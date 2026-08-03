@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { KulonController } from './kulon.controller';
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { SessionStore } from '../session/session-store';
 
 describe('KulonController', () => {
   let controller: KulonController;
@@ -11,11 +12,20 @@ describe('KulonController', () => {
     getAssignments: jest.fn(),
     parseSesskey: jest.fn(),
   };
+  const sessionStore = { get: jest.fn() };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => '<input type="hidden" name="sesskey" value="sesskey123">',
+    });
     const module = await Test.createTestingModule({
       controllers: [KulonController],
-      providers: [{ provide: KulonService, useValue: service }],
+      providers: [
+        { provide: KulonService, useValue: service },
+        { provide: SessionStore, useValue: sessionStore },
+      ],
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
@@ -23,24 +33,29 @@ describe('KulonController', () => {
     controller = module.get(KulonController);
   });
 
-  it('returns courses using msSession and sesskey', async () => {
+  it('returns courses using stored session kulon cookie', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
     service.parseSesskey.mockReturnValue('sesskey123');
     service.getCourses.mockResolvedValue([
       { id: 1, fullname: 'A', shortname: 'A', idnumber: '1' },
     ]);
-    const req = { user: { msSession: 'ms-cookie' } };
-    const res = await controller.getCourses(req as any);
+    const res = await controller.getCourses();
     expect(res[0].fullname).toBe('A');
-    expect(service.getCourses).toHaveBeenCalledWith('ms-cookie', 'sesskey123');
+    expect(service.getCourses).toHaveBeenCalledWith('MoodleSession=K', 'sesskey123');
   });
 
-  it('returns assignments with msSession', async () => {
+  it('throws when no kulon session stored', async () => {
+    sessionStore.get.mockReturnValue(null);
+    await expect(controller.getCourses()).rejects.toThrow('No Kulon session');
+  });
+
+  it('returns assignments with stored session', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
     service.parseSesskey.mockReturnValue('sesskey123');
     service.getAssignments.mockResolvedValue([
       { id: 1, name: 'Tugas', duedate: 0, overdue: false, course: 'C' },
     ]);
-    const req = { user: { msSession: 'ms-cookie' } };
-    const res = await controller.getAssignments(req as any);
+    const res = await controller.getAssignments();
     expect(res[0].name).toBe('Tugas');
   });
 });

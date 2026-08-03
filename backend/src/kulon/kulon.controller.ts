@@ -1,30 +1,39 @@
 import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { SessionStore } from '../session/session-store';
 
 @UseGuards(JwtAuthGuard)
 @Controller('api/kulon')
 export class KulonController {
-  constructor(private readonly kulonService: KulonService) {}
+  constructor(
+    private readonly kulonService: KulonService,
+    private readonly sessionStore: SessionStore,
+  ) {}
 
   @Get('courses')
-  async getCourses(@Req() req: any) {
-    const msSession = req.user?.msSession;
-    const sesskey = await this.getSesskey(msSession);
-    return this.kulonService.getCourses(msSession, sesskey);
+  async getCourses() {
+    const session = this.sessionStore.get();
+    if (!session?.kulonCookie) {
+      throw new Error('No Kulon session — capture SSO session first');
+    }
+    const sesskey = await this.getSesskey(session.kulonCookie);
+    return this.kulonService.getCourses(session.kulonCookie, sesskey);
   }
 
   @Get('assignments')
-  async getAssignments(@Req() req: any) {
-    const msSession = req.user?.msSession;
-    const sesskey = await this.getSesskey(msSession);
-    return this.kulonService.getAssignments(msSession, sesskey);
+  async getAssignments() {
+    const session = this.sessionStore.get();
+    if (!session?.kulonCookie) {
+      throw new Error('No Kulon session — capture SSO session first');
+    }
+    const sesskey = await this.getSesskey(session.kulonCookie);
+    return this.kulonService.getAssignments(session.kulonCookie, sesskey);
   }
 
-  private async getSesskey(msSession: string): Promise<string> {
-    // Fetch the Kulon home page with the MS session to extract sesskey.
+  private async getSesskey(kulonCookie: string): Promise<string> {
     const res = await fetch('https://kulon2.undip.ac.id/my/', {
-      headers: { Cookie: msSession },
+      headers: { Cookie: kulonCookie },
     });
     const html = await res.text();
     return this.kulonService.parseSesskey(html);

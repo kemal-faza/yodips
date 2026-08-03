@@ -46,6 +46,15 @@ export class EnvConfig {
   @IsString()
   @IsNotEmpty()
   MS_REDIRECT_URI: string;
+
+  // Playwright (browser automation for SSO session capture)
+  @IsString()
+  @IsNotEmpty()
+  CDP_URL: string;
+
+  @IsString()
+  @IsNotEmpty()
+  SSO_DASHBOARD_URL: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvConfig {

@@ -3,12 +3,16 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SSOAuthService } from '../sso/sso-auth.service';
 import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
+import { PlaywrightAuthService } from '../playwright/playwright-auth.service';
+import { SessionStore } from '../session/session-store';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly ssoAuth: SSOAuthService,
     private readonly microsoftAuth: MicrosoftAuthService,
+    private readonly playwrightAuth: PlaywrightAuthService,
+    private readonly sessionStore: SessionStore,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {}
@@ -23,6 +27,27 @@ export class AuthService {
     const payload = { sub: identity, ssoSession: cookie, redirectUrl };
     const accessToken = await this.jwt.signAsync(payload);
     return { accessToken, ssoSession: cookie, redirectUrl };
+  }
+
+  /**
+   * Capture the SSO session from the user's running Chrome via Playwright,
+   * store it, and issue a JWT that carries the session reference.
+   */
+  async captureSsoSession() {
+    const cdpUrl = this.config.get<string>('CDP_URL')!;
+    const ssoUrl = this.config.get<string>('SSO_DASHBOARD_URL')!;
+    const session = await this.playwrightAuth.captureSession(cdpUrl, ssoUrl);
+    this.sessionStore.set(session);
+
+    const payload = { sub: 'sso', via: 'playwright' };
+    const accessToken = await this.jwt.signAsync(payload);
+    return {
+      accessToken,
+      capturedAt: session.capturedAt,
+      hasSso: !!session.ssoCookie,
+      hasMicrosoft: !!session.microsoftCookie,
+      hasKulon: !!session.kulonCookie,
+    };
   }
 
   getMicrosoftAuthUrl() {

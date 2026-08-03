@@ -12,6 +12,11 @@ export class AuthController {
     return this.authService.login(dto.identity, dto.password);
   }
 
+  @Post('sso/capture')
+  captureSsoSession() {
+    return this.authService.captureSsoSession();
+  }
+
   @Get('microsoft/login')
   microsoftLogin() {
     return this.authService.getMicrosoftAuthUrl();

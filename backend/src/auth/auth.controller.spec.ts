@@ -6,7 +6,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 
 describe('AuthController', () => {
   let controller: AuthController;
-  const authService = { login: jest.fn(), me: jest.fn(), getMicrosoftAuthUrl: jest.fn(), handleMicrosoftCallback: jest.fn() };
+  const authService = { login: jest.fn(), me: jest.fn(), getMicrosoftAuthUrl: jest.fn(), handleMicrosoftCallback: jest.fn(), captureSsoSession: jest.fn() };
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -48,5 +48,12 @@ describe('AuthController', () => {
     authService.handleMicrosoftCallback.mockResolvedValue({ accessToken: 'jwt2', msSession: 'cookie' });
     const res = await controller.microsoftCallback('authcode');
     expect(res.accessToken).toBe('jwt2');
+  });
+
+  it('capture sso session returns access token', async () => {
+    authService.captureSsoSession.mockResolvedValue({ accessToken: 'jwt3', hasSso: true, hasMicrosoft: true });
+    const res = await controller.captureSsoSession();
+    expect(res.accessToken).toBe('jwt3');
+    expect(res.hasSso).toBe(true);
   });
 });

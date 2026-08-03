@@ -3,6 +3,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SSOModule } from '../sso/sso.module';
 import { MicrosoftModule } from '../microsoft/microsoft.module';
+import { PlaywrightModule } from '../playwright/playwright.module';
+import { SessionModule } from '../session/session.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -11,6 +13,8 @@ import { JwtAuthGuard } from './jwt-auth.guard';
   imports: [
     SSOModule,
     MicrosoftModule,
+    PlaywrightModule,
+    SessionModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (c: ConfigService) => ({
