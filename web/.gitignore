@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.tsbuildinfo
+# vue-tsc build-mode emissions (should not be tracked)
+src/**/*.js
+*.js
