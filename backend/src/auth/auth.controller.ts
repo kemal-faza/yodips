@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -10,6 +10,16 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto.identity, dto.password);
+  }
+
+  @Get('microsoft/login')
+  microsoftLogin() {
+    return this.authService.getMicrosoftAuthUrl();
+  }
+
+  @Get('microsoft/callback')
+  microsoftCallback(@Query('code') code: string) {
+    return this.authService.handleMicrosoftCallback(code);
   }
 
   @UseGuards(JwtAuthGuard)

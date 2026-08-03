@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SSOModule } from '../sso/sso.module';
+import { MicrosoftModule } from '../microsoft/microsoft.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -9,6 +10,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 @Module({
   imports: [
     SSOModule,
+    MicrosoftModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (c: ConfigService) => ({

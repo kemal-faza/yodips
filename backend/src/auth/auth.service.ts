@@ -2,11 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SSOAuthService } from '../sso/sso-auth.service';
+import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly ssoAuth: SSOAuthService,
+    private readonly microsoftAuth: MicrosoftAuthService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {}
@@ -21,6 +23,18 @@ export class AuthService {
     const payload = { sub: identity, ssoSession: cookie, redirectUrl };
     const accessToken = await this.jwt.signAsync(payload);
     return { accessToken, ssoSession: cookie, redirectUrl };
+  }
+
+  getMicrosoftAuthUrl() {
+    return { authUrl: this.microsoftAuth.getAuthUrl() };
+  }
+
+  async handleMicrosoftCallback(code: string) {
+    const { accessToken, sessionCookies } =
+      await this.microsoftAuth.handleCallback(code);
+    const payload = { sub: 'microsoft', msSession: sessionCookies, accessToken };
+    const jwt = await this.jwt.signAsync(payload);
+    return { accessToken: jwt, msSession: sessionCookies };
   }
 
   async me(user: any) {
