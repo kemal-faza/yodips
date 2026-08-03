@@ -57,6 +57,15 @@ export class EnvConfig {
   @IsNotEmpty()
   SSO_DASHBOARD_URL: string;
 
+  // Interactive login (headed browser)
+  @IsString()
+  @IsNotEmpty()
+  SSO_LOGIN_URL: string;
+
+  @IsString()
+  @IsNotEmpty()
+  CHROME_PROFILE_DIR: string;
+
   // CORS origins (comma-separated) for the frontend
   @IsOptional()
   @IsString()

@@ -39,13 +39,20 @@ export class AuthService {
   }
 
   /**
-   * Capture the SSO session from the user's running Chrome via Playwright,
-   * store it, and issue a JWT that carries the session reference.
+   * Capture the SSO session via the interactive flow: Playwright opens a
+   * visible Chrome window on the SSO login page, the user logs in (NIM +
+   * password + MFA), and the captured session is stored server-side. Issues
+   * a JWT that carries only a session reference (never raw cookies).
    */
   async captureSsoSession() {
-    const cdpUrl = this.config.get<string>('CDP_URL')!;
-    const ssoUrl = this.config.get<string>('SSO_DASHBOARD_URL')!;
-    const session = await this.playwrightAuth.captureSession(cdpUrl, ssoUrl);
+    const loginUrl = this.config.get<string>('SSO_LOGIN_URL')!;
+    const dashboardUrl = this.config.get<string>('SSO_DASHBOARD_URL')!;
+    const profileDir = this.config.get<string>('CHROME_PROFILE_DIR')!;
+    const session = await this.playwrightAuth.launchAndCaptureSession(
+      profileDir,
+      loginUrl,
+      dashboardUrl,
+    );
     this.sessionStore.set(session);
 
     const payload = { sub: 'sso', via: 'playwright' };

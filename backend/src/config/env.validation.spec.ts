@@ -12,6 +12,8 @@ describe('validateEnv', () => {
       MS_REDIRECT_URI: 'http://localhost:3000/callback',
       CDP_URL: 'http://127.0.0.1:9223',
       SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
+      SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+      CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
       PORT: '3000',
     });
     expect(cfg.SSO_BASE_URL).toBe('https://sso.undip.ac.id');
@@ -28,6 +30,8 @@ describe('validateEnv', () => {
       MS_REDIRECT_URI: 'http://localhost:3000/callback',
       CDP_URL: 'http://127.0.0.1:9223',
       SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
+      SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+      CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
     });
     expect(cfg.NODE_ENV).toBe('development');
     expect(cfg.JWT_EXPIRES_IN).toBe('12h');
