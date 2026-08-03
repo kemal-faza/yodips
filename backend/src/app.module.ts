@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { validateEnv } from './config/env.validation';
 import { SSOModule } from './sso/sso.module';
 import { AuthModule } from './auth/auth.module';
+import { KulonModule } from './kulon/kulon.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { AuthModule } from './auth/auth.module';
     }),
     SSOModule,
     AuthModule,
+    KulonModule,
   ],
   controllers: [AppController],
   providers: [AppService],
