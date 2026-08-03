@@ -106,34 +106,28 @@ export class KulonService {
       timesortto: 0,
       limitnum: 50,
     })) as { events: any[] };
-    return Promise.all(
-      (data?.events ?? [])
-        .filter((e: any) => e.eventtype === 'due')
-        .map(async (e: any): Promise<KulonAssignment> => {
-          const assignmentId = e.instance ?? 0;
-          let courseModuleId = e.cmid ?? 0;
-          if (!courseModuleId && e.instance && e.course?.id) {
-            courseModuleId = await this.resolveCmid(
-              sessionCookie,
-              sesskey,
-              e.instance,
-              e.course.id,
-            );
-          }
-          return {
-            id: e.id,
-            name: e.activityname ?? e.name,
-            module: e.modulename,
-            eventType: e.eventtype,
-            duedate: e.timestart,
-            overdue: !!e.overdue,
-            course: e.course?.fullname ?? '',
-            courseId: e.course?.id ?? 0,
-            assignmentId,
-            courseModuleId,
-          };
-        }),
-    );
+    return (data?.events ?? [])
+      .filter((e: any) => e.eventtype === 'due')
+      .map((e: any): KulonAssignment => {
+        const assignmentId = e.instance ?? 0;
+        return {
+          id: e.id,
+          name: e.activityname ?? e.name,
+          module: e.modulename,
+          eventType: e.eventtype,
+          duedate: e.timestart,
+          overdue: !!e.overdue,
+          course: e.course?.fullname ?? '',
+          courseId: e.course?.id ?? 0,
+          assignmentId,
+          // Moodle does NOT expose cmid on calendar events, and the
+          // core_course_get_course_module_by_instance web service is disabled
+          // on Kulon. The event's `url` (built by Moodle itself) carries the
+          // page id used by /mod/assign/view.php?id=<n> — verified against
+          // real Kulon data. Use that as the courseModuleId.
+          courseModuleId: this.extractCourseModuleId(e.url),
+        };
+      });
   }
 
   async getAssignmentDetail(
@@ -166,19 +160,16 @@ export class KulonService {
     };
   }
 
-  private async resolveCmid(
-    sessionCookie: string,
-    sesskey: string,
-    instance: number,
-    courseId: number,
-  ): Promise<number> {
-    const data = (await this.ajax(
-      sessionCookie,
-      sesskey,
-      'core_course_get_course_module_by_instance',
-      { courseid: courseId, module: 'assign', instance },
-    )) as { cmid?: number };
-    return data?.cmid ?? 0;
+  /**
+   * Extract the assignment page id from a Moodle calendar event `url` such as
+   * `https://kulon2.undip.ac.id/mod/assign/view.php?id=3335`. This is the id
+   * the detail page needs (`view.php?id=<n>`); it is the module instance id
+   * for mod_assign and equals what the frontend treats as courseModuleId.
+   * Returns 0 when the url does not match (caller should skip detail).
+   */
+  private extractCourseModuleId(url: string | undefined): number {
+    const match = (url ?? '').match(/\/mod\/assign\/view\.php\?id=(\d+)/);
+    return match ? Number(match[1]) : 0;
   }
 
   private extractDescription(html: string): string {

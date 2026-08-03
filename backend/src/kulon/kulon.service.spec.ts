@@ -82,7 +82,7 @@ describe('KulonService', () => {
                 timestart: 1742230800,
                 overdue: true,
                 instance: 42,
-                cmid: 777,
+                url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
                 course: { id: 9371, fullname: 'C' },
               },
             ],
@@ -95,39 +95,63 @@ describe('KulonService', () => {
     expect(assignments[0].courseModuleId).toBe(777);
   });
 
-  it('resolves cmid via lookup when event has no cmid', async () => {
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          {
-            error: false,
-            data: {
-              events: [
-                {
-                  id: 1165,
-                  activityname: 'Tugas Kelompok I',
-                  modulename: 'assign',
-                  eventtype: 'due',
-                  timestart: 1742230800,
-                  overdue: true,
-                  instance: 42,
-                  course: { id: 9371, fullname: 'C' },
-                },
-              ],
-            },
+  it('derives courseModuleId from the event url (no extra AJAX call)', async () => {
+    // Real Kulon events carry NO cmid field; the page id lives in event.url.
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          error: false,
+          data: {
+            events: [
+              {
+                id: 1165,
+                activityname: 'Tugas Kelompok I',
+                modulename: 'assign',
+                eventtype: 'due',
+                timestart: 1742230800,
+                overdue: true,
+                instance: 42,
+                url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=3335',
+                course: { id: 9371, fullname: 'C' },
+              },
+            ],
           },
-        ],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ error: false, data: { cmid: 777 } }],
-      });
+        },
+      ],
+    });
     const assignments = await svc.getAssignments('session-cookie', 'sesskey');
-    expect(assignments[0].courseModuleId).toBe(777);
-    const calls = (global.fetch as jest.Mock).mock.calls;
-    const ajaxBody = calls[1][1] as { body: string };
-    expect(ajaxBody.body).toContain('core_course_get_course_module_by_instance');
+    expect(assignments[0].courseModuleId).toBe(3335);
+    // Exactly one fetch: the calendar AJAX. No course-module lookup call.
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
+  });
+
+  it('returns courseModuleId 0 when event url does not match an assign page', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          error: false,
+          data: {
+            events: [
+              {
+                id: 1165,
+                activityname: 'Quiz A',
+                modulename: 'quiz',
+                eventtype: 'due',
+                timestart: 1742230800,
+                overdue: false,
+                instance: 9,
+                url: 'https://kulon2.undip.ac.id/mod/quiz/view.php?id=9',
+                course: { id: 9371, fullname: 'C' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const assignments = await svc.getAssignments('session-cookie', 'sesskey');
+    expect(assignments[0].courseModuleId).toBe(0);
   });
 
   it('fetches assignment detail from page and submission status', async () => {
