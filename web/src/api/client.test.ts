@@ -100,4 +100,24 @@ describe('api client', () => {
     await expect(onRejected(error)).rejects.toMatchObject(error);
     expect(localStorage.getItem('sso_token')).toBeNull();
   });
+
+  it('getAssignmentDetail fetches detail with id and cmid', async () => {
+    mockRequest.mockResolvedValue({
+      data: {
+        assignmentId: 42,
+        name: 'Tugas',
+        descriptionHtml: '<p>x</p>',
+        files: [],
+        submission: { status: 'not_submitted', grade: null, maxGrade: null },
+        kulonUrl: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
+      },
+    });
+    const { getAssignmentDetail } = await import('./client');
+    const result = await getAssignmentDetail(42, 777);
+    const call = mockRequest.mock.calls[0][0];
+    expect(call.method).toBe('get');
+    expect(call.url).toBe('/api/kulon/assignments/42/detail');
+    expect(call.params).toEqual({ cmid: 777 });
+    expect(result.assignmentId).toBe(42);
+  });
 });

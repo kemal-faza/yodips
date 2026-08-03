@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { Assignment, CaptureResult, Course, User } from '../types';
+import type { Assignment, AssignmentDetail, CaptureResult, Course, User } from '../types';
 
 const TOKEN_KEY = 'sso_token';
 
@@ -54,5 +54,13 @@ export async function getAssignments(): Promise<Assignment[]> {
 
 export async function getCourses(): Promise<Course[]> {
   const { data } = await apiClient.get<Course[]>('/api/kulon/courses');
+  return data;
+}
+
+export async function getAssignmentDetail(assignmentId: number, cmid: number): Promise<AssignmentDetail> {
+  const { data } = await apiClient.get<AssignmentDetail>(
+    `/api/kulon/assignments/${assignmentId}/detail`,
+    { params: { cmid } },
+  );
   return data;
 }
