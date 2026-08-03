@@ -65,4 +65,139 @@ describe('KulonService', () => {
     const key = svc.parseSesskey(html);
     expect(key).toBe('abc123XYZ');
   });
+
+  it('maps assignmentId and courseModuleId into assignments list', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          error: false,
+          data: {
+            events: [
+              {
+                id: 1165,
+                activityname: 'Tugas Kelompok I',
+                modulename: 'assign',
+                eventtype: 'due',
+                timestart: 1742230800,
+                overdue: true,
+                instance: 42,
+                cmid: 777,
+                course: { id: 9371, fullname: 'C' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const assignments = await svc.getAssignments('session-cookie', 'sesskey');
+    expect(assignments[0].assignmentId).toBe(42);
+    expect(assignments[0].courseModuleId).toBe(777);
+  });
+
+  it('resolves cmid via lookup when event has no cmid', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            error: false,
+            data: {
+              events: [
+                {
+                  id: 1165,
+                  activityname: 'Tugas Kelompok I',
+                  modulename: 'assign',
+                  eventtype: 'due',
+                  timestart: 1742230800,
+                  overdue: true,
+                  instance: 42,
+                  course: { id: 9371, fullname: 'C' },
+                },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: { cmid: 777 } }],
+      });
+    const assignments = await svc.getAssignments('session-cookie', 'sesskey');
+    expect(assignments[0].courseModuleId).toBe(777);
+    const calls = (global.fetch as jest.Mock).mock.calls;
+    const ajaxBody = calls[1][1] as { body: string };
+    expect(ajaxBody.body).toContain('core_course_get_course_module_by_instance');
+  });
+
+  it('fetches assignment detail from page and submission status', async () => {
+    const pageHtml =
+      '<header id="page-header"><div class="page-context-header"><h1>Tugas Kelompok I</h1></div></header><div class="activity-description" id="intro"><div class="box py-3 generalbox boxaligncenter"><div class="no-overflow"><p>Kerjakan laporan kelompok.</p></div></div></div><div class="fileuploadsubmission"><a target="_blank" href="https://kulon2.undip.ac.id/pluginfile.php/498185/assignsubmission_file/submission_files/659669/laporan.pdf">laporan.pdf</a></div>';
+    const submissionPayload = {
+      status: 'submitted',
+      lastattempt: {
+        submission: { timemodified: 1742000000 },
+        submissionstatus: 'submitted',
+        graded: true,
+      },
+      feedback: { grade: { grade: '85.0', maxmark: 100 } },
+    };
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => pageHtml,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: submissionPayload }],
+      });
+    const detail = await svc.getAssignmentDetail(
+      'session-cookie',
+      'sesskey',
+      42,
+      777,
+    );
+    expect(detail.assignmentId).toBe(42);
+    expect(detail.name).toBe('Tugas Kelompok I');
+    expect(detail.descriptionHtml).toContain('Kerjakan laporan kelompok.');
+    expect(detail.files[0].name).toBe('laporan.pdf');
+    expect(detail.files[0].url).toContain('/pluginfile.php/498185/');
+    expect(detail.submission.status).toBe('graded');
+    expect(detail.submission.grade).toBe(85);
+    expect(detail.submission.maxGrade).toBe(100);
+    expect(detail.submission.submittedAt).toBe(1742000000);
+    expect(detail.kulonUrl).toContain('view.php?id=777');
+  });
+
+  it('returns not_submitted when ajax submission data is empty', async () => {
+    const pageHtml =
+      '<header id="page-header"><h1>Task</h1></header><div id="intro"><div class="no-overflow"></div></div>';
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({ ok: true, text: async () => pageHtml })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: {} }],
+      });
+    const detail = await svc.getAssignmentDetail(
+      'session-cookie',
+      'sesskey',
+      42,
+      777,
+    );
+    expect(detail.name).toBe('Task');
+    expect(detail.descriptionHtml).toBe('');
+    expect(detail.submission.status).toBe('not_submitted');
+    expect(detail.submission.grade).toBeNull();
+    expect(detail.submission.maxGrade).toBeNull();
+  });
+
+  it('throws ASSIGNMENT_NOT_FOUND when page responds 404', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 404,
+    });
+    await expect(
+      svc.getAssignmentDetail('session-cookie', 'sesskey', 42, 777),
+    ).rejects.toThrow('ASSIGNMENT_NOT_FOUND');
+  });
 });
