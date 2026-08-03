@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy: #0a1931;
+  --color-navy-light: #1a2f52;
+  --color-canvas: #f4f6f9;
+  --color-gold: #ffc107;
+  --color-danger: #dc2626;
+  --color-warn: #f59e0b;
+  --color-success: #16a34a;
+  --radius-card: 0.9rem;
+}
+
+body {
+  @apply bg-canvas text-navy antialiased;
+}

@@ -1,0 +1,32 @@
+export interface Assignment {
+  id: number;
+  name: string;
+  module: string;
+  eventType: string;
+  duedate: number; // unix seconds
+  overdue: boolean;
+  course: string;
+  courseId: number;
+}
+
+export interface Course {
+  id: number;
+  fullname: string;
+  shortname: string;
+  idnumber: string;
+}
+
+export interface User {
+  sub: string;
+  authenticated: boolean;
+}
+
+export interface CaptureResult {
+  accessToken: string;
+  capturedAt: number;
+  hasSso: boolean;
+  hasMicrosoft: boolean;
+  hasKulon: boolean;
+}
+
+export type AssignmentStatus = 'overdue' | 'dueSoon' | 'onTrack';
