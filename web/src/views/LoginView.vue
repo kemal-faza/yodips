@@ -8,7 +8,7 @@ const router = useRouter();
 async function handleLogin() {
   await store.login();
   if (store.isAuthenticated) {
-    router.push('/');
+    await router.push('/');
   }
 }
 </script>
