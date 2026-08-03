@@ -1,16 +1,41 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { getAssignments } from '../api/client';
-import type { Assignment } from '../types';
+import { computed, onMounted, ref } from 'vue';
+import { getAssignments, getCourses } from '../api/client';
+import type { Assignment, Course } from '../types';
 import { useAuthStore } from '../stores/auth';
+import { useFilterStore } from '../stores/filter';
+import { applyFilters, applySort } from '../utils/filter';
 import AppHeader from '../components/AppHeader.vue';
+import FilterBar from '../components/FilterBar.vue';
+import ViewToggle from '../components/ViewToggle.vue';
+import TimelineGroup from '../components/TimelineGroup.vue';
 import CourseGroup from '../components/CourseGroup.vue';
+import DetailPanel from '../components/DetailPanel.vue';
 
 const store = useAuthStore();
+const filterStore = useFilterStore();
 const assignments = ref<Assignment[]>([]);
+const courses = ref<Course[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sessionExpired = ref(false);
+const selected = ref<Assignment | null>(null);
+const panelOpen = ref(false);
+
+const visible = computed(() =>
+  applySort(
+    applyFilters(
+      assignments.value,
+      {
+        search: filterStore.search,
+        status: filterStore.status,
+        courseId: filterStore.courseId,
+      },
+      Date.now(),
+    ),
+    filterStore.sortBy,
+  ),
+);
 
 function extractError(e: unknown): string {
   const anyE = e as { response?: { status?: number; data?: { message?: string } }; message?: string };
@@ -29,8 +54,9 @@ async function load() {
   error.value = null;
   sessionExpired.value = false;
   try {
-    const [a] = await Promise.all([getAssignments()]);
+    const [a, c] = await Promise.all([getAssignments(), getCourses()]);
     assignments.value = a;
+    courses.value = c;
   } catch (e) {
     error.value = extractError(e);
   } finally {
@@ -44,6 +70,11 @@ async function relogin() {
   if (store.isAuthenticated) {
     await load();
   }
+}
+
+function openDetail(a: Assignment) {
+  selected.value = a;
+  panelOpen.value = true;
 }
 
 onMounted(load);
@@ -78,8 +109,22 @@ onMounted(load);
       <p v-else-if="error" class="mt-8 rounded bg-danger/10 p-4 text-danger">{{ error }}</p>
 
       <div v-else class="mt-6">
-        <CourseGroup :assignments="assignments" />
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <FilterBar :courses="courses" />
+          <ViewToggle />
+        </div>
+
+        <div class="mt-6">
+          <TimelineGroup
+            v-if="filterStore.viewMode === 'timeline'"
+            :assignments="visible"
+            @open-assignment="openDetail"
+          />
+          <CourseGroup v-else :assignments="visible" />
+        </div>
       </div>
     </main>
+
+    <DetailPanel :assignment="selected" :open="panelOpen" @close="panelOpen = false" />
   </div>
 </template>
