@@ -24,9 +24,18 @@ export class AuthService {
       identity,
       password,
     );
-    const payload = { sub: identity, ssoSession: cookie, redirectUrl };
+    // Store session server-side; JWT carries only a reference (not raw cookie).
+    this.sessionStore.set({
+      identity,
+      ssoCookie: cookie,
+      microsoftCookie: '',
+      kulonCookie: '',
+      siapCookie: '',
+      capturedAt: Date.now(),
+    });
+    const payload = { sub: identity, via: 'sso' };
     const accessToken = await this.jwt.signAsync(payload);
-    return { accessToken, ssoSession: cookie, redirectUrl };
+    return { accessToken, redirectUrl };
   }
 
   /**
@@ -54,12 +63,21 @@ export class AuthService {
     return { authUrl: this.microsoftAuth.getAuthUrl() };
   }
 
-  async handleMicrosoftCallback(code: string) {
+  async handleMicrosoftCallback(code: string, state?: string) {
     const { accessToken, sessionCookies } =
-      await this.microsoftAuth.handleCallback(code);
-    const payload = { sub: 'microsoft', msSession: sessionCookies, accessToken };
+      await this.microsoftAuth.handleCallback(code, state);
+    // Store microsoft session server-side; JWT carries only a reference.
+    this.sessionStore.set({
+      identity: 'microsoft',
+      ssoCookie: '',
+      microsoftCookie: sessionCookies,
+      kulonCookie: '',
+      siapCookie: '',
+      capturedAt: Date.now(),
+    });
+    const payload = { sub: 'microsoft', via: 'oidc' };
     const jwt = await this.jwt.signAsync(payload);
-    return { accessToken: jwt, msSession: sessionCookies };
+    return { accessToken: jwt };
   }
 
   async me(user: any) {

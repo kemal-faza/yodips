@@ -10,6 +10,8 @@ describe('validateEnv', () => {
       MS_CLIENT_ID: 'client',
       MS_CLIENT_SECRET: 'secret',
       MS_REDIRECT_URI: 'http://localhost:3000/callback',
+      CDP_URL: 'http://127.0.0.1:9223',
+      SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
       PORT: '3000',
     });
     expect(cfg.SSO_BASE_URL).toBe('https://sso.undip.ac.id');
@@ -24,9 +26,19 @@ describe('validateEnv', () => {
       MS_CLIENT_ID: 'client',
       MS_CLIENT_SECRET: 'secret',
       MS_REDIRECT_URI: 'http://localhost:3000/callback',
+      CDP_URL: 'http://127.0.0.1:9223',
+      SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
     });
     expect(cfg.NODE_ENV).toBe('development');
     expect(cfg.JWT_EXPIRES_IN).toBe('12h');
     expect(cfg.SSO_LOGIN_PATH).toBe('/sso/auth_v2');
+  });
+
+  it('throws when required env vars are missing', () => {
+    expect(() =>
+      validateEnv({
+        SSO_BASE_URL: 'https://sso.undip.ac.id',
+      }),
+    ).toThrow();
   });
 });

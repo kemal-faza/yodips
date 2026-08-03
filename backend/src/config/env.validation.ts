@@ -1,4 +1,5 @@
 import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 import { IsEnum, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
 export enum Env {
@@ -55,11 +56,27 @@ export class EnvConfig {
   @IsString()
   @IsNotEmpty()
   SSO_DASHBOARD_URL: string;
+
+  // CORS origins (comma-separated) for the frontend
+  @IsOptional()
+  @IsString()
+  CORS_ORIGIN?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvConfig {
   const validated = plainToInstance(EnvConfig, config, {
     enableImplicitConversion: true,
   });
+  // NOTE: NestJS passes the entire process.env to validate(), so we must NOT
+  // use forbidNonWhitelisted (it would reject unrelated OS env vars). whitelist
+  // strips unknown keys so only our declared fields are kept.
+  const errors = validateSync(validated, {
+    whitelist: true,
+  });
+  if (errors.length > 0) {
+    throw new Error(
+      errors.map((e) => JSON.stringify(e.constraints)).join(', '),
+    );
+  }
   return validated;
 }
