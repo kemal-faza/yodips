@@ -13,14 +13,14 @@ describe('LoginView', () => {
   });
 
   it('renders login button', () => {
-    const store = { login: vi.fn(), capturing: false, error: null };
+    const store = { login: vi.fn(), checking: false, error: null };
     (useAuthStore as any).mockReturnValue(store);
     const w = mount(LoginView);
     expect(w.text()).toContain('Login via SSO');
   });
 
   it('calls store.login on button click', async () => {
-    const store = { login: vi.fn().mockResolvedValue(undefined), capturing: false, error: null };
+    const store = { login: vi.fn().mockResolvedValue(undefined), checking: false, error: null };
     (useAuthStore as any).mockReturnValue(store);
     const w = mount(LoginView);
     await w.find('button').trigger('click');
@@ -29,7 +29,7 @@ describe('LoginView', () => {
   });
 
   it('shows error message when login fails', () => {
-    const store = { login: vi.fn(), capturing: false, error: 'Gagal login' };
+    const store = { login: vi.fn(), checking: false, error: 'Gagal login' };
     (useAuthStore as any).mockReturnValue(store);
     const w = mount(LoginView);
     expect(w.text()).toContain('Gagal login');
