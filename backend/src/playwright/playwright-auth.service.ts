@@ -11,6 +11,7 @@ export interface CapturedSession {
 }
 
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000; // 5 minutes
+const KULON_TIMEOUT_MS = 30_000; // 30 seconds for Kulon session establish
 const POLL_INTERVAL_MS = 2_000;
 
 @Injectable()
@@ -51,16 +52,20 @@ export class PlaywrightAuthService {
 
   /**
    * Launch a HEADED persistent Chromium context (visible browser window),
-   * navigate to the SSO login page, and poll until the user completes login
-   * (a `ci_session_sso` cookie appears). Returns a normalized session.
+   * navigate to the SSO login page, and wait until the user completes login —
+   * detected by the page URL reaching the dashboard (a reliable auth signal,
+   * unlike a cookie which SSO sets on the login-page GET itself).
    *
-   * The persistent profile keeps the user logged in across calls, so repeat
-   * logins are instant. The timeout guards against the user abandoning login.
+   * After SSO auth is confirmed, navigate to the Kulon ticket URL so the
+   * MoodleSession cookie is established in the same browser context, then
+   * capture all cookies. The persistent profile keeps the user logged in,
+   * so repeat logins are instant. The timeout guards against abandonment.
    */
   async launchAndCaptureSession(
     profileDir: string,
     loginUrl: string,
-    _dashboardUrl: string,
+    dashboardUrl: string,
+    kulonTicketUrl: string,
     loginTimeoutMs: number = DEFAULT_LOGIN_TIMEOUT_MS,
   ): Promise<CapturedSession> {
     // Point Playwright at the system Chrome so a real, visible window opens.
@@ -74,27 +79,61 @@ export class PlaywrightAuthService {
       // Navigate to the SSO login page. If the persistent profile is already
       // logged in, the page redirects to the dashboard automatically.
       await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
-      if (this.hasSsoCookie(await context.cookies())) {
-        this.logger.log('SSO session already present in profile — no login needed');
-      } else {
-        this.logger.log('Waiting for user to log in on the SSO page…');
-      }
 
+      // Wait for the real auth signal: the page URL reaches the dashboard.
       const deadline = Date.now() + loginTimeoutMs;
-      let cookies = await context.cookies();
-      while (!this.hasSsoCookie(cookies)) {
+      while (!this.isOnDashboard(page.url(), dashboardUrl)) {
         if (Date.now() > deadline) {
           throw new Error('Timed out waiting for SSO login');
         }
         await this.sleep(POLL_INTERVAL_MS);
-        cookies = await context.cookies();
       }
+      this.logger.log('SSO login detected — on dashboard');
 
+      // Establish the Kulon session so the MoodleSession cookie exists.
+      await this.establishKulonSession(page, context, kulonTicketUrl);
+
+      const cookies = await context.cookies();
       const session = this.buildSession(cookies, '');
       this.logger.log('SSO session captured via interactive browser login');
       return session;
     } finally {
       await context.close();
+    }
+  }
+
+  /** Detect authentication by URL reaching the dashboard (not cookie presence). */
+  private isOnDashboard(currentUrl: string, dashboardUrl: string): boolean {
+    return currentUrl.includes(dashboardUrl);
+  }
+
+  /**
+   * Navigate to the Kulon ticket URL so the Moodle OIDC flow issues a
+   * MoodleSession cookie in the same browser context. Best-effort: if it
+   * fails (e.g. Microsoft OIDC needs extra interaction), log and continue
+   * with whatever cookies exist — the dashboard will show gracefully.
+   */
+  private async establishKulonSession(
+    page: { goto: (url: string, opts?: unknown) => Promise<unknown> },
+    context: { cookies: () => Promise<{ name: string; domain: string }[]> },
+    kulonTicketUrl: string,
+  ): Promise<void> {
+    try {
+      await page.goto(kulonTicketUrl, { waitUntil: 'domcontentloaded' });
+      // Wait for the MoodleSession cookie to appear (up to ~30s).
+      const deadline = Date.now() + KULON_TIMEOUT_MS;
+      let cookies = await context.cookies();
+      while (!this.hasKulonCookie(cookies)) {
+        if (Date.now() > deadline) {
+          this.logger.warn('Kulon session not established within timeout');
+          return;
+        }
+        await this.sleep(POLL_INTERVAL_MS);
+        cookies = await context.cookies();
+      }
+      this.logger.log('Kulon session established');
+    } catch (e) {
+      this.logger.warn(`Kulon session establish failed: ${(e as Error).message}`);
     }
   }
 
@@ -127,9 +166,9 @@ export class PlaywrightAuthService {
     };
   }
 
-  private hasSsoCookie(cookies: { name: string; domain: string }[]): boolean {
+  private hasKulonCookie(cookies: { name: string; domain: string }[]): boolean {
     return cookies.some(
-      (c) => c.name === 'ci_session_sso' && c.domain.includes('sso.undip.ac.id'),
+      (c) => c.name === 'MoodleSession' && c.domain.includes('kulon2.undip.ac.id'),
     );
   }
 

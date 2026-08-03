@@ -1,15 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SSOAuthService } from '../sso/sso-auth.service';
+import { SSOTicketService } from '../sso/ticket.service';
 import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
 import { PlaywrightAuthService } from '../playwright/playwright-auth.service';
 import { SessionStore } from '../session/session-store';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  // Reuse a stored session only if it was captured within this window.
+  private readonly SESSION_TTL_MS = 30 * 60_000; // 30 minutes
+
   constructor(
     private readonly ssoAuth: SSOAuthService,
+    private readonly ssoTicket: SSOTicketService,
     private readonly microsoftAuth: MicrosoftAuthService,
     private readonly playwrightAuth: PlaywrightAuthService,
     private readonly sessionStore: SessionStore,
@@ -43,15 +49,38 @@ export class AuthService {
    * visible Chrome window on the SSO login page, the user logs in (NIM +
    * password + MFA), and the captured session is stored server-side. Issues
    * a JWT that carries only a session reference (never raw cookies).
+   *
+   * Smart reuse: if a stored session is still fresh AND its Kulon cookie is
+   * still valid, return a JWT immediately WITHOUT opening a browser window.
+   * Otherwise run the interactive flow.
    */
   async captureSsoSession() {
+    // 1) Try smart reuse of a stored, still-valid session — no browser window.
+    const existing = this.sessionStore.get();
+    if (existing && this.isFresh(existing) && (await this.kulonProbeOk(existing.kulonCookie))) {
+      this.logger.log('Reusing stored SSO session — no browser window needed');
+      const payload = { sub: 'sso', via: 'reuse' };
+      const accessToken = await this.jwt.signAsync(payload);
+      return {
+        accessToken,
+        capturedAt: existing.capturedAt,
+        reused: true,
+        hasSso: !!existing.ssoCookie,
+        hasMicrosoft: !!existing.microsoftCookie,
+        hasKulon: !!existing.kulonCookie,
+      };
+    }
+
+    // 2) Interactive flow: open a browser window, let the user log in.
     const loginUrl = this.config.get<string>('SSO_LOGIN_URL')!;
     const dashboardUrl = this.config.get<string>('SSO_DASHBOARD_URL')!;
     const profileDir = this.config.get<string>('CHROME_PROFILE_DIR')!;
+    const kulonTicketUrl = this.ssoTicket.buildServiceUrl('kulon', this.ssoTicket.generateTicket());
     const session = await this.playwrightAuth.launchAndCaptureSession(
       profileDir,
       loginUrl,
       dashboardUrl,
+      kulonTicketUrl,
     );
     this.sessionStore.set(session);
 
@@ -60,10 +89,36 @@ export class AuthService {
     return {
       accessToken,
       capturedAt: session.capturedAt,
+      reused: false,
       hasSso: !!session.ssoCookie,
       hasMicrosoft: !!session.microsoftCookie,
       hasKulon: !!session.kulonCookie,
     };
+  }
+
+  /** A session is reusable if captured within the TTL window. */
+  private isFresh(session: { capturedAt: number }): boolean {
+    return Date.now() - session.capturedAt < this.SESSION_TTL_MS;
+  }
+
+  /**
+   * Lightweight probe: does the stored Kulon cookie still yield a valid
+   * Moodle page (has a sesskey)? A stale/expired cookie redirect-loops, which
+   * surfaces as a fetch failure — treat that as "not reusable".
+   */
+  private async kulonProbeOk(kulonCookie: string): Promise<boolean> {
+    if (!kulonCookie) return false;
+    try {
+      const res = await fetch('https://kulon2.undip.ac.id/my/', {
+        headers: { Cookie: kulonCookie },
+        redirect: 'follow',
+      });
+      if (!res.ok) return false;
+      const html = await res.text();
+      return /name="sesskey"/.test(html);
+    } catch {
+      return false;
+    }
   }
 
   getMicrosoftAuthUrl() {
