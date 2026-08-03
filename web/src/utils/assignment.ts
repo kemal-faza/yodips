@@ -7,8 +7,8 @@ export function assignStatus(
   duedateSec: number,
   nowMs: number,
 ): AssignmentStatus {
-  if (overdue) return 'overdue';
   const duedateMs = duedateSec * 1000;
+  if (overdue || duedateMs < nowMs) return 'overdue';
   if (duedateMs - nowMs <= DUE_SOON_MS) return 'dueSoon';
   return 'onTrack';
 }
