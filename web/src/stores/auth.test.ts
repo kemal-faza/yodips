@@ -32,7 +32,7 @@ describe('auth store', () => {
     await store.login();
     expect(store.token).toBeNull();
     expect(store.isAuthenticated).toBe(false);
-    expect(store.error).toContain('Chrome');
+    expect(store.error).toContain('Gagal login');
   });
 
   it('logout clears token', async () => {

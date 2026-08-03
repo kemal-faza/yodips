@@ -25,8 +25,11 @@ async function handleLogin() {
         :disabled="store.capturing"
         @click="handleLogin"
       >
-        {{ store.capturing ? 'Menghubungkan ke Chrome…' : 'Login via SSO' }}
+        {{ store.capturing ? 'Menunggu login di browser…' : 'Login via SSO' }}
       </button>
+      <p v-if="store.capturing" class="mt-4 text-center text-sm text-navy-light">
+        Sebuah jendela browser baru akan terbuka. Silakan login dengan akun SSO kamu di sana.
+      </p>
       <p v-if="store.error" class="mt-4 rounded bg-danger/10 p-3 text-sm text-danger">
         {{ store.error }}
       </p>

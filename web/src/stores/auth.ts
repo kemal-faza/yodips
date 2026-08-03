@@ -22,13 +22,14 @@ export const useAuthStore = defineStore('auth', {
         const result = await capture();
         this.token = result.accessToken;
         localStorage.setItem(TOKEN_KEY, result.accessToken);
-        if (!result.hasSso) {
-          this.error = 'Tidak ada session SSO di Chrome. Buka/login Chrome dulu, lalu klik lagi.';
+        if (result.hasSso && result.hasKulon) {
+          this.error = null;
         } else if (!result.hasKulon) {
-          this.error = 'Session Kulon belum ada — beberapa fitur mungkin kosong.';
+          // SSO sukses tapi session Kulon kosong — dashboard mungkin kosong.
+          this.error = 'Login SSO berhasil, tapi session Kulon belum lengkap — beberapa data mungkin kosong.';
         }
       } catch (e) {
-        this.error = 'Gagal login. Pastikan Chrome berjalan dengan session SSO, lalu coba lagi. Error: ' + (e as Error).message;
+        this.error = 'Gagal login: ' + (e as Error).message;
       } finally {
         this.capturing = false;
       }

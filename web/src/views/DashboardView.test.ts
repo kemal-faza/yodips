@@ -7,7 +7,6 @@ import { useAuthStore } from '../stores/auth';
 
 vi.mock('../api/client', () => ({
   getAssignments: vi.fn(),
-  getCourses: vi.fn(),
 }));
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 
@@ -24,7 +23,6 @@ describe('DashboardView', () => {
     (api.getAssignments as any).mockResolvedValue([
       { id: 1, name: 'T1', module: 'assign', eventType: 'due', duedate: (now + 3600 * sec) / sec, overdue: false, course: 'Matkul A', courseId: 1 },
     ]);
-    (api.getCourses as any).mockResolvedValue([]);
     (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
     const w = mount(DashboardView);
     await flushPromises();
@@ -34,10 +32,20 @@ describe('DashboardView', () => {
 
   it('renders empty state when no assignments', async () => {
     (api.getAssignments as any).mockResolvedValue([]);
-    (api.getCourses as any).mockResolvedValue([]);
     (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
     const w = mount(DashboardView);
     await flushPromises();
     expect(w.text()).toContain('Belum ada tugas');
+  });
+
+  it('shows re-login prompt when session expired (401)', async () => {
+    (api.getAssignments as any).mockRejectedValue({
+      response: { status: 401, data: { message: 'Session Kulon expired — silakan login ulang via SSO' } },
+    });
+    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
+    const w = mount(DashboardView);
+    await flushPromises();
+    expect(w.text()).toContain('Login Ulang');
+    expect(w.text()).toContain('Session Kulon expired');
   });
 });
