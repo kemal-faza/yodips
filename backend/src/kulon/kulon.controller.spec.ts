@@ -131,4 +131,39 @@ describe('KulonController', () => {
       response: { message: 'Detail tugas tidak ditemukan' },
     });
   });
+
+  it('throws 401 (not 500) when the Kulon page is a login page (no sesskey)', async () => {
+    // Stale MoodleSession: /my/ returns 200 with the Moodle login page (no
+    // `name="sesskey"` input) or an OIDC redirect landing page. This must
+    // surface as a clean 401 so the frontend prompts re-login.
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=STALE' });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      url: 'https://kulon2.undip.ac.id/login/index.php',
+      text: async () =>
+        '<html><form class="login-form"><input name="username"><input name="password"></form></html>',
+    });
+    service.parseSesskey.mockImplementation(() => {
+      throw new Error('sesskey not found in Kulon page');
+    });
+    await expect(controller.getCourses()).rejects.toMatchObject({
+      status: HttpStatus.UNAUTHORIZED,
+      response: { message: expect.stringContaining('login ulang') },
+    });
+  });
+
+  it('throws 401 (not 500) when /my/ redirects to the Microsoft OIDC login page', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=STALE' });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      url: 'https://login.microsoftonline.com/03290435-ff74-45d1-aeaa-173677221cf8/oauth2/authorize?x=1',
+      text: async () => '<html>Sign in to your account</html>',
+    });
+    service.parseSesskey.mockImplementation(() => {
+      throw new Error('sesskey not found in Kulon page');
+    });
+    await expect(controller.getCourses()).rejects.toMatchObject({
+      status: HttpStatus.UNAUTHORIZED,
+    });
+  });
 });

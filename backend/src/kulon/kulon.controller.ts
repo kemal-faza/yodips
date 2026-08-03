@@ -105,6 +105,31 @@ export class KulonController {
       );
     }
     const html = await res.text();
-    return this.kulonService.parseSesskey(html);
+    try {
+      return this.kulonService.parseSesskey(html);
+    } catch (e) {
+      // No sesskey means the page is a login page — either Moodle's own
+      // (kulon2.undip.ac.id/login/index.php) or a Microsoft OIDC redirect
+      // landing (login.microsoftonline.com) after the stale MoodleSession.
+      // Surface as a clean 401 so the frontend prompts re-login instead of a
+      // raw 500.
+      if (this.isLoginPage(res.url, html)) {
+        throw new HttpException(
+          { message: 'Session Kulon expired — silakan login ulang via SSO' },
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * A page that reached getSesskey without a parseable sesskey is a login
+   * page (Moodle login or Microsoft OIDC redirect). Detect via the final URL
+   * or by the absence of the sesskey input.
+   */
+  private isLoginPage(finalUrl: string, html: string): boolean {
+    if (/(login\.microsoftonline\.com|\/login\/)/i.test(finalUrl)) return true;
+    return !/name="sesskey"/.test(html);
   }
 }
