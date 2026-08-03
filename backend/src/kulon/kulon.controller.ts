@@ -1,4 +1,4 @@
-import { Controller, Get, HttpException, HttpStatus, UseGuards } from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus, Param, Query, UseGuards } from '@nestjs/common';
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
@@ -35,6 +35,42 @@ export class KulonController {
     }
     const sesskey = await this.getSesskey(session.kulonCookie);
     return this.kulonService.getAssignments(session.kulonCookie, sesskey);
+  }
+
+  @Get('assignments/:id/detail')
+  async getAssignmentDetail(@Param('id') id: string, @Query('cmid') cmid?: string) {
+    const session = this.sessionStore.get();
+    if (!session?.kulonCookie) {
+      throw new HttpException(
+        { message: 'Kulon session belum ada — silakan login ulang via SSO' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const assignmentId = Number(id);
+    const courseModuleId = Number(cmid);
+    if (!Number.isInteger(assignmentId) || !Number.isInteger(courseModuleId) || assignmentId <= 0) {
+      throw new HttpException(
+        { message: 'Detail tugas tidak ditemukan' },
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    const sesskey = await this.getSesskey(session.kulonCookie);
+    try {
+      return await this.kulonService.getAssignmentDetail(
+        session.kulonCookie,
+        sesskey,
+        assignmentId,
+        courseModuleId,
+      );
+    } catch (e) {
+      if ((e as Error).message === 'ASSIGNMENT_NOT_FOUND') {
+        throw new HttpException(
+          { message: 'Detail tugas tidak ditemukan' },
+          HttpStatus.NOT_FOUND,
+        );
+      }
+      throw e;
+    }
   }
 
   /**

@@ -11,6 +11,7 @@ describe('KulonController', () => {
   const service = {
     getCourses: jest.fn(),
     getAssignments: jest.fn(),
+    getAssignmentDetail: jest.fn(),
     parseSesskey: jest.fn(),
   };
   const sessionStore = { get: jest.fn() };
@@ -77,6 +78,57 @@ describe('KulonController', () => {
     await expect(controller.getCourses()).rejects.toMatchObject({
       status: HttpStatus.UNAUTHORIZED,
       response: { message: expect.stringContaining('expired') },
+    });
+  });
+
+  it('returns assignment detail with stored session', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
+    service.getAssignmentDetail.mockResolvedValue({
+      assignmentId: 42,
+      name: 'Tugas',
+      descriptionHtml: '<p>x</p>',
+      files: [],
+      submission: { status: 'graded', grade: 85, maxGrade: 100 },
+      kulonUrl: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
+    });
+    const res = await controller.getAssignmentDetail('42', '777');
+    expect(res.assignmentId).toBe(42);
+    expect(service.getAssignmentDetail).toHaveBeenCalledWith(
+      'MoodleSession=K',
+      'sesskey123',
+      42,
+      777,
+    );
+  });
+
+  it('throws 401 when no kulon session stored for detail', async () => {
+    sessionStore.get.mockReturnValue(null);
+    await expect(controller.getAssignmentDetail('42', '777')).rejects.toMatchObject({
+      status: HttpStatus.UNAUTHORIZED,
+    });
+  });
+
+  it('throws 404 when assignment id is invalid', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
+    await expect(controller.getAssignmentDetail('abc', '777')).rejects.toMatchObject({
+      status: HttpStatus.NOT_FOUND,
+      response: { message: 'Detail tugas tidak ditemukan' },
+    });
+  });
+
+  it('throws 404 when cmid is missing', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
+    await expect(controller.getAssignmentDetail('42', undefined)).rejects.toMatchObject({
+      status: HttpStatus.NOT_FOUND,
+    });
+  });
+
+  it('throws 404 when service reports assignment not found', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
+    service.getAssignmentDetail.mockRejectedValue(new Error('ASSIGNMENT_NOT_FOUND'));
+    await expect(controller.getAssignmentDetail('42', '777')).rejects.toMatchObject({
+      status: HttpStatus.NOT_FOUND,
+      response: { message: 'Detail tugas tidak ditemukan' },
     });
   });
 });
