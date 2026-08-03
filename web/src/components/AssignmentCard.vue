@@ -6,6 +6,8 @@ import StatusBadge from './StatusBadge.vue';
 
 const props = defineProps<{ assignment: Assignment }>();
 
+const emit = defineEmits<{ open: [] }>();
+
 const status = computed(() =>
   assignStatus(props.assignment.overdue, props.assignment.duedate, Date.now()),
 );
@@ -17,10 +19,17 @@ const formattedDate = computed(() => {
 </script>
 
 <template>
-  <div class="rounded-card bg-white p-4 shadow-sm">
+  <div
+    class="assignment-card cursor-pointer rounded-card bg-white p-4 shadow-sm transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-gold"
+    role="button"
+    tabindex="0"
+    @click="emit('open')"
+    @keydown.enter="emit('open')"
+  >
     <div class="flex items-start justify-between gap-3">
       <div>
         <p class="font-semibold text-navy">{{ assignment.name }}</p>
+        <p class="mt-0.5 text-sm text-navy-light">{{ assignment.course }}</p>
         <p class="mt-1 text-sm text-navy-light">Deadline: {{ formattedDate }}</p>
       </div>
       <StatusBadge :status="status" />
