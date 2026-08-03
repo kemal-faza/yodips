@@ -22,13 +22,13 @@ async function handleLogin() {
       </p>
       <button
         class="mt-6 w-full rounded-full bg-navy py-3 font-semibold text-white transition hover:bg-navy-light disabled:opacity-50"
-        :disabled="store.capturing"
+        :disabled="store.checking"
         @click="handleLogin"
       >
-        {{ store.capturing ? 'Menunggu login di browser…' : 'Login via SSO' }}
+        {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
       </button>
-      <p v-if="store.capturing" class="mt-4 text-center text-sm text-navy-light">
-        Sebuah jendela browser baru akan terbuka. Silakan login dengan akun SSO kamu di sana.
+      <p v-if="store.checking" class="mt-4 text-center text-sm text-navy-light">
+        Memeriksa session SSO. Jika perlu, sebuah jendela browser baru akan terbuka untuk login.
       </p>
       <p v-if="store.error" class="mt-4 rounded bg-danger/10 p-3 text-sm text-danger">
         {{ store.error }}

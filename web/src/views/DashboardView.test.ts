@@ -42,10 +42,34 @@ describe('DashboardView', () => {
     (api.getAssignments as any).mockRejectedValue({
       response: { status: 401, data: { message: 'Session Kulon expired — silakan login ulang via SSO' } },
     });
-    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
+    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null, checking: false });
     const w = mount(DashboardView);
     await flushPromises();
     expect(w.text()).toContain('Login Ulang');
     expect(w.text()).toContain('Session Kulon expired');
+  });
+
+  it('relogin re-captures and reloads assignments', async () => {
+    const store = {
+      isAuthenticated: true,
+      logout: vi.fn(),
+      user: null,
+      checking: false,
+      login: vi.fn().mockResolvedValue(undefined),
+    };
+    (useAuthStore as any).mockReturnValue(store);
+    // First load fails with 401, then relogin succeeds and reload works.
+    (api.getAssignments as any)
+      .mockRejectedValueOnce({ response: { status: 401, data: { message: 'Session Kulon expired' } } })
+      .mockResolvedValueOnce([
+        { id: 1, name: 'T1', module: 'assign', eventType: 'due', duedate: (now + 3600 * sec) / sec, overdue: false, course: 'Matkul A', courseId: 1 },
+      ]);
+    const w = mount(DashboardView);
+    await flushPromises();
+    expect(w.text()).toContain('Login Ulang');
+    await w.findAll('button').find((b) => b.text().includes('Login Ulang'))!.trigger('click');
+    await flushPromises();
+    expect(store.login).toHaveBeenCalled();
+    expect(w.text()).toContain('Matkul A');
   });
 });

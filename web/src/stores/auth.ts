@@ -8,7 +8,7 @@ export const useAuthStore = defineStore('auth', {
   state: () => ({
     token: localStorage.getItem(TOKEN_KEY) as string | null,
     user: null as User | null,
-    capturing: false,
+    checking: false, // "memeriksa session" / "sedang login" phase
     error: null as string | null,
   }),
   getters: {
@@ -16,13 +16,16 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     async login() {
-      this.capturing = true;
+      this.checking = true;
       this.error = null;
       try {
         const result = await capture();
         this.token = result.accessToken;
         localStorage.setItem(TOKEN_KEY, result.accessToken);
-        if (result.hasSso && result.hasKulon) {
+        // If the session was reused, no browser window was opened.
+        if (result.reused) {
+          this.error = null;
+        } else if (result.hasSso && result.hasKulon) {
           this.error = null;
         } else if (!result.hasKulon) {
           // SSO sukses tapi session Kulon kosong — dashboard mungkin kosong.
@@ -31,7 +34,7 @@ export const useAuthStore = defineStore('auth', {
       } catch (e) {
         this.error = 'Gagal login: ' + (e as Error).message;
       } finally {
-        this.capturing = false;
+        this.checking = false;
       }
     },
     async fetchMe() {

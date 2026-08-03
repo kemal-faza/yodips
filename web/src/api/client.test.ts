@@ -6,14 +6,26 @@ import { getAssignments, getCourses, capture } from './client';
 // spying on `request` after creation does NOT intercept — we must mock the
 // module itself.
 const mockRequest = vi.fn();
+const responseHandlers: { onFulfilled?: Function; onRejected?: Function } = {};
 const mockInstance = {
   get: vi.fn((url: string, config?: any) => mockRequest({ method: 'get', url, ...config })),
   post: vi.fn((url: string, data?: any, config?: any) => mockRequest({ method: 'post', url, data, ...config })),
   interceptors: {
-    request: { use: vi.fn() },
-    response: { use: vi.fn() },
+    request: {
+      use: vi.fn((onFulfilled?: Function) => {
+        // capture request interceptor for later assertions if needed
+        mockInstance.requestHandler = onFulfilled;
+      }),
+    },
+    response: {
+      use: vi.fn((onFulfilled?: Function, onRejected?: Function) => {
+        responseHandlers.onFulfilled = onFulfilled;
+        responseHandlers.onRejected = onRejected;
+      }),
+    },
   },
   request: mockRequest,
+  requestHandler: undefined as Function | undefined,
 };
 
 vi.mock('axios', () => ({
@@ -61,5 +73,31 @@ describe('api client', () => {
     const call = mockRequest.mock.calls[0][0];
     expect(call.method).toBe('get');
     expect(call.url).toBe('/api/kulon/courses');
+  });
+
+  it('Kulon 401 does NOT clear token or redirect (view handles re-login)', async () => {
+    localStorage.setItem('sso_token', 'keep-me');
+    await vi.resetModules();
+    const { apiClient } = await import('./client');
+    const onRejected = responseHandlers.onRejected!;
+    const error = {
+      response: { status: 401, data: { message: 'Session Kulon expired' } },
+      config: { url: '/api/kulon/assignments' },
+    };
+    await expect(onRejected(error)).rejects.toMatchObject(error);
+    expect(localStorage.getItem('sso_token')).toBe('keep-me');
+  });
+
+  it('auth 401 clears token and redirects to /login', async () => {
+    localStorage.setItem('sso_token', 'drop-me');
+    await vi.resetModules();
+    const { apiClient } = await import('./client');
+    const onRejected = responseHandlers.onRejected!;
+    const error = {
+      response: { status: 401 },
+      config: { url: '/api/auth/me' },
+    };
+    await expect(onRejected(error)).rejects.toMatchObject(error);
+    expect(localStorage.getItem('sso_token')).toBeNull();
   });
 });

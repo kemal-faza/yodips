@@ -2,9 +2,11 @@
 import { onMounted, ref } from 'vue';
 import { getAssignments } from '../api/client';
 import type { Assignment } from '../types';
+import { useAuthStore } from '../stores/auth';
 import AppHeader from '../components/AppHeader.vue';
 import CourseGroup from '../components/CourseGroup.vue';
 
+const store = useAuthStore();
 const assignments = ref<Assignment[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -22,7 +24,10 @@ function extractError(e: unknown): string {
   return anyE.message || 'Terjadi kesalahan tidak diketahui.';
 }
 
-onMounted(async () => {
+async function load() {
+  loading.value = true;
+  error.value = null;
+  sessionExpired.value = false;
   try {
     const [a] = await Promise.all([getAssignments()]);
     assignments.value = a;
@@ -31,7 +36,17 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-});
+}
+
+async function relogin() {
+  // Smart re-capture: reuse session if still valid, else open browser window.
+  await store.login();
+  if (store.isAuthenticated) {
+    await load();
+  }
+}
+
+onMounted(load);
 </script>
 
 <template>
@@ -48,12 +63,16 @@ onMounted(async () => {
       <div v-else-if="sessionExpired" class="mt-8 rounded bg-gold/20 p-6 text-center">
         <p class="font-semibold text-navy">Session login kedaluwarsa</p>
         <p class="mt-1 text-sm text-navy-light">{{ error }}</p>
-        <router-link
-          to="/login"
-          class="mt-4 inline-block rounded-full bg-navy px-6 py-2.5 font-semibold text-white hover:bg-navy-light"
+        <button
+          class="mt-4 inline-block rounded-full bg-navy px-6 py-2.5 font-semibold text-white hover:bg-navy-light disabled:opacity-50"
+          :disabled="store.checking"
+          @click="relogin"
         >
-          Login Ulang
-        </router-link>
+          {{ store.checking ? 'Memeriksa session…' : 'Login Ulang' }}
+        </button>
+        <p v-if="store.checking" class="mt-3 text-sm text-navy-light">
+          Memeriksa session SSO. Jika perlu, sebuah jendela browser baru akan terbuka.
+        </p>
       </div>
 
       <p v-else-if="error" class="mt-8 rounded bg-danger/10 p-4 text-danger">{{ error }}</p>

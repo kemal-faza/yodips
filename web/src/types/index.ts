@@ -27,6 +27,7 @@ export interface CaptureResult {
   hasSso: boolean;
   hasMicrosoft: boolean;
   hasKulon: boolean;
+  reused?: boolean;
 }
 
 export type AssignmentStatus = 'overdue' | 'dueSoon' | 'onTrack';

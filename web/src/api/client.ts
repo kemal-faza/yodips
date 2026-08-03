@@ -18,11 +18,20 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error?.response?.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+    const status = error?.response?.status;
+    const url: string = error?.config?.url ?? '';
+    if (status === 401) {
+      const isKulon = url.startsWith('/api/kulon');
+      if (!isKulon) {
+        // Auth-token 401 (invalid/expired JWT): full logout + redirect.
+        localStorage.removeItem(TOKEN_KEY);
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
+      // Kulon 401 = back-end session expired; the view shows a re-login card.
+      // We deliberately keep the token (the JWT is still valid) so the user
+      // can re-capture without losing their auth state.
     }
     return Promise.reject(error);
   },
