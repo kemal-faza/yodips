@@ -1,5 +1,14 @@
 import axios, { AxiosInstance } from 'axios';
-import type { Assignment, AssignmentDetail, CaptureResult, Course, User } from '../types';
+import type {
+  Assignment,
+  AssignmentDetail,
+  CaptureResult,
+  Course,
+  SiapIrs,
+  SiapKhs,
+  SiapProfile,
+  User,
+} from '../types';
 
 const TOKEN_KEY = 'sso_token';
 
@@ -62,5 +71,20 @@ export async function getAssignmentDetail(assignmentId: number, cmid: number): P
     `/api/kulon/assignments/${assignmentId}/detail`,
     { params: { cmid } },
   );
+  return data;
+}
+
+export async function getSiapProfile(): Promise<SiapProfile> {
+  const { data } = await apiClient.get<SiapProfile>('/api/siap/profile');
+  return data;
+}
+
+export async function getSiapIrs(): Promise<SiapIrs> {
+  const { data } = await apiClient.get<SiapIrs>('/api/siap/irs');
+  return data;
+}
+
+export async function getSiapKhs(): Promise<SiapKhs> {
+  const { data } = await apiClient.get<SiapKhs>('/api/siap/khs');
   return data;
 }

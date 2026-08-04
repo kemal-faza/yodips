@@ -101,6 +101,38 @@ describe('api client', () => {
     expect(localStorage.getItem('sso_token')).toBeNull();
   });
 
+  it('getSiapProfile fetches /api/siap/profile', async () => {
+    mockRequest.mockResolvedValue({
+      data: { nama: 'Budi', nim: '2600000001', prodi: 'Informatika', fakultas: 'Fakultas Sains', angkatan: '2020', status: 'aktif' },
+    });
+    const { getSiapProfile } = await import('./client');
+    const result = await getSiapProfile();
+    const call = mockRequest.mock.calls[0][0];
+    expect(call.method).toBe('get');
+    expect(call.url).toBe('/api/siap/profile');
+    expect(result.nama).toBe('Budi');
+  });
+
+  it('getSiapIrs fetches /api/siap/irs', async () => {
+    mockRequest.mockResolvedValue({ data: { semester: '2025/2026 Genap', totalSks: 20, mataKuliah: [] } });
+    const { getSiapIrs } = await import('./client');
+    const result = await getSiapIrs();
+    const call = mockRequest.mock.calls[0][0];
+    expect(call.method).toBe('get');
+    expect(call.url).toBe('/api/siap/irs');
+    expect(result.totalSks).toBe(20);
+  });
+
+  it('getSiapKhs fetches /api/siap/khs', async () => {
+    mockRequest.mockResolvedValue({ data: { ipk: 3.5, semesters: [] } });
+    const { getSiapKhs } = await import('./client');
+    const result = await getSiapKhs();
+    const call = mockRequest.mock.calls[0][0];
+    expect(call.method).toBe('get');
+    expect(call.url).toBe('/api/siap/khs');
+    expect(result.ipk).toBe(3.5);
+  });
+
   it('getAssignmentDetail fetches detail with id and cmid', async () => {
     mockRequest.mockResolvedValue({
       data: {

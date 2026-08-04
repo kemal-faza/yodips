@@ -54,3 +54,44 @@ export interface CaptureResult {
 }
 
 export type AssignmentStatus = 'overdue' | 'dueSoon' | 'onTrack';
+
+export interface SiapProfile {
+  nama: string;
+  nim: string;
+  prodi: string;
+  fakultas: string;
+  angkatan: string;
+  jalurMasuk?: string;
+  semesterBerjalan?: string;
+  status: string;
+  sksTempuh?: number;
+  sksLulus?: number;
+  ipk?: number;
+}
+
+export interface SiapIrs {
+  semester: string;
+  totalSks: number;
+  mataKuliah: Array<{
+    kode: string;
+    nama: string;
+    sks: number;
+    kelas?: string;
+    ruang?: string;
+    jadwal?: string;
+    dosen?: string;
+    status: string;
+  }>;
+}
+
+export interface SiapKhsSemester {
+  semester: string;
+  ip: number;
+  totalSks: number;
+  nilai: Array<{ mataKuliah: string; sks: number; nilaiHuruf: string; bobot?: number }>;
+}
+
+export interface SiapKhs {
+  ipk: number;
+  semesters: SiapKhsSemester[];
+}
