@@ -52,6 +52,21 @@ describe('auth store', () => {
     expect(localStorage.getItem('sso_token')).toBe('jwt-handoff');
   });
 
+  it('fetchMe sets hasSiap from the me response', async () => {
+    (api.me as any).mockResolvedValue({ sub: 'n', authenticated: true, hasSiap: true });
+    const store = useAuthStore();
+    await store.fetchMe();
+    expect(store.hasSiap).toBe(true);
+    expect(store.user).toEqual({ sub: 'n', authenticated: true, hasSiap: true });
+  });
+
+  it('fetchMe defaults hasSiap to false when absent', async () => {
+    (api.me as any).mockResolvedValue({ sub: 'n', authenticated: true });
+    const store = useAuthStore();
+    await store.fetchMe();
+    expect(store.hasSiap).toBe(false);
+  });
+
   it('isHandoffMode reflects VITE_LOGIN_MODE', () => {
     vi.stubEnv('VITE_LOGIN_MODE', 'handoff');
     const store = useAuthStore();

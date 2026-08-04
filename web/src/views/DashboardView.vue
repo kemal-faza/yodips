@@ -11,6 +11,7 @@ import ViewToggle from '../components/ViewToggle.vue';
 import TimelineGroup from '../components/TimelineGroup.vue';
 import CourseGroup from '../components/CourseGroup.vue';
 import DetailPanel from '../components/DetailPanel.vue';
+import AcademicPanel from '../components/AcademicPanel.vue';
 
 const store = useAuthStore();
 const filterStore = useFilterStore();
@@ -21,6 +22,8 @@ const error = ref<string | null>(null);
 const sessionExpired = ref(false);
 const selected = ref<Assignment | null>(null);
 const panelOpen = ref(false);
+const activeTab = ref<'tugas' | 'akademik'>('tugas');
+const hasSiap = computed(() => store.hasSiap);
 
 const visible = computed(() =>
   applySort(
@@ -85,43 +88,67 @@ onMounted(load);
     <AppHeader />
     <main class="mx-auto max-w-3xl px-4 py-8">
       <h1 class="text-xl font-bold text-navy">Dashboard Tugas</h1>
-      <p class="mt-1 text-sm text-navy-light">Ringkasan tugas dan deadline dari Kulon.</p>
+      <p class="mt-1 text-sm text-navy-light">Ringkasan tugas dan data akademik Anda.</p>
 
-      <div v-if="loading" class="mt-8 space-y-3">
-        <div v-for="i in 3" :key="i" class="h-20 animate-pulse rounded-card bg-white" />
-      </div>
-
-      <div v-else-if="sessionExpired" class="mt-8 rounded bg-gold/20 p-6 text-center">
-        <p class="font-semibold text-navy">Session login kedaluwarsa</p>
-        <p class="mt-1 text-sm text-navy-light">{{ error }}</p>
+      <div class="mt-6 flex gap-1 border-b border-navy/10">
         <button
-          class="mt-4 inline-block rounded-full bg-navy px-6 py-2.5 font-semibold text-white hover:bg-navy-light disabled:opacity-50"
-          :disabled="store.checking"
-          @click="relogin"
+          class="rounded-t px-4 py-2 text-sm font-medium"
+          :class="activeTab === 'tugas' ? 'bg-gold text-navy' : 'text-navy-light'"
+          @click="activeTab = 'tugas'"
         >
-          {{ store.checking ? 'Memeriksa session…' : 'Login Ulang' }}
+          Tugas
         </button>
-        <p v-if="store.checking" class="mt-3 text-sm text-navy-light">
-          Memeriksa session SSO. Jika perlu, sebuah jendela browser baru akan terbuka.
-        </p>
+        <button
+          v-if="hasSiap"
+          class="rounded-t px-4 py-2 text-sm font-medium"
+          :class="activeTab === 'akademik' ? 'bg-gold text-navy' : 'text-navy-light'"
+          @click="activeTab = 'akademik'"
+        >
+          Akademik
+        </button>
       </div>
 
-      <p v-else-if="error" class="mt-8 rounded bg-danger/10 p-4 text-danger">{{ error }}</p>
-
-      <div v-else class="mt-6">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <FilterBar :courses="courses" />
-          <ViewToggle />
+      <div v-show="activeTab === 'tugas'">
+        <div v-if="loading" class="mt-8 space-y-3">
+          <div v-for="i in 3" :key="i" class="h-20 animate-pulse rounded-card bg-white" />
         </div>
 
-        <div class="mt-6">
-          <TimelineGroup
-            v-if="filterStore.viewMode === 'timeline'"
-            :assignments="visible"
-            @open-assignment="openDetail"
-          />
-          <CourseGroup v-else :assignments="visible" />
+        <div v-else-if="sessionExpired" class="mt-8 rounded bg-gold/20 p-6 text-center">
+          <p class="font-semibold text-navy">Session login kedaluwarsa</p>
+          <p class="mt-1 text-sm text-navy-light">{{ error }}</p>
+          <button
+            class="mt-4 inline-block rounded-full bg-navy px-6 py-2.5 font-semibold text-white hover:bg-navy-light disabled:opacity-50"
+            :disabled="store.checking"
+            @click="relogin"
+          >
+            {{ store.checking ? 'Memeriksa session…' : 'Login Ulang' }}
+          </button>
+          <p v-if="store.checking" class="mt-3 text-sm text-navy-light">
+            Memeriksa session SSO. Jika perlu, sebuah jendela browser baru akan terbuka.
+          </p>
         </div>
+
+        <p v-else-if="error" class="mt-8 rounded bg-danger/10 p-4 text-danger">{{ error }}</p>
+
+        <div v-else class="mt-6">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <FilterBar :courses="courses" />
+            <ViewToggle />
+          </div>
+
+          <div class="mt-6">
+            <TimelineGroup
+              v-if="filterStore.viewMode === 'timeline'"
+              :assignments="visible"
+              @open-assignment="openDetail"
+            />
+            <CourseGroup v-else :assignments="visible" />
+          </div>
+        </div>
+      </div>
+
+      <div v-show="activeTab === 'akademik'" class="mt-6">
+        <AcademicPanel :has-siap="hasSiap" />
       </div>
     </main>
 

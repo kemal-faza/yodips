@@ -10,6 +10,7 @@ export const useAuthStore = defineStore('auth', {
     user: null as User | null,
     checking: false, // "memeriksa session" / "sedang login" phase
     error: null as string | null,
+    hasSiap: false, // SIAP session validity (from GET /me)
   }),
   getters: {
     isAuthenticated: (state) => !!state.token,
@@ -23,6 +24,7 @@ export const useAuthStore = defineStore('auth', {
         const result = await capture();
         this.token = result.accessToken;
         localStorage.setItem(TOKEN_KEY, result.accessToken);
+        this.hasSiap = result.hasSiap ?? false;
         // If the session was reused, no browser window was opened.
         if (result.reused) {
           this.error = null;
@@ -41,6 +43,7 @@ export const useAuthStore = defineStore('auth', {
     async fetchMe() {
       try {
         this.user = await me();
+        this.hasSiap = this.user?.hasSiap ?? false;
       } catch {
         /* 401 handled by interceptor */
       }
