@@ -9,3 +9,5 @@ coverage/
 docs/
 AGENTS.md
 design-reference/
+# Real captured SIAP session data (personal) — never commit.
+backend/test/fixtures/
