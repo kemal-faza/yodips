@@ -5,7 +5,11 @@ import { SessionStore } from '../session/session-store';
 
 const mockSsoTicket = {
   generateTicket: jest.fn(() => 'dGVzdA'),
-  buildServiceUrl: jest.fn((service: string, t: string) => `https://kulon2.undip.ac.id/auth/oidc/?t=${t}`),
+  buildServiceUrl: jest.fn((service: string, t: string) =>
+    service === 'siap'
+      ? `https://siap.undip.ac.id/sso/login?t=${t}`
+      : `https://kulon2.undip.ac.id/auth/oidc/?t=${t}`,
+  ),
 };
 const mockPlaywright = {
   launchAndCaptureSession: jest.fn(),
@@ -105,6 +109,8 @@ describe('AuthService.captureSsoSession', () => {
       'https://sso.undip.ac.id/auth/user/login',
       'https://sso.undip.ac.id/pages/dashboard',
       'https://kulon2.undip.ac.id/auth/oidc/?t=dGVzdA',
+      'https://siap.undip.ac.id/sso/login?t=dGVzdA',
+      expect.any(Number),
       expect.any(Number),
       expect.any(Number),
     );

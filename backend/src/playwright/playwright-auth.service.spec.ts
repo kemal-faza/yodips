@@ -12,9 +12,11 @@ import { chromium } from 'playwright-core';
 
 describe('PlaywrightAuthService', () => {
   let svc: PlaywrightAuthService;
+  const mockKulon = { checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })) };
+  const mockSiap = { checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })) };
 
   beforeEach(() => {
-    svc = new PlaywrightAuthService();
+    svc = new PlaywrightAuthService(mockKulon as any, mockSiap as any);
     jest.clearAllMocks();
   });
 
@@ -68,13 +70,17 @@ describe('launchAndCaptureSession', () => {
   const LOGIN_URL = 'https://sso.undip.ac.id/auth/user/login';
   const DASHBOARD_URL = 'https://sso.undip.ac.id/pages/dashboard';
   const KULON_URL = 'https://kulon2.undip.ac.id/auth/oidc/?t=dGVzdA';
+  const SIAP_URL = 'https://siap.undip.ac.id/sso/login?t=dGVzdA';
 
   const mockKulon = {
     checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
   };
+  const mockSiap = {
+    checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
+  };
 
   beforeEach(() => {
-    svc = new PlaywrightAuthService(mockKulon as any);
+    svc = new PlaywrightAuthService(mockKulon as any, mockSiap as any);
     jest.clearAllMocks();
   });
 
@@ -113,6 +119,7 @@ describe('launchAndCaptureSession', () => {
       LOGIN_URL,
       DASHBOARD_URL,
       KULON_URL,
+      SIAP_URL,
     );
 
     expect(chromium.launchPersistentContext).toHaveBeenCalledWith(
@@ -122,6 +129,8 @@ describe('launchAndCaptureSession', () => {
     expect(page.goto).toHaveBeenCalledWith(LOGIN_URL, expect.anything());
     // After auth, navigate to Kulon ticket URL to establish MoodleSession.
     expect(page.goto).toHaveBeenCalledWith(KULON_URL, expect.anything());
+    // And to SIAP ticket URL to establish the SIAP session.
+    expect(page.goto).toHaveBeenCalledWith(SIAP_URL, expect.anything());
     expect(session.ssoCookie).toContain('ci_session_sso=SSO');
     expect(session.kulonCookie).toContain('MoodleSession=KULON');
     expect(session.microsoftCookie).toContain('ESTSAUTH=MS');
@@ -129,6 +138,8 @@ describe('launchAndCaptureSession', () => {
     expect(mockContext.close).toHaveBeenCalled();
     expect(mockKulon.checkSessionValid).toHaveBeenCalled();
     expect(mockKulon.checkSessionValid).toHaveBeenCalledWith(expect.stringContaining('MoodleSession=KULON'));
+    expect(mockSiap.checkSessionValid).toHaveBeenCalled();
+    expect(mockSiap.checkSessionValid).toHaveBeenCalledWith(expect.stringContaining('cookiesession1=SIAP'));
   });
 
   it('captures immediately when already on dashboard (already logged in)', async () => {
@@ -143,6 +154,7 @@ describe('launchAndCaptureSession', () => {
       LOGIN_URL,
       DASHBOARD_URL,
       KULON_URL,
+      SIAP_URL,
     );
 
     expect(session.ssoCookie).toContain('ci_session_sso=SSO');
@@ -164,6 +176,7 @@ describe('launchAndCaptureSession', () => {
         LOGIN_URL,
         DASHBOARD_URL,
         KULON_URL,
+        SIAP_URL,
         50,
       ),
     ).rejects.toThrow('Timed out waiting for SSO login');
@@ -184,6 +197,7 @@ describe('launchAndCaptureSession', () => {
         LOGIN_URL,
         DASHBOARD_URL,
         KULON_URL,
+        SIAP_URL,
         5000, // login timeout (won't be hit; already on dashboard)
         50,   // kulon timeout — tiny so the test returns fast
       ),
@@ -208,6 +222,7 @@ describe('launchAndCaptureSession', () => {
       LOGIN_URL,
       DASHBOARD_URL,
       KULON_URL,
+      SIAP_URL,
       5000,
       50,
     );

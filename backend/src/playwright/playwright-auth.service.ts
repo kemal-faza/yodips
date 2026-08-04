@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { chromium } from 'playwright-core';
 import { KulonService } from '../kulon/kulon.service';
+import { SiapService } from '../siap/siap.service';
 
 export interface CapturedSession {
   identity: string;
@@ -13,14 +14,18 @@ export interface CapturedSession {
 
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000; // 5 minutes
 const KULON_TIMEOUT_MS = 3 * 60_000; // 3 minutes for a verified Kulon session
+const SIAP_TIMEOUT_MS = 3 * 60_000; // 3 minutes for a verified SIAP session
 const POLL_INTERVAL_MS = 2_000;
 
 @Injectable()
 export class PlaywrightAuthService {
   private readonly logger = new Logger(PlaywrightAuthService.name);
 
-  constructor(private readonly kulon: KulonService) {
-    // no-op — KulonService injected for session-validity probing
+  constructor(
+    private readonly kulon: KulonService,
+    private readonly siap: SiapService,
+  ) {
+    // no-op — services injected for session-validity probing
   }
 
   /**
@@ -72,8 +77,10 @@ export class PlaywrightAuthService {
     loginUrl: string,
     dashboardUrl: string,
     kulonTicketUrl: string,
+    siapTicketUrl: string,
     loginTimeoutMs: number = DEFAULT_LOGIN_TIMEOUT_MS,
     kulonTimeoutMs: number = KULON_TIMEOUT_MS,
+    siapTimeoutMs: number = SIAP_TIMEOUT_MS,
   ): Promise<CapturedSession> {
     // Point Playwright at the system Chrome so a real, visible window opens.
     const context = await chromium.launchPersistentContext(profileDir, {
@@ -98,10 +105,13 @@ export class PlaywrightAuthService {
       this.logger.log('SSO login detected — on dashboard');
 
       await this.establishKulonSession(context, kulonTicketUrl, kulonTimeoutMs);
+      await this.establishSiapSession(context, siapTicketUrl, siapTimeoutMs);
 
       const cookies = await context.cookies();
       const session = this.buildSession(cookies, '');
-      this.logger.log('SSO session captured with verified Kulon session');
+      this.logger.log(
+        'SSO session captured with verified Kulon + SIAP sessions',
+      );
       return session;
     } finally {
       await context.close();
@@ -145,6 +155,47 @@ export class PlaywrightAuthService {
   private kulonCookieString(cookies: { name: string; value: string; domain: string }[]): string {
     return cookies
       .filter((c) => c.domain.includes('kulon2.undip.ac.id'))
+      .map((c) => `${c.name}=${c.value}`)
+      .join('; ');
+  }
+
+  /**
+   * Navigate to the SIAP ticket URL and keep polling until the SIAP session is
+   * VERIFIED VALID (via SiapService.checkSessionValid), not merely present.
+   * If the flow lands on a login page, keep waiting — the user completes it in
+   * the visible browser window. Throws on deadline so a stale session is never
+   * returned.
+   */
+  private async establishSiapSession(
+    context: { pages: () => { url: () => string; goto: (u: string, o?: unknown) => Promise<unknown> }[]; cookies: () => Promise<{ name: string; value: string; domain: string }[]> },
+    siapTicketUrl: string,
+    siapTimeoutMs: number,
+  ): Promise<void> {
+    const page = context.pages()[0];
+    await page.goto(siapTicketUrl, { waitUntil: 'domcontentloaded' });
+
+    const deadline = Date.now() + siapTimeoutMs;
+    while (true) {
+      const cookies = await context.cookies();
+      const cookieStr = this.siapCookieString(cookies);
+      const check = await this.siap.checkSessionValid(cookieStr);
+      if (check.valid) {
+        this.logger.log('SIAP session verified');
+        return;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          'SIAP session tidak terverifikasi — silakan selesaikan login di window browser atau coba lagi nanti',
+        );
+      }
+      await this.sleep(POLL_INTERVAL_MS);
+    }
+  }
+
+  /** Build the `name=value; ...` cookie string for the SIAP domain. */
+  private siapCookieString(cookies: { name: string; value: string; domain: string }[]): string {
+    return cookies
+      .filter((c) => c.domain.includes('siap.undip.ac.id'))
       .map((c) => `${c.name}=${c.value}`)
       .join('; ');
   }
