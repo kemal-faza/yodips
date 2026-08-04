@@ -35,6 +35,9 @@ const mockKulon = {
   checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
   getSessionIdentity: jest.fn(async () => '24060121130000'),
 };
+const mockSiap = {
+  checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
+};
 
 function makeService() {
   return new AuthService(
@@ -46,6 +49,7 @@ function makeService() {
     mockJwt as any,
     mockConfig as any,
     mockKulon as any,
+    mockSiap as any,
   );
 }
 
@@ -252,5 +256,43 @@ describe('AuthService.handleSessionHandoff', () => {
     } as any);
     expect(res.hasKulon).toBe(true);
     expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+  });
+
+  it('reports hasSiap based on SIAP session validity', async () => {
+    mockSiap.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    const svc = makeService();
+    const res = await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: 'ci_session_x=K',
+      identity: '24060121130000',
+    } as any);
+    expect(res.hasSiap).toBe(false);
+    expect(mockSiap.checkSessionValid).toHaveBeenCalledWith('ci_session_x=K');
+  });
+});
+
+describe('AuthService.me', () => {
+  it('returns hasSiap true when the stored session has a siapCookie', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      siapCookie: 'ci_session_x=K',
+      capturedAt: Date.now(),
+    });
+    const svc = makeService();
+    const res = await svc.me({ sub: '24060121130000' });
+    expect(res.sub).toBe('24060121130000');
+    expect(res.authenticated).toBe(true);
+    expect(res.hasSiap).toBe(true);
+  });
+
+  it('returns hasSiap false when the stored session lacks a siapCookie', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      siapCookie: '',
+      capturedAt: Date.now(),
+    });
+    const svc = makeService();
+    const res = await svc.me({ sub: '24060121130000' });
+    expect(res.hasSiap).toBe(false);
   });
 });

@@ -8,6 +8,7 @@ import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
 import { PlaywrightAuthService, CapturedSession } from '../playwright/playwright-auth.service';
 import { SessionStore } from '../session/session-store';
 import { KulonService } from '../kulon/kulon.service';
+import { SiapService } from '../siap/siap.service';
 import { HandoffDto } from './dto/handoff.dto';
 
 @Injectable()
@@ -25,6 +26,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly kulon: KulonService,
+    private readonly siap: SiapService,
   ) {}
 
   async login(identity: string, password: string) {
@@ -72,6 +74,7 @@ export class AuthService {
         hasSso: !!existing.ssoCookie,
         hasMicrosoft: !!existing.microsoftCookie,
         hasKulon: !!existing.kulonCookie,
+        hasSiap: !!existing.siapCookie,
       };
     }
 
@@ -105,6 +108,9 @@ export class AuthService {
 
     const payload = { sub: identity, via: 'playwright' };
     const accessToken = await this.jwt.signAsync(payload);
+    const siapCheck = session.siapCookie
+      ? await this.siap.checkSessionValid(session.siapCookie)
+      : { valid: false, reason: 'no-cookie' as const };
     return {
       accessToken,
       capturedAt: session.capturedAt,
@@ -112,6 +118,7 @@ export class AuthService {
       hasSso: !!session.ssoCookie,
       hasMicrosoft: !!session.microsoftCookie,
       hasKulon: check.valid,
+      hasSiap: siapCheck.valid,
     };
   }
 
@@ -188,6 +195,9 @@ export class AuthService {
     });
     const payload = { sub: identity, via: 'handoff' };
     const accessToken = await this.jwt.signAsync(payload);
+    const siapCheck = dto.siapCookie
+      ? await this.siap.checkSessionValid(dto.siapCookie)
+      : { valid: false, reason: 'no-cookie' as const };
     return {
       accessToken,
       capturedAt: Date.now(),
@@ -195,10 +205,12 @@ export class AuthService {
       hasSso: !!dto.ssoCookie,
       hasMicrosoft: !!dto.microsoftCookie,
       hasKulon: true,
+      hasSiap: siapCheck.valid,
     };
   }
 
   async me(user: any) {
-    return { sub: user?.sub, authenticated: true };
+    const session = await this.sessionStore.get(user?.sub);
+    return { sub: user?.sub, authenticated: true, hasSiap: !!session?.siapCookie };
   }
 }
