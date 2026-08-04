@@ -41,4 +41,27 @@ describe('LoginView', () => {
     const w = mount(LoginView);
     expect(w.text()).toContain('selesaikan login di window browser');
   });
+
+  it('handoff mode with ?token= calls finishHandoff and routes home', async () => {
+    const store = { login: vi.fn(), finishHandoff: vi.fn(), checking: false, error: null, isHandoffMode: true };
+    (useAuthStore as any).mockReturnValue(store);
+    const router = { push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: { $route: { query: { token: 'jwt-handoff' } }, $router: router },
+      },
+    });
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledWith('jwt-handoff');
+    expect(router.push).toHaveBeenCalledWith('/');
+  });
+
+  it('handoff mode without token shows capture instructions', () => {
+    const store = { login: vi.fn(), finishHandoff: vi.fn(), checking: false, error: null, isHandoffMode: true };
+    (useAuthStore as any).mockReturnValue(store);
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
+    });
+    expect(w.text()).toContain('jalankan tool capture');
+  });
 });

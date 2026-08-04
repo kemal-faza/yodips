@@ -1,14 +1,28 @@
 <script setup lang="ts">
+import { getCurrentInstance, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
-import { useRouter } from 'vue-router';
 
 const store = useAuthStore();
-const router = useRouter();
+// Read $route/$router from the instance proxy: vue-router exposes them as
+// global instance properties in the app, and tests inject them via global.mocks.
+// The proxy is only fully wired after setup, so resolve it lazily when needed.
+const inst = getCurrentInstance()!;
+const proxy = () => inst.proxy as any;
+
+onMounted(() => {
+  if (store.isHandoffMode) {
+    const token = proxy().$route?.query?.token as string | undefined;
+    if (token) {
+      store.finishHandoff(token);
+      proxy().$router?.push('/');
+    }
+  }
+});
 
 async function handleLogin() {
   await store.login();
   if (store.isAuthenticated) {
-    await router.push('/');
+    await proxy().$router?.push('/');
   }
 }
 </script>
@@ -20,16 +34,31 @@ async function handleLogin() {
       <p class="mt-2 text-sm text-navy-light">
         Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.
       </p>
-      <button
-        class="mt-6 w-full rounded-full bg-navy py-3 font-semibold text-white transition hover:bg-navy-light disabled:opacity-50"
-        :disabled="store.checking"
-        @click="handleLogin"
-      >
-        {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
-      </button>
-      <p v-if="store.checking" class="mt-4 text-center text-sm text-navy-light">
-        Tunggu — selesaikan login di window browser yang terbuka. Jika perlu, tunggu hingga halaman dashboard Kulon tampil.
-      </p>
+
+      <template v-if="store.isHandoffMode">
+        <div class="mt-6 rounded bg-navy/5 p-4 text-sm text-navy-light">
+          <p class="font-semibold text-navy">Login via browser kamu</p>
+          <ol class="mt-2 list-decimal space-y-1 pl-5">
+            <li>Buka Chrome dengan flag remote-debugging (lihat README capture-client).</li>
+            <li>Login ke Kulon di window itu.</li>
+            <li>jalankan tool capture: <code>node capture-handoff.mjs --api &lt;serverUrl&gt;</code></li>
+          </ol>
+          <p class="mt-2">Menunggu session dari tool capture…</p>
+        </div>
+      </template>
+
+      <template v-else>
+        <button
+          class="mt-6 w-full rounded-full bg-navy py-3 font-semibold text-white transition hover:bg-navy-light disabled:opacity-50"
+          :disabled="store.checking"
+          @click="handleLogin"
+        >
+          {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
+        </button>
+        <p v-if="store.checking" class="mt-4 text-center text-sm text-navy-light">
+          Tunggu — selesaikan login di window browser yang terbuka. Jika perlu, tunggu hingga halaman dashboard Kulon tampil.
+        </p>
+      </template>
       <p v-if="store.error" class="mt-4 rounded bg-danger/10 p-3 text-sm text-danger">
         {{ store.error }}
       </p>
