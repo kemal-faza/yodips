@@ -35,7 +35,7 @@ export class AuthService {
       password,
     );
     // Store session server-side keyed by identity; JWT carries only a reference (not raw cookie).
-    this.sessionStore.set(identity, {
+    await this.sessionStore.set(identity, {
       identity,
       ssoCookie: cookie,
       microsoftCookie: '',
@@ -101,7 +101,7 @@ export class AuthService {
     const identity = check.valid
       ? (await this.kulon.getSessionIdentity(session.kulonCookie)) ?? 'sso'
       : 'sso';
-    this.sessionStore.set(identity, { ...stored, identity });
+    await this.sessionStore.set(identity, { ...stored, identity });
 
     const payload = { sub: identity, via: 'playwright' };
     const accessToken = await this.jwt.signAsync(payload);
@@ -128,7 +128,7 @@ export class AuthService {
 
   /** Return the first fresh, still-valid stored session across all users. */
   private async findReusableSession(): Promise<CapturedSession | null> {
-    for (const s of this.sessionStore.all()) {
+    for (const s of await this.sessionStore.all()) {
       if (this.isFresh(s) && (await this.kulonProbeOk(s.kulonCookie))) {
         return s;
       }
@@ -144,7 +144,7 @@ export class AuthService {
     const { accessToken, sessionCookies } =
       await this.microsoftAuth.handleCallback(code, state);
     // Store microsoft session server-side keyed by fixed identity; JWT carries only a reference.
-    this.sessionStore.set('microsoft', {
+    await this.sessionStore.set('microsoft', {
       identity: 'microsoft',
       ssoCookie: '',
       microsoftCookie: sessionCookies,
@@ -178,7 +178,7 @@ export class AuthService {
         HttpStatus.BAD_REQUEST,
       );
     }
-    this.sessionStore.set(identity, {
+    await this.sessionStore.set(identity, {
       identity,
       ssoCookie: dto.ssoCookie ?? '',
       microsoftCookie: dto.microsoftCookie ?? '',

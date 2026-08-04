@@ -1,0 +1,75 @@
+import 'reflect-metadata';
+import { InMemorySessionStore } from './in-memory-session.store';
+
+function makeSession(identity: string, kulon: string) {
+  return {
+    identity,
+    ssoCookie: 'ci_session_sso=SSO',
+    microsoftCookie: '',
+    kulonCookie: kulon,
+    siapCookie: '',
+    capturedAt: Date.now(),
+  };
+}
+
+describe('InMemorySessionStore (per-user, TTL)', () => {
+  let store: InMemorySessionStore;
+
+  beforeEach(() => {
+    store = new InMemorySessionStore(1000); // 1s TTL
+  });
+
+  it('stores and retrieves a session per identity', async () => {
+    await store.set('24060121130000', makeSession('24060121130000', 'MoodleSession=A'));
+    const s = await store.get('24060121130000');
+    expect(s?.kulonCookie).toContain('MoodleSession=A');
+  });
+
+  it('isolates different identities', async () => {
+    await store.set('24060121130000', makeSession('24060121130000', 'MoodleSession=A'));
+    await store.set('24060121130001', makeSession('24060121130001', 'MoodleSession=B'));
+    expect((await store.get('24060121130000'))?.kulonCookie).toContain('MoodleSession=A');
+    expect((await store.get('24060121130001'))?.kulonCookie).toContain('MoodleSession=B');
+  });
+
+  it('returns null for an unknown identity', async () => {
+    expect(await store.get('nobody')).toBeNull();
+  });
+
+  it('clears a single identity', async () => {
+    await store.set('a', makeSession('a', 'A'));
+    await store.set('b', makeSession('b', 'B'));
+    await store.clear('a');
+    expect(await store.get('a')).toBeNull();
+    expect(await store.get('b')).not.toBeNull();
+  });
+
+  it('all() returns all stored sessions', async () => {
+    await store.set('a', makeSession('a', 'A'));
+    await store.set('b', makeSession('b', 'B'));
+    expect((await store.all()).map((s) => s.identity).sort()).toEqual(['a', 'b']);
+  });
+
+  it('returns null once a session has expired (TTL)', async () => {
+    store = new InMemorySessionStore(20);
+    await store.set('a', makeSession('a', 'A'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(await store.get('a')).toBeNull();
+  });
+
+  it('sliding TTL: get() keeps a session alive', async () => {
+    store = new InMemorySessionStore(30);
+    await store.set('a', makeSession('a', 'A'));
+    await new Promise((r) => setTimeout(r, 15));
+    await store.get('a');
+    await new Promise((r) => setTimeout(r, 15));
+    expect(await store.get('a')).not.toBeNull();
+  });
+
+  it('set() overwrites an existing session and refreshes TTL', async () => {
+    store = new InMemorySessionStore(20);
+    await store.set('a', makeSession('a', 'MoodleSession=A'));
+    await store.set('a', makeSession('a', 'MoodleSession=B'));
+    expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=B');
+  });
+});

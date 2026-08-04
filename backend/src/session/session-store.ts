@@ -1,29 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
 import { CapturedSession } from '../playwright/playwright-auth.service';
 
 /**
- * Stores captured SSO sessions keyed by user identity (NIM).
- * In-memory implementation; swap for Redis/DB in production (interface only).
+ * Session store interface, keyed by user identity (NIM).
+ * Implementations are async and apply a TTL (sliding on access).
+ * Bound to the DI token `SessionStore`; swap via SESSION_BACKEND.
  */
-@Injectable()
-export class SessionStore {
-  private readonly logger = new Logger(SessionStore.name);
-  private readonly sessions = new Map<string, CapturedSession>();
-
-  set(identity: string, session: CapturedSession): void {
-    this.sessions.set(identity, session);
-    this.logger.log(`SSO session stored for ${identity}`);
-  }
-
-  get(identity: string): CapturedSession | null {
-    return this.sessions.get(identity) ?? null;
-  }
-
-  clear(identity: string): void {
-    this.sessions.delete(identity);
-  }
-
-  all(): CapturedSession[] {
-    return [...this.sessions.values()];
-  }
+export abstract class SessionStore {
+  abstract set(identity: string, session: CapturedSession): Promise<void>;
+  abstract get(identity: string): Promise<CapturedSession | null>;
+  abstract clear(identity: string): Promise<void>;
+  abstract all(): Promise<CapturedSession[]>;
 }

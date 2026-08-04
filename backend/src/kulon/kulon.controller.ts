@@ -13,7 +13,7 @@ export class KulonController {
 
   @Get('courses')
   async getCourses(@Req() req: any) {
-    const session = this.sessionStore.get(req.user?.sub);
+    const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
         { message: 'Kulon session belum ada — silakan login ulang via SSO' },
@@ -26,7 +26,7 @@ export class KulonController {
 
   @Get('assignments')
   async getAssignments(@Req() req: any) {
-    const session = this.sessionStore.get(req.user?.sub);
+    const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
         { message: 'Kulon session belum ada — silakan login ulang via SSO' },
@@ -39,7 +39,7 @@ export class KulonController {
 
   @Get('assignments/:id/detail')
   async getAssignmentDetail(@Param('id') id: string, @Query('cmid') cmid: string, @Req() req: any) {
-    const session = this.sessionStore.get(req.user?.sub);
+    const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
         { message: 'Kulon session belum ada — silakan login ulang via SSO' },
