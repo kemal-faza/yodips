@@ -41,6 +41,11 @@ export interface KulonAssignmentDetail {
   kulonUrl: string;
 }
 
+export interface KulonSessionCheck {
+  valid: boolean;
+  reason: 'ok' | 'no-cookie' | 'stale';
+}
+
 @Injectable()
 export class KulonService {
   private readonly baseUrl = 'https://kulon2.undip.ac.id';
@@ -77,6 +82,32 @@ export class KulonService {
     const match = html.match(/name="sesskey"\s+value="([^"]+)"/);
     if (!match) throw new Error('sesskey not found in Kulon page');
     return match[1];
+  }
+
+  /**
+   * Single source of truth for Kulon session validity. A real session makes
+   * GET /my/ return a page containing a `sesskey`. A stale/expired session
+   * redirects to a Moodle login page or Microsoft OIDC, or loops redirects
+   * (fetch throws "redirect count exceeded") — all map to `stale`.
+   */
+  async checkSessionValid(sessionCookie: string): Promise<KulonSessionCheck> {
+    if (!sessionCookie) return { valid: false, reason: 'no-cookie' };
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/my/`, {
+        headers: { Cookie: sessionCookie },
+        redirect: 'follow',
+      });
+    } catch {
+      return { valid: false, reason: 'stale' };
+    }
+    if (!res.ok) return { valid: false, reason: 'stale' };
+    if (/(login\.microsoftonline\.com|\/login\/)/i.test(res.url)) {
+      return { valid: false, reason: 'stale' };
+    }
+    const html = await res.text();
+    if (!/name="sesskey"/.test(html)) return { valid: false, reason: 'stale' };
+    return { valid: true, reason: 'ok' };
   }
 
   async getCourses(

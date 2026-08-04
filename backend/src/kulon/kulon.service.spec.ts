@@ -224,4 +224,59 @@ describe('KulonService', () => {
       svc.getAssignmentDetail('session-cookie', 'sesskey', 42, 777),
     ).rejects.toThrow('ASSIGNMENT_NOT_FOUND');
   });
+
+  describe('checkSessionValid', () => {
+    it('returns valid ok when /my/ has a sesskey', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://kulon2.undip.ac.id/my/',
+        text: async () => '<input type="hidden" name="sesskey" value="abc">',
+      });
+      const res = await svc.checkSessionValid('MoodleSession=K');
+      expect(res).toEqual({ valid: true, reason: 'ok' });
+    });
+
+    it('returns no-cookie when cookie is empty', async () => {
+      const res = await svc.checkSessionValid('');
+      expect(res).toEqual({ valid: false, reason: 'no-cookie' });
+    });
+
+    it('returns stale when final URL is a login page', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://kulon2.undip.ac.id/login/index.php',
+        text: async () => '<html>login</html>',
+      });
+      const res = await svc.checkSessionValid('MoodleSession=STALE');
+      expect(res).toEqual({ valid: false, reason: 'stale' });
+    });
+
+    it('returns stale when redirecting to microsoft login', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://login.microsoftonline.com/...',
+        text: async () => '<html>sign in</html>',
+      });
+      const res = await svc.checkSessionValid('MoodleSession=STALE');
+      expect(res).toEqual({ valid: false, reason: 'stale' });
+    });
+
+    it('returns stale when fetch fails (redirect loop)', async () => {
+      (global.fetch as jest.Mock).mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause: new Error('redirect count exceeded') }),
+      );
+      const res = await svc.checkSessionValid('MoodleSession=STALE');
+      expect(res).toEqual({ valid: false, reason: 'stale' });
+    });
+
+    it('returns stale when page has no sesskey', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://kulon2.undip.ac.id/my/',
+        text: async () => '<html>no sesskey here</html>',
+      });
+      const res = await svc.checkSessionValid('MoodleSession=STALE');
+      expect(res).toEqual({ valid: false, reason: 'stale' });
+    });
+  });
 });
