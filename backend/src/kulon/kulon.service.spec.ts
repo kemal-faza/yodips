@@ -322,5 +322,45 @@ describe('KulonService', () => {
       const id = await svc.getSessionIdentity('MoodleSession=K');
       expect(id).toBeNull();
     });
+
+    it('falls back to scraping NIM from /user/profile.php when site_info is disabled', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          url: 'https://kulon2.undip.ac.id/my/',
+          text: async () => '<input type="hidden" name="sesskey" value="sess123">',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ error: true, exception: { message: "Web service is not available. (It doesn't exist or might be disabled.)" } }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          url: 'https://kulon2.undip.ac.id/user/profile.php',
+          text: async () => '<head><title>Anonim Uji 24060121130000: Public profile</title></head>',
+        });
+      const id = await svc.getSessionIdentity('MoodleSession=K');
+      expect(id).toBe('24060121130000');
+    });
+
+    it('returns null when profile page has no NIM in title', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          url: 'https://kulon2.undip.ac.id/my/',
+          text: async () => '<input type="hidden" name="sesskey" value="sess123">',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ error: true, exception: { message: 'disabled' } }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          url: 'https://kulon2.undip.ac.id/user/profile.php',
+          text: async () => '<head><title>Public profile</title></head>',
+        });
+      const id = await svc.getSessionIdentity('MoodleSession=K');
+      expect(id).toBeNull();
+    });
   });
 });

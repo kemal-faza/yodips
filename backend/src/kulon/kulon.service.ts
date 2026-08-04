@@ -111,9 +111,11 @@ export class KulonService {
   }
 
   /**
-   * Derive the user's identity (NIM) from a valid Kulon session using the
-   * core `core_webservice_get_site_info` service, which returns `username`.
-   * Returns null on any failure (stale session, service disabled, network).
+   * Derive the user's identity (NIM) from a valid Kulon session.
+   * Primary: `core_webservice_get_site_info` (returns `username`). If that
+   * service is disabled (it is on Kulon), fall back to scraping the NIM from
+   * the `/user/profile.php` page title (format: "Full Name NIM: Public profile").
+   * Returns null on any failure (stale session, services disabled, network).
    */
   async getSessionIdentity(sessionCookie: string): Promise<string | null> {
     if (!sessionCookie) return null;
@@ -125,6 +127,20 @@ export class KulonService {
       if (!res.ok) return null;
       const html = await res.text();
       const sesskey = this.parseSesskey(html);
+      const username = await this.trySiteInfo(sessionCookie, sesskey);
+      if (username) return username;
+      return this.identityFromProfilePage(sessionCookie);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Try `core_webservice_get_site_info`; null when disabled/errored. */
+  private async trySiteInfo(
+    sessionCookie: string,
+    sesskey: string,
+  ): Promise<string | null> {
+    try {
       const data = (await this.ajax(
         sessionCookie,
         sesskey,
@@ -132,6 +148,23 @@ export class KulonService {
         {},
       )) as { username?: string } | null;
       return data?.username ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Scrape the NIM from the /user/profile.php page title. */
+  private async identityFromProfilePage(sessionCookie: string): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/user/profile.php`, {
+        headers: { Cookie: sessionCookie },
+        redirect: 'follow',
+      });
+      if (!res.ok) return null;
+      const page = await res.text();
+      const title = page.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
+      // NIM = 8-16 digit number appearing in the profile title.
+      return title.match(/\b\d{8,16}\b/)?.[0] ?? null;
     } catch {
       return null;
     }
