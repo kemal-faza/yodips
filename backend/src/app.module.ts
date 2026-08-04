@@ -8,6 +8,7 @@ import { validateEnv } from './config/env.validation';
 import { SSOModule } from './sso/sso.module';
 import { AuthModule } from './auth/auth.module';
 import { KulonModule } from './kulon/kulon.module';
+import { SiapModule } from './siap/siap.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { KulonModule } from './kulon/kulon.module';
     SSOModule,
     AuthModule,
     KulonModule,
+    SiapModule,
   ],
   controllers: [AppController],
   providers: [
