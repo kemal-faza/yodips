@@ -5,6 +5,7 @@ import { SSOModule } from '../sso/sso.module';
 import { MicrosoftModule } from '../microsoft/microsoft.module';
 import { PlaywrightModule } from '../playwright/playwright.module';
 import { SessionModule } from '../session/session.module';
+import { KulonModule } from '../kulon/kulon.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -15,6 +16,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
     MicrosoftModule,
     PlaywrightModule,
     SessionModule,
+    KulonModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (c: ConfigService) => ({

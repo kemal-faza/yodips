@@ -30,6 +30,9 @@ const mockConfig = {
 };
 const mockSsoAuth = { login: jest.fn() };
 const mockMicrosoftAuth = { getAuthUrl: jest.fn(), handleCallback: jest.fn() };
+const mockKulon = {
+  checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
+};
 
 function makeService() {
   return new AuthService(
@@ -40,6 +43,7 @@ function makeService() {
     mockSessionStore as any,
     mockJwt as any,
     mockConfig as any,
+    mockKulon as any,
   );
 }
 

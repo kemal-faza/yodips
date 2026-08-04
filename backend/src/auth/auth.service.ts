@@ -6,6 +6,7 @@ import { SSOTicketService } from '../sso/ticket.service';
 import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
 import { PlaywrightAuthService } from '../playwright/playwright-auth.service';
 import { SessionStore } from '../session/session-store';
+import { KulonService } from '../kulon/kulon.service';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +22,7 @@ export class AuthService {
     private readonly sessionStore: SessionStore,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly kulon: KulonService,
   ) {}
 
   async login(identity: string, password: string) {
