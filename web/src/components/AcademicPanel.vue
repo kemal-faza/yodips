@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { getSiapProfile, getSiapIrs, getSiapKhs } from '../api/client';
 import type { SiapProfile, SiapIrs, SiapKhs } from '../types';
 
 const props = defineProps<{ hasSiap: boolean }>();
+
+const SIAP_POLL_MS = 30_000;
+let timer: ReturnType<typeof setInterval> | null = null;
+let inFlight = false;
 
 const profile = ref<SiapProfile | null>(null);
 const irs = ref<SiapIrs | null>(null);
@@ -12,6 +16,8 @@ const error = ref<string | null>(null);
 const loading = ref(false);
 
 async function load() {
+  if (inFlight) return;
+  inFlight = true;
   error.value = null;
   loading.value = true;
   try {
@@ -23,12 +29,25 @@ async function load() {
     error.value = e?.response?.data?.message ?? 'Gagal memuat data akademik';
   } finally {
     loading.value = false;
+    inFlight = false;
   }
 }
 
+function schedulePolling() {
+  clearInterval(timer!);
+  timer = setInterval(() => {
+    if (document.visibilityState === 'visible') load();
+  }, SIAP_POLL_MS);
+}
+
 onMounted(() => {
-  if (props.hasSiap) load();
+  if (props.hasSiap) {
+    load();
+    schedulePolling();
+  }
 });
+
+onUnmounted(() => clearInterval(timer!));
 </script>
 
 <template>
@@ -37,6 +56,14 @@ onMounted(() => {
   </div>
 
   <div v-else class="space-y-6">
+    <div class="flex items-center justify-between">
+      <span class="text-xs font-medium uppercase tracking-wide text-navy-light">Akademik</span>
+      <button
+        class="rounded bg-gold px-3 py-1.5 text-sm font-medium text-navy transition hover:bg-gold/80"
+        @click="load"
+      >Segarkan</button>
+    </div>
+
     <div v-if="loading" class="mt-4 space-y-3">
       <div v-for="i in 3" :key="i" class="h-20 animate-pulse rounded-card bg-white" />
     </div>

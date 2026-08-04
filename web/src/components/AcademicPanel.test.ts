@@ -73,4 +73,33 @@ describe('AcademicPanel', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(w.text()).toContain('Session SIAP expired');
   });
+
+  it('auto-polls every 30s while visible', async () => {
+    vi.useFakeTimers();
+    try {
+      const w = mount(AcademicPanel, { props: { hasSiap: true } });
+      // Flush the initial onMounted load's microtasks without relying on a
+      // real setTimeout (which is faked by useFakeTimers).
+      await vi.advanceTimersByTimeAsync(0);
+      (api.getSiapKhs as any).mockClear();
+      vi.advanceTimersByTime(30000);
+      expect(api.getSiapKhs).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-fetches via the Segarkan button when clicked', async () => {
+    const w = mount(AcademicPanel, { props: { hasSiap: true } });
+    await w.vm.$nextTick();
+    await new Promise((r) => setTimeout(r, 0));
+    (api.getSiapProfile as any).mockClear();
+    (api.getSiapIrs as any).mockClear();
+    (api.getSiapKhs as any).mockClear();
+    await w.find('button').trigger('click');
+    await w.vm.$nextTick();
+    expect(api.getSiapProfile).toHaveBeenCalled();
+    expect(api.getSiapIrs).toHaveBeenCalled();
+    expect(api.getSiapKhs).toHaveBeenCalled();
+  });
 });
