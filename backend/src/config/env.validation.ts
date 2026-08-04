@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
-import { IsEnum, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsIn, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
 export enum Env {
   Development = 'development',
@@ -70,6 +70,22 @@ export class EnvConfig {
   @IsOptional()
   @Min(1000)
   SSO_CAPTURE_TIMEOUT_MS: number = 180000;
+
+  // Session store persistence
+  @IsIn(['memory', 'redis'])
+  SESSION_BACKEND: 'memory' | 'redis' = 'memory';
+
+  @IsOptional()
+  @IsString()
+  REDIS_URL?: string;
+
+  @IsOptional()
+  @Min(60000)
+  SESSION_TTL_MS: number = 604800000; // 7 days
+
+  @IsOptional()
+  @IsString()
+  SESSION_ENC_KEY?: string;
 
   // CORS origins (comma-separated) for the frontend
   @IsOptional()
