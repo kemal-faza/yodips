@@ -110,6 +110,33 @@ export class KulonService {
     return { valid: true, reason: 'ok' };
   }
 
+  /**
+   * Derive the user's identity (NIM) from a valid Kulon session using the
+   * core `core_webservice_get_site_info` service, which returns `username`.
+   * Returns null on any failure (stale session, service disabled, network).
+   */
+  async getSessionIdentity(sessionCookie: string): Promise<string | null> {
+    if (!sessionCookie) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/my/`, {
+        headers: { Cookie: sessionCookie },
+        redirect: 'follow',
+      });
+      if (!res.ok) return null;
+      const html = await res.text();
+      const sesskey = this.parseSesskey(html);
+      const data = (await this.ajax(
+        sessionCookie,
+        sesskey,
+        'core_webservice_get_site_info',
+        {},
+      )) as { username?: string } | null;
+      return data?.username ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async getCourses(
     sessionCookie: string,
     sesskey: string,

@@ -279,4 +279,48 @@ describe('KulonService', () => {
       expect(res).toEqual({ valid: false, reason: 'stale' });
     });
   });
+
+  describe('getSessionIdentity', () => {
+    it('returns the username (NIM) from core_webservice_get_site_info', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          url: 'https://kulon2.undip.ac.id/my/',
+          text: async () => '<input type="hidden" name="sesskey" value="sess123">',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ error: false, data: { username: '24060121130000' } }],
+        });
+      const id = await svc.getSessionIdentity('MoodleSession=K');
+      expect(id).toBe('24060121130000');
+    });
+
+    it('returns null when /my/ has no sesskey (stale session)', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        url: 'https://kulon2.undip.ac.id/my/',
+        text: async () => '<html>login page</html>',
+      });
+      const id = await svc.getSessionIdentity('MoodleSession=STALE');
+      expect(id).toBeNull();
+    });
+
+    it('returns null when session cookie is empty', async () => {
+      const id = await svc.getSessionIdentity('');
+      expect(id).toBeNull();
+    });
+
+    it('returns null when the ajax call errors', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          url: 'https://kulon2.undip.ac.id/my/',
+          text: async () => '<input type="hidden" name="sesskey" value="sess123">',
+        })
+        .mockRejectedValueOnce(new Error('network'));
+      const id = await svc.getSessionIdentity('MoodleSession=K');
+      expect(id).toBeNull();
+    });
+  });
 });
