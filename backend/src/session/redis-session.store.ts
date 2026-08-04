@@ -31,7 +31,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
 
   async set(identity: string, session: CapturedSession): Promise<void> {
     const envelope = this.encrypt(JSON.stringify(session));
-    await this.client.set(`${KEY_PREFIX}${identity}`, envelope, 'EX', this.ttlMs);
+    await this.client.set(`${KEY_PREFIX}${identity}`, envelope, 'EX', this.ttlSeconds());
     this.logger.log(`SSO session stored for ${identity}`);
   }
 
@@ -42,7 +42,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     const session = this.decrypt(envelope);
     if (!session) return null;
     // Sliding TTL: refresh on access.
-    await this.client.expire(key, this.ttlMs);
+    await this.client.expire(key, this.ttlSeconds());
     return session;
   }
 
@@ -68,6 +68,11 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     await this.client.quit();
+  }
+
+  /** ttlMs is milliseconds; Redis EX/EXPIRE take seconds. */
+  private ttlSeconds(): number {
+    return Math.floor(this.ttlMs / 1000);
   }
 
   private encrypt(plaintext: string): string {

@@ -35,14 +35,14 @@ beforeEach(() => {
 });
 
 describe('RedisSessionStore', () => {
-  it('set() writes SET key envelope EX ttl', async () => {
+  it('set() writes SET key envelope EX ttl (ms converted to sec for Redis)', async () => {
     mockClient.set.mockResolvedValue('OK');
     await store.set('24060121130000', makeSession('24060121130000', 'MoodleSession=A'));
     expect(mockClient.set).toHaveBeenCalledWith(
       'sso:session:24060121130000',
       expect.stringMatching(/^v1:/),
       'EX',
-      1000,
+      1, // 1000 ms → 1 s; Redis EX/EXPIRE are in seconds
     );
   });
 
@@ -56,7 +56,7 @@ describe('RedisSessionStore', () => {
     mockClient.expire.mockResolvedValue(1);
     const result = await store.get('24060121130000');
     expect(result?.kulonCookie).toContain('MoodleSession=A');
-    expect(mockClient.expire).toHaveBeenCalledWith('sso:session:24060121130000', 1000);
+    expect(mockClient.expire).toHaveBeenCalledWith('sso:session:24060121130000', 1);
   });
 
   it('get() returns null when the key is absent', async () => {
