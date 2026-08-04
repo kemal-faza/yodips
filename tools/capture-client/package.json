@@ -1,0 +1,10 @@
+{
+  "name": "capture-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Captures SSO/Kulon session cookies from the user's Chrome via CDP and hands them to the server.",
+  "dependencies": {
+    "playwright-core": "^1.45.0"
+  }
+}
