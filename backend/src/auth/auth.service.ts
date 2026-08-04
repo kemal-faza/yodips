@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { SSOAuthService } from '../sso/sso-auth.service';
 import { SSOTicketService } from '../sso/ticket.service';
 import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
-import { PlaywrightAuthService } from '../playwright/playwright-auth.service';
+import { PlaywrightAuthService, CapturedSession } from '../playwright/playwright-auth.service';
 import { SessionStore } from '../session/session-store';
 import { KulonService } from '../kulon/kulon.service';
 
@@ -32,8 +32,8 @@ export class AuthService {
       identity,
       password,
     );
-    // Store session server-side; JWT carries only a reference (not raw cookie).
-    this.sessionStore.set({
+    // Store session server-side keyed by identity; JWT carries only a reference (not raw cookie).
+    this.sessionStore.set(identity, {
       identity,
       ssoCookie: cookie,
       microsoftCookie: '',
@@ -58,10 +58,10 @@ export class AuthService {
    */
   async captureSsoSession() {
     // 1) Try smart reuse of a stored, still-valid session — no browser window.
-    const existing = this.sessionStore.get();
-    if (existing && this.isFresh(existing) && (await this.kulonProbeOk(existing.kulonCookie))) {
+    const existing = await this.findReusableSession();
+    if (existing) {
       this.logger.log('Reusing stored SSO session — no browser window needed');
-      const payload = { sub: 'sso', via: 'reuse' };
+      const payload = { sub: existing.identity, via: 'reuse' };
       const accessToken = await this.jwt.signAsync(payload);
       return {
         accessToken,
@@ -88,16 +88,20 @@ export class AuthService {
       kulonTimeoutMs,
     );
 
-    // Only store a verified Kulon session. Strip a stale/unverified Kulon
-    // cookie so the store never holds a session that cannot serve Kulon data.
     const check = await this.kulon.checkSessionValid(session.kulonCookie);
     const stored = check.valid ? session : { ...session, kulonCookie: '' };
     if (!check.valid) {
       this.logger.warn('Kulon session not verified on capture — stripping kulon cookie');
     }
-    this.sessionStore.set(stored);
+    // Derive identity from the Kulon session when possible; fall back to a
+    // placeholder. The interactive flow is a single-admin dev path, so the
+    // placeholder never collides with a real per-user key in production.
+    const identity = check.valid
+      ? (await this.kulon.getSessionIdentity(session.kulonCookie)) ?? 'sso'
+      : 'sso';
+    this.sessionStore.set(identity, { ...stored, identity });
 
-    const payload = { sub: 'sso', via: 'playwright' };
+    const payload = { sub: identity, via: 'playwright' };
     const accessToken = await this.jwt.signAsync(payload);
     return {
       accessToken,
@@ -120,6 +124,16 @@ export class AuthService {
     return check.valid;
   }
 
+  /** Return the first fresh, still-valid stored session across all users. */
+  private async findReusableSession(): Promise<CapturedSession | null> {
+    for (const s of this.sessionStore.all()) {
+      if (this.isFresh(s) && (await this.kulonProbeOk(s.kulonCookie))) {
+        return s;
+      }
+    }
+    return null;
+  }
+
   getMicrosoftAuthUrl() {
     return { authUrl: this.microsoftAuth.getAuthUrl() };
   }
@@ -127,8 +141,8 @@ export class AuthService {
   async handleMicrosoftCallback(code: string, state?: string) {
     const { accessToken, sessionCookies } =
       await this.microsoftAuth.handleCallback(code, state);
-    // Store microsoft session server-side; JWT carries only a reference.
-    this.sessionStore.set({
+    // Store microsoft session server-side keyed by fixed identity; JWT carries only a reference.
+    this.sessionStore.set('microsoft', {
       identity: 'microsoft',
       ssoCookie: '',
       microsoftCookie: sessionCookies,

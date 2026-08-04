@@ -12,10 +12,11 @@ const mockPlaywright = {
   captureSession: jest.fn(),
 };
 const mockSessionStore = {
-  session: null,
-  set(s: any) { this.session = s; },
-  get() { return this.session; },
-  clear() { this.session = null; },
+  _map: new Map<string, any>(),
+  set(identity: string, s: any) { this._map.set(identity, s); },
+  get(identity: string) { return this._map.get(identity) ?? null; },
+  clear(identity: string) { this._map.delete(identity); },
+  all() { return [...this._map.values()]; },
 };
 const mockJwt = { signAsync: jest.fn(async () => 'jwt-token') };
 const mockConfig = {
@@ -32,6 +33,7 @@ const mockSsoAuth = { login: jest.fn() };
 const mockMicrosoftAuth = { getAuthUrl: jest.fn(), handleCallback: jest.fn() };
 const mockKulon = {
   checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
+  getSessionIdentity: jest.fn(async () => '24060121130000'),
 };
 
 function makeService() {
@@ -49,7 +51,7 @@ function makeService() {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockSessionStore.session = null;
+  mockSessionStore._map.clear();
   global.fetch = jest.fn();
 });
 
@@ -62,13 +64,14 @@ async function okFetch() {
 
 describe('AuthService.captureSsoSession', () => {
   it('reuses a fresh valid session WITHOUT opening a browser window', async () => {
-    mockSessionStore.session = {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
       ssoCookie: 'ci_session_sso=SSO',
       microsoftCookie: 'ESTSAUTH=MS',
       kulonCookie: 'MoodleSession=K',
       siapCookie: '',
       capturedAt: Date.now(),
-    };
+    });
     await okFetch();
 
     const svc = makeService();
@@ -101,15 +104,16 @@ describe('AuthService.captureSsoSession', () => {
       expect.any(Number),
       expect.any(Number),
     );
-    expect(mockSessionStore.session).not.toBeNull();
+    expect(mockSessionStore._map.size).toBeGreaterThan(0);
   });
 
   it('opens interactive window when stored session probe fails (stale cookie)', async () => {
-    mockSessionStore.session = {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=STALE',
       capturedAt: Date.now(),
-    };
+    });
     // Kulon probe fails (delegated to KulonService.checkSessionValid)
     mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
     mockPlaywright.launchAndCaptureSession.mockResolvedValue({
@@ -128,11 +132,12 @@ describe('AuthService.captureSsoSession', () => {
   });
 
   it('opens interactive window when stored session is stale by TTL', async () => {
-    mockSessionStore.session = {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=K',
       capturedAt: Date.now() - 60 * 60 * 1000, // 1h old
-    };
+    });
     mockPlaywright.launchAndCaptureSession.mockResolvedValue({
       ssoCookie: 'ci_session_sso=SSO',
       microsoftCookie: '',
@@ -162,15 +167,18 @@ describe('AuthService.captureSsoSession', () => {
     const res = await svc.captureSsoSession();
 
     expect(res.hasKulon).toBe(false);
-    expect(mockSessionStore.session.kulonCookie).toBe('');
+    const stored = mockSessionStore.get('sso');
+    expect(stored).not.toBeNull();
+    expect(stored.kulonCookie).toBe('');
   });
 
   it('delegates the smart-reuse probe to KulonService.checkSessionValid', async () => {
-    mockSessionStore.session = {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=K',
       capturedAt: Date.now(),
-    };
+    });
     mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
 
     const svc = makeService();
@@ -178,5 +186,25 @@ describe('AuthService.captureSsoSession', () => {
 
     expect(res.reused).toBe(true);
     expect(mockKulon.checkSessionValid).toHaveBeenCalledWith('MoodleSession=K');
+  });
+
+  it('stores the captured session per-user with derived NIM identity', async () => {
+    mockPlaywright.launchAndCaptureSession.mockResolvedValue({
+      identity: '',
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: 'ESTSAUTH=MS',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+    });
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
+
+    const svc = makeService();
+    const res = await svc.captureSsoSession();
+
+    expect(res.hasKulon).toBe(true);
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+    expect(mockSessionStore.get('24060121130000').kulonCookie).toContain('MoodleSession=K');
   });
 });

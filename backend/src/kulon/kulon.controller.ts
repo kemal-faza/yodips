@@ -1,4 +1,4 @@
-import { Controller, Get, HttpException, HttpStatus, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
@@ -12,8 +12,8 @@ export class KulonController {
   ) {}
 
   @Get('courses')
-  async getCourses() {
-    const session = this.sessionStore.get();
+  async getCourses(@Req() req: any) {
+    const session = this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
         { message: 'Kulon session belum ada — silakan login ulang via SSO' },
@@ -25,8 +25,8 @@ export class KulonController {
   }
 
   @Get('assignments')
-  async getAssignments() {
-    const session = this.sessionStore.get();
+  async getAssignments(@Req() req: any) {
+    const session = this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
         { message: 'Kulon session belum ada — silakan login ulang via SSO' },
@@ -38,8 +38,8 @@ export class KulonController {
   }
 
   @Get('assignments/:id/detail')
-  async getAssignmentDetail(@Param('id') id: string, @Query('cmid') cmid?: string) {
-    const session = this.sessionStore.get();
+  async getAssignmentDetail(@Param('id') id: string, @Query('cmid') cmid: string, @Req() req: any) {
+    const session = this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
         { message: 'Kulon session belum ada — silakan login ulang via SSO' },

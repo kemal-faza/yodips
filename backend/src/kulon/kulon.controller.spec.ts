@@ -15,6 +15,7 @@ describe('KulonController', () => {
     parseSesskey: jest.fn(),
   };
   const sessionStore = { get: jest.fn() };
+  const req = () => ({ user: { sub: '24060121130000' } });
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -41,14 +42,14 @@ describe('KulonController', () => {
     service.getCourses.mockResolvedValue([
       { id: 1, fullname: 'A', shortname: 'A', idnumber: '1' },
     ]);
-    const res = await controller.getCourses();
+    const res = await controller.getCourses(req() as any);
     expect(res[0].fullname).toBe('A');
     expect(service.getCourses).toHaveBeenCalledWith('MoodleSession=K', 'sesskey123');
   });
 
   it('throws when no kulon session stored', async () => {
     sessionStore.get.mockReturnValue(null);
-    await expect(controller.getCourses()).rejects.toThrow('Kulon session');
+    await expect(controller.getCourses(req() as any)).rejects.toThrow('Kulon session');
   });
 
   it('returns assignments with stored session', async () => {
@@ -57,17 +58,17 @@ describe('KulonController', () => {
     service.getAssignments.mockResolvedValue([
       { id: 1, name: 'Tugas', duedate: 0, overdue: false, course: 'C' },
     ]);
-    const res = await controller.getAssignments();
+    const res = await controller.getAssignments(req() as any);
     expect(res[0].name).toBe('Tugas');
   });
 
   it('throws 401 when no kulon session stored (session expired)', async () => {
     sessionStore.get.mockReturnValue(null);
-    await expect(controller.getCourses()).rejects.toMatchObject({
+    await expect(controller.getCourses(req() as any)).rejects.toMatchObject({
       status: HttpStatus.UNAUTHORIZED,
       response: { message: expect.stringContaining('Kulon session') },
     });
-    await expect(controller.getCourses()).rejects.toBeInstanceOf(HttpException);
+    await expect(controller.getCourses(req() as any)).rejects.toBeInstanceOf(HttpException);
   });
 
   it('throws 401 when Kulon fetch hits redirect loop (expired cookie)', async () => {
@@ -75,7 +76,7 @@ describe('KulonController', () => {
     global.fetch = jest.fn().mockRejectedValue(
       Object.assign(new TypeError('fetch failed'), { cause: new Error('redirect count exceeded') }),
     );
-    await expect(controller.getCourses()).rejects.toMatchObject({
+    await expect(controller.getCourses(req() as any)).rejects.toMatchObject({
       status: HttpStatus.UNAUTHORIZED,
       response: { message: expect.stringContaining('expired') },
     });
@@ -91,7 +92,7 @@ describe('KulonController', () => {
       submission: { status: 'graded', grade: 85, maxGrade: 100 },
       kulonUrl: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
     });
-    const res = await controller.getAssignmentDetail('42', '777');
+    const res = await controller.getAssignmentDetail('42', '777', req() as any);
     expect(res.assignmentId).toBe(42);
     expect(service.getAssignmentDetail).toHaveBeenCalledWith(
       'MoodleSession=K',
@@ -103,14 +104,14 @@ describe('KulonController', () => {
 
   it('throws 401 when no kulon session stored for detail', async () => {
     sessionStore.get.mockReturnValue(null);
-    await expect(controller.getAssignmentDetail('42', '777')).rejects.toMatchObject({
+    await expect(controller.getAssignmentDetail('42', '777', req() as any)).rejects.toMatchObject({
       status: HttpStatus.UNAUTHORIZED,
     });
   });
 
   it('throws 404 when assignment id is invalid', async () => {
     sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
-    await expect(controller.getAssignmentDetail('abc', '777')).rejects.toMatchObject({
+    await expect(controller.getAssignmentDetail('abc', '777', req() as any)).rejects.toMatchObject({
       status: HttpStatus.NOT_FOUND,
       response: { message: 'Detail tugas tidak ditemukan' },
     });
@@ -118,7 +119,7 @@ describe('KulonController', () => {
 
   it('throws 404 when cmid is missing', async () => {
     sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
-    await expect(controller.getAssignmentDetail('42', undefined)).rejects.toMatchObject({
+    await expect(controller.getAssignmentDetail('42', undefined, req() as any)).rejects.toMatchObject({
       status: HttpStatus.NOT_FOUND,
     });
   });
@@ -126,7 +127,7 @@ describe('KulonController', () => {
   it('throws 404 when service reports assignment not found', async () => {
     sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
     service.getAssignmentDetail.mockRejectedValue(new Error('ASSIGNMENT_NOT_FOUND'));
-    await expect(controller.getAssignmentDetail('42', '777')).rejects.toMatchObject({
+    await expect(controller.getAssignmentDetail('42', '777', req() as any)).rejects.toMatchObject({
       status: HttpStatus.NOT_FOUND,
       response: { message: 'Detail tugas tidak ditemukan' },
     });
@@ -146,7 +147,7 @@ describe('KulonController', () => {
     service.parseSesskey.mockImplementation(() => {
       throw new Error('sesskey not found in Kulon page');
     });
-    await expect(controller.getCourses()).rejects.toMatchObject({
+    await expect(controller.getCourses(req() as any)).rejects.toMatchObject({
       status: HttpStatus.UNAUTHORIZED,
       response: { message: expect.stringContaining('login ulang') },
     });
@@ -162,7 +163,7 @@ describe('KulonController', () => {
     service.parseSesskey.mockImplementation(() => {
       throw new Error('sesskey not found in Kulon page');
     });
-    await expect(controller.getCourses()).rejects.toMatchObject({
+    await expect(controller.getCourses(req() as any)).rejects.toMatchObject({
       status: HttpStatus.UNAUTHORIZED,
     });
   });
