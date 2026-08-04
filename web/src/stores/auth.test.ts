@@ -43,4 +43,19 @@ describe('auth store', () => {
     expect(store.token).toBeNull();
     expect(localStorage.getItem('sso_token')).toBeNull();
   });
+
+  it('finishHandoff stores the token and authenticates', () => {
+    const store = useAuthStore();
+    store.finishHandoff('jwt-handoff');
+    expect(store.token).toBe('jwt-handoff');
+    expect(store.isAuthenticated).toBe(true);
+    expect(localStorage.getItem('sso_token')).toBe('jwt-handoff');
+  });
+
+  it('isHandoffMode reflects VITE_LOGIN_MODE', () => {
+    vi.stubEnv('VITE_LOGIN_MODE', 'handoff');
+    const store = useAuthStore();
+    expect(store.isHandoffMode).toBe(true);
+    vi.unstubAllEnvs();
+  });
 });

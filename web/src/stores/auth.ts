@@ -13,6 +13,7 @@ export const useAuthStore = defineStore('auth', {
   }),
   getters: {
     isAuthenticated: (state) => !!state.token,
+    isHandoffMode: () => import.meta.env.VITE_LOGIN_MODE === 'handoff',
   },
   actions: {
     async login() {
@@ -43,6 +44,10 @@ export const useAuthStore = defineStore('auth', {
       } catch {
         /* 401 handled by interceptor */
       }
+    },
+    finishHandoff(token: string) {
+      this.token = token;
+      localStorage.setItem(TOKEN_KEY, token);
     },
     logout() {
       this.token = null;
