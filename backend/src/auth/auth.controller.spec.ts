@@ -56,4 +56,13 @@ describe('AuthController', () => {
     expect(res.accessToken).toBe('jwt3');
     expect(res.hasSso).toBe(true);
   });
+
+  it('session handoff delegates to service', async () => {
+    authService.handleSessionHandoff = jest.fn().mockResolvedValue({
+      accessToken: 'jwt4', capturedAt: 0, reused: false, hasSso: true, hasMicrosoft: true, hasKulon: true,
+    });
+    const res = await controller.sessionHandoff({ kulonCookie: 'MoodleSession=K' } as any);
+    expect(res.accessToken).toBe('jwt4');
+    expect(authService.handleSessionHandoff).toHaveBeenCalled();
+  });
 });

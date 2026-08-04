@@ -208,3 +208,49 @@ describe('AuthService.captureSsoSession', () => {
     expect(mockSessionStore.get('24060121130000').kulonCookie).toContain('MoodleSession=K');
   });
 });
+
+describe('AuthService.handleSessionHandoff', () => {
+  it('verifies, derives identity, stores per-user, and returns a JWT', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
+
+    const svc = makeService();
+    const res = await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+      ssoCookie: 'ci_session_sso=SSO',
+    } as any);
+
+    expect(res.hasKulon).toBe(true);
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+    expect(mockSessionStore.get('24060121130000').kulonCookie).toContain('MoodleSession=K');
+  });
+
+  it('throws 401 when the kulon cookie is invalid', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    const svc = makeService();
+    await expect(
+      svc.handleSessionHandoff({ kulonCookie: 'MoodleSession=STALE' } as any),
+    ).rejects.toThrow('Session Kulon tidak valid');
+  });
+
+  it('throws 400 when identity cannot be derived and none is declared', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue(null);
+    const svc = makeService();
+    await expect(
+      svc.handleSessionHandoff({ kulonCookie: 'MoodleSession=K' } as any),
+    ).rejects.toThrow('Identitas tidak dapat ditentukan');
+  });
+
+  it('falls back to a declared identity when derivation fails', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue(null);
+    const svc = makeService();
+    const res = await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+      identity: '24060121130000',
+    } as any);
+    expect(res.hasKulon).toBe(true);
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+  });
+});

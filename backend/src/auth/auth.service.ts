@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SSOAuthService } from '../sso/sso-auth.service';
@@ -7,6 +8,7 @@ import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
 import { PlaywrightAuthService, CapturedSession } from '../playwright/playwright-auth.service';
 import { SessionStore } from '../session/session-store';
 import { KulonService } from '../kulon/kulon.service';
+import { HandoffDto } from './dto/handoff.dto';
 
 @Injectable()
 export class AuthService {
@@ -153,6 +155,47 @@ export class AuthService {
     const payload = { sub: 'microsoft', via: 'oidc' };
     const jwt = await this.jwt.signAsync(payload);
     return { accessToken: jwt };
+  }
+
+  /**
+   * Remote-production login: accept session cookies already captured on the
+   * user's device (via the capture tool). No credentials ever reach the backend.
+   * Verify the Kulon session, derive identity, store per-user, issue a JWT.
+   */
+  async handleSessionHandoff(dto: HandoffDto) {
+    const check = await this.kulon.checkSessionValid(dto.kulonCookie);
+    if (!check.valid) {
+      throw new HttpException(
+        { message: 'Session Kulon tidak valid' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const derived = await this.kulon.getSessionIdentity(dto.kulonCookie);
+    const identity = derived ?? dto.identity;
+    if (!identity) {
+      throw new HttpException(
+        { message: 'Identitas tidak dapat ditentukan' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    this.sessionStore.set(identity, {
+      identity,
+      ssoCookie: dto.ssoCookie ?? '',
+      microsoftCookie: dto.microsoftCookie ?? '',
+      kulonCookie: dto.kulonCookie,
+      siapCookie: dto.siapCookie ?? '',
+      capturedAt: Date.now(),
+    });
+    const payload = { sub: identity, via: 'handoff' };
+    const accessToken = await this.jwt.signAsync(payload);
+    return {
+      accessToken,
+      capturedAt: Date.now(),
+      reused: false,
+      hasSso: !!dto.ssoCookie,
+      hasMicrosoft: !!dto.microsoftCookie,
+      hasKulon: true,
+    };
   }
 
   async me(user: any) {

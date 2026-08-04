@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/comm
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { HandoffDto } from './dto/handoff.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Controller('api/auth')
@@ -33,6 +34,14 @@ export class AuthController {
   @Get('microsoft/callback')
   microsoftCallback(@Query('code') code: string, @Query('state') state?: string) {
     return this.authService.handleMicrosoftCallback(code, state);
+  }
+
+  // Handoff is THE remote login mechanism (it issues the JWT), so it must NOT
+  // require a JWT. DoS is mitigated by the aggressive @Throttle below.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('session/handoff')
+  sessionHandoff(@Body() dto: HandoffDto) {
+    return this.authService.handleSessionHandoff(dto);
   }
 
   @UseGuards(JwtAuthGuard)
