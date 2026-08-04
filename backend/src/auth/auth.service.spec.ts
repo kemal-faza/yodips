@@ -110,10 +110,8 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=STALE',
       capturedAt: Date.now(),
     };
-    // Kulon probe fails (redirect-loop / no sesskey in page)
-    (global.fetch as jest.Mock).mockRejectedValue(
-      Object.assign(new TypeError('fetch failed'), { cause: new Error('redirect count exceeded') }),
-    );
+    // Kulon probe fails (delegated to KulonService.checkSessionValid)
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
     mockPlaywright.launchAndCaptureSession.mockResolvedValue({
       ssoCookie: 'ci_session_sso=SSO',
       microsoftCookie: '',
@@ -148,5 +146,37 @@ describe('AuthService.captureSsoSession', () => {
 
     expect(res.reused).toBe(false);
     expect(mockPlaywright.launchAndCaptureSession).toHaveBeenCalled();
+  });
+
+  it('does not store an unverified Kulon session and reports hasKulon:false', async () => {
+    mockPlaywright.launchAndCaptureSession.mockResolvedValue({
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: 'ESTSAUTH=MS',
+      kulonCookie: 'MoodleSession=STALE',
+      siapCookie: '',
+      capturedAt: Date.now(),
+    });
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+
+    const svc = makeService();
+    const res = await svc.captureSsoSession();
+
+    expect(res.hasKulon).toBe(false);
+    expect(mockSessionStore.session.kulonCookie).toBe('');
+  });
+
+  it('delegates the smart-reuse probe to KulonService.checkSessionValid', async () => {
+    mockSessionStore.session = {
+      ssoCookie: 'ci_session_sso=SSO',
+      kulonCookie: 'MoodleSession=K',
+      capturedAt: Date.now(),
+    };
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+
+    const svc = makeService();
+    const res = await svc.captureSsoSession();
+
+    expect(res.reused).toBe(true);
+    expect(mockKulon.checkSessionValid).toHaveBeenCalledWith('MoodleSession=K');
   });
 });

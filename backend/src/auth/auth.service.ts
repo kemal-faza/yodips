@@ -87,7 +87,15 @@ export class AuthService {
       5 * 60_000,
       kulonTimeoutMs,
     );
-    this.sessionStore.set(session);
+
+    // Only store a verified Kulon session. Strip a stale/unverified Kulon
+    // cookie so the store never holds a session that cannot serve Kulon data.
+    const check = await this.kulon.checkSessionValid(session.kulonCookie);
+    const stored = check.valid ? session : { ...session, kulonCookie: '' };
+    if (!check.valid) {
+      this.logger.warn('Kulon session not verified on capture — stripping kulon cookie');
+    }
+    this.sessionStore.set(stored);
 
     const payload = { sub: 'sso', via: 'playwright' };
     const accessToken = await this.jwt.signAsync(payload);
@@ -97,7 +105,7 @@ export class AuthService {
       reused: false,
       hasSso: !!session.ssoCookie,
       hasMicrosoft: !!session.microsoftCookie,
-      hasKulon: !!session.kulonCookie,
+      hasKulon: check.valid,
     };
   }
 
@@ -106,24 +114,10 @@ export class AuthService {
     return Date.now() - session.capturedAt < this.SESSION_TTL_MS;
   }
 
-  /**
-   * Lightweight probe: does the stored Kulon cookie still yield a valid
-   * Moodle page (has a sesskey)? A stale/expired cookie redirect-loops, which
-   * surfaces as a fetch failure — treat that as "not reusable".
-   */
+  /** A session is reusable only if its Kulon cookie is still VERIFIED valid. */
   private async kulonProbeOk(kulonCookie: string): Promise<boolean> {
-    if (!kulonCookie) return false;
-    try {
-      const res = await fetch('https://kulon2.undip.ac.id/my/', {
-        headers: { Cookie: kulonCookie },
-        redirect: 'follow',
-      });
-      if (!res.ok) return false;
-      const html = await res.text();
-      return /name="sesskey"/.test(html);
-    } catch {
-      return false;
-    }
+    const check = await this.kulon.checkSessionValid(kulonCookie);
+    return check.valid;
   }
 
   getMicrosoftAuthUrl() {
