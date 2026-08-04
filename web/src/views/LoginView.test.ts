@@ -34,4 +34,11 @@ describe('LoginView', () => {
     const w = mount(LoginView);
     expect(w.text()).toContain('Gagal login');
   });
+
+  it('shows interactive login hint while checking', () => {
+    const store = { login: vi.fn(), checking: true, error: null };
+    (useAuthStore as any).mockReturnValue(store);
+    const w = mount(LoginView);
+    expect(w.text()).toContain('selesaikan login di window browser');
+  });
 });

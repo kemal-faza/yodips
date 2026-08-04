@@ -28,7 +28,7 @@ async function handleLogin() {
         {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
       </button>
       <p v-if="store.checking" class="mt-4 text-center text-sm text-navy-light">
-        Memeriksa session SSO. Jika perlu, sebuah jendela browser baru akan terbuka untuk login.
+        Tunggu — selesaikan login di window browser yang terbuka. Jika perlu, tunggu hingga halaman dashboard Kulon tampil.
       </p>
       <p v-if="store.error" class="mt-4 rounded bg-danger/10 p-3 text-sm text-danger">
         {{ store.error }}
