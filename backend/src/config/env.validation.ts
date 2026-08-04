@@ -66,6 +66,11 @@ export class EnvConfig {
   @IsNotEmpty()
   CHROME_PROFILE_DIR: string;
 
+  // How long the interactive capture waits for a valid Kulon session (ms).
+  @IsOptional()
+  @Min(1000)
+  SSO_CAPTURE_TIMEOUT_MS: number = 180000;
+
   // CORS origins (comma-separated) for the frontend
   @IsOptional()
   @IsString()
