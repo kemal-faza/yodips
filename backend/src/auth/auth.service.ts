@@ -78,11 +78,14 @@ export class AuthService {
     const dashboardUrl = this.config.get<string>('SSO_DASHBOARD_URL')!;
     const profileDir = this.config.get<string>('CHROME_PROFILE_DIR')!;
     const kulonTicketUrl = this.ssoTicket.buildServiceUrl('kulon', this.ssoTicket.generateTicket());
+    const kulonTimeoutMs = Number(this.config.get<string>('SSO_CAPTURE_TIMEOUT_MS') ?? 180000);
     const session = await this.playwrightAuth.launchAndCaptureSession(
       profileDir,
       loginUrl,
       dashboardUrl,
       kulonTicketUrl,
+      5 * 60_000,
+      kulonTimeoutMs,
     );
     this.sessionStore.set(session);
 

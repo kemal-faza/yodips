@@ -98,6 +98,8 @@ describe('AuthService.captureSsoSession', () => {
       'https://sso.undip.ac.id/auth/user/login',
       'https://sso.undip.ac.id/pages/dashboard',
       'https://kulon2.undip.ac.id/auth/oidc/?t=dGVzdA',
+      expect.any(Number),
+      expect.any(Number),
     );
     expect(mockSessionStore.session).not.toBeNull();
   });

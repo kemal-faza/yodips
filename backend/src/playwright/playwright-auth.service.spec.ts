@@ -69,8 +69,12 @@ describe('launchAndCaptureSession', () => {
   const DASHBOARD_URL = 'https://sso.undip.ac.id/pages/dashboard';
   const KULON_URL = 'https://kulon2.undip.ac.id/auth/oidc/?t=dGVzdA';
 
+  const mockKulon = {
+    checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
+  };
+
   beforeEach(() => {
-    svc = new PlaywrightAuthService();
+    svc = new PlaywrightAuthService(mockKulon as any);
     jest.clearAllMocks();
   });
 
@@ -123,6 +127,8 @@ describe('launchAndCaptureSession', () => {
     expect(session.microsoftCookie).toContain('ESTSAUTH=MS');
     expect(session.siapCookie).toContain('cookiesession1=SIAP');
     expect(mockContext.close).toHaveBeenCalled();
+    expect(mockKulon.checkSessionValid).toHaveBeenCalled();
+    expect(mockKulon.checkSessionValid).toHaveBeenCalledWith(expect.stringContaining('MoodleSession=KULON'));
   });
 
   it('captures immediately when already on dashboard (already logged in)', async () => {
@@ -162,5 +168,51 @@ describe('launchAndCaptureSession', () => {
       ),
     ).rejects.toThrow('Timed out waiting for SSO login');
     expect(mockContext.close).toHaveBeenCalled();
+  });
+
+  it('throws when Kulon session never verifies within the kulon timeout', async () => {
+    const urlMock = jest.fn().mockReturnValue(DASHBOARD_URL);
+    const page = makePage(urlMock);
+    const cookiesFn = jest.fn().mockResolvedValue(fullCookies);
+    const mockContext = makeContext(page, cookiesFn);
+    (chromium.launchPersistentContext as jest.Mock).mockResolvedValue(mockContext);
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+
+    await expect(
+      svc.launchAndCaptureSession(
+        '/tmp/test-profile',
+        LOGIN_URL,
+        DASHBOARD_URL,
+        KULON_URL,
+        5000, // login timeout (won't be hit; already on dashboard)
+        50,   // kulon timeout — tiny so the test returns fast
+      ),
+    ).rejects.toThrow('Kulon session tidak terverifikasi');
+    expect(mockContext.close).toHaveBeenCalled();
+  });
+
+  it('waits for intermediate login pages until Kulon session is valid', async () => {
+    const urlMock = jest.fn().mockReturnValue(DASHBOARD_URL);
+    const page = makePage(urlMock);
+    const cookiesFn = jest.fn().mockResolvedValue(fullCookies);
+    const mockContext = makeContext(page, cookiesFn);
+    (chromium.launchPersistentContext as jest.Mock).mockResolvedValue(mockContext);
+    // First probe: user still on a Microsoft/Moodle login page (stale).
+    // Second probe: valid — the user completed login in the window.
+    mockKulon.checkSessionValid
+      .mockResolvedValueOnce({ valid: false, reason: 'stale' })
+      .mockResolvedValueOnce({ valid: true, reason: 'ok' });
+
+    const session = await svc.launchAndCaptureSession(
+      '/tmp/test-profile',
+      LOGIN_URL,
+      DASHBOARD_URL,
+      KULON_URL,
+      5000,
+      50,
+    );
+
+    expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(2);
+    expect(session.kulonCookie).toContain('MoodleSession=KULON');
   });
 });
