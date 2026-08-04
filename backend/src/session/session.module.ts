@@ -21,7 +21,12 @@ export async function createSessionStore(config: ConfigService): Promise<Session
   const client = new Redis(url, {
     maxRetriesPerRequest: 1,
     enableOfflineQueue: false,
+    // Defer connecting until we explicitly connect() below. Without lazyConnect,
+    // a command issued here (e.g. ping) races with the async socket connect and
+    // throws "Stream isn't writeable" even when Redis is up.
+    lazyConnect: true,
   });
+  await client.connect(); // resolves once the socket is ready; rejects if Redis is down
   await client.ping(); // eager connection check — fail-fast if Redis is down
   return new RedisSessionStore(client, ttlMs, encKey);
 }

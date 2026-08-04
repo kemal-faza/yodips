@@ -17,6 +17,7 @@ const mockClient = {
   pipeline: jest.fn(),
   quit: jest.fn(),
   ping: jest.fn(),
+  connect: jest.fn().mockResolvedValue(undefined),
 };
 
 function config(overrides: Record<string, string>): ConfigService {
