@@ -48,4 +48,10 @@ describe('SessionStore (per-user)', () => {
     store.set('b', makeSession('b', 'B'));
     expect(store.all().map((s) => s.identity).sort()).toEqual(['a', 'b']);
   });
+
+  it('has no legacy single-session API', () => {
+    expect((store as any).setLegacy).toBeUndefined();
+    expect((store as any).getLegacy).toBeUndefined();
+    expect((store as any).clearLegacy).toBeUndefined();
+  });
 });
