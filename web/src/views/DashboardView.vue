@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { getAssignments, getCourses } from '../api/client';
-import type { Assignment, Course } from '../types';
+import { getAssignments, getCourses, getSiapProfile } from '../api/client';
+import type { Assignment, Course, SiapProfile } from '../types';
 import { useAuthStore } from '../stores/auth';
 import { useFilterStore } from '../stores/filter';
 import { applyFilters, applySort } from '../utils/filter';
@@ -11,34 +11,49 @@ import ViewToggle from '../components/ViewToggle.vue';
 import TimelineGroup from '../components/TimelineGroup.vue';
 import CourseGroup from '../components/CourseGroup.vue';
 import DetailPanel from '../components/DetailPanel.vue';
-import AcademicPanel from '../components/AcademicPanel.vue';
+import SsoDashboard from '../components/SsoDashboard.vue';
+import ProfileBanner, { type SiapTab } from '../components/ProfileBanner.vue';
+import InfoBanner from '../components/InfoBanner.vue';
+import SiapDashboard from '../components/SiapDashboard.vue';
+import SiapBiodata from '../components/SiapBiodata.vue';
+import SiapNotifikasi from '../components/SiapNotifikasi.vue';
+
+type SiapView = 'sso' | 'siap' | 'tugas';
 
 const store = useAuthStore();
 const filterStore = useFilterStore();
+
+const activeView = ref<SiapView>('sso');
+const siapTab = ref<SiapTab>('dasbor');
+const profile = ref<SiapProfile | null>(null);
+const profileError = ref<string | null>(null);
+const hasSiap = computed(() => store.hasSiap);
+
 const assignments = ref<Assignment[]>([]);
 const courses = ref<Course[]>([]);
-const loading = ref(true);
+const loading = ref(false);
 const error = ref<string | null>(null);
 const sessionExpired = ref(false);
+const tugasLoaded = ref(false);
 const selected = ref<Assignment | null>(null);
 const panelOpen = ref(false);
-const activeTab = ref<'tugas' | 'akademik'>('tugas');
-const hasSiap = computed(() => store.hasSiap);
 
 const visible = computed(() =>
   applySort(
     applyFilters(
       assignments.value,
-      {
-        search: filterStore.search,
-        status: filterStore.status,
-        courseId: filterStore.courseId,
-      },
+      { search: filterStore.search, status: filterStore.status, courseId: filterStore.courseId },
       Date.now(),
     ),
     filterStore.sortBy,
   ),
 );
+
+const headerTitle = computed(() => {
+  if (activeView.value === 'siap') return 'SIAP';
+  if (activeView.value === 'tugas') return 'Online Courses';
+  return '';
+});
 
 function extractError(e: unknown): string {
   const anyE = e as { response?: { status?: number; data?: { message?: string } }; message?: string };
@@ -52,7 +67,16 @@ function extractError(e: unknown): string {
   return anyE.message || 'Terjadi kesalahan tidak diketahui.';
 }
 
-async function load() {
+async function loadProfile() {
+  profileError.value = null;
+  try {
+    profile.value = await getSiapProfile();
+  } catch (e) {
+    profileError.value = extractError(e);
+  }
+}
+
+async function loadTugas() {
   loading.value = true;
   error.value = null;
   sessionExpired.value = false;
@@ -67,12 +91,27 @@ async function load() {
   }
 }
 
+function navigate(view: SiapView) {
+  if (view === 'tugas' && !tugasLoaded.value) {
+    tugasLoaded.value = true;
+    loadTugas();
+  }
+  if (view === 'siap' && !profile.value && hasSiap.value) {
+    loadProfile();
+  }
+  activeView.value = view;
+}
+
 async function relogin() {
   // Smart re-capture: reuse session if still valid, else open browser window.
   await store.login();
   if (store.isAuthenticated) {
-    await load();
+    await loadTugas();
   }
+}
+
+function changeSiapTab(tab: SiapTab) {
+  siapTab.value = tab;
 }
 
 function openDetail(a: Assignment) {
@@ -80,40 +119,46 @@ function openDetail(a: Assignment) {
   panelOpen.value = true;
 }
 
-onMounted(load);
+onMounted(() => {
+  if (hasSiap.value) loadProfile();
+});
 </script>
 
 <template>
   <div class="min-h-screen bg-canvas">
-    <AppHeader />
-    <main class="mx-auto max-w-3xl px-4 py-8">
-      <h1 class="text-xl font-bold text-navy">Dashboard Tugas</h1>
-      <p class="mt-1 text-sm text-navy-light">Ringkasan tugas dan data akademik Anda.</p>
+    <AppHeader
+      :show-back="activeView !== 'sso'"
+      :breadcrumb="headerTitle"
+      @back="navigate('sso')"
+    />
+    <main class="mx-auto max-w-6xl px-4 py-8">
+      <SsoDashboard v-if="activeView === 'sso'" @navigate="navigate" />
 
-      <div class="mt-6 flex gap-1 border-b border-navy/10">
-        <button
-          class="rounded-t px-4 py-2 text-sm font-medium"
-          :class="activeTab === 'tugas' ? 'bg-gold text-navy' : 'text-navy-light'"
-          @click="activeTab = 'tugas'"
-        >
-          Tugas
-        </button>
-        <button
-          v-if="hasSiap"
-          class="rounded-t px-4 py-2 text-sm font-medium"
-          :class="activeTab === 'akademik' ? 'bg-gold text-navy' : 'text-navy-light'"
-          @click="activeTab = 'akademik'"
-        >
-          Akademik
-        </button>
+      <div v-else-if="activeView === 'siap'" class="space-y-4">
+        <template v-if="hasSiap">
+          <ProfileBanner :profile="profile" :active-tab="siapTab" @change-tab="changeSiapTab" />
+          <InfoBanner message="Ringkasan akademik dan biodata Anda dari SIAP Undip." />
+          <div v-if="profileError" class="rounded-2xl bg-danger/10 p-4 text-danger">
+            {{ profileError }}
+          </div>
+          <SiapDashboard v-if="siapTab === 'dasbor'" :profile="profile" :has-siap="hasSiap" />
+          <SiapBiodata v-else-if="siapTab === 'biodata'" :profile="profile" />
+          <SiapNotifikasi v-else />
+        </template>
+        <div v-else class="rounded-2xl border border-navy/10 bg-white p-8 text-center">
+          <p class="font-semibold text-navy">Belum ada session SIAP</p>
+          <p class="mt-1 text-sm text-navy-light">
+            Silakan login ulang via SSO untuk melihat data akademik.
+          </p>
+        </div>
       </div>
 
-      <div v-show="activeTab === 'tugas'">
-        <div v-if="loading" class="mt-8 space-y-3">
+      <div v-else>
+        <div v-if="loading" class="mt-4 space-y-3">
           <div v-for="i in 3" :key="i" class="h-20 animate-pulse rounded-card bg-white" />
         </div>
 
-        <div v-else-if="sessionExpired" class="mt-8 rounded bg-gold/20 p-6 text-center">
+        <div v-else-if="sessionExpired" class="mt-4 rounded bg-gold/20 p-6 text-center">
           <p class="font-semibold text-navy">Session login kedaluwarsa</p>
           <p class="mt-1 text-sm text-navy-light">{{ error }}</p>
           <button
@@ -128,14 +173,13 @@ onMounted(load);
           </p>
         </div>
 
-        <p v-else-if="error" class="mt-8 rounded bg-danger/10 p-4 text-danger">{{ error }}</p>
+        <p v-else-if="error" class="mt-4 rounded bg-danger/10 p-4 text-danger">{{ error }}</p>
 
-        <div v-else class="mt-6">
+        <div v-else class="mt-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <FilterBar :courses="courses" />
             <ViewToggle />
           </div>
-
           <div class="mt-6">
             <TimelineGroup
               v-if="filterStore.viewMode === 'timeline'"
@@ -145,10 +189,6 @@ onMounted(load);
             <CourseGroup v-else :assignments="visible" />
           </div>
         </div>
-      </div>
-
-      <div v-show="activeTab === 'akademik'" class="mt-6">
-        <AcademicPanel :has-siap="hasSiap" />
       </div>
     </main>
 

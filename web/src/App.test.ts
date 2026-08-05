@@ -12,6 +12,9 @@ vi.mock('./api/client', () => ({
   getCourses: vi.fn().mockResolvedValue([]),
   capture: vi.fn(),
   me: vi.fn(),
+  getSiapProfile: vi.fn().mockResolvedValue({ nama: 'X', nim: '1', status: 'aktif' }),
+  getSiapIrs: vi.fn().mockResolvedValue({ semester: '', totalSks: 0, mataKuliah: [] }),
+  getSiapKhs: vi.fn().mockResolvedValue({ ipk: 0, semesters: [] }),
 }));
 
 describe('App integration', () => {
@@ -51,6 +54,6 @@ describe('App integration', () => {
     await router.push('/');
     await flushPromises();
     expect(router.currentRoute.value.name).toBe('dashboard');
-    expect(w.text()).toContain('Dashboard Tugas');
+    expect(w.text()).toContain('Selamat datang di Undip SSO');
   });
 });

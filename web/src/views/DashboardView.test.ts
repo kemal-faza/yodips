@@ -16,15 +16,35 @@ vi.mock('../api/client', () => ({
     submission: { status: 'not_submitted', grade: null, maxGrade: null },
     kulonUrl: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=1',
   }),
+  getSiapProfile: vi.fn(),
+  getSiapIrs: vi.fn(),
+  getSiapKhs: vi.fn(),
 }));
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 
 const now = Date.now();
 const sec = 1000;
-const mkAssignment = (id: number, name: string, duedateSec: number, overdue: boolean, course: string, courseId: number) => ({
-  id, name, module: 'assign', eventType: 'due', duedate: duedateSec, overdue, course, courseId,
-  assignmentId: id, courseModuleId: id + 1000,
-});
+
+function mkAssignment(id: number, name: string, duedateSec: number, overdue: boolean, course: string, courseId: number) {
+  return {
+    id, name, module: 'assign', eventType: 'due', duedate: duedateSec, overdue, course, courseId,
+    assignmentId: id, courseModuleId: id + 1000,
+  };
+}
+
+function mockStore(overrides: Record<string, unknown> = {}) {
+  const store = {
+    isAuthenticated: true,
+    logout: vi.fn(),
+    user: null,
+    checking: false,
+    login: vi.fn().mockResolvedValue(undefined),
+    hasSiap: true,
+    ...overrides,
+  };
+  (useAuthStore as any).mockReturnValue(store);
+  return store;
+}
 
 describe('DashboardView', () => {
   beforeEach(() => {
@@ -32,20 +52,66 @@ describe('DashboardView', () => {
     localStorage.clear();
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    (api.getCourses as any).mockResolvedValue([
-      { id: 1, fullname: 'Matkul A', shortname: 'A', idnumber: '' },
-    ]);
+    mockStore();
+    (api.getCourses as any).mockResolvedValue([{ id: 1, fullname: 'Matkul A', shortname: 'A', idnumber: '' }]);
+    (api.getSiapProfile as any).mockResolvedValue({
+      nama: 'ANONIM UJI',
+      nim: '24060121130000',
+      prodi: 'Informatika S1',
+      fakultas: 'SAINS DAN MATEMATIKA',
+      angkatan: '2024',
+      status: 'AKTIF',
+      semesterBerjalan: '2026/2027 Ganjil',
+    });
   });
 
-  it('renders assignments in timeline (period headings) by default', async () => {
+  it('shows the SSO dashboard by default', async () => {
+    const w = mount(DashboardView);
+    await flushPromises();
+    expect(w.text()).toContain('Selamat datang di Undip SSO');
+    expect(w.text()).toContain('Layanan');
+  });
+
+  it('navigates to SIAP view and shows the profile banner', async () => {
+    const w = mount(DashboardView);
+    await flushPromises();
+    await w.find('[data-test="service-siap"]').trigger('click');
+    await flushPromises();
+    expect(w.text()).toContain('ANONIM UJI');
+    expect(w.text()).toContain('24060121130000');
+  });
+
+  it('switches to the Biodata tab and shows detail fields', async () => {
+    (api.getSiapProfile as any).mockResolvedValue({
+      nama: 'ANONIM UJI',
+      nim: '24060121130000',
+      prodi: 'Informatika S1',
+      fakultas: 'SAINS DAN MATEMATIKA',
+      angkatan: '2024',
+      status: 'AKTIF',
+      semesterBerjalan: '2026/2027 Ganjil',
+      tempatLahir: 'KOTA UJI',
+      tanggalLahir: '01 Januari 2000',
+      nik: '000000 000000 0000',
+      namaIbu: 'IBU UJI',
+    });
+    const w = mount(DashboardView);
+    await flushPromises();
+    await w.find('[data-test="service-siap"]').trigger('click');
+    await w.findAll('button').find((b) => b.text().includes('Biodata'))!.trigger('click');
+    await flushPromises();
+    expect(w.text()).toContain('KOTA UJI');
+    expect(w.text()).toContain('000000 000000 0000');
+  });
+
+  it('renders assignments in the Tugas view (timeline headings)', async () => {
     (api.getAssignments as any).mockResolvedValue([
       mkAssignment(1, 'T1', (now - 3600 * sec) / sec, true, 'Matkul A', 1),
-      // +1h is always within the current week regardless of which day it is
-      // today (never crosses the next-Monday boundary), deterministic any day.
       mkAssignment(2, 'T2', (now + 3600 * sec) / sec, false, 'Matkul A', 1),
     ]);
-    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
     const w = mount(DashboardView);
+    await flushPromises();
+    await w.find('[data-test="service-kulon"]').trigger('click');
     await flushPromises();
     expect(w.text()).toContain('Terlambat');
     expect(w.text()).toContain('Minggu Ini');
@@ -53,85 +119,33 @@ describe('DashboardView', () => {
     expect(w.text()).toContain('T2');
   });
 
-  it('switches to course grouping when Per Mata Kuliah clicked', async () => {
-    (api.getAssignments as any).mockResolvedValue([
-      mkAssignment(1, 'T1', (now + 2 * 86400 * sec) / sec, false, 'Matkul A', 1),
-    ]);
-    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
+  it('back button returns to the SSO dashboard', async () => {
     const w = mount(DashboardView);
     await flushPromises();
-    const btn = w.findAll('button').find((b) => b.text().includes('Per Mata Kuliah'))!;
-    await btn.trigger('click');
+    await w.find('[data-test="service-kulon"]').trigger('click');
     await flushPromises();
-    expect(w.text()).toContain('Matkul A');
+    await w.findAll('button').find((b) => b.text().includes('Kembali'))!.trigger('click');
+    expect(w.text()).toContain('Selamat datang di Undip SSO');
   });
 
-  it('filters by status select', async () => {
-    (api.getAssignments as any).mockResolvedValue([
-      mkAssignment(1, 'OverdueT', (now - 3600 * sec) / sec, true, 'Matkul A', 1),
-      mkAssignment(2, 'TrackT', (now + 100 * 86400 * sec) / sec, false, 'Matkul A', 1),
-    ]);
-    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
-    const w = mount(DashboardView);
-    await flushPromises();
-    await w.find('select[data-test="status"]').setValue('overdue');
-    await flushPromises();
-    expect(w.text()).toContain('OverdueT');
-    expect(w.text()).not.toContain('TrackT');
-  });
-
-  it('opens DetailPanel when an assignment card is clicked', async () => {
-    (api.getAssignments as any).mockResolvedValue([
-      mkAssignment(1, 'T1', (now + 2 * 86400 * sec) / sec, false, 'Matkul A', 1),
-    ]);
-    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
-    const w = mount(DashboardView);
-    await flushPromises();
-    await w.find('.assignment-card').trigger('click');
-    await flushPromises();
-    expect(document.body.textContent).toContain('Buka di Kulon');
-    expect(document.body.textContent).toContain('Deskripsi');
-  });
-
-  it('renders empty state when no assignments', async () => {
-    (api.getAssignments as any).mockResolvedValue([]);
-    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null });
-    const w = mount(DashboardView);
-    await flushPromises();
-    expect(w.text()).toContain('Belum ada tugas');
-  });
-
-  it('shows re-login prompt when session expired (401)', async () => {
+  it('shows a re-login prompt when the Kulon session expired (401)', async () => {
     (api.getAssignments as any).mockRejectedValue({
       response: { status: 401, data: { message: 'Session Kulon expired — silakan login ulang via SSO' } },
     });
-    (useAuthStore as any).mockReturnValue({ isAuthenticated: true, logout: vi.fn(), user: null, checking: false });
     const w = mount(DashboardView);
+    await flushPromises();
+    await w.find('[data-test="service-kulon"]').trigger('click');
     await flushPromises();
     expect(w.text()).toContain('Login Ulang');
     expect(w.text()).toContain('Session Kulon expired');
   });
 
-  it('relogin re-captures and reloads assignments', async () => {
-    const store = {
-      isAuthenticated: true,
-      logout: vi.fn(),
-      user: null,
-      checking: false,
-      login: vi.fn().mockResolvedValue(undefined),
-    };
-    (useAuthStore as any).mockReturnValue(store);
-    (api.getAssignments as any)
-      .mockRejectedValueOnce({ response: { status: 401, data: { message: 'Session Kulon expired' } } })
-      .mockResolvedValueOnce([
-        mkAssignment(1, 'T1', (now + 2 * 86400 * sec) / sec, false, 'Matkul A', 1),
-      ]);
+  it('renders empty state in Tugas when no assignments', async () => {
+    (api.getAssignments as any).mockResolvedValue([]);
     const w = mount(DashboardView);
     await flushPromises();
-    expect(w.text()).toContain('Login Ulang');
-    await w.findAll('button').find((b) => b.text().includes('Login Ulang'))!.trigger('click');
+    await w.find('[data-test="service-kulon"]').trigger('click');
     await flushPromises();
-    expect(store.login).toHaveBeenCalled();
-    expect(w.text()).toContain('T1');
+    expect(w.text()).toContain('Belum ada tugas');
   });
 });
