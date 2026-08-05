@@ -14,10 +14,17 @@ const cls = computed(() => {
   if (props.status === 'dueSoon') return 'bg-gold/20 text-ink';
   return 'bg-success/10 text-success';
 });
+
+const dot = computed(() => {
+  if (props.status === 'overdue') return 'bg-danger';
+  if (props.status === 'dueSoon') return 'bg-warn';
+  return 'bg-success';
+});
 </script>
 
 <template>
-  <Badge :class="cls">
+  <Badge class="gap-1.5" :class="cls">
+    <span class="size-1.5 rounded-full" :class="dot"></span>
     {{ label }}
   </Badge>
 </template>
