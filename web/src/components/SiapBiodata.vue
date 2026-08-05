@@ -58,14 +58,14 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
 <template>
   <div class="grid gap-6 lg:grid-cols-3">
     <aside class="space-y-4">
-      <Card class="border-line bg-surface">
+      <Card>
         <CardContent class="p-6 text-center">
           <Avatar class="mx-auto size-28 border-2 border-line bg-primary-50 text-primary-600 dark:bg-primary-500/15 dark:text-primary-400">
             <AvatarImage v-if="profile?.fotoUrl" :src="profile.fotoUrl" alt="Foto" />
             <AvatarFallback class="border-2 border-current font-bold">{{ initial(profile?.nama) }}</AvatarFallback>
           </Avatar>
           <p class="mt-3 font-semibold text-ink">{{ profile?.semesterBerjalan ?? '—' }}</p>
-          <Badge class="mt-1 rounded-full bg-gold/20 px-3 py-0.5 text-xs font-semibold text-ink">
+          <Badge class="mt-1 bg-gold/20 text-ink">
             {{ profile?.status ?? '—' }}
           </Badge>
         </CardContent>
@@ -73,7 +73,7 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
       <Button
         variant="outline"
         disabled
-        class="w-full border-line bg-surface cursor-not-allowed px-4 py-2.5 text-sm font-medium text-ink-muted"
+        class="w-full"
       >
         Perbarui Biodata
       </Button>
@@ -81,7 +81,7 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
     </aside>
 
     <div class="lg:col-span-2">
-      <Card class="border-line bg-surface">
+      <Card>
         <CardContent class="p-6">
           <template v-for="g in groups" :key="g.name">
             <h3 class="mb-2 mt-4 text-sm font-semibold uppercase tracking-wide text-ink-muted first:mt-0">
@@ -95,7 +95,7 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
                     <span>{{ showNamaIbu ? (r.value ?? '—') : '********' }}</span>
                     <Button
                       variant="link"
-                      class="ml-2 h-auto p-0 text-xs font-medium text-primary-600 dark:text-primary-400"
+                      class="ml-2 dark:text-primary-400"
                       @click="showNamaIbu = !showNamaIbu"
                     >
                       {{ showNamaIbu ? 'Sembunyikan' : 'Tampilkan' }}
