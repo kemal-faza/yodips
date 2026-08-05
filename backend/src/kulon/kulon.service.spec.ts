@@ -1,5 +1,12 @@
 import 'reflect-metadata';
-import { KulonService, parseSemester } from './kulon.service';
+import fs from 'fs';
+import path from 'path';
+import {
+  KulonService,
+  parseSemester,
+  extractFileType,
+  deriveSectionLabel,
+} from './kulon.service';
 
 describe('parseSemester', () => {
   it('extracts semester from fullname', () => {
@@ -13,6 +20,76 @@ describe('parseSemester', () => {
   });
   it('handles Ganjil and case-insensitive', () => {
     expect(parseSemester('S1 2024/2025 ganjil Algoritma')).toBe('2024/2025 Ganjil');
+  });
+});
+
+describe('extractFileType', () => {
+  it.each([
+    ['https://kulon/pl/pluginfile.php/1.pdf', 'pdf'],
+    ['https://kulon/theme/image.php/moove/core/1/f/pdf', 'pdf'],
+    ['https://kulon/theme/image.php/moove/core/1/f/vnd.ms-powerpoint', 'pptx'],
+    ['https://kulon/theme/image.php/moove/core/1/f/pptx', 'pptx'],
+    ['https://kulon/theme/image.php/moove/core/1/f/edit-doc', 'doc'],
+    ['https://kulon/mod/resource/view.php?id=5', 'other'],
+    ['https://kulon/a/notes.pptx?forcedownload=1', 'pptx'],
+    ['https://kulon/x.DOC', 'doc'],
+    ['https://kulon/y.xlsx', 'xlsx'],
+  ])('%s -> %s', (url, expected) => expect(extractFileType(url)).toBe(expected));
+});
+
+describe('deriveSectionLabel', () => {
+  it('labels section 0 as General', () => {
+    expect(deriveSectionLabel(0, 'General')).toEqual({ label: 'General' });
+  });
+  it('synthesizes Pertemuan N for a pure date-range title', () => {
+    expect(deriveSectionLabel(1, '9 February - 15 February')).toEqual({
+      label: 'Pertemuan 1',
+      dateRange: '9 February - 15 February',
+    });
+  });
+  it('keeps a custom name without dateRange', () => {
+    expect(deriveSectionLabel(2, 'Pertemuan 11')).toEqual({ label: 'Pertemuan 11' });
+  });
+  it('strips surrounding whitespace', () => {
+    expect(deriveSectionLabel(3, '  Bab 4  ')).toEqual({ label: 'Bab 4' });
+  });
+});
+
+describe('getCourseContent (HTML fixture)', () => {
+  it('parses real Kulon HTML into sections/items', async () => {
+    const svc = new KulonService();
+    const html = fs.readFileSync(
+      path.join(__dirname, '../../test/fixtures/kulon/course-content-html.html'),
+      'utf8',
+    );
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
+      text: async () => html,
+    }) as any;
+    const content = await svc.getCourseContent('cookie', 'sk', 16294);
+    expect(content.courseId).toBe(16294);
+    // Section 0 = General (forum Announcements).
+    const gen = content.sections.find((s) => s.id === 0);
+    expect(gen?.label).toBe('General');
+    expect(gen?.items[0]?.kind).toBe('forum');
+    // Section 1: title date-range -> Pertemuan 1 + dateRange; file pdf.
+    const s1 = content.sections.find((s) => s.id === 1);
+    expect(s1?.label).toBe('Pertemuan 1');
+    expect(s1?.dateRange).toBe('9 February - 15 February');
+    const fileItem = s1?.items.find((i) => i.kind === 'file');
+    expect(fileItem?.fileType).toBe('pdf');
+    expect(fileItem?.name).toBe('0. Peraturan Perkuliahan');
+    // Section 12: file + assign (assign ter-bucket benar meski di luar block regex).
+    const s12 = content.sections.find((s) => s.id === 12);
+    const assignItem = s12?.items.find((i) => i.kind === 'assign');
+    expect(assignItem?.kind).toBe('assign');
+    expect(assignItem?.name).toBe('Tugas Kriptografi');
+    expect(s12?.items.every((i) => i.kind === 'file' || i.kind === 'assign')).toBe(true);
+    // Section 13: custom name "Pertemuan 11" dipertahankan (bukan synthesize ulang).
+    const s13 = content.sections.find((s) => s.id === 13);
+    expect(s13?.label).toBe('Pertemuan 11');
   });
 });
 
