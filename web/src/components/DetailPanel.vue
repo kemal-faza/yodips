@@ -114,7 +114,7 @@ watch(
     <SheetContent
       side="right"
       :show-close-button="false"
-      class="w-full max-w-md gap-0 border-line bg-surface p-0"
+      class="w-full max-w-md gap-0 p-0"
       data-test="detail-panel"
     >
       <SheetHeader v-if="assignment" class="bg-navy p-5 text-white">
@@ -128,9 +128,10 @@ watch(
             <StatusBadge :status="status" />
             <Button
               variant="ghost"
+              size="icon"
               data-test="close"
               aria-label="Tutup"
-              class="size-8 rounded-full p-0 text-white/70 hover:bg-white/10 hover:text-white"
+              class="text-white/70 hover:bg-white/10 hover:text-white"
               @click="emit('close')"
             >
               <XIcon class="size-4" aria-hidden="true" />
@@ -141,13 +142,12 @@ watch(
 
       <template v-if="assignment?.courseModuleId">
         <Tabs v-model="activeTab" class="flex flex-1 flex-col">
-          <TabsList class="flex w-full justify-start gap-0 rounded-none border-b border-line bg-transparent p-0">
+          <TabsList variant="line" class="w-full border-b border-line">
             <TabsTrigger
               v-for="t in tabs"
               :key="t.key"
               data-test="tab"
               :value="t.key"
-              class="flex-1 rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-semibold text-ink-muted hover:text-ink data-active:border-gold data-active:text-ink"
             >
               {{ t.label }}
             </TabsTrigger>
@@ -162,7 +162,7 @@ watch(
               <p class="text-sm font-semibold text-danger">{{ error }}</p>
               <Button
                 data-test="retry"
-                class="mt-4 rounded-full bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy-light"
+                class="mt-4"
                 @click="load"
               >
                 Coba lagi
