@@ -12,6 +12,7 @@ describe('KulonController', () => {
     getCourses: jest.fn(),
     getAssignments: jest.fn(),
     getAssignmentDetail: jest.fn(),
+    getCourseContent: jest.fn(),
     parseSesskey: jest.fn(),
   };
   const sessionStore = { get: jest.fn() };
@@ -165,6 +166,42 @@ describe('KulonController', () => {
     });
     await expect(controller.getCourses(req() as any)).rejects.toMatchObject({
       status: HttpStatus.UNAUTHORIZED,
+    });
+  });
+
+  it('returns course content using stored session', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
+    service.parseSesskey.mockReturnValue('sesskey123');
+    service.getCourseContent.mockResolvedValue({
+      courseId: 9,
+      sections: [{ id: 1, label: 'Pertemuan 1', dateRange: '9 February - 15 February', items: [] }],
+    });
+    const res = await controller.getCourseContent('9', req() as any);
+    expect(res.courseId).toBe(9);
+    expect(service.getCourseContent).toHaveBeenCalledWith('MoodleSession=K', 'sesskey123', 9);
+  });
+
+  it('throws 401 when no kulon session stored for content', async () => {
+    sessionStore.get.mockReturnValue(null);
+    await expect(controller.getCourseContent('9', req() as any)).rejects.toMatchObject({
+      status: HttpStatus.UNAUTHORIZED,
+    });
+  });
+
+  it('throws 404 when course id is invalid', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
+    await expect(controller.getCourseContent('abc', req() as any)).rejects.toMatchObject({
+      status: HttpStatus.NOT_FOUND,
+      response: { message: 'Mata kuliah tidak ditemukan' },
+    });
+  });
+
+  it('throws 404 when service reports course not found', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
+    service.getCourseContent.mockRejectedValue(new Error('COURSE_NOT_FOUND'));
+    await expect(controller.getCourseContent('9', req() as any)).rejects.toMatchObject({
+      status: HttpStatus.NOT_FOUND,
+      response: { message: 'Mata kuliah tidak ditemukan' },
     });
   });
 });

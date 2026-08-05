@@ -73,6 +73,30 @@ export class KulonController {
     }
   }
 
+  @Get('courses/:id/content')
+  async getCourseContent(@Param('id') id: string, @Req() req: any) {
+    const session = await this.sessionStore.get(req.user?.sub);
+    if (!session?.kulonCookie) {
+      throw new HttpException(
+        { message: 'Kulon session belum ada — silakan login ulang via SSO' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const courseId = Number(id);
+    if (!Number.isInteger(courseId) || courseId <= 0) {
+      throw new HttpException({ message: 'Mata kuliah tidak ditemukan' }, HttpStatus.NOT_FOUND);
+    }
+    const sesskey = await this.getSesskey(session.kulonCookie);
+    try {
+      return await this.kulonService.getCourseContent(session.kulonCookie, sesskey, courseId);
+    } catch (e) {
+      if ((e as Error).message === 'COURSE_NOT_FOUND') {
+        throw new HttpException({ message: 'Mata kuliah tidak ditemukan' }, HttpStatus.NOT_FOUND);
+      }
+      throw e;
+    }
+  }
+
   /**
    * Fetch the Moodle sesskey from the Kulon page. A stale/expired kulon cookie
    * makes Kulon redirect-loop (Moodle `/my/` <-> `/login/`), which surfaces as
