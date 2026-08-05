@@ -9,6 +9,18 @@ export function buildRouter(history: RouterHistory): Router {
     routes: [
       { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
       { path: '/', name: 'dashboard', component: () => import('../views/DashboardView.vue') },
+      { path: '/siap', name: 'siap', component: () => import('../views/SiapView.vue') },
+      {
+        path: '/kulon',
+        name: 'kulon',
+        component: () => import('../views/KulonLayout.vue'),
+        children: [
+          { path: '', redirect: { name: 'kulon-dashboard' } },
+          { path: 'dashboard', name: 'kulon-dashboard', component: () => import('../views/KulonDashboardView.vue') },
+          { path: 'matakuliah', name: 'kulon-courses', component: () => import('../views/KulonCoursesView.vue') },
+          { path: 'matakuliah/:courseId', name: 'kulon-course-detail', component: () => import('../views/KulonCourseDetailView.vue') },
+        ],
+      },
     ],
   });
 

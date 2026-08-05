@@ -56,4 +56,25 @@ describe('App integration', () => {
     expect(router.currentRoute.value.name).toBe('dashboard');
     expect(w.text()).toContain('Selamat datang di Undip SSO');
   });
+
+  it('navigates to /siap after login and resolves the SIAP route', async () => {
+    (api.capture as any).mockResolvedValue({
+      accessToken: 'tok', capturedAt: 0, hasSso: true, hasMicrosoft: true, hasKulon: true,
+    });
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(App, { global: { plugins: [router, pinia] } });
+    await router.push('/login');
+    await flushPromises();
+
+    const store = useAuthStore();
+    await store.login();
+
+    await router.push('/siap');
+    await flushPromises();
+    expect(router.currentRoute.value.name).toBe('siap');
+    expect(router.currentRoute.value.path).toBe('/siap');
+    expect(w.text()).toContain('SIAP');
+  });
 });

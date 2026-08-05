@@ -17,10 +17,12 @@ describe('SsoDashboard', () => {
     expect(w.emitted('navigate')?.[0]).toEqual(['siap']);
   });
 
-  it('emits navigate "tugas" when Online Courses is clicked', async () => {
+  it('emits navigate "kulon" when Kulon is clicked', async () => {
     const w = mount(SsoDashboard);
     await w.find('[data-test="service-kulon"]').trigger('click');
-    expect(w.emitted('navigate')?.[0]).toEqual(['tugas']);
+    expect(w.emitted('navigate')?.[0]).toEqual(['kulon']);
+    expect(w.text()).toContain('Kulon');
+    expect(w.text()).not.toContain('Online Courses');
   });
 
   it('does NOT emit navigate for Coming Soon services', async () => {

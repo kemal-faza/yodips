@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 
-const emit = defineEmits<{ (e: 'navigate', view: 'siap' | 'tugas'): void }>();
+const emit = defineEmits<{ (e: 'navigate', view: 'siap' | 'kulon'): void }>();
 
 const DISMISS_KEY = 'sso_welcome_dismissed';
 const dismissed = ref(localStorage.getItem(DISMISS_KEY) === '1');
@@ -20,12 +20,12 @@ interface Service {
   desc: string;
   monogram: string;
   ready: boolean;
-  view?: 'siap' | 'tugas';
+  view?: 'siap' | 'kulon';
 }
 
 const services: Service[] = [
   { key: 'siap', name: 'SIAP', desc: 'Informasi akademik dan biodata', monogram: 'S', ready: true, view: 'siap' },
-  { key: 'kulon', name: 'Online Courses', desc: 'Tugas dan materi pembelajaran', monogram: 'O', ready: true, view: 'tugas' },
+  { key: 'kulon', name: 'Kulon', desc: 'Tugas dan materi pembelajaran', monogram: 'K', ready: true, view: 'kulon' },
   { key: 'mandala', name: 'MANDALA', desc: 'Jadwal perkuliahan', monogram: 'M', ready: false },
   { key: 'beasiswa', name: 'Scholarship', desc: 'Informasi beasiswa', monogram: 'B', ready: false },
   { key: 'event', name: 'Event', desc: 'Kegiatan kampus', monogram: 'E', ready: false },
