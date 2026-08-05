@@ -3,7 +3,7 @@ import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { Bell, Home, Moon, Sun } from '@lucide/vue';
+import { ArrowLeft, Bell, Home, Moon, Sun } from '@lucide/vue';
 
 defineProps<{ showBack?: boolean; breadcrumb?: string }>();
 const emit = defineEmits<{ (e: 'back'): void }>();
@@ -26,7 +26,7 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
           aria-label="Kembali"
           @click="emit('back')"
         >
-          <Home class="size-4" aria-hidden="true" />
+          <ArrowLeft class="size-4" aria-hidden="true" />
         </Button>
         <router-link to="/" class="flex items-center gap-2 text-white no-underline hover:opacity-90">
           <Home class="size-4 shrink-0" aria-hidden="true" />
