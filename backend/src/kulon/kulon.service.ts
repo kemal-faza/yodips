@@ -325,11 +325,15 @@ export class KulonService {
     if (res.status === 404) throw new Error('ASSIGNMENT_NOT_FOUND');
     if (!res.ok) throw new Error(`Kulon assignment page failed: ${res.status}`);
     const html = await res.text();
+    // Pengunjung (course-content path) hanya kirim cmid, bukan assign instance id.
+    // Ekstrak assignid asli dari halaman detail; fallback ke param bila tidak ketemu
+    // (dashboard path tetap aman — param dari calendar event.instance).
+    const assignid = this.extractAssignId(html, assignmentId);
     const sub = await this.ajax(
       sessionCookie,
       sesskey,
       'mod_assign_get_submission_status',
-      { assignid: assignmentId },
+      { assignid },
     );
     return {
       assignmentId,
@@ -339,6 +343,29 @@ export class KulonService {
       submission: this.normalizeSubmission(sub),
       kulonUrl: pageUrl,
     };
+  }
+
+  /**
+   * Extract the Moodle assign instance id (assignid) from the assignment detail
+   * page HTML. The course-content path only exposes the cmid in the URL, but
+   * `mod_assign_get_submission_status` needs the assign instance id (which
+   * differs from cmid). Moodle embeds it in the page — try several markers,
+   * falling back to the caller-provided assignmentId when none match.
+   */
+  private extractAssignId(html: string, fallback: number): number {
+    const patterns = [
+      /name="assignid"\s+value="(\d+)"/i,
+      /data-assignmentid="(\d+)"/i,
+      /data-id-instance="(\d+)"/i,
+      /"assignmentid"\s*:\s*(\d+)/i,
+      /M\.mod_assign\.init\(\s*\{[^}]*?["']?assignmentid["']?\s*:\s*(\d+)/i,
+    ];
+    for (const re of patterns) {
+      const m = html.match(re);
+      if (m) return Number(m[1]);
+    }
+    // Fallback: reuse the cmid-as-assignmentId only if caller passed no real id.
+    return fallback;
   }
 
   /**

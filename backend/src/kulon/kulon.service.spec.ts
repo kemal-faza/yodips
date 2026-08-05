@@ -55,6 +55,30 @@ describe('deriveSectionLabel', () => {
   });
 });
 
+describe('extractAssignId', () => {
+  let svc: KulonService;
+  beforeEach(() => { svc = new KulonService(); });
+
+  it('extracts from hidden input name="assignid"', () => {
+    const html = '<form><input type="hidden" name="assignid" value="42"></form>';
+    expect((svc as any).extractAssignId(html, 0)).toBe(42);
+  });
+
+  it('extracts from data-assignmentid attribute', () => {
+    const html = '<div data-assignmentid="43">Tugas</div>';
+    expect((svc as any).extractAssignId(html, 0)).toBe(43);
+  });
+
+  it('extracts from M.mod_assign.init JS', () => {
+    const html = 'M.mod_assign.init({"assignmentid":44,...});';
+    expect((svc as any).extractAssignId(html, 0)).toBe(44);
+  });
+
+  it('falls back to passed assignmentId when no marker found', () => {
+    expect((svc as any).extractAssignId('<html>no marker</html>', 99)).toBe(99);
+  });
+});
+
 describe('getCourseContent (HTML fixture)', () => {
   it('parses real Kulon HTML into sections/items', async () => {
     const svc = new KulonService();
@@ -283,6 +307,28 @@ describe('KulonService', () => {
     expect(detail.submission.maxGrade).toBe(100);
     expect(detail.submission.submittedAt).toBe(1742000000);
     expect(detail.kulonUrl).toContain('view.php?id=777');
+  });
+
+  it('uses the assignid extracted from the page when caller only has cmid', async () => {
+    // Course-content path: caller passes assignmentId=0 (only knows cmid).
+    // The page HTML embeds the real assign instance id -> must be used for AJAX.
+    const pageHtml =
+      '<form id="submitform"><input type="hidden" name="assignid" value="500"></form><div id="intro"><div class="no-overflow"><p>x</p></div></div>';
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => pageHtml,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: {} }],
+      });
+    await svc.getAssignmentDetail('session-cookie', 'sesskey', 0, 777);
+    // Second fetch = AJAX POST ke lib/ajax/service.php dengan assignid hasil ekstraksi.
+    const ajaxCall = (global.fetch as jest.Mock).mock.calls[1];
+    expect(ajaxCall[0]).toContain('service.php');
+    const body = JSON.parse(ajaxCall[1].body);
+    expect(body[0].args).toEqual({ assignid: 500 });
   });
 
   it('returns not_submitted when ajax submission data is empty', async () => {
