@@ -1,5 +1,9 @@
+
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn-vue/tailwind.css";
 
 @theme {
   --color-navy: #0a1931;
@@ -43,6 +47,38 @@
      dark canvas while remaining dark enough for white text. */
   --color-navy: #2e4d82;
   --color-navy-light: #3b5f9e;
+  /* shadcn-vue theme variables mapped to the app's dark palette. */
+  --background: #0b1220;
+  --foreground: #e6ebf5;
+  --card: #121b2d;
+  --card-foreground: #e6ebf5;
+  --popover: #121b2d;
+  --popover-foreground: #e6ebf5;
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
+  --secondary: #1b2740;
+  --secondary-foreground: #e6ebf5;
+  --muted: #1b2740;
+  --muted-foreground: #8fa0bb;
+  --accent: #1b2740;
+  --accent-foreground: #e6ebf5;
+  --destructive: #ef4444;
+  --border: rgb(255 255 255 / 0.12);
+  --input: rgb(255 255 255 / 0.15);
+  --ring: #818cf8;
+  --chart-1: #6366f1;
+  --chart-2: #48bb78;
+  --chart-3: #ffc107;
+  --chart-4: #f59e0b;
+  --chart-5: #2d5aa0;
+  --sidebar: #121b2d;
+  --sidebar-foreground: #e6ebf5;
+  --sidebar-primary: #6366f1;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1b2740;
+  --sidebar-accent-foreground: #e6ebf5;
+  --sidebar-border: rgb(255 255 255 / 0.12);
+  --sidebar-ring: #818cf8;
 }
 
 body {
@@ -83,3 +119,90 @@ body {
 .stagger-children > *:nth-child(4) { animation-delay: 150ms; }
 .stagger-children > *:nth-child(5) { animation-delay: 200ms; }
 .stagger-children > *:nth-child(6) { animation-delay: 250ms; }
+
+/* ===== shadcn-vue: theme variable → Tailwind color mappings ===== */
+@theme inline {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  /* shadcn-vue theme variables mapped to the app's light palette. */
+  --background: #f4f6f9;
+  --foreground: #0a1931;
+  --card: #ffffff;
+  --card-foreground: #0a1931;
+  --popover: #ffffff;
+  --popover-foreground: #0a1931;
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f6;
+  --secondary-foreground: #0a1931;
+  --muted: #eef1f6;
+  --muted-foreground: #1a2f52;
+  --accent: #eef1f6;
+  --accent-foreground: #0a1931;
+  --destructive: #dc2626;
+  --border: rgb(10 25 49 / 0.1);
+  --input: rgb(10 25 49 / 0.15);
+  --ring: #6366f1;
+  --chart-1: #4f46e5;
+  --chart-2: #48bb78;
+  --chart-3: #ffc107;
+  --chart-4: #f59e0b;
+  --chart-5: #2d5aa0;
+  --radius: 0.9rem;
+  --sidebar: #0a1931;
+  --sidebar-foreground: #e6ebf5;
+  --sidebar-primary: #4f46e5;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a2f52;
+  --sidebar-accent-foreground: #e6ebf5;
+  --sidebar-border: rgb(255 255 255 / 0.1);
+  --sidebar-ring: #6366f1;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    @apply font-sans;
+  }
+}
