@@ -17,6 +17,18 @@ export interface SiapProfile {
   sksTempuh?: number;
   sksLulus?: number;
   ipk?: number;
+  // Biodata detail (from #tabmhs_profile tab)
+  fotoUrl?: string;
+  tempatLahir?: string;
+  tanggalLahir?: string;
+  nik?: string;
+  namaIbu?: string;
+  kodeKewarganegaraan?: string;
+  nomorHp?: string;
+  emailSso?: string;
+  emailPribadi?: string;
+  alamatAsal?: string;
+  alamatSekarang?: string;
 }
 
 export interface SiapIrs {
@@ -108,6 +120,25 @@ export class SiapService {
     return match ? match[1].trim() : undefined;
   }
 
+  /**
+   * Like pickProfileValue, but keeps line breaks (the SIAP address rows use
+   * <br> between lines). <br> becomes '\n'-equivalent, remaining tags strip,
+   * and whitespace collapses so a multiline address becomes readable single
+   * spaces.
+   */
+  private pickProfileValueHtml(html: string, label: string): string | undefined {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = html.match(
+      new RegExp(`<b>${escaped}<\\/b>:<\\/div>\\s*<div class="col-sm-9">([\\s\\S]*?)<\\/div>`),
+    );
+    if (!match) return undefined;
+    return match[1]
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   /** The `#tabmhs_profile` section of the dashboard (server-rendered). */
   private profileSection(html: string): string {
     return html.match(/id="tabmhs_profile"([\s\S]*)/)?.[1] ?? html;
@@ -162,6 +193,12 @@ export class SiapService {
     // Optional summary fields (IPK / SKS) — parsed when present on the page.
     const ipk = this.parseNumber(html, /IPK[^0-9]*([0-9]+(?:[.,][0-9]+)?)/i);
 
+    // Biodata detail (from #tabmhs_profile). <img src="..." alt="Foto"> and the
+    // nama-ibu value live behind a click-to-show anchor:
+    // <span id="web_span_mn" style="display:none;">IBU UJI</span>
+    const fotoUrl = tab.match(/<img src="([^"]+)" alt="Foto"/)?.[1] ?? undefined;
+    const namaIbu = tab.match(/id="web_span_mn"[^>]*>([^<]+)</)?.[1]?.trim() ?? undefined;
+
     return {
       nama: this.pickProfileValue(tab, 'Nama Lengkap') ?? '',
       nim: this.pickProfileValue(tab, 'NIM') ?? '',
@@ -172,6 +209,17 @@ export class SiapService {
       semesterBerjalan,
       status: status || 'aktif',
       ...(ipk != null ? { ipk } : {}),
+      fotoUrl,
+      tempatLahir: this.pickProfileValue(tab, 'Tempat lahir'),
+      tanggalLahir: this.pickProfileValue(tab, 'Tanggal lahir'),
+      nik: this.pickProfileValue(tab, 'NIK'),
+      namaIbu,
+      kodeKewarganegaraan: this.pickProfileValue(tab, 'Kode kewarganegaraan'),
+      nomorHp: this.pickProfileValue(tab, 'Nomor HP'),
+      emailSso: this.pickProfileValue(tab, 'Email SSO'),
+      emailPribadi: this.pickProfileValue(tab, 'Email pribadi'),
+      alamatAsal: this.pickProfileValueHtml(tab, 'Alamat Asal'),
+      alamatSekarang: this.pickProfileValueHtml(tab, 'Alamat Sekarang'),
     };
   }
 

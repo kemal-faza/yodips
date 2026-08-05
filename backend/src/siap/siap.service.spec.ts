@@ -90,6 +90,18 @@ describe('SiapService', () => {
       expect(profile.angkatan).toBe('2024');
       expect(profile.status).toBe('AKTIF');
       expect(profile.semesterBerjalan).toBe('2026/2027 Ganjil');
+      // Biodata detail fields (Task 1)
+      expect(profile.fotoUrl).toContain('disk.undip.ac.id');
+      expect(profile.tempatLahir).toBe('KOTA UJI');
+      expect(profile.tanggalLahir).toBe('01 Januari 2000');
+      expect(profile.nik).toBe('000000 000000 0000');
+      expect(profile.namaIbu).toBe('IBU UJI');
+      expect(profile.kodeKewarganegaraan).toBe('ID');
+      expect(profile.nomorHp).toBe('080000000000');
+      expect(profile.emailSso).toBe('anonim.sso@students.undip.ac.id');
+      expect(profile.emailPribadi).toBe('anonim.pribadi@contoh.test');
+      expect(profile.alamatAsal).toContain('Jalan Uji');
+      expect(profile.alamatSekarang).toContain('Uji');
     });
   });
 
