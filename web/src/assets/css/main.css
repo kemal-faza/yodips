@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -8,9 +9,49 @@
   --color-danger: #dc2626;
   --color-warn: #f59e0b;
   --color-success: #16a34a;
+  --color-siap-from: #1e3a5f;
+  --color-siap-to: #2d5aa0;
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
+  --color-sso-green: #48bb78;
+  --color-sso-green-dark: #38a169;
   --radius-card: 0.9rem;
+  --font-sans: 'Inter', system-ui, sans-serif;
 }
 
 body {
   @apply bg-canvas text-navy antialiased;
+  font-family: var(--font-sans);
 }
+
+/* ===== Animations ===== */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-fade-in-up { animation: fade-in-up 0.4s ease-out both; }
+.animate-slide-in-right { animation: slide-in-right 0.3s ease-out both; }
+
+/* ===== Card & glass ===== */
+.card-hover { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgb(10 25 49 / 0.08); }
+
+.glass-card { background: rgb(255 255 255 / 0.9); backdrop-filter: blur(8px); }
+
+/* Stagger children: delays 0–250ms, applied to direct children */
+.stagger-children > * { animation: fade-in-up 0.4s ease-out both; }
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 50ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 100ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 150ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 200ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 250ms; }
