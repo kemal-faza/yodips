@@ -13,6 +13,7 @@ import type { SiapIrs, SiapKhs, SiapProfile } from '../types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const props = defineProps<{ profile: SiapProfile | null; hasSiap: boolean }>();
@@ -65,24 +66,18 @@ onUnmounted(() => clearInterval(timer!));
   <div v-else class="space-y-6">
     <div class="flex items-center justify-between">
       <span class="text-xs font-medium uppercase tracking-wide text-ink-muted">Dasbor</span>
-      <Button
-        variant="outline"
-        class="rounded-full bg-navy px-4 py-1.5 text-sm font-medium text-white hover:bg-navy-light"
-        @click="load"
-      >
-        Segarkan
-      </Button>
+      <Button size="sm" @click="load">Segarkan</Button>
     </div>
 
     <div v-if="loading" class="space-y-3">
       <Skeleton v-for="i in 3" :key="i" class="h-24 rounded-card" />
     </div>
 
-    <div v-else-if="error" class="rounded-2xl bg-danger/10 p-4 text-danger">{{ error }}</div>
+    <Alert v-else-if="error" variant="destructive" class="bg-danger/10 p-4"><AlertDescription>{{ error }}</AlertDescription></Alert>
 
     <template v-else>
       <section class="grid gap-4 sm:grid-cols-2">
-        <Card class="rounded-2xl border-line bg-surface">
+        <Card>
           <CardContent class="p-5">
             <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">Status Akademik</h2>
             <dl class="mt-3 space-y-2 text-sm">
@@ -106,7 +101,7 @@ onUnmounted(() => clearInterval(timer!));
           </CardContent>
         </Card>
 
-        <Card class="rounded-2xl border-line bg-surface">
+        <Card>
           <CardContent class="p-5">
             <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">Prestasi</h2>
             <div class="mt-3 flex items-end gap-6">
@@ -123,7 +118,7 @@ onUnmounted(() => clearInterval(timer!));
         </Card>
       </section>
 
-      <Card class="rounded-2xl border-line bg-surface">
+      <Card>
         <CardContent class="p-5">
           <h2 class="mb-2 font-semibold text-ink">IRS — {{ irs?.semester || 'Semester Aktif' }}</h2>
           <p class="mb-2 text-sm text-ink-muted">Total SKS: {{ irs?.totalSks ?? 0 }}</p>
@@ -137,7 +132,7 @@ onUnmounted(() => clearInterval(timer!));
         </CardContent>
       </Card>
 
-      <Card class="rounded-2xl border-line bg-surface">
+      <Card>
         <CardContent class="p-5">
           <h2 class="mb-2 font-semibold text-ink">KHS — IPK {{ khs?.ipk?.toFixed(2) ?? '—' }}</h2>
           <div v-for="s in khs?.semesters ?? []" :key="s.semester" class="mb-3">
@@ -151,7 +146,7 @@ onUnmounted(() => clearInterval(timer!));
           </div>
         </CardContent>
       </Card>
-      <Card class="rounded-2xl border-line bg-surface">
+      <Card>
         <CardContent class="p-5">
           <h2 class="mb-2 font-semibold text-ink">Quick Link</h2>
           <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -161,7 +156,7 @@ onUnmounted(() => clearInterval(timer!));
               class="rounded-xl border border-line bg-canvas px-3 py-2 text-sm text-ink-muted"
             >
               {{ q }}
-              <Badge class="ml-1 rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-semibold text-ink">
+              <Badge class="ml-1 bg-gold/20 text-ink">
                 Coming Soon
               </Badge>
             </div>
