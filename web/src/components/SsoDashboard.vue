@@ -32,13 +32,6 @@ const services: Service[] = [
   { key: 'microsoft', name: 'Microsoft 365', desc: 'Email dan aplikasi', monogram: 'M', ready: false },
 ];
 
-const news = [
-  { title: 'Pengumuman Jadwal UTS', date: '12 Agu 2026' },
-  { title: 'Pendaftaran Beasiswa', date: '18 Agu 2026' },
-  { title: 'Workshop Karya Ilmiah', date: '25 Agu 2026' },
-  { title: 'Seminar Nasional', date: '2 Sep 2026' },
-];
-
 function openService(s: Service) {
   if (s.ready && s.view) emit('navigate', s.view);
 }
@@ -48,11 +41,11 @@ function openService(s: Service) {
   <div class="stagger-children space-y-6">
     <div
       v-if="!dismissed"
-      class="flex items-start justify-between gap-4 rounded-2xl bg-gradient-to-r from-sso-green to-sso-green-dark p-6 text-white shadow"
+      class="flex items-start justify-between gap-4 rounded-xl bg-sso-green p-5 text-white shadow-sm"
     >
       <div>
-        <h1 class="text-xl font-bold">Selamat datang di Undip SSO</h1>
-        <p class="mt-1 text-sm text-white/90">
+        <h1 class="text-lg font-bold">Selamat datang di Undip SSO</h1>
+        <p class="mt-0.5 text-sm text-white/80">
           Akses semua layanan akademik Undip dari satu tempat.
         </p>
       </div>
@@ -79,34 +72,17 @@ function openService(s: Service) {
           @click="openService(s)"
           @keydown.enter="openService(s)"
         >
-          <CardContent class="p-5">
-            <div class="flex items-start justify-between">
-              <div
-                class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-lg font-bold text-primary-600 dark:bg-primary-500/15 dark:text-primary-400"
-              >
-                {{ s.monogram }}
-              </div>
-              <Badge
-                v-if="!s.ready"
-                class="bg-gold/20 text-ink"
-              >
-                Coming Soon
-              </Badge>
+          <CardContent class="flex items-center gap-3 p-4">
+            <span
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-sm font-bold text-primary-600 dark:bg-primary-500/15 dark:text-primary-400"
+            >
+              {{ s.monogram }}
+            </span>
+            <div class="min-w-0 flex-1">
+              <p class="truncate font-medium text-ink">{{ s.name }}</p>
+              <p class="truncate text-xs text-ink-muted">{{ s.desc }}</p>
             </div>
-            <p class="mt-3 font-semibold text-ink">{{ s.name }}</p>
-            <p class="mt-0.5 text-xs text-ink-muted">{{ s.desc }}</p>
-          </CardContent>
-        </Card>
-      </div>
-    </section>
-
-    <section>
-      <h2 class="mb-3 text-lg font-bold text-ink">Berita</h2>
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card v-for="n in news" :key="n.title">
-          <CardContent>
-            <p class="text-xs font-medium text-primary-600 dark:text-primary-400">{{ n.date }}</p>
-            <p class="mt-1 font-semibold text-ink">{{ n.title }}</p>
+            <Badge v-if="!s.ready" class="bg-gold/20 text-ink">Coming Soon</Badge>
           </CardContent>
         </Card>
       </div>
