@@ -15,7 +15,7 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
 </script>
 
 <template>
-  <header class="bg-gradient-to-r from-siap-from to-siap-to text-white">
+  <header class="bg-navy text-white shadow-sm">
     <div class="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4">
       <div class="flex items-center gap-3">
         <Button
