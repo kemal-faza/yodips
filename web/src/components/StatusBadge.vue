@@ -17,7 +17,7 @@ const cls = computed(() => {
 </script>
 
 <template>
-  <Badge class="rounded-full px-3 py-1 text-xs" :class="cls">
+  <Badge :class="cls">
     {{ label }}
   </Badge>
 </template>
