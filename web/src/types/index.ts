@@ -37,6 +37,33 @@ export interface Course {
   fullname: string;
   shortname: string;
   idnumber: string;
+  semester?: string | null;
+}
+
+export type FileType = 'pdf' | 'pptx' | 'ppt' | 'doc' | 'docx' | 'xls' | 'xlsx' | 'other';
+
+export type ContentItemKind = 'file' | 'assign' | 'quiz' | 'url' | 'forum' | 'page' | 'other';
+
+export interface CourseContentItem {
+  kind: ContentItemKind;
+  name: string;
+  url: string;
+  fileType?: FileType;
+  cmid?: number;
+  assignmentId?: number;
+  duedate?: number;
+}
+
+export interface CourseSection {
+  id: number;
+  label: string;
+  dateRange?: string;
+  items: CourseContentItem[];
+}
+
+export interface KulonCourseContent {
+  courseId: number;
+  sections: CourseSection[];
 }
 
 export interface User {

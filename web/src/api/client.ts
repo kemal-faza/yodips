@@ -4,6 +4,7 @@ import type {
   AssignmentDetail,
   CaptureResult,
   Course,
+  KulonCourseContent,
   SiapIrs,
   SiapKhs,
   SiapProfile,
@@ -63,6 +64,11 @@ export async function getAssignments(): Promise<Assignment[]> {
 
 export async function getCourses(): Promise<Course[]> {
   const { data } = await apiClient.get<Course[]>('/api/kulon/courses');
+  return data;
+}
+
+export async function getCourseContent(courseId: number): Promise<KulonCourseContent> {
+  const { data } = await apiClient.get<KulonCourseContent>(`/api/kulon/courses/${courseId}/content`);
   return data;
 }
 

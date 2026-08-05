@@ -1,0 +1,47 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { setActivePinia, createPinia } from 'pinia';
+import { useKulonStore } from './kulon';
+import * as api from '../api/client';
+
+vi.mock('../api/client', () => ({
+  getAssignments: vi.fn(),
+  getCourses: vi.fn(),
+  getCourseContent: vi.fn(),
+}));
+
+describe('KulonStore', () => {
+  beforeEach(() => { setActivePinia(createPinia()); vi.clearAllMocks(); });
+
+  it('fetches assignments lazily and caches', async () => {
+    const store = useKulonStore();
+    (api.getAssignments as any).mockResolvedValue([{ id: 1 }]);
+    await store.ensureAssignments();
+    await store.ensureAssignments();
+    expect(api.getAssignments).toHaveBeenCalledTimes(1);
+    expect(store.assignments).toEqual([{ id: 1 }]);
+  });
+
+  it('fetches courses lazily', async () => {
+    const store = useKulonStore();
+    (api.getCourses as any).mockResolvedValue([{ id: 2 }]);
+    await store.ensureCourses();
+    expect(api.getCourses).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches content per course', async () => {
+    const store = useKulonStore();
+    (api.getCourseContent as any).mockResolvedValue({ courseId: 9, sections: [] });
+    await store.ensureContent(9);
+    await store.ensureContent(9);
+    expect(api.getCourseContent).toHaveBeenCalledTimes(1);
+    expect(store.contents.get(9)).toEqual({ courseId: 9, sections: [] });
+  });
+
+  it('reset clears caches', async () => {
+    const store = useKulonStore();
+    (api.getAssignments as any).mockResolvedValue([]);
+    await store.ensureAssignments();
+    store.reset();
+    expect(store.assignmentsLoaded).toBe(false);
+  });
+});
