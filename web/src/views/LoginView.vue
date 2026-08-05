@@ -28,8 +28,8 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-canvas px-4">
-    <div class="w-full max-w-md rounded-card bg-white p-8 shadow-sm">
+  <div class="flex min-h-screen items-center justify-center bg-gradient-to-br from-siap-from via-siap-to to-primary-700 px-4">
+    <div class="glass-card animate-fade-in-up w-full max-w-md rounded-2xl border border-white/20 p-8 shadow-2xl">
       <h1 class="text-2xl font-bold text-navy">Undip SSO Aggregator</h1>
       <p class="mt-2 text-sm text-navy-light">
         Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.
