@@ -33,7 +33,7 @@ function initial(name?: string): string {
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-2xl bg-gradient-to-r from-siap-from to-siap-to text-white shadow-lg [--foreground:white]">
+  <div class="overflow-hidden rounded-2xl bg-navy text-white shadow-sm [--foreground:white]">
     <div class="flex items-center gap-4 p-6">
       <Avatar class="size-20 border-2 border-white/40 bg-white/20 text-white">
         <AvatarImage v-if="profile?.fotoUrl" :src="profile.fotoUrl" alt="Foto" />
