@@ -48,6 +48,12 @@ async function handleLogin() {
       </template>
 
       <template v-else>
+        <p
+          v-if="proxy().$route?.query?.reason === 'incomplete'"
+          class="mt-4 rounded bg-warn/10 p-3 text-sm text-navy"
+        >
+          Session login belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
+        </p>
         <button
           class="mt-6 w-full rounded-full bg-navy py-3 font-semibold text-white transition hover:bg-navy-light disabled:opacity-50"
           :disabled="store.checking"

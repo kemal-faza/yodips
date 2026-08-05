@@ -42,7 +42,11 @@ export interface Course {
 export interface User {
   sub: string;
   authenticated: boolean;
+  hasSso?: boolean;
+  hasMicrosoft?: boolean;
+  hasKulon?: boolean;
   hasSiap?: boolean;
+  complete?: boolean;
 }
 
 export interface CaptureResult {

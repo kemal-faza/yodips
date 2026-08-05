@@ -52,19 +52,49 @@ describe('auth store', () => {
     expect(localStorage.getItem('sso_token')).toBe('jwt-handoff');
   });
 
-  it('fetchMe sets hasSiap from the me response', async () => {
-    (api.me as any).mockResolvedValue({ sub: 'n', authenticated: true, hasSiap: true });
+  it('fetchMe returns ok and sets flags when the session is complete', async () => {
+    (api.me as any).mockResolvedValue({
+      sub: 'n', authenticated: true, hasSso: true, hasMicrosoft: false,
+      hasKulon: true, hasSiap: true, complete: true,
+    });
     const store = useAuthStore();
-    await store.fetchMe();
+    const status = await store.fetchMe();
+    expect(status).toBe('ok');
+    expect(store.user).toEqual(expect.objectContaining({ sub: 'n', complete: true }));
     expect(store.hasSiap).toBe(true);
-    expect(store.user).toEqual({ sub: 'n', authenticated: true, hasSiap: true });
+    expect(store.hasKulon).toBe(true);
   });
 
-  it('fetchMe defaults hasSiap to false when absent', async () => {
-    (api.me as any).mockResolvedValue({ sub: 'n', authenticated: true });
+  it('fetchMe returns incomplete, wipes the token and does not keep user on incomplete session', async () => {
+    localStorage.setItem('sso_token', 'jwt-x');
+    (api.me as any).mockResolvedValue({
+      sub: 'n', authenticated: true, hasSso: false, hasMicrosoft: false,
+      hasKulon: false, hasSiap: false, complete: false,
+    });
     const store = useAuthStore();
-    await store.fetchMe();
-    expect(store.hasSiap).toBe(false);
+    store.token = 'jwt-x';
+    const status = await store.fetchMe();
+    expect(status).toBe('incomplete');
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+  });
+
+  it('fetchMe returns error and keeps the token on network failure', async () => {
+    localStorage.setItem('sso_token', 'jwt-x');
+    (api.me as any).mockRejectedValue(new Error('Network Error')); // no response.status
+    const store = useAuthStore();
+    store.token = 'jwt-x';
+    const status = await store.fetchMe();
+    expect(status).toBe('error');
+    expect(store.token).toBe('jwt-x');
+    expect(localStorage.getItem('sso_token')).toBe('jwt-x');
+  });
+
+  it('fetchMe returns invalid on 401', async () => {
+    (api.me as any).mockRejectedValue({ response: { status: 401 } });
+    const store = useAuthStore();
+    const status = await store.fetchMe();
+    expect(status).toBe('invalid');
   });
 
   it('isHandoffMode reflects VITE_LOGIN_MODE', () => {

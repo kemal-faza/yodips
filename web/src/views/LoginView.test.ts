@@ -64,4 +64,13 @@ describe('LoginView', () => {
     });
     expect(w.text()).toContain('jalankan tool capture');
   });
+
+  it('shows an incomplete-session notice when reason=incomplete', () => {
+    const store = { login: vi.fn(), checking: false, error: null };
+    (useAuthStore as any).mockReturnValue(store);
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: { reason: 'incomplete' } }, $router: { push: vi.fn() } } },
+    });
+    expect(w.text()).toContain('belum lengkap');
+  });
 });

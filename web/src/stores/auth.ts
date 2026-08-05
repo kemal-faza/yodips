@@ -11,6 +11,7 @@ export const useAuthStore = defineStore('auth', {
     checking: false, // "memeriksa session" / "sedang login" phase
     error: null as string | null,
     hasSiap: false, // SIAP session validity (from GET /me)
+    hasKulon: false, // Kulon session validity (from GET /me)
   }),
   getters: {
     isAuthenticated: (state) => !!state.token,
@@ -25,6 +26,7 @@ export const useAuthStore = defineStore('auth', {
         this.token = result.accessToken;
         localStorage.setItem(TOKEN_KEY, result.accessToken);
         this.hasSiap = result.hasSiap ?? false;
+        this.hasKulon = result.hasKulon ?? false;
         // If the session was reused, no browser window was opened.
         if (result.reused) {
           this.error = null;
@@ -40,12 +42,21 @@ export const useAuthStore = defineStore('auth', {
         this.checking = false;
       }
     },
-    async fetchMe() {
+    async fetchMe(): Promise<'ok' | 'incomplete' | 'invalid' | 'error'> {
       try {
         this.user = await me();
         this.hasSiap = this.user?.hasSiap ?? false;
-      } catch {
-        /* 401 handled by interceptor */
+        this.hasKulon = this.user?.hasKulon ?? false;
+        if (this.user && this.user.complete === false) {
+          this.logout();
+          return 'incomplete';
+        }
+        return 'ok';
+      } catch (e: any) {
+        // 401 = invalid JWT: the axios interceptor wipes the token and
+        // redirects to /login. Other failures (network/5xx) must NOT bounce —
+        // otherwise a downed backend causes a login loop.
+        return e?.response?.status === 401 ? 'invalid' : 'error';
       }
     },
     finishHandoff(token: string) {

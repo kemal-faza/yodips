@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory, type RouterHistory, type Router } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 
+let booted = false;
+
 export function buildRouter(history: RouterHistory): Router {
   const router = createRouter({
     history,
@@ -17,6 +19,20 @@ export function buildRouter(history: RouterHistory): Router {
     }
     if (to.name === 'login' && store.isAuthenticated) {
       return { name: 'dashboard' };
+    }
+    // Boot gate: validate the server-side session exactly once on the first
+    // protected navigation. 'incomplete' => clear token + show login with a
+    // reason; 'invalid' (401, interceptor already redirecting) => go to login
+    // idempotently; 'error' (backend down) => let the SPA render (no loop).
+    if (to.name !== 'login' && store.isAuthenticated && !booted) {
+      booted = true;
+      const status = await store.fetchMe();
+      if (status === 'incomplete') {
+        return { name: 'login', query: { reason: 'incomplete' } };
+      }
+      if (status === 'invalid') {
+        return { name: 'login' };
+      }
     }
     return true;
   });
