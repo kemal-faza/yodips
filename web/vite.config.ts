@@ -21,5 +21,6 @@ export default defineConfig({
     // cold-loading it in a jsdom worker can exceed the default 5s under the
     // full parallel suite, so allow more time.
     testTimeout: 20000,
+    setupFiles: ['./src/test/setup.ts'],
   },
 });
