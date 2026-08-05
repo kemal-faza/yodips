@@ -214,6 +214,16 @@ export class AuthService {
 
   async me(user: any) {
     const session = await this.sessionStore.get(user?.sub);
-    return { sub: user?.sub, authenticated: true, hasSiap: !!session?.siapCookie };
+    const present = !!session;
+    return {
+      sub: user?.sub,
+      authenticated: present,
+      hasSso: present ? !!session.ssoCookie : false,
+      hasMicrosoft: present ? !!session.microsoftCookie : false,
+      hasKulon: present ? !!session.kulonCookie : false,
+      hasSiap: present ? !!session.siapCookie : false,
+      complete:
+        present && !!session.ssoCookie && !!session.kulonCookie && !!session.siapCookie,
+    };
   }
 }

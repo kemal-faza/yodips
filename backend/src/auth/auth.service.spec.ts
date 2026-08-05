@@ -278,9 +278,12 @@ describe('AuthService.handleSessionHandoff', () => {
 });
 
 describe('AuthService.me', () => {
-  it('returns hasSiap true when the stored session has a siapCookie', async () => {
+  it('reports complete when the session has SSO, Kulon and SIAP cookies', async () => {
     mockSessionStore._map.set('24060121130000', {
       identity: '24060121130000',
+      ssoCookie: 'sso=x',
+      microsoftCookie: '',
+      kulonCookie: 'kulon=y',
       siapCookie: 'ci_session_x=K',
       capturedAt: Date.now(),
     });
@@ -288,17 +291,33 @@ describe('AuthService.me', () => {
     const res = await svc.me({ sub: '24060121130000' });
     expect(res.sub).toBe('24060121130000');
     expect(res.authenticated).toBe(true);
+    expect(res.hasSso).toBe(true);
+    expect(res.hasMicrosoft).toBe(false);
+    expect(res.hasKulon).toBe(true);
     expect(res.hasSiap).toBe(true);
+    expect(res.complete).toBe(true);
   });
 
-  it('returns hasSiap false when the stored session lacks a siapCookie', async () => {
+  it('reports complete false when a cookie is missing', async () => {
     mockSessionStore._map.set('24060121130000', {
       identity: '24060121130000',
-      siapCookie: '',
+      siapCookie: 'ci_session_x=K', // no sso, no kulon
       capturedAt: Date.now(),
     });
     const svc = makeService();
     const res = await svc.me({ sub: '24060121130000' });
+    expect(res.hasSiap).toBe(true);
+    expect(res.hasKulon).toBe(false);
+    expect(res.complete).toBe(false);
+  });
+
+  it('reports unauthenticated + incomplete when no session exists', async () => {
+    const svc = makeService();
+    const res = await svc.me({ sub: 'unknown-user' });
+    expect(res.authenticated).toBe(false);
+    expect(res.hasSso).toBe(false);
+    expect(res.hasKulon).toBe(false);
     expect(res.hasSiap).toBe(false);
+    expect(res.complete).toBe(false);
   });
 });
