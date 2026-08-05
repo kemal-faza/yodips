@@ -55,29 +55,7 @@ describe('deriveSectionLabel', () => {
   });
 });
 
-describe('extractAssignId', () => {
-  let svc: KulonService;
-  beforeEach(() => { svc = new KulonService(); });
 
-  it('extracts from hidden input name="assignid"', () => {
-    const html = '<form><input type="hidden" name="assignid" value="42"></form>';
-    expect((svc as any).extractAssignId(html, 0)).toBe(42);
-  });
-
-  it('extracts from data-assignmentid attribute', () => {
-    const html = '<div data-assignmentid="43">Tugas</div>';
-    expect((svc as any).extractAssignId(html, 0)).toBe(43);
-  });
-
-  it('extracts from M.mod_assign.init JS', () => {
-    const html = 'M.mod_assign.init({"assignmentid":44,...});';
-    expect((svc as any).extractAssignId(html, 0)).toBe(44);
-  });
-
-  it('falls back to passed assignmentId when no marker found', () => {
-    expect((svc as any).extractAssignId('<html>no marker</html>', 99)).toBe(99);
-  });
-});
 
 describe('getCourseContent (HTML fixture)', () => {
   it('parses real Kulon HTML into sections/items', async () => {
@@ -270,85 +248,89 @@ describe('KulonService', () => {
     expect(assignments[0].courseModuleId).toBe(0);
   });
 
-  it('fetches assignment detail from page and submission status', async () => {
+  it('fetches assignment detail and parses a graded submission from HTML', async () => {
     const pageHtml =
-      '<header id="page-header"><div class="page-context-header"><h1>Tugas Kelompok I</h1></div></header><div class="activity-description" id="intro"><div class="box py-3 generalbox boxaligncenter"><div class="no-overflow"><p>Kerjakan laporan kelompok.</p></div></div></div><div class="fileuploadsubmission"><a target="_blank" href="https://kulon2.undip.ac.id/pluginfile.php/498185/assignsubmission_file/submission_files/659669/laporan.pdf">laporan.pdf</a></div>';
-    const submissionPayload = {
-      status: 'submitted',
-      lastattempt: {
-        submission: { timemodified: 1742000000 },
-        submissionstatus: 'submitted',
-        graded: true,
-      },
-      feedback: { grade: { grade: '85.0', maxmark: 100 } },
-    };
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: true,
-        text: async () => pageHtml,
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ error: false, data: submissionPayload }],
-      });
-    const detail = await svc.getAssignmentDetail(
-      'session-cookie',
-      'sesskey',
-      42,
-      777,
-    );
+      '<header id="page-header"><div class="page-context-header"><h1>Tugas Kelompok I</h1></div></header>' +
+      '<div class="activity-description" id="intro"><div class="box py-3 generalbox boxaligncenter"><div class="no-overflow"><p>Kerjakan laporan kelompok.</p></div></div></div>' +
+      '<div class="submissionstatustable"><h3>Submission status</h3><div class="box py-3 boxaligncenter submissionsummarytable">' +
+      '<div class="table-responsive"><table class="generaltable table-bordered"><tbody>' +
+      '<tr><th class="cell c0" scope="row">Submission status</th><td class="submissionstatussubmitted cell c1 lastcol">Submitted for grading</td></tr>' +
+      '<tr><th class="cell c0" scope="row">Grading status</th><td class="submissiongraded cell c1 lastcol">Graded</td></tr>' +
+      '<tr><th class="cell c0" scope="row">Grade</th><td class="cell c1 lastcol">85.00 / 100.00</td></tr>' +
+      '<tr><th class="cell c0" scope="row">Last modified</th><td class="cell c1 lastcol">Thursday, 7 May 2026, 11:50 PM</td></tr>' +
+      '</tbody></table></div></div></div>';
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      text: async () => pageHtml,
+    });
+    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
     expect(detail.assignmentId).toBe(42);
     expect(detail.name).toBe('Tugas Kelompok I');
     expect(detail.descriptionHtml).toContain('Kerjakan laporan kelompok.');
-    expect(detail.files[0].name).toBe('laporan.pdf');
-    expect(detail.files[0].url).toContain('/pluginfile.php/498185/');
     expect(detail.submission.status).toBe('graded');
     expect(detail.submission.grade).toBe(85);
     expect(detail.submission.maxGrade).toBe(100);
-    expect(detail.submission.submittedAt).toBe(1742000000);
+    expect(detail.submission.submittedAt).toBe(
+      Math.floor(new Date(2026, 4, 7, 23, 50).getTime() / 1000),
+    );
     expect(detail.kulonUrl).toContain('view.php?id=777');
   });
 
-  it('uses the assignid extracted from the page when caller only has cmid', async () => {
-    // Course-content path: caller passes assignmentId=0 (only knows cmid).
-    // The page HTML embeds the real assign instance id -> must be used for AJAX.
+  it('parses submitted + not graded submission (verified live shape)', async () => {
     const pageHtml =
-      '<form id="submitform"><input type="hidden" name="assignid" value="500"></form><div id="intro"><div class="no-overflow"><p>x</p></div></div>';
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: true,
-        text: async () => pageHtml,
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ error: false, data: {} }],
-      });
-    await svc.getAssignmentDetail('session-cookie', 'sesskey', 0, 777);
-    // Second fetch = AJAX POST ke lib/ajax/service.php dengan assignid hasil ekstraksi.
-    const ajaxCall = (global.fetch as jest.Mock).mock.calls[1];
-    expect(ajaxCall[0]).toContain('service.php');
-    const body = JSON.parse(ajaxCall[1].body);
-    expect(body[0].args).toEqual({ assignid: 500 });
+      '<header id="page-header"><h1>Task</h1></header>' +
+      '<div class="submissionstatustable"><h3>Submission status</h3><div class="box py-3 boxaligncenter submissionsummarytable">' +
+      '<div class="table-responsive"><table class="generaltable table-bordered"><tbody>' +
+      '<tr><th class="cell c0" scope="row">Submission status</th><td class="submissionstatussubmitted cell c1 lastcol">Submitted for grading</td></tr>' +
+      '<tr><th class="cell c0" scope="row">Grading status</th><td class="submissionnotgraded cell c1 lastcol">Not graded</td></tr>' +
+      '<tr><th class="cell c0" scope="row">Last modified</th><td class="cell c1 lastcol">Thursday, 7 May 2026, 11:50 PM</td></tr>' +
+      '<tr><th class="cell c0" scope="row">File submissions</th><td class="cell c1 lastcol"><div class="fileuploadsubmission"><a href="https://kulon2.undip.ac.id/pluginfile.php/484704/assignsubmission_file/submission_files/595020/x.pdf">x.pdf</a></div></td></tr>' +
+      '</tbody></table></div></div></div>';
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      text: async () => pageHtml,
+    });
+    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
+    expect(detail.submission.status).toBe('submitted');
+    expect(detail.submission.grade).toBeNull();
+    expect(detail.submission.maxGrade).toBeNull();
+    expect(detail.submission.submittedAt).toBe(
+      Math.floor(new Date(2026, 4, 7, 23, 50).getTime() / 1000),
+    );
+    expect(detail.files.some((f) => f.name === 'x.pdf')).toBe(true);
   });
 
-  it('returns not_submitted when ajax submission data is empty', async () => {
+  it('returns not_submitted when submission status says not submitted', async () => {
     const pageHtml =
-      '<header id="page-header"><h1>Task</h1></header><div id="intro"><div class="no-overflow"></div></div>';
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({ ok: true, text: async () => pageHtml })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ error: false, data: {} }],
-      });
-    const detail = await svc.getAssignmentDetail(
-      'session-cookie',
-      'sesskey',
-      42,
-      777,
-    );
+      '<header id="page-header"><h1>Task</h1></header>' +
+      '<div class="activity-description" id="intro"><div class="no-overflow"></div></div>' +
+      '<div class="submissionstatustable"><h3>Submission status</h3><div class="box py-3 boxaligncenter submissionsummarytable">' +
+      '<div class="table-responsive"><table class="generaltable table-bordered"><tbody>' +
+      '<tr><th class="cell c0" scope="row">Submission status</th><td class="submissionstatusnotsubmitted cell c1 lastcol">Not submitted</td></tr>' +
+      '<tr><th class="cell c0" scope="row">Grading status</th><td class="submissionnotgraded cell c1 lastcol">Not graded</td></tr>' +
+      '</tbody></table></div></div></div>';
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      text: async () => pageHtml,
+    });
+    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
     expect(detail.name).toBe('Task');
     expect(detail.descriptionHtml).toBe('');
     expect(detail.submission.status).toBe('not_submitted');
+    expect(detail.submission.grade).toBeNull();
+    expect(detail.submission.maxGrade).toBeNull();
+    expect(detail.submission.submittedAt).toBeUndefined();
+  });
+
+  it('returns unknown submission when page has no submissionstatustable', async () => {
+    const pageHtml =
+      '<header id="page-header"><h1>Task</h1></header><div id="intro"><div class="no-overflow"></div></div>';
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      text: async () => pageHtml,
+    });
+    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
+    expect(detail.submission.status).toBe('unknown');
     expect(detail.submission.grade).toBeNull();
     expect(detail.submission.maxGrade).toBeNull();
   });
@@ -359,7 +341,7 @@ describe('KulonService', () => {
       status: 404,
     });
     await expect(
-      svc.getAssignmentDetail('session-cookie', 'sesskey', 42, 777),
+      svc.getAssignmentDetail('session-cookie', 42, 777),
     ).rejects.toThrow('ASSIGNMENT_NOT_FOUND');
   });
 

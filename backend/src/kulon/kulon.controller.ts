@@ -54,11 +54,10 @@ export class KulonController {
         HttpStatus.NOT_FOUND,
       );
     }
-    const sesskey = await this.getSesskey(session.kulonCookie);
+    await this.getSesskey(session.kulonCookie);
     try {
       return await this.kulonService.getAssignmentDetail(
         session.kulonCookie,
-        sesskey,
         assignmentId,
         courseModuleId,
       );

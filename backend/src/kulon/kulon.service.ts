@@ -313,7 +313,6 @@ export class KulonService {
 
   async getAssignmentDetail(
     sessionCookie: string,
-    sesskey: string,
     assignmentId: number,
     cmid: number,
   ): Promise<KulonAssignmentDetail> {
@@ -325,47 +324,103 @@ export class KulonService {
     if (res.status === 404) throw new Error('ASSIGNMENT_NOT_FOUND');
     if (!res.ok) throw new Error(`Kulon assignment page failed: ${res.status}`);
     const html = await res.text();
-    // Pengunjung (course-content path) hanya kirim cmid, bukan assign instance id.
-    // Ekstrak assignid asli dari halaman detail; fallback ke param bila tidak ketemu
-    // (dashboard path tetap aman — param dari calendar event.instance).
-    const assignid = this.extractAssignId(html, assignmentId);
-    const sub = await this.ajax(
-      sessionCookie,
-      sesskey,
-      'mod_assign_get_submission_status',
-      { assignid },
-    );
     return {
       assignmentId,
       name: this.extractName(html),
       descriptionHtml: this.extractDescription(html),
       files: this.extractFiles(html),
-      submission: this.normalizeSubmission(sub),
+      submission: this.parseSubmissionFromHtml(html),
       kulonUrl: pageUrl,
     };
   }
 
   /**
-   * Extract the Moodle assign instance id (assignid) from the assignment detail
-   * page HTML. The course-content path only exposes the cmid in the URL, but
-   * `mod_assign_get_submission_status` needs the assign instance id (which
-   * differs from cmid). Moodle embeds it in the page — try several markers,
-   * falling back to the caller-provided assignmentId when none match.
+   * Parse submission status/grade/timestamps from the assignment page HTML.
+   * The `mod_assign_get_submission_status` AJAX webservice is DISABLED on
+   * Kulon, but the page always renders the summary in
+   * `<div class="submissionstatustable">`. Defensive: never throws; worst case
+   * falls back to `{ status: 'unknown' }`.
    */
-  private extractAssignId(html: string, fallback: number): number {
-    const patterns = [
-      /name="assignid"\s+value="(\d+)"/i,
-      /data-assignmentid="(\d+)"/i,
-      /data-id-instance="(\d+)"/i,
-      /"assignmentid"\s*:\s*(\d+)/i,
-      /M\.mod_assign\.init\(\s*\{[^}]*?["']?assignmentid["']?\s*:\s*(\d+)/i,
-    ];
-    for (const re of patterns) {
-      const m = html.match(re);
-      if (m) return Number(m[1]);
+  private parseSubmissionFromHtml(html: string): KulonSubmission {
+    const fallback: KulonSubmission = { status: 'unknown', grade: null, maxGrade: null };
+    // Grab the submission summary TABLE that lives inside the
+    // `submissionstatustable` div. Capturing the table (not counting enclosing
+    // divs) is robust to theme nesting depth. All status rows are in it.
+    const blockMatch = html.match(
+      /<div class="submissionstatustable">[\s\S]*?<table[^>]*>([\s\S]*?)<\/table>/i,
+    );
+    const block = blockMatch ? `<table>${blockMatch[1]}</table>` : '';
+    if (!block) return fallback;
+
+    const rows: { label: string; value: string }[] = [];
+    const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let tr: RegExpExecArray | null;
+    while ((tr = trRe.exec(block)) !== null) {
+      const labelMatch = tr[1].match(/<th[^>]*>([\s\S]*?)<\/th>/i);
+      const valueMatch = tr[1].match(/<td[^>]*>([\s\S]*?)<\/td>/i);
+      if (!labelMatch || !valueMatch) continue;
+      rows.push({
+        label: labelMatch[1].replace(/<[^>]*>/g, '').trim().toLowerCase(),
+        value: valueMatch[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+      });
     }
-    // Fallback: reuse the cmid-as-assignmentId only if caller passed no real id.
-    return fallback;
+    if (rows.length === 0) return fallback;
+
+    const get = (label: string) => rows.find((r) => r.label.includes(label))?.value ?? '';
+    const submissionStatus = get('submission status');
+    const gradingStatus = get('grading status');
+    const lastModified = get('last modified');
+
+    let status: KulonSubmission['status'] = 'unknown';
+    const isGraded = /graded/i.test(gradingStatus) && !/not graded/i.test(gradingStatus);
+    if (isGraded) status = 'graded';
+    else if (/not submitted|draft/i.test(submissionStatus)) status = 'not_submitted';
+    else if (/submitted/i.test(submissionStatus)) status = 'submitted';
+
+    const grade = this.extractGrade(block);
+    const submittedAt = this.parseMoodleDate(lastModified);
+
+    return {
+      status,
+      submittedAt: submittedAt ?? undefined,
+      grade: grade?.grade ?? null,
+      maxGrade: grade?.maxGrade ?? null,
+    };
+  }
+
+  /**
+   * Best-effort numeric grade: Moodle renders it as "85.00 / 100.00"
+   * somewhere in the submission summary. Scan the whole block for the pair;
+   * return null when absent (UI renders "Belum dinilai").
+   */
+  private extractGrade(block: string): { grade: number; maxGrade: number } | null {
+    const m = block.match(/(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/);
+    if (!m) return null;
+    const toNum = (s: string) => Number(s.replace(',', '.'));
+    return { grade: toNum(m[1]), maxGrade: toNum(m[2]) };
+  }
+
+  /**
+   * Parse a Moodle "Last modified" value like
+   * `Thursday, 7 May 2026, 11:50 PM` into epoch seconds. Best-effort; null on
+   * any unexpected shape (caller maps to undefined).
+   */
+  private parseMoodleDate(text: string): number | null {
+    if (!text) return null;
+    const m = text.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4}),?\s+(?:(\d{1,2}):(\d{2}))?\s*(AM|PM)?/i);
+    if (!m) return null;
+    const months: Record<string, number> = {
+      january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+    };
+    const month = months[(m[2] || '').toLowerCase()];
+    if (month === undefined) return null;
+    let hour = m[4] ? Number(m[4]) : 12;
+    const minute = m[5] ? Number(m[5]) : 0;
+    const ampm = (m[6] || '').toUpperCase();
+    if (ampm === 'PM' && hour < 12) hour += 12;
+    if (ampm === 'AM' && hour === 12) hour = 0;
+    return Math.floor(new Date(Number(m[3]), month, Number(m[1]), hour, minute).getTime() / 1000);
   }
 
   /**
@@ -400,31 +455,6 @@ export class KulonService {
       result.push({ name: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1] });
     }
     return result;
-  }
-
-  private normalizeSubmission(data: any): KulonSubmission {
-    if (
-      !data ||
-      !data.lastattempt?.submission ||
-      data.lastattempt.submissionstatus !== 'submitted'
-    ) {
-      return { status: 'not_submitted', grade: null, maxGrade: null };
-    }
-    const base: KulonSubmission = {
-      status: 'submitted',
-      submittedAt: data.lastattempt.submission.timemodified ?? undefined,
-      grade: null,
-      maxGrade: null,
-    };
-    if (data.lastattempt.graded && data.feedback?.grade) {
-      return {
-        ...base,
-        status: 'graded',
-        grade: data.feedback.grade.grade != null ? Number(data.feedback.grade.grade) : null,
-        maxGrade: data.feedback.grade.maxmark != null ? Number(data.feedback.grade.maxmark) : null,
-      };
-    }
-    return base;
   }
 
   private moduleKind(modname: string): KulonContentItemKind {

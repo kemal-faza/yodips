@@ -97,7 +97,6 @@ describe('KulonController', () => {
     expect(res.assignmentId).toBe(42);
     expect(service.getAssignmentDetail).toHaveBeenCalledWith(
       'MoodleSession=K',
-      'sesskey123',
       42,
       777,
     );
