@@ -5,7 +5,7 @@ defineProps<{ message: string; title?: string }>();
 </script>
 
 <template>
-  <Alert class="rounded-2xl border-warn/40 bg-warn/10 p-4 text-ink">
+  <Alert class="border-warn/40 bg-warn/10 p-4">
     <AlertTitle>{{ title ?? 'Info' }}</AlertTitle>
     <AlertDescription class="mt-0.5 text-ink-muted">{{ message }}</AlertDescription>
   </Alert>
