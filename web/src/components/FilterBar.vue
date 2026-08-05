@@ -1,8 +1,17 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useFilterStore } from '../stores/filter';
 import type { Course } from '../types';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
-defineProps<{ courses: Course[] }>();
+const props = defineProps<{ courses: Course[] }>();
 
 const store = useFilterStore();
 
@@ -19,44 +28,74 @@ const sortOptions: { value: string; label: string }[] = [
   { value: 'name', label: 'Nama' },
   { value: 'course', label: 'Mata kuliah' },
 ];
+
+const statusLabel = computed(
+  () => statusOptions.find((o) => o.value === store.status)?.label ?? 'Semua status',
+);
+const sortLabel = computed(
+  () => sortOptions.find((o) => o.value === store.sortBy)?.label ?? 'Deadline terdekat',
+);
+const courseLabel = computed(() => {
+  if (store.courseId === 'all') return 'Semua mata kuliah';
+  return props.courses.find((c) => c.id === store.courseId)?.fullname ?? 'Semua mata kuliah';
+});
+
+function onCourseChange(v: unknown) {
+  store.setCourseId(v === 'all' || v == null ? 'all' : Number(v));
+}
 </script>
 
 <template>
   <div class="flex flex-wrap items-center gap-2">
-    <input
+    <Input
       v-model="store.search"
       data-test="search"
       type="text"
       placeholder="Cari tugas..."
-      class="rounded-full bg-surface px-4 py-2 text-sm text-ink shadow-sm outline-none focus:ring-2 focus:ring-gold"
+      class="h-9 w-48 rounded-full bg-surface px-4 text-sm text-ink shadow-sm"
     />
-    <select
-      v-model="store.status"
-      data-test="status"
-      class="rounded-full bg-surface px-4 py-2 text-sm text-ink shadow-sm outline-none focus:ring-2 focus:ring-gold"
-    >
-      <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
-        {{ opt.label }}
-      </option>
-    </select>
-    <select
-      v-model="store.sortBy"
-      data-test="sort"
-      class="rounded-full bg-surface px-4 py-2 text-sm text-ink shadow-sm outline-none focus:ring-2 focus:ring-gold"
-    >
-      <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">
-        {{ opt.label }}
-      </option>
-    </select>
-    <select
-      v-model="store.courseId"
-      data-test="course"
-      class="rounded-full bg-surface px-4 py-2 text-sm text-ink shadow-sm outline-none focus:ring-2 focus:ring-gold"
-    >
-      <option value="all">Semua mata kuliah</option>
-      <option v-for="c in courses" :key="c.id" :value="c.id">
-        {{ c.fullname }}
-      </option>
-    </select>
+    <Select v-model="store.status">
+      <SelectTrigger
+        data-test="status"
+        aria-label="Filter status"
+        class="h-9 w-44 rounded-full bg-surface px-4 py-0 text-sm text-ink shadow-sm"
+      >
+        <SelectValue>{{ statusLabel }}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
+          {{ opt.label }}
+        </SelectItem>
+      </SelectContent>
+    </Select>
+    <Select v-model="store.sortBy">
+      <SelectTrigger
+        data-test="sort"
+        aria-label="Urutkan"
+        class="h-9 w-48 rounded-full bg-surface px-4 py-0 text-sm text-ink shadow-sm"
+      >
+        <SelectValue>{{ sortLabel }}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem v-for="opt in sortOptions" :key="opt.value" :value="opt.value">
+          {{ opt.label }}
+        </SelectItem>
+      </SelectContent>
+    </Select>
+    <Select :model-value="String(store.courseId)" @update:model-value="onCourseChange">
+      <SelectTrigger
+        data-test="course"
+        aria-label="Filter mata kuliah"
+        class="h-9 max-w-56 rounded-full bg-surface px-4 py-0 text-sm text-ink shadow-sm"
+      >
+        <SelectValue>{{ courseLabel }}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">Semua mata kuliah</SelectItem>
+        <SelectItem v-for="c in courses" :key="c.id" :value="String(c.id)">
+          {{ c.fullname }}
+        </SelectItem>
+      </SelectContent>
+    </Select>
   </div>
 </template>

@@ -12,6 +12,7 @@ import TimelineGroup from '../components/TimelineGroup.vue';
 import CourseGroup from '../components/CourseGroup.vue';
 import DetailPanel from '../components/DetailPanel.vue';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import SsoDashboard from '../components/SsoDashboard.vue';
 import ProfileBanner, { type SiapTab } from '../components/ProfileBanner.vue';
@@ -147,12 +148,14 @@ onMounted(() => {
           <SiapBiodata v-else-if="siapTab === 'biodata'" :profile="profile" />
           <SiapNotifikasi v-else />
         </template>
-        <div v-else class="rounded-2xl border border-line bg-surface p-8 text-center">
-          <p class="font-semibold text-ink">Belum ada session SIAP</p>
-          <p class="mt-1 text-sm text-ink-muted">
-            Silakan login ulang via SSO untuk melihat data akademik.
-          </p>
-        </div>
+        <Card v-else class="rounded-2xl border-line bg-surface p-8 text-center">
+          <CardContent class="p-0">
+            <p class="font-semibold text-ink">Belum ada session SIAP</p>
+            <p class="mt-1 text-sm text-ink-muted">
+              Silakan login ulang via SSO untuk melihat data akademik.
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       <div v-else>

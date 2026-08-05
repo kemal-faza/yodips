@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { XIcon } from '@lucide/vue';
 import { getAssignmentDetail } from '../api/client';
 import type { Assignment, AssignmentDetail, SubmissionStatus } from '../types';
 import { assignStatus } from '../utils/assignment';
+import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import StatusBadge from './StatusBadge.vue';
 
 const props = defineProps<{ assignment: Assignment | null; open: boolean }>();
@@ -106,89 +110,77 @@ watch(
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition name="fade">
-      <div
-        v-if="open"
-        class="fixed inset-0 z-50"
-        role="dialog"
-        aria-modal="true"
-        data-test="detail-panel"
-      >
-        <div
-          class="absolute inset-0 bg-navy/60 backdrop-blur-sm"
-          data-test="backdrop"
-          @click="emit('close')"
-        />
-        <aside class="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-surface shadow-xl">
-          <header v-if="assignment" class="bg-navy p-5 text-white">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-sm text-white/70">{{ assignment.course }}</p>
-                <h2 class="mt-1 text-lg font-bold">{{ assignment.name }}</h2>
-                <p class="mt-1 text-sm text-white/70">Deadline: {{ deadline }}</p>
-              </div>
-              <div class="flex flex-col items-end gap-2">
-                <StatusBadge :status="status" />
-                <button
-                  data-test="close"
-                  aria-label="Tutup"
-                  class="rounded-full p-2 leading-none text-white/70 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-gold"
-                  @click="emit('close')"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          </header>
+  <Sheet :open="props.open" @update:open="(o: boolean) => { if (!o) emit('close') }">
+    <SheetContent
+      side="right"
+      :show-close-button="false"
+      class="w-full max-w-md gap-0 border-line bg-surface p-0"
+      data-test="detail-panel"
+    >
+      <SheetHeader v-if="assignment" class="bg-navy p-5 text-white">
+        <div class="flex items-start justify-between gap-3">
+          <SheetTitle class="text-left text-lg font-bold text-white">
+            <span class="block text-sm font-normal text-white/70">{{ assignment.course }}</span>
+            {{ assignment.name }}
+            <span class="mt-1 block text-sm font-normal text-white/70">Deadline: {{ deadline }}</span>
+          </SheetTitle>
+          <div class="flex flex-col items-end gap-2">
+            <StatusBadge :status="status" />
+            <Button
+              variant="ghost"
+              data-test="close"
+              aria-label="Tutup"
+              class="size-8 rounded-full p-0 text-white/70 hover:bg-white/10 hover:text-white"
+              @click="emit('close')"
+            >
+              <XIcon class="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+      </SheetHeader>
 
-          <template v-if="assignment?.courseModuleId">
-            <div class="flex border-b border-canvas">
-              <button
-                v-for="tab in tabs"
-                :key="tab.key"
-                data-test="tab"
-                class="flex-1 px-4 py-2.5 text-sm font-semibold transition"
-                :class="
-                  activeTab === tab.key
-                    ? 'border-b-2 border-gold text-ink'
-                    : 'text-ink-muted hover:text-ink'
-                "
-                @click="activeTab = tab.key"
+      <template v-if="assignment?.courseModuleId">
+        <Tabs v-model="activeTab" class="flex flex-1 flex-col">
+          <TabsList class="flex w-full justify-start gap-0 rounded-none border-b border-line bg-transparent p-0">
+            <TabsTrigger
+              v-for="t in tabs"
+              :key="t.key"
+              data-test="tab"
+              :value="t.key"
+              class="flex-1 rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-semibold text-ink-muted hover:text-ink data-active:border-gold data-active:text-ink"
+            >
+              {{ t.label }}
+            </TabsTrigger>
+          </TabsList>
+
+          <div class="flex-1 overflow-y-auto p-5">
+            <div v-if="loading" class="flex justify-center py-10" data-test="loading">
+              <span class="size-6 animate-spin rounded-full border-2 border-gold border-t-transparent" />
+            </div>
+
+            <div v-else-if="error" class="py-8 text-center">
+              <p class="text-sm font-semibold text-danger">{{ error }}</p>
+              <Button
+                data-test="retry"
+                class="mt-4 rounded-full bg-navy px-4 py-2 text-sm font-semibold text-white hover:bg-navy-light"
+                @click="load"
               >
-                {{ tab.label }}
-              </button>
+                Coba lagi
+              </Button>
             </div>
 
-            <div class="flex-1 overflow-y-auto p-5">
-              <div v-if="loading" class="flex justify-center py-10" data-test="loading">
-                <span
-                  class="size-6 animate-spin rounded-full border-2 border-gold border-t-transparent"
+            <template v-else-if="detail">
+              <TabsContent value="description">
+                <div
+                  v-if="detail.descriptionHtml"
+                  class="text-sm leading-relaxed text-ink"
+                  v-html="detail.descriptionHtml"
                 />
-              </div>
+                <p v-else class="text-ink-muted">Tidak ada deskripsi.</p>
+              </TabsContent>
 
-              <div v-else-if="error" class="py-8 text-center">
-                <p class="text-sm font-semibold text-danger">{{ error }}</p>
-                <button
-                  data-test="retry"
-                  class="mt-4 rounded-full bg-navy px-4 py-2 text-sm font-semibold text-white transition hover:bg-navy-light focus:outline-none focus:ring-2 focus:ring-gold"
-                  @click="load"
-                >
-                  Coba lagi
-                </button>
-              </div>
-
-              <template v-else-if="detail">
-                <div v-if="activeTab === 'description'">
-                  <div
-                    v-if="detail.descriptionHtml"
-                    class="text-sm leading-relaxed text-ink"
-                    v-html="detail.descriptionHtml"
-                  />
-                  <p v-else class="text-ink-muted">Tidak ada deskripsi.</p>
-                </div>
-
-                <ul v-else-if="activeTab === 'files'" class="space-y-3">
+              <TabsContent value="files">
+                <ul class="space-y-3">
                   <li v-for="f in detail.files" :key="f.url">
                     <a
                       :href="f.url"
@@ -201,48 +193,37 @@ watch(
                   </li>
                   <li v-if="detail.files.length === 0" class="text-ink-muted">Tidak ada file.</li>
                 </ul>
+              </TabsContent>
 
-                <div v-else class="space-y-3 text-sm">
-                  <p>
-                    <span class="font-semibold text-ink">Status:</span>
-                    {{ submissionLabel }}
-                  </p>
-                  <p v-if="submittedAt">
-                    <span class="font-semibold text-ink">Dikumpulkan:</span>
-                    {{ submittedAt }}
-                  </p>
-                  <p v-if="detail.submission.grade != null || detail.submission.maxGrade != null">
-                    <span class="font-semibold text-ink">Nilai:</span>
-                    {{ gradeText }}
-                  </p>
-                </div>
-              </template>
-            </div>
-          </template>
+              <TabsContent value="submission" class="space-y-3 text-sm">
+                <p>
+                  <span class="font-semibold text-ink">Status:</span>
+                  {{ submissionLabel }}
+                </p>
+                <p v-if="submittedAt">
+                  <span class="font-semibold text-ink">Dikumpulkan:</span>
+                  {{ submittedAt }}
+                </p>
+                <p v-if="detail.submission.grade != null || detail.submission.maxGrade != null">
+                  <span class="font-semibold text-ink">Nilai:</span>
+                  {{ gradeText }}
+                </p>
+              </TabsContent>
+            </template>
+          </div>
+        </Tabs>
+      </template>
 
-          <footer class="border-t border-canvas p-4">
-            <a
-              :href="kulonUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex items-center gap-1 font-semibold text-ink hover:text-gold"
-            >
-              Buka di Kulon →
-            </a>
-          </footer>
-        </aside>
+      <div class="border-t border-line p-4">
+        <a
+          :href="kulonUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center gap-1 font-semibold text-ink hover:text-gold"
+        >
+          Buka di Kulon →
+        </a>
       </div>
-    </Transition>
-  </Teleport>
+    </SheetContent>
+  </Sheet>
 </template>
-
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>
