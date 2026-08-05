@@ -2,6 +2,8 @@
 import { getCurrentInstance, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 
 const store = useAuthStore();
 // Read $route/$router from the instance proxy: vue-router exposes them as
@@ -30,11 +32,14 @@ async function handleLogin() {
 
 <template>
   <div class="flex min-h-screen items-center justify-center bg-gradient-to-br from-siap-from via-siap-to to-primary-700 px-4">
-    <div class="glass-card animate-fade-in-up w-full max-w-md rounded-2xl border border-white/20 p-8 shadow-2xl">
-      <h1 class="text-2xl font-bold text-ink">Undip SSO Aggregator</h1>
-      <p class="mt-2 text-sm text-ink-muted">
-        Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.
-      </p>
+    <Card class="glass-card animate-fade-in-up w-full max-w-md border-white/20 shadow-2xl">
+      <CardHeader class="px-6 pt-6">
+        <h1 class="text-2xl font-bold">Undip SSO Aggregator</h1>
+        <p class="mt-2 text-sm text-ink-muted">
+          Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.
+        </p>
+      </CardHeader>
+      <CardContent class="px-6 pb-6">
 
       <template v-if="store.isHandoffMode">
         <div class="mt-6 rounded bg-navy/5 p-4 text-sm text-ink-muted">
@@ -49,14 +54,17 @@ async function handleLogin() {
       </template>
 
       <template v-else>
-        <p
+        <Alert
           v-if="proxy().$route?.query?.reason === 'incomplete'"
-          class="mt-4 rounded bg-warn/10 p-3 text-sm text-ink"
+          class="mt-4 border-warn/40 bg-warn/10 p-3"
         >
-          Session login belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
-        </p>
+          <AlertDescription class="text-ink">
+            Session login belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
+          </AlertDescription>
+        </Alert>
         <Button
-          class="mt-6 w-full rounded-full bg-navy py-3 font-semibold text-white transition hover:bg-navy-light disabled:opacity-50"
+          size="lg"
+          class="mt-6 h-11 w-full"
           :disabled="store.checking"
           @click="handleLogin"
         >
@@ -66,9 +74,10 @@ async function handleLogin() {
           Tunggu — selesaikan login di window browser yang terbuka. Jika perlu, tunggu hingga halaman dashboard Kulon tampil.
         </p>
       </template>
-      <p v-if="store.error" class="mt-4 rounded bg-danger/10 p-3 text-sm text-danger">
-        {{ store.error }}
-      </p>
-    </div>
+      <Alert v-if="store.error" variant="destructive" class="mt-4 bg-danger/10 p-3">
+        <AlertDescription>{{ store.error }}</AlertDescription>
+      </Alert>
+      </CardContent>
+    </Card>
   </div>
 </template>
