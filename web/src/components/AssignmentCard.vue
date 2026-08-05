@@ -21,7 +21,7 @@ const formattedDate = computed(() => {
 
 <template>
   <Card
-    class="assignment-card cursor-pointer rounded-card border-line bg-surface shadow-sm transition hover:shadow-md"
+    class="assignment-card cursor-pointer shadow-sm transition hover:shadow-md"
     role="button"
     tabindex="0"
     @click="emit('open')"
