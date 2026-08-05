@@ -62,40 +62,40 @@ function openService(s: Service) {
     </div>
 
     <section>
-      <h2 class="mb-3 text-lg font-bold text-navy">Layanan</h2>
+      <h2 class="mb-3 text-lg font-bold text-ink">Layanan</h2>
       <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <button
           v-for="s in services"
           :key="s.key"
           :data-test="`service-${s.key}`"
-          class="card-hover rounded-2xl border border-navy/10 bg-white p-5 text-left"
+          class="card-hover rounded-2xl border border-line bg-surface p-5 text-left"
           @click="openService(s)"
         >
           <div class="flex items-start justify-between">
             <div
-              class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-lg font-bold text-primary-600"
+              class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-lg font-bold text-primary-600 dark:bg-primary-500/15 dark:text-primary-400"
             >
               {{ s.monogram }}
             </div>
             <span
               v-if="!s.ready"
-              class="rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-semibold text-navy"
+              class="rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-semibold text-ink"
             >
               Coming Soon
             </span>
           </div>
-          <p class="mt-3 font-semibold text-navy">{{ s.name }}</p>
-          <p class="mt-0.5 text-xs text-navy-light">{{ s.desc }}</p>
+          <p class="mt-3 font-semibold text-ink">{{ s.name }}</p>
+          <p class="mt-0.5 text-xs text-ink-muted">{{ s.desc }}</p>
         </button>
       </div>
     </section>
 
     <section>
-      <h2 class="mb-3 text-lg font-bold text-navy">Berita</h2>
+      <h2 class="mb-3 text-lg font-bold text-ink">Berita</h2>
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div v-for="n in news" :key="n.title" class="rounded-2xl border border-navy/10 bg-white p-4">
-          <p class="text-xs font-medium text-primary-600">{{ n.date }}</p>
-          <p class="mt-1 font-semibold text-navy">{{ n.title }}</p>
+        <div v-for="n in news" :key="n.title" class="rounded-2xl border border-line bg-surface p-4">
+          <p class="text-xs font-medium text-primary-600 dark:text-primary-400">{{ n.date }}</p>
+          <p class="mt-1 font-semibold text-ink">{{ n.title }}</p>
         </div>
       </div>
     </section>

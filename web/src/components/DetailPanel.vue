@@ -120,7 +120,7 @@ watch(
           data-test="backdrop"
           @click="emit('close')"
         />
-        <aside class="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-white shadow-xl">
+        <aside class="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-surface shadow-xl">
           <header v-if="assignment" class="bg-navy p-5 text-white">
             <div class="flex items-start justify-between gap-3">
               <div>
@@ -151,8 +151,8 @@ watch(
                 class="flex-1 px-4 py-2.5 text-sm font-semibold transition"
                 :class="
                   activeTab === tab.key
-                    ? 'border-b-2 border-gold text-navy'
-                    : 'text-navy-light hover:text-navy'
+                    ? 'border-b-2 border-gold text-ink'
+                    : 'text-ink-muted hover:text-ink'
                 "
                 @click="activeTab = tab.key"
               >
@@ -182,10 +182,10 @@ watch(
                 <div v-if="activeTab === 'description'">
                   <div
                     v-if="detail.descriptionHtml"
-                    class="text-sm leading-relaxed text-navy"
+                    class="text-sm leading-relaxed text-ink"
                     v-html="detail.descriptionHtml"
                   />
-                  <p v-else class="text-navy-light">Tidak ada deskripsi.</p>
+                  <p v-else class="text-ink-muted">Tidak ada deskripsi.</p>
                 </div>
 
                 <ul v-else-if="activeTab === 'files'" class="space-y-3">
@@ -194,25 +194,25 @@ watch(
                       :href="f.url"
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="text-navy underline hover:text-gold"
+                      class="text-ink underline hover:text-gold"
                     >
                       {{ f.name }}
                     </a>
                   </li>
-                  <li v-if="detail.files.length === 0" class="text-navy-light">Tidak ada file.</li>
+                  <li v-if="detail.files.length === 0" class="text-ink-muted">Tidak ada file.</li>
                 </ul>
 
                 <div v-else class="space-y-3 text-sm">
                   <p>
-                    <span class="font-semibold text-navy">Status:</span>
+                    <span class="font-semibold text-ink">Status:</span>
                     {{ submissionLabel }}
                   </p>
                   <p v-if="submittedAt">
-                    <span class="font-semibold text-navy">Dikumpulkan:</span>
+                    <span class="font-semibold text-ink">Dikumpulkan:</span>
                     {{ submittedAt }}
                   </p>
                   <p v-if="detail.submission.grade != null || detail.submission.maxGrade != null">
-                    <span class="font-semibold text-navy">Nilai:</span>
+                    <span class="font-semibold text-ink">Nilai:</span>
                     {{ gradeText }}
                   </p>
                 </div>
@@ -225,7 +225,7 @@ watch(
               :href="kulonUrl"
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex items-center gap-1 font-semibold text-navy hover:text-gold"
+              class="inline-flex items-center gap-1 font-semibold text-ink hover:text-gold"
             >
               Buka di Kulon →
             </a>

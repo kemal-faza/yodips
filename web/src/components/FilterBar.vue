@@ -28,12 +28,12 @@ const sortOptions: { value: string; label: string }[] = [
       data-test="search"
       type="text"
       placeholder="Cari tugas..."
-      class="rounded-full bg-white px-4 py-2 text-sm text-navy shadow-sm outline-none focus:ring-2 focus:ring-gold"
+      class="rounded-full bg-surface px-4 py-2 text-sm text-ink shadow-sm outline-none focus:ring-2 focus:ring-gold"
     />
     <select
       v-model="store.status"
       data-test="status"
-      class="rounded-full bg-white px-4 py-2 text-sm text-navy shadow-sm outline-none focus:ring-2 focus:ring-gold"
+      class="rounded-full bg-surface px-4 py-2 text-sm text-ink shadow-sm outline-none focus:ring-2 focus:ring-gold"
     >
       <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">
         {{ opt.label }}
@@ -42,7 +42,7 @@ const sortOptions: { value: string; label: string }[] = [
     <select
       v-model="store.sortBy"
       data-test="sort"
-      class="rounded-full bg-white px-4 py-2 text-sm text-navy shadow-sm outline-none focus:ring-2 focus:ring-gold"
+      class="rounded-full bg-surface px-4 py-2 text-sm text-ink shadow-sm outline-none focus:ring-2 focus:ring-gold"
     >
       <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">
         {{ opt.label }}
@@ -51,7 +51,7 @@ const sortOptions: { value: string; label: string }[] = [
     <select
       v-model="store.courseId"
       data-test="course"
-      class="rounded-full bg-white px-4 py-2 text-sm text-navy shadow-sm outline-none focus:ring-2 focus:ring-gold"
+      class="rounded-full bg-surface px-4 py-2 text-sm text-ink shadow-sm outline-none focus:ring-2 focus:ring-gold"
     >
       <option value="all">Semua mata kuliah</option>
       <option v-for="c in courses" :key="c.id" :value="c.id">

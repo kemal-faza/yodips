@@ -145,9 +145,9 @@ onMounted(() => {
           <SiapBiodata v-else-if="siapTab === 'biodata'" :profile="profile" />
           <SiapNotifikasi v-else />
         </template>
-        <div v-else class="rounded-2xl border border-navy/10 bg-white p-8 text-center">
-          <p class="font-semibold text-navy">Belum ada session SIAP</p>
-          <p class="mt-1 text-sm text-navy-light">
+        <div v-else class="rounded-2xl border border-line bg-surface p-8 text-center">
+          <p class="font-semibold text-ink">Belum ada session SIAP</p>
+          <p class="mt-1 text-sm text-ink-muted">
             Silakan login ulang via SSO untuk melihat data akademik.
           </p>
         </div>
@@ -155,12 +155,12 @@ onMounted(() => {
 
       <div v-else>
         <div v-if="loading" class="mt-4 space-y-3">
-          <div v-for="i in 3" :key="i" class="h-20 animate-pulse rounded-card bg-white" />
+          <div v-for="i in 3" :key="i" class="h-20 animate-pulse rounded-card bg-surface" />
         </div>
 
         <div v-else-if="sessionExpired" class="mt-4 rounded bg-gold/20 p-6 text-center">
-          <p class="font-semibold text-navy">Session login kedaluwarsa</p>
-          <p class="mt-1 text-sm text-navy-light">{{ error }}</p>
+          <p class="font-semibold text-ink">Session login kedaluwarsa</p>
+          <p class="mt-1 text-sm text-ink-muted">{{ error }}</p>
           <button
             class="mt-4 inline-block rounded-full bg-navy px-6 py-2.5 font-semibold text-white hover:bg-navy-light disabled:opacity-50"
             :disabled="store.checking"
@@ -168,7 +168,7 @@ onMounted(() => {
           >
             {{ store.checking ? 'Memeriksa session…' : 'Login Ulang' }}
           </button>
-          <p v-if="store.checking" class="mt-3 text-sm text-navy-light">
+          <p v-if="store.checking" class="mt-3 text-sm text-ink-muted">
             Memeriksa session SSO. Jika perlu, sebuah jendela browser baru akan terbuka.
           </p>
         </div>

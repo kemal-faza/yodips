@@ -54,7 +54,7 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
 <template>
   <div class="grid gap-6 lg:grid-cols-3">
     <aside class="space-y-4">
-      <div class="rounded-2xl border border-navy/10 bg-white p-6 text-center">
+      <div class="rounded-2xl border border-line bg-surface p-6 text-center">
         <img
           v-if="profile?.fotoUrl"
           :src="profile.fotoUrl"
@@ -63,20 +63,20 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
         />
         <div
           v-else
-          class="mx-auto flex h-28 w-28 items-center justify-center rounded-full bg-primary-50 text-3xl font-bold text-primary-600"
+          class="mx-auto flex h-28 w-28 items-center justify-center rounded-full bg-primary-50 text-3xl font-bold text-primary-600 dark:bg-primary-500/15 dark:text-primary-400"
         >
           {{ initial(profile?.nama) }}
         </div>
-        <p class="mt-3 font-semibold text-navy">{{ profile?.semesterBerjalan ?? '—' }}</p>
+        <p class="mt-3 font-semibold text-ink">{{ profile?.semesterBerjalan ?? '—' }}</p>
         <span
-          class="mt-1 inline-block rounded-full bg-gold/20 px-3 py-0.5 text-xs font-semibold text-navy"
+          class="mt-1 inline-block rounded-full bg-gold/20 px-3 py-0.5 text-xs font-semibold text-ink"
         >
           {{ profile?.status ?? '—' }}
         </span>
       </div>
       <button
         disabled
-        class="w-full cursor-not-allowed rounded-xl border border-navy/10 bg-white px-4 py-2.5 text-sm font-medium text-navy-light"
+        class="w-full cursor-not-allowed rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink-muted"
       >
         Perbarui Biodata
       </button>
@@ -84,19 +84,19 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
     </aside>
 
     <div class="lg:col-span-2">
-      <div class="rounded-2xl border border-navy/10 bg-white p-6">
+      <div class="rounded-2xl border border-line bg-surface p-6">
         <template v-for="g in groups" :key="g.name">
-          <h3 class="mb-2 mt-4 text-sm font-semibold uppercase tracking-wide text-navy-light first:mt-0">
+          <h3 class="mb-2 mt-4 text-sm font-semibold uppercase tracking-wide text-ink-muted first:mt-0">
             {{ g.name }}
           </h3>
           <dl class="space-y-2 text-sm">
             <div v-for="r in g.rows" :key="r.label" class="flex flex-col sm:flex-row sm:gap-4 sm:py-1">
-              <dt class="w-40 shrink-0 font-medium text-navy-light">{{ r.label }}</dt>
-              <dd class="text-navy">
+              <dt class="w-40 shrink-0 font-medium text-ink-muted">{{ r.label }}</dt>
+              <dd class="text-ink">
                 <template v-if="r.masked">
                   <span>{{ showNamaIbu ? (r.value ?? '—') : '********' }}</span>
                   <button
-                    class="ml-2 text-xs font-medium text-primary-600 hover:underline"
+                    class="ml-2 text-xs font-medium text-primary-600 hover:underline dark:text-primary-400"
                     @click="showNamaIbu = !showNamaIbu"
                   >
                     {{ showNamaIbu ? 'Sembunyikan' : 'Tampilkan' }}

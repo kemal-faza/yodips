@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { useAuthStore } from '../stores/auth';
+import { useThemeStore } from '../stores/theme';
 
 defineProps<{ showBack?: boolean; breadcrumb?: string }>();
 const emit = defineEmits<{ (e: 'back'): void }>();
 
 const store = useAuthStore();
+const theme = useThemeStore();
 // Avatar initial from the logged-in identity (NIM in store.user.sub), else 'U'.
 const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
 </script>
@@ -26,6 +28,30 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
         </div>
       </div>
       <div class="flex items-center gap-3">
+        <button
+          class="rounded-full bg-white/10 p-2 transition hover:bg-white/20"
+          :aria-label="theme.dark ? 'Pindah ke tema terang' : 'Pindah ke tema gelap'"
+          data-test="theme-toggle"
+          @click="theme.toggle()"
+        >
+          <svg
+            v-if="theme.dark"
+            class="h-4 w-4"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+          </svg>
+          <svg
+            v-else
+            class="h-4 w-4"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+        </button>
         <button
           class="rounded-full bg-white/10 p-2 transition hover:bg-white/20"
           aria-label="Notifikasi"

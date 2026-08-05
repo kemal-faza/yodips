@@ -30,14 +30,14 @@ async function handleLogin() {
 <template>
   <div class="flex min-h-screen items-center justify-center bg-gradient-to-br from-siap-from via-siap-to to-primary-700 px-4">
     <div class="glass-card animate-fade-in-up w-full max-w-md rounded-2xl border border-white/20 p-8 shadow-2xl">
-      <h1 class="text-2xl font-bold text-navy">Undip SSO Aggregator</h1>
-      <p class="mt-2 text-sm text-navy-light">
+      <h1 class="text-2xl font-bold text-ink">Undip SSO Aggregator</h1>
+      <p class="mt-2 text-sm text-ink-muted">
         Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.
       </p>
 
       <template v-if="store.isHandoffMode">
-        <div class="mt-6 rounded bg-navy/5 p-4 text-sm text-navy-light">
-          <p class="font-semibold text-navy">Login via browser kamu</p>
+        <div class="mt-6 rounded bg-navy/5 p-4 text-sm text-ink-muted">
+          <p class="font-semibold text-ink">Login via browser kamu</p>
           <ol class="mt-2 list-decimal space-y-1 pl-5">
             <li>Buka Chrome dengan flag remote-debugging (lihat README capture-client).</li>
             <li>Login ke Kulon di window itu.</li>
@@ -50,7 +50,7 @@ async function handleLogin() {
       <template v-else>
         <p
           v-if="proxy().$route?.query?.reason === 'incomplete'"
-          class="mt-4 rounded bg-warn/10 p-3 text-sm text-navy"
+          class="mt-4 rounded bg-warn/10 p-3 text-sm text-ink"
         >
           Session login belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
         </p>
@@ -61,7 +61,7 @@ async function handleLogin() {
         >
           {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
         </button>
-        <p v-if="store.checking" class="mt-4 text-center text-sm text-navy-light">
+        <p v-if="store.checking" class="mt-4 text-center text-sm text-ink-muted">
           Tunggu — selesaikan login di window browser yang terbuka. Jika perlu, tunggu hingga halaman dashboard Kulon tampil.
         </p>
       </template>
