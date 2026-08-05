@@ -14,7 +14,7 @@ import { Card, CardContent } from '@/components/ui/card';
       <p class="max-w-sm text-sm text-ink-muted">
         Fitur notifikasi akan segera hadir. Pantau terus perkembangan aplikasi.
       </p>
-      <Badge class="rounded-full bg-gold/20 px-3 py-1 text-xs font-semibold text-ink">Coming Soon</Badge>
+      <Badge class="bg-gold/20 text-ink">Coming Soon</Badge>
     </CardContent>
   </Card>
 </template>
