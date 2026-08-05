@@ -5,6 +5,15 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // FOUC guard: apply the saved/system theme BEFORE the bundle paints.
+      ;(function () {
+        var t = localStorage.getItem('sso_theme');
+        var dark = t ? t === 'dark' : !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
     <title>Undip SSO Aggregator</title>
   </head>
   <body>

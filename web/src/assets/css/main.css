@@ -18,12 +18,35 @@
   --color-primary-700: #4338ca;
   --color-sso-green: #48bb78;
   --color-sso-green-dark: #38a169;
+  /* Semantic tokens (dark-mode aware): surfaces, text and borders. `navy`
+     stays the brand color for buttons/overlays in both themes. */
+  --color-surface: #ffffff;
+  --color-ink: #0a1931;
+  --color-ink-muted: #1a2f52;
+  --color-line: rgb(10 25 49 / 0.1);
   --radius-card: 0.9rem;
   --font-sans: 'Inter', system-ui, sans-serif;
 }
 
+/* Class-based dark mode: `.dark` on <html> (set by index.html FOUC guard,
+   theme store, and toggle in AppHeader). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+.dark {
+  color-scheme: dark;
+  --color-canvas: #0b1220;
+  --color-surface: #121b2d;
+  --color-ink: #e6ebf5;
+  --color-ink-muted: #8fa0bb;
+  --color-line: rgb(255 255 255 / 0.12);
+  /* Brand navy lightens slightly so buttons keep enough contrast on the
+     dark canvas while remaining dark enough for white text. */
+  --color-navy: #2e4d82;
+  --color-navy-light: #3b5f9e;
+}
+
 body {
-  @apply bg-canvas text-navy antialiased;
+  @apply bg-canvas text-ink antialiased;
   font-family: var(--font-sans);
 }
 
@@ -50,6 +73,7 @@ body {
 }
 
 .glass-card { background: rgb(255 255 255 / 0.9); backdrop-filter: blur(8px); }
+.dark .glass-card { background: rgb(18 27 45 / 0.9); }
 
 /* Stagger children: delays 0–250ms, applied to direct children */
 .stagger-children > * { animation: fade-in-up 0.4s ease-out both; }
