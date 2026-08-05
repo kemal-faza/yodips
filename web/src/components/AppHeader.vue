@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 defineProps<{ showBack?: boolean; breadcrumb?: string }>();
 const emit = defineEmits<{ (e: 'back'): void }>();
@@ -61,9 +62,9 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
             <path d="M13.73 21a2 2 0 0 1-3.46 0" />
           </svg>
         </button>
-        <div class="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 font-bold">
-          {{ initial }}
-        </div>
+        <Avatar class="size-9 bg-white/20 text-white">
+          <AvatarFallback class="bg-transparent font-bold">{{ initial }}</AvatarFallback>
+        </Avatar>
         <button
           v-if="store.isAuthenticated"
           class="rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium transition hover:bg-white/20"

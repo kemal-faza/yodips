@@ -10,6 +10,9 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { getSiapIrs, getSiapKhs } from '../api/client';
 import type { SiapIrs, SiapKhs, SiapProfile } from '../types';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const props = defineProps<{ profile: SiapProfile | null; hasSiap: boolean }>();
 
@@ -61,16 +64,17 @@ onUnmounted(() => clearInterval(timer!));
   <div v-else class="space-y-6">
     <div class="flex items-center justify-between">
       <span class="text-xs font-medium uppercase tracking-wide text-ink-muted">Dasbor</span>
-      <button
-        class="rounded-full bg-navy px-4 py-1.5 text-sm font-medium text-white transition hover:bg-navy-light"
+      <Button
+        variant="outline"
+        class="rounded-full bg-navy px-4 py-1.5 text-sm font-medium text-white hover:bg-navy-light"
         @click="load"
       >
         Segarkan
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="space-y-3">
-      <div v-for="i in 3" :key="i" class="h-24 animate-pulse rounded-card bg-surface" />
+      <Skeleton v-for="i in 3" :key="i" class="h-24 rounded-card" />
     </div>
 
     <div v-else-if="error" class="rounded-2xl bg-danger/10 p-4 text-danger">{{ error }}</div>
@@ -147,9 +151,9 @@ onUnmounted(() => clearInterval(timer!));
             class="rounded-xl border border-line bg-canvas px-3 py-2 text-sm text-ink-muted"
           >
             {{ q }}
-            <span class="ml-1 rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-semibold text-ink">
+            <Badge class="ml-1 rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-semibold text-ink">
               Coming Soon
-            </span>
+            </Badge>
           </div>
         </div>
       </section>

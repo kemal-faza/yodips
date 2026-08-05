@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { Badge } from '@/components/ui/badge';
 
 const emit = defineEmits<{ (e: 'navigate', view: 'siap' | 'tugas'): void }>();
 
@@ -77,12 +78,12 @@ function openService(s: Service) {
             >
               {{ s.monogram }}
             </div>
-            <span
+            <Badge
               v-if="!s.ready"
               class="rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-semibold text-ink"
             >
               Coming Soon
-            </span>
+            </Badge>
           </div>
           <p class="mt-3 font-semibold text-ink">{{ s.name }}</p>
           <p class="mt-0.5 text-xs text-ink-muted">{{ s.desc }}</p>

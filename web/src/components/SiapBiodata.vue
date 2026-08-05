@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import type { SiapProfile } from '../types';
 import InfoBanner from './InfoBanner.vue';
+import { Badge } from '@/components/ui/badge';
 
 const props = defineProps<{ profile: SiapProfile | null }>();
 const showNamaIbu = ref(false);
@@ -68,11 +69,9 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
           {{ initial(profile?.nama) }}
         </div>
         <p class="mt-3 font-semibold text-ink">{{ profile?.semesterBerjalan ?? '—' }}</p>
-        <span
-          class="mt-1 inline-block rounded-full bg-gold/20 px-3 py-0.5 text-xs font-semibold text-ink"
-        >
+        <Badge class="mt-1 rounded-full bg-gold/20 px-3 py-0.5 text-xs font-semibold text-ink">
           {{ profile?.status ?? '—' }}
-        </span>
+        </Badge>
       </div>
       <button
         disabled

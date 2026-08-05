@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { getCurrentInstance, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
+import { Button } from '@/components/ui/button';
 
 const store = useAuthStore();
 // Read $route/$router from the instance proxy: vue-router exposes them as
@@ -54,13 +55,13 @@ async function handleLogin() {
         >
           Session login belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
         </p>
-        <button
+        <Button
           class="mt-6 w-full rounded-full bg-navy py-3 font-semibold text-white transition hover:bg-navy-light disabled:opacity-50"
           :disabled="store.checking"
           @click="handleLogin"
         >
           {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
-        </button>
+        </Button>
         <p v-if="store.checking" class="mt-4 text-center text-sm text-ink-muted">
           Tunggu — selesaikan login di window browser yang terbuka. Jika perlu, tunggu hingga halaman dashboard Kulon tampil.
         </p>
