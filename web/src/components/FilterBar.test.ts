@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import FilterBar from './FilterBar.vue';
 import { useFilterStore } from '../stores/filter';
@@ -12,10 +12,24 @@ const courses: Course[] = [
 
 const mountFilterBar = () => mount(FilterBar, { props: { courses } });
 
+function openSelect(w: { get: (s: string) => { element: Element } }, dataTest: string) {
+  const el = w.get(`[data-test="${dataTest}"]`).element;
+  el.dispatchEvent(new MouseEvent('pointerdown', { button: 0, ctrlKey: false, bubbles: true }));
+}
+
+function clickOption(text: string) {
+  const option = [...document.body.querySelectorAll('[role="option"]')].find(
+    (el) => el.textContent?.trim() === text || el.textContent?.includes(text),
+  );
+  expect(option).toBeTruthy();
+  option!.dispatchEvent(new MouseEvent('pointerup', { button: 0, ctrlKey: false, bubbles: true }));
+}
+
 describe('FilterBar', () => {
   beforeEach(() => {
     localStorage.clear();
     setActivePinia(createPinia());
+    document.body.innerHTML = ''; // clear any leftover reka portals
   });
 
   it('updates store.search when search input changes', async () => {
@@ -25,27 +39,36 @@ describe('FilterBar', () => {
     expect(store.search).toBe('uts');
   });
 
-  it('updates store.status when status select changes', async () => {
+  it('updates store.status when a status option is chosen', async () => {
     const store = useFilterStore();
     const w = mountFilterBar();
-    await w.get('[data-test="status"]').setValue('overdue');
+    openSelect(w, 'status');
+    await flushPromises();
+    clickOption('Terlambat');
+    await flushPromises();
     expect(store.status).toBe('overdue');
   });
 
   it('renders Semua + N course options and updates store.courseId', async () => {
     const store = useFilterStore();
     const w = mountFilterBar();
-    const options = w.get('[data-test="course"]').findAll('option');
+    openSelect(w, 'course');
+    await flushPromises();
+    const options = [...document.body.querySelectorAll('[role="option"]')];
     expect(options.length).toBe(1 + courses.length);
-    expect(options[0].text()).toBe('Semua mata kuliah');
-    await w.get('[data-test="course"]').setValue('2');
+    expect(options[0].textContent).toContain('Semua mata kuliah');
+    clickOption('Basis Data');
+    await flushPromises();
     expect(store.courseId).toBe(2);
   });
 
-  it('updates store.sortBy when sort select changes', async () => {
+  it('updates store.sortBy when a sort option is chosen', async () => {
     const store = useFilterStore();
     const w = mountFilterBar();
-    await w.get('[data-test="sort"]').setValue('name');
+    openSelect(w, 'sort');
+    await flushPromises();
+    clickOption('Nama');
+    await flushPromises();
     expect(store.sortBy).toBe('name');
   });
 });

@@ -28,7 +28,7 @@ describe('ProfileBanner', () => {
   it('shows initials fallback without foto and emits change-tab', async () => {
     const w = mount(ProfileBanner, { props: { profile: baseProfile, activeTab: 'dasbor' } });
     expect(w.text()).toContain('MK');
-    await w.findAll('button').find((b) => b.text().includes('Biodata'))!.trigger('click');
+    await w.findAll('button').find((b) => b.text().includes('Biodata'))!.trigger('mousedown');
     expect(w.emitted('change-tab')?.[0]).toEqual(['biodata']);
   });
 

@@ -9,10 +9,18 @@ vi.mock('../api/client', () => ({
 }));
 
 function mountPanel(props: { assignment: Assignment | null; open: boolean }) {
-  return mount(DetailPanel, {
-    props,
-    global: { stubs: { teleport: true } },
-  });
+  return mount(DetailPanel, { props });
+}
+
+const bodyText = () => document.body.textContent ?? '';
+const bodyEls = (sel: string) => [...document.body.querySelectorAll(sel)];
+
+async function clickTab(index: number) {
+  const el = bodyEls('button[data-test="tab"]')[index];
+  expect(el).toBeTruthy();
+  // reka TabsTrigger activates on mousedown (not click).
+  el.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }));
+  await flushPromises();
 }
 
 const assignment: Assignment = {
@@ -24,6 +32,7 @@ const assignment: Assignment = {
 
 describe('DetailPanel', () => {
   beforeEach(() => {
+    document.body.innerHTML = ''; // clear reka portals between tests
     getAssignmentDetailMock.mockReset();
     getAssignmentDetailMock.mockResolvedValue({
       assignmentId: 42,
@@ -36,46 +45,50 @@ describe('DetailPanel', () => {
   });
 
   it('fetches detail when opened and renders tabs', async () => {
-    const wrapper = mountPanel({ assignment, open: true });
+    mountPanel({ assignment, open: true });
     expect(getAssignmentDetailMock).toHaveBeenCalledWith(42, 777);
     await flushPromises();
-    expect(wrapper.text()).toContain('Deskripsi');
-    expect(wrapper.text()).toContain('File');
-    expect(wrapper.text()).toContain('Submission');
-    expect(wrapper.text()).toContain('Kerjakan laporan.');
+    expect(bodyText()).toContain('Deskripsi');
+    expect(bodyText()).toContain('File');
+    expect(bodyText()).toContain('Submission');
+    expect(bodyText()).toContain('Kerjakan laporan.');
   });
 
   it('shows files in File tab when selected', async () => {
-    const wrapper = mountPanel({ assignment, open: true });
+    mountPanel({ assignment, open: true });
     await flushPromises();
-    await wrapper.findAll('button[data-test="tab"]')[1].trigger('click');
-    expect(wrapper.text()).toContain('a.pdf');
+    await clickTab(1);
+    expect(bodyText()).toContain('a.pdf');
   });
 
   it('shows submission status in Submission tab', async () => {
-    const wrapper = mountPanel({ assignment, open: true });
+    mountPanel({ assignment, open: true });
     await flushPromises();
-    await wrapper.findAll('button[data-test="tab"]')[2].trigger('click');
-    expect(wrapper.text()).toContain('85');
+    await clickTab(2);
+    expect(bodyText()).toContain('85');
   });
 
   it('shows retry on error', async () => {
     getAssignmentDetailMock.mockRejectedValue(new Error('network'));
-    const wrapper = mountPanel({ assignment, open: true });
+    mountPanel({ assignment, open: true });
     await flushPromises();
-    expect(wrapper.text()).toContain('Coba lagi');
+    expect(bodyText()).toContain('Coba lagi');
   });
 
   it('renders header + open link only when cmid missing', async () => {
     const noCmid = { ...assignment, courseModuleId: undefined };
-    const wrapper = mountPanel({ assignment: noCmid, open: true });
+    mountPanel({ assignment: noCmid, open: true });
+    await flushPromises();
     expect(getAssignmentDetailMock).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain('Buka di Kulon');
+    expect(bodyText()).toContain('Buka di Kulon');
   });
 
-  it('emits close when backdrop/close clicked', async () => {
+  it('emits close when close button clicked', async () => {
     const wrapper = mountPanel({ assignment, open: true });
-    await wrapper.find('[data-test="close"]').trigger('click');
+    await flushPromises();
+    const close = bodyEls('[data-test="close"]')[0];
+    expect(close).toBeTruthy();
+    close.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(wrapper.emitted('close')).toBeTruthy();
   });
 });
