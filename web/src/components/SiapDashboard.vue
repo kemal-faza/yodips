@@ -10,7 +10,6 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { getSiapIrs, getSiapKhs } from '../api/client';
 import type { SiapIrs, SiapKhs, SiapProfile } from '../types';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -59,7 +58,7 @@ onUnmounted(() => clearInterval(timer!));
 <template>
   <div
     v-if="!hasSiap"
-    class="rounded-2xl border border-line bg-surface p-6 text-center text-ink-muted"
+    class="rounded-xl border border-border bg-card p-6 text-center text-muted-foreground"
   >
     Belum ada session SIAP — silakan login ulang via SSO.
   </div>
@@ -156,9 +155,6 @@ onUnmounted(() => clearInterval(timer!));
               class="rounded-xl border border-line bg-canvas px-3 py-2 text-sm text-ink-muted"
             >
               {{ q }}
-              <Badge class="ml-1 bg-gold/20 text-ink">
-                Coming Soon
-              </Badge>
             </div>
           </div>
         </CardContent>
