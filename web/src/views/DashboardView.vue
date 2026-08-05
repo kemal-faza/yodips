@@ -13,6 +13,7 @@ import CourseGroup from '../components/CourseGroup.vue';
 import DetailPanel from '../components/DetailPanel.vue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import SsoDashboard from '../components/SsoDashboard.vue';
 import ProfileBanner, { type SiapTab } from '../components/ProfileBanner.vue';
@@ -148,8 +149,8 @@ onMounted(() => {
           <SiapBiodata v-else-if="siapTab === 'biodata'" :profile="profile" />
           <SiapNotifikasi v-else />
         </template>
-        <Card v-else class="rounded-2xl border-line bg-surface p-8 text-center">
-          <CardContent class="p-0">
+        <Card v-else class="text-center">
+          <CardContent class="px-4 py-8">
             <p class="font-semibold text-ink">Belum ada session SIAP</p>
             <p class="mt-1 text-sm text-ink-muted">
               Silakan login ulang via SSO untuk melihat data akademik.
@@ -163,11 +164,11 @@ onMounted(() => {
           <Skeleton v-for="i in 3" :key="i" class="h-20 rounded-card" />
         </div>
 
-        <div v-else-if="sessionExpired" class="mt-4 rounded bg-gold/20 p-6 text-center">
-          <p class="font-semibold text-ink">Session login kedaluwarsa</p>
-          <p class="mt-1 text-sm text-ink-muted">{{ error }}</p>
+        <Alert v-else-if="sessionExpired" class="mt-4 gap-2 border-gold/40 bg-gold/20 p-6 text-center">
+          <AlertTitle class="font-semibold text-ink">Session login kedaluwarsa</AlertTitle>
+          <AlertDescription class="text-sm text-ink-muted">{{ error }}</AlertDescription>
           <Button
-            class="mt-4 inline-block rounded-full bg-navy px-6 py-2.5 font-semibold text-white hover:bg-navy-light disabled:opacity-50"
+            class="mt-4 justify-self-center"
             :disabled="store.checking"
             @click="relogin"
           >
@@ -176,9 +177,11 @@ onMounted(() => {
           <p v-if="store.checking" class="mt-3 text-sm text-ink-muted">
             Memeriksa session SSO. Jika perlu, sebuah jendela browser baru akan terbuka.
           </p>
-        </div>
+        </Alert>
 
-        <p v-else-if="error" class="mt-4 rounded bg-danger/10 p-4 text-danger">{{ error }}</p>
+        <Alert v-else-if="error" variant="destructive" class="mt-4 bg-danger/10 p-4">
+          <AlertDescription>{{ error }}</AlertDescription>
+        </Alert>
 
         <div v-else class="mt-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
