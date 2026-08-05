@@ -40,6 +40,14 @@ const courseLabel = computed(() => {
   return props.courses.find((c) => c.id === store.courseId)?.fullname ?? 'Semua mata kuliah';
 });
 
+const hasActiveFilters = computed(() => store.search !== '' || store.status !== 'all' || store.courseId !== 'all');
+
+function clearFilters() {
+  store.setSearch('');
+  store.setStatus('all');
+  store.setCourseId('all');
+}
+
 function onCourseChange(v: unknown) {
   store.setCourseId(v === 'all' || v == null ? 'all' : Number(v));
 }
@@ -97,5 +105,18 @@ function onCourseChange(v: unknown) {
         </SelectItem>
       </SelectContent>
     </Select>
+    <button
+      v-if="hasActiveFilters"
+      type="button"
+      data-test="clear-filters"
+      class="inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      @click="clearFilters"
+    >
+      <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </svg>
+      Hapus filter
+    </button>
   </div>
 </template>

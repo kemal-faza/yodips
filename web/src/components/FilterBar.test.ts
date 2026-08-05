@@ -71,4 +71,18 @@ describe('FilterBar', () => {
     await flushPromises();
     expect(store.sortBy).toBe('name');
   });
+
+  it('shows clear button only when a filter is active and resets on click', async () => {
+    const store = useFilterStore();
+    const w = mountFilterBar();
+    expect(w.find('[data-test="clear-filters"]').exists()).toBe(false);
+    await w.get('[data-test="search"]').setValue('uts');
+    expect(w.find('[data-test="clear-filters"]').exists()).toBe(true);
+    await w.find('[data-test="clear-filters"]').trigger('click');
+    await flushPromises();
+    expect(store.search).toBe('');
+    expect(store.status).toBe('all');
+    expect(store.courseId).toBe('all');
+    expect(w.find('[data-test="clear-filters"]').exists()).toBe(false);
+  });
 });
