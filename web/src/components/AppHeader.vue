@@ -21,7 +21,8 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
         <Button
           v-if="showBack"
           variant="ghost"
-          class="rounded-full bg-white/10 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/20 hover:text-white"
+          size="sm"
+          class="text-white hover:bg-white/20 hover:text-white"
           @click="emit('back')"
         >
           &larr; Kembali
@@ -34,7 +35,8 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
       <div class="flex items-center gap-3">
         <Button
           variant="ghost"
-          class="rounded-full bg-white/10 p-2 text-white hover:bg-white/20 hover:text-white"
+          size="icon"
+          class="text-white hover:bg-white/20 hover:text-white"
           :aria-label="theme.dark ? 'Pindah ke tema terang' : 'Pindah ke tema gelap'"
           data-test="theme-toggle"
           @click="theme.toggle()"
@@ -44,18 +46,20 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
         </Button>
         <Button
           variant="ghost"
-          class="rounded-full bg-white/10 p-2 text-white hover:bg-white/20 hover:text-white"
+          size="icon"
+          class="text-white hover:bg-white/20 hover:text-white"
           aria-label="Notifikasi"
         >
           <Bell class="size-4" aria-hidden="true" />
         </Button>
-        <Avatar class="size-9 bg-white/20 text-white">
+        <Avatar size="default" class="bg-white/20 text-white">
           <AvatarFallback class="bg-transparent font-bold">{{ initial }}</AvatarFallback>
         </Avatar>
         <Button
           v-if="store.isAuthenticated"
           variant="ghost"
-          class="rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium text-white hover:bg-white/20 hover:text-white"
+          size="sm"
+          class="text-white hover:bg-white/20 hover:text-white"
           @click="store.logout()"
         >
           Keluar
