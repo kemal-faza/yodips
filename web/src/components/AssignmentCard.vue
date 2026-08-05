@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import type { Assignment } from '../types';
 import { assignStatus } from '../utils/assignment';
+import { Card, CardContent } from '@/components/ui/card';
 import StatusBadge from './StatusBadge.vue';
 
 const props = defineProps<{ assignment: Assignment }>();
@@ -19,20 +20,20 @@ const formattedDate = computed(() => {
 </script>
 
 <template>
-  <div
-    class="assignment-card cursor-pointer rounded-card bg-surface p-4 shadow-sm transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-gold"
+  <Card
+    class="assignment-card cursor-pointer rounded-card border-line bg-surface shadow-sm transition hover:shadow-md"
     role="button"
     tabindex="0"
     @click="emit('open')"
     @keydown.enter="emit('open')"
   >
-    <div class="flex items-start justify-between gap-3">
+    <CardContent class="flex items-start justify-between gap-3 p-4">
       <div>
         <p class="font-semibold text-ink">{{ assignment.name }}</p>
         <p class="mt-0.5 text-sm text-ink-muted">{{ assignment.course }}</p>
         <p class="mt-1 text-sm text-ink-muted">Deadline: {{ formattedDate }}</p>
       </div>
       <StatusBadge :status="status" />
-    </div>
-  </div>
+    </CardContent>
+  </Card>
 </template>

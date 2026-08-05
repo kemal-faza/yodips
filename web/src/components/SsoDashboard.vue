@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 
 const emit = defineEmits<{ (e: 'navigate', view: 'siap' | 'tugas'): void }>();
 
@@ -65,12 +66,15 @@ function openService(s: Service) {
     <section>
       <h2 class="mb-3 text-lg font-bold text-ink">Layanan</h2>
       <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <button
+        <Card
           v-for="s in services"
           :key="s.key"
           :data-test="`service-${s.key}`"
-          class="card-hover rounded-2xl border border-line bg-surface p-5 text-left"
+          role="button"
+          tabindex="0"
+          class="card-hover cursor-pointer rounded-2xl border-line bg-surface p-5 text-left"
           @click="openService(s)"
+          @keydown.enter="openService(s)"
         >
           <div class="flex items-start justify-between">
             <div
@@ -87,17 +91,19 @@ function openService(s: Service) {
           </div>
           <p class="mt-3 font-semibold text-ink">{{ s.name }}</p>
           <p class="mt-0.5 text-xs text-ink-muted">{{ s.desc }}</p>
-        </button>
+        </Card>
       </div>
     </section>
 
     <section>
       <h2 class="mb-3 text-lg font-bold text-ink">Berita</h2>
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div v-for="n in news" :key="n.title" class="rounded-2xl border border-line bg-surface p-4">
-          <p class="text-xs font-medium text-primary-600 dark:text-primary-400">{{ n.date }}</p>
-          <p class="mt-1 font-semibold text-ink">{{ n.title }}</p>
-        </div>
+        <Card v-for="n in news" :key="n.title" class="border-line bg-surface">
+          <CardContent class="p-4">
+            <p class="text-xs font-medium text-primary-600 dark:text-primary-400">{{ n.date }}</p>
+            <p class="mt-1 font-semibold text-ink">{{ n.title }}</p>
+          </CardContent>
+        </Card>
       </div>
     </section>
   </div>

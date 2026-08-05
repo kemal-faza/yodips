@@ -1,24 +1,27 @@
 <script setup lang="ts">
 import { useFilterStore } from '../stores/filter';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 const store = useFilterStore();
 </script>
 
 <template>
-  <div class="inline-flex rounded-full bg-surface p-1 shadow-sm">
-    <button
-      class="rounded-full px-4 py-1.5 text-sm font-semibold transition"
-      :class="store.viewMode === 'timeline' ? 'bg-navy text-white' : 'text-ink hover:bg-canvas'"
-      @click="store.setViewMode('timeline')"
+  <ToggleGroup
+    v-model="store.viewMode"
+    type="single"
+    class="gap-1 rounded-full bg-surface p-1 shadow-sm"
+  >
+    <ToggleGroupItem
+      value="timeline"
+      class="rounded-full px-4 py-1.5 text-sm font-semibold text-ink data-[state=on]:bg-navy data-[state=on]:text-white"
     >
       Kronologis
-    </button>
-    <button
-      class="rounded-full px-4 py-1.5 text-sm font-semibold transition"
-      :class="store.viewMode === 'course' ? 'bg-navy text-white' : 'text-ink hover:bg-canvas'"
-      @click="store.setViewMode('course')"
+    </ToggleGroupItem>
+    <ToggleGroupItem
+      value="course"
+      class="rounded-full px-4 py-1.5 text-sm font-semibold text-ink data-[state=on]:bg-navy data-[state=on]:text-white"
     >
       Per Mata Kuliah
-    </button>
-  </div>
+    </ToggleGroupItem>
+  </ToggleGroup>
 </template>
