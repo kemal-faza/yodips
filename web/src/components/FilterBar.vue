@@ -52,13 +52,13 @@ function onCourseChange(v: unknown) {
       data-test="search"
       type="text"
       placeholder="Cari tugas..."
-      class="h-9 w-48 rounded-full bg-surface px-4 text-sm text-ink shadow-sm"
+      class="w-48"
     />
     <Select v-model="store.status">
       <SelectTrigger
         data-test="status"
         aria-label="Filter status"
-        class="h-9 w-44 rounded-full bg-surface px-4 py-0 text-sm text-ink shadow-sm"
+        class="w-44"
       >
         <SelectValue>{{ statusLabel }}</SelectValue>
       </SelectTrigger>
@@ -72,7 +72,7 @@ function onCourseChange(v: unknown) {
       <SelectTrigger
         data-test="sort"
         aria-label="Urutkan"
-        class="h-9 w-48 rounded-full bg-surface px-4 py-0 text-sm text-ink shadow-sm"
+        class="w-48"
       >
         <SelectValue>{{ sortLabel }}</SelectValue>
       </SelectTrigger>
@@ -86,7 +86,7 @@ function onCourseChange(v: unknown) {
       <SelectTrigger
         data-test="course"
         aria-label="Filter mata kuliah"
-        class="h-9 max-w-56 rounded-full bg-surface px-4 py-0 text-sm text-ink shadow-sm"
+        class="max-w-56"
       >
         <SelectValue>{{ courseLabel }}</SelectValue>
       </SelectTrigger>
