@@ -91,4 +91,31 @@ describe('KulonCourseDetailView', () => {
     // DetailPanel teleports to body
     expect(document.body.textContent).toContain('Tugas A');
   });
+
+  it('shows a category badge for every item kind', async () => {
+    (api.getCourseContent as any).mockResolvedValue({
+      courseId: 9,
+      sections: [
+        {
+          id: 1,
+          label: 'Pertemuan 1',
+          items: [
+            { kind: 'quiz', name: 'Kuis 1', url: 'https://kulon/mod/quiz/view.php?id=20', cmid: 20 },
+            { kind: 'forum', name: 'Diskusi', url: 'https://kulon/mod/forum/view.php?id=21', cmid: 21 },
+            { kind: 'url', name: 'Link Materi', url: 'https://kulon/mod/url/view.php?id=22', cmid: 22 },
+            { kind: 'page', name: 'Halaman Materi', url: 'https://kulon/mod/page/view.php?id=23', cmid: 23 },
+          ],
+        },
+      ],
+    });
+    (api.getCourses as any).mockResolvedValue([]);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/kulon/matakuliah/9');
+    const w = mount(KulonCourseDetailView, { global: { plugins: [router] } });
+    await flushPromises();
+    expect(w.text()).toContain('Kuis');
+    expect(w.text()).toContain('Forum');
+    expect(w.text()).toContain('Link');
+    expect(w.text()).toContain('Materi');
+  });
 });

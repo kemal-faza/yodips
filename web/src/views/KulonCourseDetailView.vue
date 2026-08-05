@@ -23,8 +23,24 @@ const course = computed(() => store.courses.find((c) => c.id === courseId.value)
 
 const ITEM_ICON = { file: FileText, assign: ClipboardList, quiz: HelpCircle, url: Link, forum: Megaphone, page: FileText, other: FileQuestion };
 
+// Label kategori untuk item yang bukan file (file menampilkan tipe filenya).
+const KIND_LABEL: Record<CourseContentItem['kind'], string> = {
+  file: '',
+  assign: 'Tugas',
+  quiz: 'Kuis',
+  url: 'Link',
+  forum: 'Forum',
+  page: 'Materi',
+  other: '',
+};
+
 function itemIcon(kind: CourseContentItem['kind']) {
   return ITEM_ICON[kind] ?? FileQuestion;
+}
+
+function itemBadge(item: CourseContentItem): string {
+  if (item.kind === 'file') return item.fileType ?? '';
+  return KIND_LABEL[item.kind] ?? '';
 }
 
 function openItem(item: CourseContentItem) {
@@ -95,10 +111,9 @@ load();
             >
               <component :is="itemIcon(item.kind)" class="size-4 shrink-0 text-ink-muted" aria-hidden="true" />
               <span class="min-w-0 flex-1 truncate font-medium text-ink">{{ item.name }}</span>
-              <span v-if="item.kind === 'file' && item.fileType" class="shrink-0 text-xs uppercase text-ink-muted">
-                {{ item.fileType }}
+              <span v-if="itemBadge(item)" class="shrink-0 text-xs uppercase text-ink-muted">
+                {{ itemBadge(item) }}
               </span>
-              <span v-else-if="item.kind === 'assign'" class="shrink-0 text-xs uppercase text-ink-muted">Tugas</span>
             </button>
           </li>
         </ul>
