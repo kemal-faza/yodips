@@ -31,14 +31,14 @@ const accent = computed(() => {
     @click="emit('open')"
     @keydown.enter="emit('open')"
   >
-    <CardContent class="flex items-center justify-between gap-3 py-3">
+    <CardContent class="flex items-center justify-between gap-3 px-3 py-2">
       <div class="min-w-0">
-        <p class="truncate font-medium text-ink">{{ assignment.name }}</p>
-        <p class="mt-0.5 truncate text-sm text-ink-muted">{{ assignment.course }}</p>
+        <p class="truncate font-medium text-sm text-ink">{{ assignment.name }}</p>
+        <p class="mt-0.5 truncate text-xs text-ink-muted">{{ assignment.course }}</p>
       </div>
-      <div class="flex shrink-0 flex-col items-end gap-1">
+      <div class="flex shrink-0 flex-col items-end gap-0.5">
         <StatusBadge :status="status" />
-        <span class="text-xs text-ink-muted">{{ dateText }}</span>
+        <span class="text-[10px] text-ink-muted">{{ dateText }}</span>
       </div>
     </CardContent>
   </Card>

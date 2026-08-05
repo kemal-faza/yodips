@@ -71,8 +71,8 @@ load();
       <Input v-model="search" data-test="search" type="text" placeholder="Cari tugas atau mata kuliah…" class="w-64" />
     </div>
 
-    <div v-if="loading" class="mt-4 space-y-3">
-      <Skeleton v-for="i in 5" :key="i" class="h-16 rounded-card" />
+    <div v-if="loading" class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <Skeleton v-for="i in 6" :key="i" class="h-12 rounded-card" />
     </div>
 
     <Alert v-else-if="sessionExpired" class="mt-4 gap-2 border-gold/40 bg-gold/20 p-6 text-center">
@@ -92,11 +92,12 @@ load();
       Tidak ada tugas yang cocok
     </div>
 
-    <div v-else class="mt-4 space-y-3">
+    <div v-else class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
       <AssignmentCard v-for="a in pageItems" :key="a.id" :assignment="a" @open="openDetail(a)" />
-      <div class="flex justify-center pt-2">
-        <PaginationBar :page="page" :total-pages="totalPages" @change="(p) => (page = p)" />
-      </div>
+    </div>
+
+    <div v-if="pageItems.length > 0 && totalPages > 1" class="mt-3 flex justify-center">
+      <PaginationBar :page="page" :total-pages="totalPages" @change="(p) => (page = p)" />
     </div>
 
     <DetailPanel :assignment="selected" :open="panelOpen" @close="panelOpen = false" />
