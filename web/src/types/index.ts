@@ -69,6 +69,17 @@ export interface SiapProfile {
   sksTempuh?: number;
   sksLulus?: number;
   ipk?: number;
+  fotoUrl?: string;
+  tempatLahir?: string;
+  tanggalLahir?: string;
+  nik?: string;
+  namaIbu?: string;
+  kodeKewarganegaraan?: string;
+  nomorHp?: string;
+  emailSso?: string;
+  emailPribadi?: string;
+  alamatAsal?: string;
+  alamatSekarang?: string;
 }
 
 export interface SiapIrs {
