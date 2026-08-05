@@ -31,7 +31,7 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-gradient-to-br from-siap-from via-siap-to to-primary-700 px-4">
+  <div class="flex min-h-screen items-center justify-center bg-navy px-4">
     <Card class="glass-card animate-fade-in-up w-full max-w-md border-white/20 shadow-2xl">
       <CardHeader class="px-6 pt-6">
         <h1 class="text-2xl font-bold">Undip SSO Aggregator</h1>
