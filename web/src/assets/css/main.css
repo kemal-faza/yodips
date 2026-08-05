@@ -36,6 +36,42 @@
    theme store, and toggle in AppHeader). */
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  /* shadcn-vue theme variables mapped to the app's light palette. */
+  --background: #f4f6f9;
+  --foreground: #0a1931;
+  --card: #ffffff;
+  --card-foreground: #0a1931;
+  --popover: #ffffff;
+  --popover-foreground: #0a1931;
+  --primary: #0a1931; /* navy — brand primary (was indigo) */
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f6;
+  --secondary-foreground: #0a1931;
+  --muted: #eef1f6;
+  --muted-foreground: #1a2f52;
+  --accent: #eef1f6;
+  --accent-foreground: #0a1931;
+  --destructive: #dc2626;
+  --border: rgb(10 25 49 / 0.1);
+  --input: rgb(10 25 49 / 0.15);
+  --ring: #6366f1;
+  --chart-1: #4f46e5;
+  --chart-2: #48bb78;
+  --chart-3: #ffc107;
+  --chart-4: #f59e0b;
+  --chart-5: #2d5aa0;
+  --radius: 0.9rem;
+  --sidebar: #0a1931;
+  --sidebar-foreground: #e6ebf5;
+  --sidebar-primary: #4f46e5;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a2f52;
+  --sidebar-accent-foreground: #e6ebf5;
+  --sidebar-border: rgb(255 255 255 / 0.1);
+  --sidebar-ring: #6366f1;
+}
+
 .dark {
   color-scheme: dark;
   /* Brand navy lightens slightly so buttons keep enough contrast on the
@@ -152,41 +188,7 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-:root {
-  /* shadcn-vue theme variables mapped to the app's light palette. */
-  --background: #f4f6f9;
-  --foreground: #0a1931;
-  --card: #ffffff;
-  --card-foreground: #0a1931;
-  --popover: #ffffff;
-  --popover-foreground: #0a1931;
-  --primary: #0a1931; /* navy — brand primary (was indigo) */
-  --primary-foreground: #ffffff;
-  --secondary: #eef1f6;
-  --secondary-foreground: #0a1931;
-  --muted: #eef1f6;
-  --muted-foreground: #1a2f52;
-  --accent: #eef1f6;
-  --accent-foreground: #0a1931;
-  --destructive: #dc2626;
-  --border: rgb(10 25 49 / 0.1);
-  --input: rgb(10 25 49 / 0.15);
-  --ring: #6366f1;
-  --chart-1: #4f46e5;
-  --chart-2: #48bb78;
-  --chart-3: #ffc107;
-  --chart-4: #f59e0b;
-  --chart-5: #2d5aa0;
-  --radius: 0.9rem;
-  --sidebar: #0a1931;
-  --sidebar-foreground: #e6ebf5;
-  --sidebar-primary: #4f46e5;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1a2f52;
-  --sidebar-accent-foreground: #e6ebf5;
-  --sidebar-border: rgb(255 255 255 / 0.1);
-  --sidebar-ring: #6366f1;
-}
+
 
 @layer base {
   * {
