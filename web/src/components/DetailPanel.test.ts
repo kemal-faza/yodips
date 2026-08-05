@@ -68,6 +68,14 @@ describe('DetailPanel', () => {
     expect(bodyText()).toContain('85');
   });
 
+  it('shows submission status in the header (glanceable)', async () => {
+    mountPanel({ assignment, open: true });
+    await flushPromises();
+    const el = bodyEls('[data-test="submission-status"]')[0];
+    expect(el).toBeTruthy();
+    expect(el.textContent).toContain('Sudah dinilai');
+  });
+
   it('shows retry on error', async () => {
     getAssignmentDetailMock.mockRejectedValue(new Error('network'));
     mountPanel({ assignment, open: true });

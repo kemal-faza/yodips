@@ -322,6 +322,28 @@ describe('KulonService', () => {
     expect(detail.submission.submittedAt).toBeUndefined();
   });
 
+  it('returns not_submitted for real Moodle phrasing "No submissions have been made yet"', async () => {
+    // Verified live: Moodle renders not-submitted WITHOUT a status class on the
+    // td and with the text "No submissions have been made yet" (not "Not submitted").
+    const pageHtml =
+      '<header id="page-header"><h1>Task</h1></header>' +
+      '<div class="submissionstatustable"><h3>Submission status</h3><div class="box py-3 boxaligncenter submissionsummarytable">' +
+      '<div class="table-responsive"><table class="generaltable table-bordered"><tbody>' +
+      '<tr class=""><th class="cell c0" style="" scope="row">Submission status</th><td class="cell c1 lastcol" style="">No submissions have been made yet</td></tr>' +
+      '<tr class=""><th class="cell c0" style="" scope="row">Grading status</th><td class="submissionnotgraded cell c1 lastcol" style="">Not graded</td></tr>' +
+      '<tr class=""><th class="cell c0" style="" scope="row">Last modified</th><td class="cell c1 lastcol" style="">-</td></tr>' +
+      '</tbody></table></div></div></div>';
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      text: async () => pageHtml,
+    });
+    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
+    expect(detail.submission.status).toBe('not_submitted');
+    expect(detail.submission.grade).toBeNull();
+    expect(detail.submission.maxGrade).toBeNull();
+    expect(detail.submission.submittedAt).toBeUndefined();
+  });
+
   it('returns unknown submission when page has no submissionstatustable', async () => {
     const pageHtml =
       '<header id="page-header"><h1>Task</h1></header><div id="intro"><div class="no-overflow"></div></div>';

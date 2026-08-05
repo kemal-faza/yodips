@@ -53,6 +53,15 @@ const kulonUrl = computed(() => {
     : 'https://kulon2.undip.ac.id/';
 });
 
+const submissionDot = computed(() => {
+  switch (detail.value?.submission.status) {
+    case 'submitted': return 'bg-yellow-400';
+    case 'graded': return 'bg-emerald-400';
+    case 'not_submitted': return 'bg-white/40';
+    default: return 'bg-white/25';
+  }
+});
+
 const submissionLabel = computed(() =>
   detail.value ? SUBMISSION_LABELS[detail.value.submission.status] : '',
 );
@@ -123,6 +132,21 @@ watch(
             <span class="block text-sm font-normal text-white/70">{{ assignment.course }}</span>
             {{ assignment.name }}
             <span class="mt-1 block text-sm font-normal text-white/70">Deadline: {{ deadline }}</span>
+            <span
+              v-if="detail"
+              class="mt-2 flex items-center gap-1.5 text-sm font-normal text-white/85"
+            >
+              <span
+                class="size-2 shrink-0 rounded-full"
+                :class="submissionDot"
+                aria-hidden="true"
+              />
+              <span data-test="submission-status">{{ submissionLabel }}</span>
+              <template v-if="submittedAt">
+                <span aria-hidden="true">·</span>
+                <span>Dikumpulkan {{ submittedAt }}</span>
+              </template>
+            </span>
           </SheetTitle>
           <div class="flex flex-col items-end gap-2">
             <StatusBadge :status="status" />

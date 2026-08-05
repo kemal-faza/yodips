@@ -374,7 +374,7 @@ export class KulonService {
     let status: KulonSubmission['status'] = 'unknown';
     const isGraded = /graded/i.test(gradingStatus) && !/not graded/i.test(gradingStatus);
     if (isGraded) status = 'graded';
-    else if (/not submitted|draft/i.test(submissionStatus)) status = 'not_submitted';
+    else if (/not submitted|no submissions|draft/i.test(submissionStatus)) status = 'not_submitted';
     else if (/submitted/i.test(submissionStatus)) status = 'submitted';
 
     const grade = this.extractGrade(block);
