@@ -14,18 +14,11 @@ const status = computed(() =>
 );
 
 const dateText = computed(() => formatRelativeDate(props.assignment.duedate));
-
-const accent = computed(() => {
-  if (status.value === 'overdue') return 'border-l-danger';
-  if (status.value === 'dueSoon') return 'border-l-warn';
-  return 'border-l-success';
-});
 </script>
 
 <template>
   <Card
-    class="assignment-card cursor-pointer border-solid border-l-4 transition hover:bg-muted/50"
-    :class="accent"
+    class="assignment-card cursor-pointer border-transparent transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
     role="button"
     tabindex="0"
     @click="emit('open')"

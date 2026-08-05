@@ -3,7 +3,7 @@ import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { Bell, Moon, Sun } from '@lucide/vue';
+import { Bell, Home, Moon, Sun } from '@lucide/vue';
 
 defineProps<{ showBack?: boolean; breadcrumb?: string }>();
 const emit = defineEmits<{ (e: 'back'): void }>();
@@ -21,16 +21,20 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
         <Button
           v-if="showBack"
           variant="ghost"
-          size="sm"
+          size="icon"
           class="text-white hover:bg-white/20 hover:text-white"
+          aria-label="Kembali"
           @click="emit('back')"
         >
-          &larr; Kembali
+          <Home class="size-4" aria-hidden="true" />
         </Button>
-        <div>
-          <h1 class="text-lg font-bold">Undip SSO Aggregator</h1>
-          <p v-if="breadcrumb" class="text-xs text-white/70">{{ breadcrumb }}</p>
-        </div>
+        <router-link to="/" class="flex items-center gap-2 text-white no-underline hover:opacity-90">
+          <Home class="size-4 shrink-0" aria-hidden="true" />
+          <div>
+            <h1 class="text-lg font-bold leading-tight">Undip SSO Aggregator</h1>
+            <p v-if="breadcrumb" class="text-xs text-white/70">{{ breadcrumb }}</p>
+          </div>
+        </router-link>
       </div>
       <div class="flex items-center gap-3">
         <Button

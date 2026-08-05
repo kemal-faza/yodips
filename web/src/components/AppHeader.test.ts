@@ -16,7 +16,7 @@ describe('AppHeader', () => {
   it('emits back when the back button is clicked', async () => {
     mockStores();
     const w = mount(AppHeader, { props: { showBack: true } });
-    await w.findAll('button').find((b) => b.text().includes('Kembali'))!.trigger('click');
+    await w.find('[aria-label="Kembali"]').trigger('click');
     expect(w.emitted('back')).toHaveLength(1);
   });
 
@@ -24,7 +24,7 @@ describe('AppHeader', () => {
     mockStores();
     const w = mount(AppHeader, { props: { breadcrumb: 'SIAP' } });
     expect(w.text()).toContain('SIAP');
-    expect(w.text()).not.toContain('Kembali');
+    expect(w.find('[aria-label="Kembali"]').exists()).toBe(false);
   });
 
   it('calls store.logout when Keluar is clicked', async () => {

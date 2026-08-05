@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { XIcon } from '@lucide/vue';
+import { X } from '@lucide/vue';
 import { getAssignmentDetail } from '../api/client';
 import type { Assignment, AssignmentDetail, SubmissionStatus } from '../types';
 import { assignStatus } from '../utils/assignment';
@@ -134,7 +134,7 @@ watch(
               class="text-white/70 hover:bg-white/10 hover:text-white"
               @click="emit('close')"
             >
-              <XIcon class="size-4" aria-hidden="true" />
+              <X class="size-4" aria-hidden="true" />
             </Button>
           </div>
         </div>
