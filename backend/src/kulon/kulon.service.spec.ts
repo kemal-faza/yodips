@@ -1,5 +1,20 @@
 import 'reflect-metadata';
-import { KulonService } from './kulon.service';
+import { KulonService, parseSemester } from './kulon.service';
+
+describe('parseSemester', () => {
+  it('extracts semester from fullname', () => {
+    expect(parseSemester('S1 2025/2026 Genap Keamanan dan Jaminan Informasi B')).toBe('2025/2026 Genap');
+  });
+  it('returns null when no pattern', () => {
+    expect(parseSemester('Pemrograman Berorientasi Objek E')).toBeNull();
+  });
+  it('falls back to idnumber', () => {
+    expect(parseSemester('KJI B', 'MIK1624601 S1 2025/2026 Genap')).toBe('2025/2026 Genap');
+  });
+  it('handles Ganjil and case-insensitive', () => {
+    expect(parseSemester('S1 2024/2025 ganjil Algoritma')).toBe('2024/2025 Ganjil');
+  });
+});
 
 describe('KulonService', () => {
   let svc: KulonService;

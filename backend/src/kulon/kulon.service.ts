@@ -1,10 +1,20 @@
 import { Injectable } from '@nestjs/common';
 
+const SEMESTER_RE = /(20\d{2}\/\d{4})\s+(Ganjil|Genap|Pendek)/i;
+
+export function parseSemester(fullname: string, idnumber = ''): string | null {
+  const m = fullname.match(SEMESTER_RE) ?? idnumber.match(SEMESTER_RE);
+  if (!m) return null;
+  const term = m[2][0].toUpperCase() + m[2].slice(1).toLowerCase();
+  return `${m[1]} ${term}`;
+}
+
 export interface KulonCourse {
   id: number;
   fullname: string;
   shortname: string;
   idnumber: string;
+  semester?: string | null;
 }
 
 export interface KulonAssignment {
@@ -185,6 +195,7 @@ export class KulonService {
       fullname: c.fullname,
       shortname: c.shortname,
       idnumber: c.idnumber ?? '',
+      semester: parseSemester(c.fullname ?? '', c.idnumber ?? ''),
     }));
   }
 
