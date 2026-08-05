@@ -33,7 +33,7 @@ function initial(name?: string): string {
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-2xl bg-gradient-to-r from-siap-from to-siap-to text-white shadow-lg">
+  <div class="overflow-hidden rounded-2xl bg-gradient-to-r from-siap-from to-siap-to text-white shadow-lg [--foreground:white]">
     <div class="flex items-center gap-4 p-6">
       <Avatar class="size-20 border-2 border-white/40 bg-white/20 text-white">
         <AvatarImage v-if="profile?.fotoUrl" :src="profile.fotoUrl" alt="Foto" />
@@ -47,12 +47,12 @@ function initial(name?: string): string {
       </div>
     </div>
     <Tabs v-model="activeTabModel">
-      <TabsList class="grid w-full grid-cols-3 gap-0 rounded-none border-t border-white/20 bg-black/10 p-0">
+      <TabsList variant="line" class="grid w-full grid-cols-3 border-t border-white/20 bg-black/10">
         <TabsTrigger
           v-for="t in tabs"
           :key="t.key"
           :value="t.key"
-          class="rounded-none px-4 py-3 text-sm font-medium text-white/70 hover:text-white data-[state=active]:bg-white/20 data-[state=active]:text-white"
+          class="dark:text-white/70"
         >
           {{ t.label }}
         </TabsTrigger>
