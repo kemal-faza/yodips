@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 
 const emit = defineEmits<{ (e: 'navigate', view: 'siap' | 'tugas'): void }>();
@@ -55,12 +56,14 @@ function openService(s: Service) {
           Akses semua layanan akademik Undip dari satu tempat.
         </p>
       </div>
-      <button
-        class="shrink-0 rounded-full bg-white/20 px-3 py-1 text-sm font-medium transition hover:bg-white/30"
+      <Button
+        variant="ghost"
+        size="sm"
+        class="shrink-0 text-white hover:bg-white/30"
         @click="dismissWelcome"
       >
         Tutup
-      </button>
+      </Button>
     </div>
 
     <section>
@@ -72,25 +75,27 @@ function openService(s: Service) {
           :data-test="`service-${s.key}`"
           role="button"
           tabindex="0"
-          class="card-hover cursor-pointer rounded-2xl border-line bg-surface p-5 text-left"
+          class="card-hover cursor-pointer text-left"
           @click="openService(s)"
           @keydown.enter="openService(s)"
         >
-          <div class="flex items-start justify-between">
-            <div
-              class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-lg font-bold text-primary-600 dark:bg-primary-500/15 dark:text-primary-400"
-            >
-              {{ s.monogram }}
+          <CardContent class="p-5">
+            <div class="flex items-start justify-between">
+              <div
+                class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-lg font-bold text-primary-600 dark:bg-primary-500/15 dark:text-primary-400"
+              >
+                {{ s.monogram }}
+              </div>
+              <Badge
+                v-if="!s.ready"
+                class="bg-gold/20 text-ink"
+              >
+                Coming Soon
+              </Badge>
             </div>
-            <Badge
-              v-if="!s.ready"
-              class="rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-semibold text-ink"
-            >
-              Coming Soon
-            </Badge>
-          </div>
-          <p class="mt-3 font-semibold text-ink">{{ s.name }}</p>
-          <p class="mt-0.5 text-xs text-ink-muted">{{ s.desc }}</p>
+            <p class="mt-3 font-semibold text-ink">{{ s.name }}</p>
+            <p class="mt-0.5 text-xs text-ink-muted">{{ s.desc }}</p>
+          </CardContent>
         </Card>
       </div>
     </section>
@@ -98,8 +103,8 @@ function openService(s: Service) {
     <section>
       <h2 class="mb-3 text-lg font-bold text-ink">Berita</h2>
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card v-for="n in news" :key="n.title" class="border-line bg-surface">
-          <CardContent class="p-4">
+        <Card v-for="n in news" :key="n.title">
+          <CardContent>
             <p class="text-xs font-medium text-primary-600 dark:text-primary-400">{{ n.date }}</p>
             <p class="mt-1 font-semibold text-ink">{{ n.title }}</p>
           </CardContent>
