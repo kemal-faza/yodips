@@ -67,6 +67,7 @@ function itemBadge(item: CourseContentItem): string {
 }
 
 const MONTH_NAMES: Record<string, number> = {
+  // Indonesian
   januari: 0, jan: 0,
   februari: 1, feb: 1,
   maret: 2, mar: 2,
@@ -79,6 +80,17 @@ const MONTH_NAMES: Record<string, number> = {
   oktober: 9, okt: 9,
   november: 10, nov: 10,
   desember: 11, des: 11,
+  // English (Kulon real titles use e.g. "9 February - 15 February").
+  // april/september/november are identical to the Indonesian keys above.
+  january: 0,
+  february: 1,
+  march: 2,
+  may: 4,
+  june: 5,
+  july: 6,
+  august: 7,
+  october: 9,
+  december: 11,
 };
 
 /**
@@ -100,13 +112,20 @@ function isCurrentWeekSection(dateRange?: string): boolean {
 
     const startDay = parseInt(startTokens[0], 10);
     const startMonthStr = startTokens[1] || '';
-    const startMonth = MONTH_NAMES[startMonthStr] ?? new Date().getMonth();
 
     const endDay = parseInt(endTokens[0], 10);
     const endMonthStr = endTokens[1] || startMonthStr;
-    const endMonth = MONTH_NAMES[endMonthStr] ?? startMonth;
 
     if (isNaN(startDay) || isNaN(endDay)) return false;
+    // BUGFIX: both months must be recognized. The old `?? new Date().getMonth()`
+    // fallback silently re-placed EVERY unrecognized day-range into the current
+    // month — so several weekly titles whose day-numbers straddled today all got
+    // flagged "Minggu Ini" at once (e.g. Pertemuan 7 AND 15). Unknown month ⇒ not
+    // a valid current-week section.
+    if (!(startMonthStr in MONTH_NAMES) || !(endMonthStr in MONTH_NAMES)) return false;
+
+    const startMonth = MONTH_NAMES[startMonthStr];
+    const endMonth = MONTH_NAMES[endMonthStr];
 
     const now = new Date();
     const startDate = new Date(year, startMonth, startDay, 0, 0, 0);

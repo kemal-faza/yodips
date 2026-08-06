@@ -128,4 +128,42 @@ describe('KulonCourseDetailView', () => {
     expect(w.text()).toContain('Link');
     expect(w.text()).toContain('Materi');
   });
+
+  it("renders NO 'Minggu Ini' badge for sections whose month name isn't recognized (stray current-month fallback bug)", async () => {
+    // Regression: sections with an unrecognized month used to silently fall back
+    // to the *current* month (August) and could all get flagged "Minggu Ini".
+    (api.getCourseContent as any).mockResolvedValue({
+      courseId: 9,
+      sections: [
+        { id: 7, label: 'Pertemuan 7', dateRange: '1 Xxx - 7 Xxx', items: [] },
+        { id: 15, label: 'Pertemuan 15', dateRange: '6 Xxx - 12 Xxx', items: [] },
+      ],
+    });
+    (api.getCourses as any).mockResolvedValue([]);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/kulon/matakuliah/9');
+    const w = mount(KulonCourseDetailView, { global: { plugins: [router] } });
+    await flushPromises();
+    expect(w.text()).not.toContain('Minggu Ini');
+  });
+
+  it("shows the 'Minggu Ini' badge only on the section whose recognized (English) month is the current week", async () => {
+    // Today is 2026-08-06 → "3 August - 9 August" is the current week.
+    (api.getCourseContent as any).mockResolvedValue({
+      courseId: 9,
+      sections: [
+        { id: 6, label: 'Pertemuan 6', dateRange: '27 July - 2 August', items: [] },
+        { id: 7, label: 'Pertemuan 7', dateRange: '3 August - 9 August', items: [] },
+        { id: 15, label: 'Pertemuan 15', dateRange: '10 August - 16 August', items: [] },
+      ],
+    });
+    (api.getCourses as any).mockResolvedValue([]);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/kulon/matakuliah/9');
+    const w = mount(KulonCourseDetailView, { global: { plugins: [router] } });
+    await flushPromises();
+    expect(w.text()).toContain('Minggu Ini');
+    // Exactly one occurrence.
+    expect(w.text().match(/Minggu Ini/g)?.length).toBe(1);
+  });
 });
