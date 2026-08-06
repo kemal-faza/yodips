@@ -24,6 +24,19 @@ export class KulonController {
     return this.kulonService.getCourses(session.kulonCookie, sesskey);
   }
 
+  @Get('assignments/all')
+  async getAllAssignments(@Req() req: any) {
+    const session = await this.sessionStore.get(req.user?.sub);
+    if (!session?.kulonCookie) {
+      throw new HttpException(
+        { message: 'Kulon session belum ada — silakan login ulang via SSO' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const sesskey = await this.getSesskey(session.kulonCookie);
+    return this.kulonService.getAllAssignments(session.kulonCookie, sesskey);
+  }
+
   @Get('assignments')
   async getAssignments(@Req() req: any) {
     const session = await this.sessionStore.get(req.user?.sub);

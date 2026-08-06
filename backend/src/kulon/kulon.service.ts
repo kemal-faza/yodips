@@ -28,6 +28,7 @@ export interface KulonAssignment {
   courseId: number;
   assignmentId: number;
   courseModuleId: number;
+  submissionStatus?: KulonSubmission['status'];
 }
 
 export interface KulonFile {
@@ -309,6 +310,109 @@ export class KulonService {
           courseModuleId: this.extractCourseModuleId(e.url),
         };
       });
+  }
+
+  /**
+   * Full assignment list across all enrolled courses, including COMPLETED
+   * ones. The calendar action-events feed (`getAssignments`) only surfaces
+   * outstanding items, so we aggregate each course's
+   * `/mod/assign/index.php` page — one fetch per course — which lists all
+   * assignments with a student "Submission" column. Bounded concurrency keeps
+   * the first load reasonable.
+   */
+  async getAllAssignments(
+    sessionCookie: string,
+    sesskey: string,
+  ): Promise<KulonAssignment[]> {
+    const courses = await this.getCourses(sessionCookie, sesskey);
+    const results: KulonAssignment[][] = [];
+    const CONCURRENCY = 4;
+    const queue = [...courses];
+    const workers = Array(Math.min(CONCURRENCY, queue.length))
+      .fill(0)
+      .map(async () => {
+        while (queue.length) {
+          const c = queue.shift()!;
+          results.push(await this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname));
+        }
+      });
+    await Promise.all(workers);
+    return results.flat();
+  }
+
+  /** Fetch and parse one course's assignment index page; [] on any failure. */
+  private async fetchAssignmentIndex(
+    sessionCookie: string,
+    courseId: number,
+    courseName: string,
+  ): Promise<KulonAssignment[]> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/mod/assign/index.php?id=${courseId}`,
+        { headers: { Cookie: sessionCookie }, redirect: 'follow' },
+      );
+      if (!res.ok) return [];
+      return this.parseAssignmentIndex(await res.text(), courseId, courseName);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Parse `/mod/assign/index.php` HTML into assignments. The table row cells
+   * are index-ordered (c0 Section, c1 Assignments+link, c2 Due date,
+   * c3 Submission, c4 Grade). Verified live: the student sees a "Submission"
+   * column with values like "No submission" / "Submitted for grading" /
+   * "Graded".
+   */
+  private parseAssignmentIndex(
+    html: string,
+    courseId: number,
+    courseName: string,
+  ): KulonAssignment[] {
+    const out: KulonAssignment[] = [];
+    const table = html.match(/<table[^>]*class="[^"]*mod-index[^"]*"[^>]*>([\s\S]*?)<\/table>/i);
+    if (!table) return out;
+    const body = table[1];
+    const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let tr: RegExpExecArray | null;
+    while ((tr = trRe.exec(body)) !== null) {
+      const link = tr[1].match(/href="[^"]*\/mod\/assign\/view\.php\?id=(\d+)"/i);
+      if (!link) continue;
+      const cmid = Number(link[1]);
+      const name = (tr[1].match(/view\.php\?id=\d+">([\s\S]*?)<\/a>/i) ??
+        tr[1].match(/<a[^>]*>([\s\S]*?)<\/a>/i))?.[1];
+      if (!name) continue;
+      const dueRaw = ((tr[1].match(/<td[^>]*class="cell c2"[^>]*>([\s\S]*?)<\/td>/i) ?? [])[1] ?? '')
+        .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      const subRaw = ((tr[1].match(/<td[^>]*class="cell c3"[^>]*>([\s\S]*?)<\/td>/i) ?? [])[1] ?? '')
+        .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      const due = this.parseMoodleDate(dueRaw);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const isOverdueRelative = /overdue/i.test(dueRaw);
+      out.push({
+        id: cmid,
+        name: name.replace(/<[^>]*>/g, '').trim(),
+        module: 'assign',
+        eventType: 'due',
+        duedate: due ?? 0,
+        overdue: due !== null ? due < nowSec : isOverdueRelative,
+        course: courseName,
+        courseId,
+        assignmentId: cmid,
+        courseModuleId: cmid,
+        submissionStatus: this.mapIndexSubmissionStatus(subRaw),
+      });
+    }
+    return out;
+  }
+
+  /** Map the index "Submission" cell text to our status enum. */
+  private mapIndexSubmissionStatus(text: string): KulonSubmission['status'] {
+    if (/no submission|not submitted|no submissions|draft/i.test(text)) return 'not_submitted';
+    if (/graded/i.test(text)) return 'graded';
+    if (/submitted/i.test(text)) return 'submitted';
+    return 'unknown';
   }
 
   async getAssignmentDetail(
