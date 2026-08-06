@@ -14,9 +14,10 @@ describe('PlaywrightAuthService', () => {
   let svc: PlaywrightAuthService;
   const mockKulon = { checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })) };
   const mockSiap = { checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })) };
+  const mockConfig = { get: jest.fn(() => undefined) }; // CHROME_PATH unset → default chrome
 
   beforeEach(() => {
-    svc = new PlaywrightAuthService(mockKulon as any, mockSiap as any);
+    svc = new PlaywrightAuthService(mockKulon as any, mockSiap as any, mockConfig as any);
     jest.clearAllMocks();
   });
 
@@ -78,9 +79,10 @@ describe('launchAndCaptureSession', () => {
   const mockSiap = {
     checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
   };
+  const mockConfig = { get: jest.fn(() => undefined) }; // CHROME_PATH unset → default chrome
 
   beforeEach(() => {
-    svc = new PlaywrightAuthService(mockKulon as any, mockSiap as any);
+    svc = new PlaywrightAuthService(mockKulon as any, mockSiap as any, mockConfig as any);
     jest.clearAllMocks();
   });
 
@@ -229,5 +231,37 @@ describe('launchAndCaptureSession', () => {
 
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(2);
     expect(session.kulonCookie).toContain('MoodleSession=KULON');
+  });
+
+  it('uses CHROME_PATH (e.g. Edge) for launchPersistentContext when configured', async () => {
+    const cfg = {
+      get: jest.fn((k: string) => (k === 'CHROME_PATH' ? '/usr/bin/microsoft-edge' : undefined)),
+    };
+    // Local mocks: isolated from any leftover mockResolvedValueOnce on the shared ones.
+    const kulonLocal = {
+      checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
+    };
+    const siapLocal = {
+      checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
+    };
+    const svcEdge = new PlaywrightAuthService(kulonLocal as any, siapLocal as any, cfg as any);
+    const page = makePage(jest.fn().mockReturnValue(DASHBOARD_URL));
+    const mockContext = makeContext(page, jest.fn().mockResolvedValue(fullCookies));
+    (chromium.launchPersistentContext as jest.Mock).mockResolvedValue(mockContext);
+
+    await svcEdge.launchAndCaptureSession(
+      '/tmp/test-profile',
+      LOGIN_URL,
+      DASHBOARD_URL,
+      KULON_URL,
+      SIAP_URL,
+      5000,
+      50,
+    );
+
+    expect(chromium.launchPersistentContext).toHaveBeenCalledWith(
+      '/tmp/test-profile',
+      expect.objectContaining({ executablePath: '/usr/bin/microsoft-edge' }),
+    );
   });
 });

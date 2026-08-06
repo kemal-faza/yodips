@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { chromium } from 'playwright-core';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
@@ -20,12 +21,19 @@ const POLL_INTERVAL_MS = 2_000;
 @Injectable()
 export class PlaywrightAuthService {
   private readonly logger = new Logger(PlaywrightAuthService.name);
+  private readonly browserPath: string;
 
   constructor(
     private readonly kulon: KulonService,
     private readonly siap: SiapService,
+    // ConfigModule is global (app.module.ts isGlobal: true).
+    private readonly config: ConfigService,
   ) {
-    // no-op — services injected for session-validity probing
+    // Browser binary for the interactive login window. Defaults to system Google
+    // Chrome; set CHROME_PATH to use e.g. Edge (`/usr/bin/microsoft-edge`).
+    // Playwright always launches with an isolated `--user-data-dir` (profileDir),
+    // so it never touches the user's default profile or its stored sessions.
+    this.browserPath = this.config.get<string>('CHROME_PATH') ?? '/usr/bin/google-chrome';
   }
 
   /**
@@ -82,10 +90,12 @@ export class PlaywrightAuthService {
     kulonTimeoutMs: number = KULON_TIMEOUT_MS,
     siapTimeoutMs: number = SIAP_TIMEOUT_MS,
   ): Promise<CapturedSession> {
-    // Point Playwright at the system Chrome so a real, visible window opens.
+    // Point Playwright at the configured browser (CHROME_PATH, e.g. Edge) so a
+    // real, visible window opens. Defaults to system Google Chrome.
+    this.logger.log(`Opening interactive login window using browser: ${this.browserPath}`);
     const context = await chromium.launchPersistentContext(profileDir, {
       headless: false,
-      executablePath: '/usr/bin/google-chrome',
+      executablePath: this.browserPath,
       viewport: { width: 1280, height: 800 },
     });
     try {

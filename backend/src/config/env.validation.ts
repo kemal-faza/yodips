@@ -66,6 +66,12 @@ export class EnvConfig {
   @IsNotEmpty()
   CHROME_PROFILE_DIR: string;
 
+  // Browser binary for the interactive login window (optional — code defaults
+  // to Google Chrome). Declared here or `whitelist` strips it → fallback Chrome.
+  @IsOptional()
+  @IsString()
+  CHROME_PATH?: string;
+
   // How long the interactive capture waits for a valid Kulon session (ms).
   @IsOptional()
   @Min(1000)
