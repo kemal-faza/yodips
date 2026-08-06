@@ -39,6 +39,8 @@ export interface Course {
   shortname: string;
   idnumber: string;
   semester?: string | null;
+  /** Moodle's own timeline classification (source of truth for active/past). */
+  timelineStatus?: 'inprogress' | 'past';
 }
 
 export type FileType = 'pdf' | 'pptx' | 'ppt' | 'doc' | 'docx' | 'xls' | 'xlsx' | 'other';
