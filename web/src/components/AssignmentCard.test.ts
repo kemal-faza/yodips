@@ -17,10 +17,35 @@ describe('AssignmentCard', () => {
   });
   it('shows overdue badge for overdue assignment', () => {
     const w = mount(AssignmentCard, { props: { assignment: make(now - 1000, true) } });
-    expect(w.text()).toContain('Terlambat');
+    expect(w.text()).toContain('overdue');
   });
   it('shows overdue badge for past deadline', () => {
     const w = mount(AssignmentCard, { props: { assignment: make(now - 1000) } });
-    expect(w.text()).toContain('Terlambat');
+    expect(w.text()).toContain('overdue');
+  });
+  it('shows due badge for upcoming deadline', () => {
+    const w = mount(AssignmentCard, { props: { assignment: make(now + 5 * 24 * 3600 * sec) } });
+    expect(w.text()).toContain('due');
+  });
+  it('shows done badge when submitted', () => {
+    const w = mount(AssignmentCard, {
+      props: { assignment: { ...make(now - 1000), submissionStatus: 'submitted' } },
+    });
+    expect(w.text()).toContain('done');
+  });
+  it('emits hide when hide button clicked', () => {
+    const w = mount(AssignmentCard, {
+      props: { assignment: make(now + 1000), showHide: true },
+    });
+    const btn = w.find('[data-test="hide-assignment"]');
+    expect(btn.exists()).toBe(true);
+    btn.trigger('click');
+    expect(w.emitted('hide')).toBeTruthy();
+  });
+  it('does not show hide button when showHide is false', () => {
+    const w = mount(AssignmentCard, {
+      props: { assignment: make(now + 1000), showHide: false },
+    });
+    expect(w.find('[data-test="hide-assignment"]').exists()).toBe(false);
   });
 });

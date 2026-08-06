@@ -75,6 +75,9 @@ describe('KulonCourseDetailView', () => {
     expect(w.text()).toContain('General');
     expect(w.text()).toContain('Pertemuan 1');
     expect(w.text()).toContain('9 February - 15 February');
+    // Open section 1 to view items
+    await w.find('[data-test="section-toggle-1"]').trigger('click');
+    await flushPromises();
     expect(w.text()).toContain('Materi 1');
     expect(w.text()).toContain('Tugas A');
   });
@@ -85,6 +88,8 @@ describe('KulonCourseDetailView', () => {
     const router = buildRouter(createMemoryHistory());
     await router.push('/kulon/matakuliah/9');
     const w = mount(KulonCourseDetailView, { global: { plugins: [router] } });
+    await flushPromises();
+    await w.find('[data-test="section-toggle-1"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="item-assign-12"]').trigger('click');
     await flushPromises();
@@ -113,6 +118,11 @@ describe('KulonCourseDetailView', () => {
     await router.push('/kulon/matakuliah/9');
     const w = mount(KulonCourseDetailView, { global: { plugins: [router] } });
     await flushPromises();
+    // If section 1 is collapsed, click to toggle open
+    if (!w.text().includes('Kuis')) {
+      await w.find('[data-test="section-toggle-1"]').trigger('click');
+      await flushPromises();
+    }
     expect(w.text()).toContain('Kuis');
     expect(w.text()).toContain('Forum');
     expect(w.text()).toContain('Link');

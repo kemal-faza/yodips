@@ -7,6 +7,8 @@ export function assignStatus(
   duedateSec: number,
   nowMs: number,
 ): AssignmentStatus {
+  // A missing/zero duedate means "no deadline" — never count as overdue.
+  if (!duedateSec || duedateSec <= 0) return 'onTrack';
   const duedateMs = duedateSec * 1000;
   if (overdue || duedateMs < nowMs) return 'overdue';
   if (duedateMs - nowMs <= DUE_SOON_MS) return 'dueSoon';
@@ -33,9 +35,11 @@ export function deadlineStatus(
 }
 
 /**
- * Combined status for an assignment, distinguishing whether it was submitted.
- * Key driver of the dashboard list: "Terlambat, belum dikumpulkan" (danger)
- * vs "Terlambat, sudah dikumpulkan" (warn) is the core ask.
+ * Combined status for an assignment.
+ * Exactly three states:
+ *  - done     (success/green)  — submitted or graded, regardless of timing
+ *  - overdue  (danger/red)     — deadline passed and not submitted
+ *  - due      (warn/yellow)    — deadline still ahead and not submitted
  */
 export function assignmentDisplayStatus(
   overdue: boolean,
@@ -43,15 +47,9 @@ export function assignmentDisplayStatus(
   submission: SubmissionStatus | undefined,
 ): DisplayStatus {
   if (submission === 'submitted' || submission === 'graded') {
-    return overdue
-      ? { label: 'Terlambat, sudah dikumpulkan', tone: 'warn' }
-      : { label: 'Selesai', tone: 'success' };
+    return { label: 'done', tone: 'success' };
   }
-  if (submission === 'not_submitted') {
-    return overdue
-      ? { label: 'Terlambat, belum dikumpulkan', tone: 'danger' }
-      : { label: 'Belum dikumpulkan', tone: 'muted' };
-  }
-  // Unknown submission (e.g. legacy list without status) -> deadline view.
-  return deadlineStatus(overdue, duedateSec, Date.now());
+  const s = assignStatus(overdue, duedateSec, Date.now());
+  if (s === 'overdue') return { label: 'overdue', tone: 'danger' };
+  return { label: 'due', tone: 'warn' };
 }

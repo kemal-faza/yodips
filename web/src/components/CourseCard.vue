@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Course } from '../types';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { BookOpen } from '@lucide/vue';
 
 defineProps<{ course: Course }>();
 const emit = defineEmits<{ (e: 'open'): void }>();
@@ -9,19 +9,19 @@ const emit = defineEmits<{ (e: 'open'): void }>();
 
 <template>
   <Card
-    class="card-hover cursor-pointer text-left"
+    class="group cursor-pointer overflow-hidden border border-line bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/40"
     role="button"
     tabindex="0"
     data-test="course-card"
     @click="emit('open')"
     @keydown.enter="emit('open')"
   >
-    <CardContent class="p-4">
-      <Badge v-if="course.semester" class="bg-primary-50 text-primary-600 dark:bg-primary-500/15 dark:text-primary-400">
-        {{ course.semester }}
-      </Badge>
-      <p class="mt-2 truncate font-medium text-ink">{{ course.fullname }}</p>
-      <p v-if="course.idnumber" class="mt-0.5 truncate text-xs text-ink-muted">{{ course.idnumber }}</p>
+    <CardContent class="flex items-center gap-5 px-5 py-4">
+      <BookOpen class="size-6 shrink-0 text-primary" aria-hidden="true" />
+      <div class="min-w-0 flex-1">
+        <p class="truncate font-medium text-sm text-ink">{{ course.fullname }}</p>
+        <p v-if="course.idnumber" class="mt-1.5 truncate text-xs text-ink-muted">{{ course.idnumber }}</p>
+      </div>
     </CardContent>
   </Card>
 </template>

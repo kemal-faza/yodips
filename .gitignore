@@ -11,3 +11,6 @@ AGENTS.md
 design-reference/
 # Real captured SIAP session data (personal) — never commit.
 backend/test/fixtures/
+.codegraph/
+.superpowers/
+web/.visual-fix/

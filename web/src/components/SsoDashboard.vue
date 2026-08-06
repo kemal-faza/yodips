@@ -3,6 +3,8 @@ import { ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { User, GraduationCap, Mail, Award, CalendarDays, Cloud } from '@lucide/vue';
+import type { Component } from 'vue';
 
 const emit = defineEmits<{ (e: 'navigate', view: 'siap' | 'kulon'): void }>();
 
@@ -18,18 +20,18 @@ interface Service {
   key: string;
   name: string;
   desc: string;
-  monogram: string;
+  icon: Component;
   ready: boolean;
   view?: 'siap' | 'kulon';
 }
 
 const services: Service[] = [
-  { key: 'siap', name: 'SIAP', desc: 'Informasi akademik dan biodata', monogram: 'S', ready: true, view: 'siap' },
-  { key: 'kulon', name: 'Kulon', desc: 'Tugas dan materi pembelajaran', monogram: 'K', ready: true, view: 'kulon' },
-  { key: 'mandala', name: 'MANDALA', desc: 'Jadwal perkuliahan', monogram: 'M', ready: false },
-  { key: 'beasiswa', name: 'Scholarship', desc: 'Informasi beasiswa', monogram: 'B', ready: false },
-  { key: 'event', name: 'Event', desc: 'Kegiatan kampus', monogram: 'E', ready: false },
-  { key: 'microsoft', name: 'Microsoft 365', desc: 'Email dan aplikasi', monogram: 'M', ready: false },
+  { key: 'siap', name: 'SIAP', desc: 'Informasi akademik dan biodata', icon: User, ready: true, view: 'siap' },
+  { key: 'kulon', name: 'Kulon', desc: 'Tugas dan materi pembelajaran', icon: GraduationCap, ready: true, view: 'kulon' },
+  { key: 'mandala', name: 'MANDALA', desc: 'Persuratan online', icon: Mail, ready: false },
+  { key: 'beasiswa', name: 'Scholarship', desc: 'Informasi beasiswa', icon: Award, ready: false },
+  { key: 'event', name: 'Event', desc: 'Kegiatan kampus', icon: CalendarDays, ready: false },
+  { key: 'microsoft', name: 'Microsoft 365', desc: 'Email dan aplikasi', icon: Cloud, ready: false },
 ];
 
 function openService(s: Service) {
@@ -66,17 +68,19 @@ function openService(s: Service) {
           v-for="s in services"
           :key="s.key"
           :data-test="`service-${s.key}`"
-          role="button"
-          tabindex="0"
-          class="card-hover cursor-pointer text-left"
+          :role="s.ready ? 'button' : undefined"
+          :tabindex="s.ready ? 0 : undefined"
+          :aria-disabled="!s.ready"
+          class="text-left transition-all duration-200"
+          :class="s.ready ? 'card-hover cursor-pointer hover:border-primary/40' : 'opacity-60 cursor-default'"
           @click="openService(s)"
           @keydown.enter="openService(s)"
         >
           <CardContent class="flex items-center gap-3 p-4">
             <span
-              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-sm font-bold text-primary-600 dark:bg-primary-500/15 dark:text-primary-400"
+              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary dark:bg-primary/20"
             >
-              {{ s.monogram }}
+              <component :is="s.icon" class="size-5" aria-hidden="true" />
             </span>
             <div class="min-w-0 flex-1">
               <p class="truncate font-medium text-ink">{{ s.name }}</p>

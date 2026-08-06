@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
 import { getSiapProfile } from '../api/client';
 import type { SiapProfile } from '../types';
 import { useAuthStore } from '../stores/auth';
-import AppHeader from '../components/AppHeader.vue';
 import ProfileBanner, { type SiapTab } from '../components/ProfileBanner.vue';
 import InfoBanner from '../components/InfoBanner.vue';
 import SiapDashboard from '../components/SiapDashboard.vue';
@@ -12,7 +10,6 @@ import SiapBiodata from '../components/SiapBiodata.vue';
 import SiapNotifikasi from '../components/SiapNotifikasi.vue';
 import { Card, CardContent } from '@/components/ui/card';
 
-const router = useRouter();
 const store = useAuthStore();
 
 const siapTab = ref<SiapTab>('dasbor');
@@ -44,39 +41,30 @@ function changeSiapTab(tab: SiapTab) {
   siapTab.value = tab;
 }
 
-function goBack() {
-  router.push('/');
-}
-
 onMounted(() => {
   if (hasSiap.value) loadProfile();
 });
 </script>
 
 <template>
-  <div class="min-h-screen bg-canvas">
-    <AppHeader show-back breadcrumb="SIAP" @back="goBack" />
-    <main class="mx-auto max-w-6xl px-4 py-8">
-      <div class="space-y-4">
-        <template v-if="hasSiap">
-          <ProfileBanner :profile="profile" :active-tab="siapTab" @change-tab="changeSiapTab" />
-          <InfoBanner message="Ringkasan akademik dan biodata Anda dari SIAP Undip." />
-          <div v-if="profileError" class="rounded-2xl bg-danger/10 p-4 text-danger">
-            {{ profileError }}
-          </div>
-          <SiapDashboard v-if="siapTab === 'dasbor'" :profile="profile" :has-siap="hasSiap" />
-          <SiapBiodata v-else-if="siapTab === 'biodata'" :profile="profile" />
-          <SiapNotifikasi v-else />
-        </template>
-        <Card v-else class="text-center">
-          <CardContent class="px-4 py-8">
-            <p class="font-semibold text-ink">Belum ada session SIAP</p>
-            <p class="mt-1 text-sm text-ink-muted">
-              Silakan login ulang via SSO untuk melihat data akademik.
-            </p>
-          </CardContent>
-        </Card>
+  <div class="space-y-4">
+    <template v-if="hasSiap">
+      <ProfileBanner :profile="profile" :active-tab="siapTab" @change-tab="changeSiapTab" />
+      <InfoBanner message="Ringkasan akademik dan biodata Anda dari SIAP Undip." />
+      <div v-if="profileError" class="rounded-2xl bg-danger/10 p-4 text-danger">
+        {{ profileError }}
       </div>
-    </main>
+      <SiapDashboard v-if="siapTab === 'dasbor'" :profile="profile" :has-siap="hasSiap" />
+      <SiapBiodata v-else-if="siapTab === 'biodata'" :profile="profile" />
+      <SiapNotifikasi v-else />
+    </template>
+    <Card v-else class="text-center">
+      <CardContent class="px-4 py-8">
+        <p class="font-semibold text-ink">Belum ada session SIAP</p>
+        <p class="mt-1 text-sm text-ink-muted">
+          Silakan login ulang via SSO untuk melihat data akademik.
+        </p>
+      </CardContent>
+    </Card>
   </div>
 </template>

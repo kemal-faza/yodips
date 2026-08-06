@@ -33,7 +33,13 @@ async function handleLogin() {
 <template>
   <div class="flex min-h-screen items-center justify-center bg-navy px-4">
     <Card class="glass-card animate-fade-in-up w-full max-w-md border-white/20 shadow-2xl">
-      <CardHeader class="px-6 pt-6">
+      <CardHeader class="flex flex-col items-center gap-3 px-6 pt-8 text-center">
+        <img
+          src="/undip-logo.png"
+          alt="Logo Undip"
+          class="h-20 w-auto shrink-0"
+          aria-hidden="true"
+        />
         <h1 class="text-2xl font-bold">Undip SSO Aggregator</h1>
         <p class="mt-2 text-sm text-ink-muted">
           Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.

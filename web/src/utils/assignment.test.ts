@@ -26,29 +26,37 @@ describe('assignStatus', () => {
 });
 
 describe('assignmentDisplayStatus', () => {
-  it('overdue + not_submitted => Terlambat, belum dikumpulkan (danger)', () => {
-    expect(assignmentDisplayStatus(true, now / sec, 'not_submitted'))
-      .toEqual({ label: 'Terlambat, belum dikumpulkan', tone: 'danger' });
-  });
-  it('overdue + submitted => Terlambat, sudah dikumpulkan (warn)', () => {
-    expect(assignmentDisplayStatus(true, now / sec, 'submitted'))
-      .toEqual({ label: 'Terlambat, sudah dikumpulkan', tone: 'warn' });
-  });
-  it('overdue + graded => Terlambat, sudah dikumpulkan (warn)', () => {
-    expect(assignmentDisplayStatus(true, now / sec, 'graded'))
-      .toEqual({ label: 'Terlambat, sudah dikumpulkan', tone: 'warn' });
-  });
-  it('on-track + not_submitted => Belum dikumpulkan (muted)', () => {
-    expect(assignmentDisplayStatus(false, now / sec + 5 * 24 * 3600, 'not_submitted'))
-      .toEqual({ label: 'Belum dikumpulkan', tone: 'muted' });
-  });
-  it('on-track + submitted => Selesai (success)', () => {
+  it('submitted assignment => done (success)', () => {
     expect(assignmentDisplayStatus(false, now / sec + 5 * 24 * 3600, 'submitted'))
-      .toEqual({ label: 'Selesai', tone: 'success' });
+      .toEqual({ label: 'done', tone: 'success' });
   });
-  it('unknown submission falls back to deadline', () => {
+  it('submitted but overdue => still done (success)', () => {
+    expect(assignmentDisplayStatus(true, now / sec, 'submitted'))
+      .toEqual({ label: 'done', tone: 'success' });
+  });
+  it('graded assignment => done (success)', () => {
+    expect(assignmentDisplayStatus(true, now / sec, 'graded'))
+      .toEqual({ label: 'done', tone: 'success' });
+  });
+  it('not submitted + overdue => overdue (danger)', () => {
+    expect(assignmentDisplayStatus(true, now / sec, 'not_submitted'))
+      .toEqual({ label: 'overdue', tone: 'danger' });
+  });
+  it('not submitted + deadline passed but flag false => overdue (danger)', () => {
+    expect(assignmentDisplayStatus(false, (now - 1000) / sec, 'not_submitted'))
+      .toEqual({ label: 'overdue', tone: 'danger' });
+  });
+  it('not submitted + on-track => due (warn)', () => {
+    expect(assignmentDisplayStatus(false, now / sec + 5 * 24 * 3600, 'not_submitted'))
+      .toEqual({ label: 'due', tone: 'warn' });
+  });
+  it('unknown submission + overdue => overdue (danger)', () => {
     expect(assignmentDisplayStatus(true, now / sec, undefined))
-      .toEqual({ label: 'Terlambat', tone: 'danger' });
+      .toEqual({ label: 'overdue', tone: 'danger' });
+  });
+  it('unknown submission + on-track => due (warn)', () => {
+    expect(assignmentDisplayStatus(false, now / sec + 5 * 24 * 3600, undefined))
+      .toEqual({ label: 'due', tone: 'warn' });
   });
   it('deadlineStatus maps to display', () => {
     expect(deadlineStatus(false, now / sec + 5 * 24 * 3600, now))

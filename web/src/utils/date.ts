@@ -3,8 +3,9 @@ const HOUR = 3600;
 const DAY = 86400;
 const THIRTY_DAYS = 30 * DAY;
 
-/** Relative Indonesian deadline label: "5 menit lagi", "3 jam lalu", "besok", "5 hari lagi", "3 hari lalu", else "12 Des 2026". */
+/** Relative Indonesian deadline label: "5 menit lagi", "3 jam lalu", "besok", "5 hari lagi", "3 hari lalu", else "12 Des 2026". Missing deadline → "Tanpa deadline". */
 export function formatRelativeDate(duedateSec: number, nowMs?: number): string {
+  if (!duedateSec || duedateSec <= 0) return 'Tanpa deadline';
   const now = nowMs ?? Date.now();
   const diffSec = Math.round(duedateSec * 1000 - now) / 1000;
   const abs = Math.abs(diffSec);
