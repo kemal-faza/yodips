@@ -40,7 +40,7 @@ async function handleLogin() {
           class="h-20 w-auto shrink-0"
           aria-hidden="true"
         />
-        <h1 class="text-2xl font-bold">Undip SSO Aggregator</h1>
+        <h1 class="text-2xl font-bold">SSO</h1>
         <p class="mt-2 text-sm text-ink-muted">
           Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.
         </p>

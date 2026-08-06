@@ -26,7 +26,7 @@ const PAGE_TITLES: Record<string, string> = {
 
 const pageTitle = computed(() => {
   const name = route.name as string;
-  return PAGE_TITLES[name] ?? 'Undip SSO Aggregator';
+  return PAGE_TITLES[name] ?? 'SSO';
 });
 </script>
 

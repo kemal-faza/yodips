@@ -31,7 +31,7 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
         <router-link to="/" class="flex items-center gap-2 text-white no-underline hover:opacity-90">
           <img src="/undip-logo.png" alt="Logo Undip" class="h-8 w-auto shrink-0" aria-hidden="true" />
           <div>
-            <h1 class="text-lg font-bold leading-tight">Undip SSO Aggregator</h1>
+            <h1 class="text-lg font-bold leading-tight">SSO</h1>
             <p v-if="breadcrumb" class="text-xs text-white/70">{{ breadcrumb }}</p>
           </div>
         </router-link>
