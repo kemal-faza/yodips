@@ -70,6 +70,10 @@ async function handleLogin() {
         >
           {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
         </Button>
+        <p class="mt-3 text-center text-xs text-ink-muted">
+          Login membuka window Chrome terpisah. Jika langsung masuk tanpa window, sesi kamu masih
+          valid — tidak perlu menekan ulang.
+        </p>
         <p v-if="store.checking" class="mt-4 text-center text-sm text-ink-muted">
           Tunggu — selesaikan login di window browser yang terbuka. Jika perlu, tunggu hingga halaman dashboard Kulon tampil.
         </p>

@@ -35,6 +35,15 @@ describe('auth store', () => {
     expect(store.error).toContain('Gagal login');
   });
 
+  it('login shows a clear message on 429 (rate limit)', async () => {
+    (api.capture as any).mockRejectedValue({ response: { status: 429 } });
+    const store = useAuthStore();
+    await store.login();
+    expect(store.token).toBeNull();
+    expect(store.error).not.toContain('Request failed with status code 429');
+    expect(store.error).toContain('Terlalu banyak percobaan');
+  });
+
   it('logout clears token', async () => {
     localStorage.setItem('sso_token', 'x');
     const store = useAuthStore();

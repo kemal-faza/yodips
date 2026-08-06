@@ -37,7 +37,13 @@ export const useAuthStore = defineStore('auth', {
           this.error = 'Login SSO berhasil, tapi session Kulon belum lengkap — beberapa data mungkin kosong.';
         }
       } catch (e) {
-        this.error = 'Gagal login: ' + (e as Error).message;
+        const status = (e as { response?: { status?: number } })?.response?.status;
+        if (status === 429) {
+          this.error =
+            'Terlalu banyak percobaan login. Tunggu sekitar 1 menit lalu coba lagi.';
+        } else {
+          this.error = 'Gagal login: ' + ((e as Error).message ?? 'Terjadi kesalahan');
+        }
       } finally {
         this.checking = false;
       }
