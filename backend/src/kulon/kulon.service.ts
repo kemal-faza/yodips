@@ -361,9 +361,12 @@ export class KulonService {
   /**
    * Parse `/mod/assign/index.php` HTML into assignments. The table row cells
    * are index-ordered (c0 Section, c1 Assignments+link, c2 Due date,
-   * c3 Submission, c4 Grade). Verified live: the student sees a "Submission"
-   * column with values like "No submission" / "Submitted for grading" /
-   * "Graded".
+   * c3 Submission, c4 Grade); the class carries "generaltable" and the rows
+   * link to `/mod/assign/view.php?id=<cmid>`. We iterate all `<tr>` blocks and
+   * keep those that link to an assignment + carry a due (c2) and submission
+   * (c3) cell — robust to varying table class strings. Verified live: the
+   * student sees a "Submission" column with values like "No submission" /
+   * "Submitted for grading" / "Graded".
    */
   private parseAssignmentIndex(
     html: string,
@@ -371,22 +374,21 @@ export class KulonService {
     courseName: string,
   ): KulonAssignment[] {
     const out: KulonAssignment[] = [];
-    const table = html.match(/<table[^>]*class="[^"]*mod-index[^"]*"[^>]*>([\s\S]*?)<\/table>/i);
-    if (!table) return out;
-    const body = table[1];
     const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let tr: RegExpExecArray | null;
-    while ((tr = trRe.exec(body)) !== null) {
+    while ((tr = trRe.exec(html)) !== null) {
       const link = tr[1].match(/href="[^"]*\/mod\/assign\/view\.php\?id=(\d+)"/i);
       if (!link) continue;
-      const cmid = Number(link[1]);
-      const name = (tr[1].match(/view\.php\?id=\d+">([\s\S]*?)<\/a>/i) ??
-        tr[1].match(/<a[^>]*>([\s\S]*?)<\/a>/i))?.[1];
-      if (!name) continue;
       const dueRaw = ((tr[1].match(/<td[^>]*class="cell c2"[^>]*>([\s\S]*?)<\/td>/i) ?? [])[1] ?? '')
         .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       const subRaw = ((tr[1].match(/<td[^>]*class="cell c3"[^>]*>([\s\S]*?)<\/td>/i) ?? [])[1] ?? '')
         .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      // Assignment rows always expose Due (c2) and Submission (c3) cells.
+      if (!dueRaw && !subRaw) continue;
+      const name = (tr[1].match(/view\.php\?id=\d+">([\s\S]*?)<\/a>/i) ??
+        tr[1].match(/<a[^>]*>([\s\S]*?)<\/a>/i))?.[1];
+      if (!name) continue;
+      const cmid = Number(link[1]);
       const due = this.parseMoodleDate(dueRaw);
       const nowSec = Math.floor(Date.now() / 1000);
       const isOverdueRelative = /overdue/i.test(dueRaw);

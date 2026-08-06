@@ -369,7 +369,7 @@ describe('KulonService', () => {
 
   describe('parseAssignmentIndex', () => {
     const indexHtml =
-      '<table class="generaltable mod-index"><thead><tr><th>Section</th><th>Assignments</th><th>Due date</th><th>Submission</th><th>Grade</th></tr></thead><tbody>' +
+      '<table class="generaltable"><thead><tr><th>Section</th><th>Assignments</th><th>Due date</th><th>Submission</th><th>Grade</th></tr></thead><tbody>' +
       '<tr><td class="cell c0">Pertemuan Kedua</td><td class="cell c1"><a href="https://kulon2.undip.ac.id/mod/assign/view.php?id=3317">Tugas Kelompok I. Galat</a></td><td class="cell c2">Tuesday, 18 March 2025, 12:00 AM</td><td class="cell c3">No submission</td><td class="cell c4 lastcol">-</td></tr>' +
       '<tr><td class="cell c0"></td><td class="cell c1"><a href="https://kulon2.undip.ac.id/mod/assign/view.php?id=3342">Tugas Individu I. Galat</a></td><td class="cell c2">Thursday, 7 May 2027, 11:50 PM</td><td class="cell c3">Submitted for grading</td><td class="cell c4 lastcol">-</td></tr>' +
       '<tr><td class="cell c0"></td><td class="cell c1"><a href="https://kulon2.undip.ac.id/mod/assign/view.php?id=9999">Tugas Dinilai</a></td><td class="cell c2">Monday, 2 June 2025, 8:00 AM</td><td class="cell c3">Graded</td><td class="cell c4 lastcol">85.00</td></tr>' +
