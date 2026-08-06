@@ -15,6 +15,8 @@ export interface KulonCourse {
   shortname: string;
   idnumber: string;
   semester?: string | null;
+  /** Moodle's own timeline classification — source of truth for active/past. */
+  timelineStatus: 'inprogress' | 'past';
 }
 
 export interface KulonAssignment {
@@ -264,15 +266,46 @@ export class KulonService {
     sessionCookie: string,
     sesskey: string,
   ): Promise<KulonCourse[]> {
+    // Moodle's own timeline classification is the source of truth for
+    // "active now": a course present in the 'inprogress' bucket is the
+    // current semester. Kulon course names/ID numbers carry no reliable
+    // semester marker (verified live 2026-08-06), so name-parsing stays
+    // display-only.
+    const [visible, inprogress, hidden] = await Promise.all([
+      this.fetchTimelineCourses(sessionCookie, sesskey, 'all'),
+      this.fetchTimelineCourses(sessionCookie, sesskey, 'inprogress'),
+      this.fetchTimelineCourses(sessionCookie, sesskey, 'hidden'),
+    ]);
+    const inprogressIds = new Set(inprogress.map((c) => c.id));
+    // Merge visible + "removed from view" (hidden) courses, dedupe by id.
+    // Visible entries take priority, so semester/fullname reflects the live course.
+    const byId = new Map<number, Omit<KulonCourse, 'timelineStatus'>>();
+    for (const c of [...hidden, ...visible]) {
+      if (!byId.has(c.id)) byId.set(c.id, c);
+    }
+    return Array.from(byId.values()).map((c) => ({
+      ...c,
+      timelineStatus: inprogressIds.has(c.id) ? 'inprogress' : 'past',
+    }));
+  }
+
+  async fetchTimelineCourses(
+    sessionCookie: string,
+    sesskey: string,
+    classification: string,
+  ): Promise<Omit<KulonCourse, 'timelineStatus'>[]> {
     const data = (await this.ajax(sessionCookie, sesskey, 'core_course_get_enrolled_courses_by_timeline_classification', {
-      classification: 'all',
+      classification,
       limit: 0,
       offset: 0,
       sort: 'fullname',
     })) as { courses: any[] };
     return (data?.courses ?? []).map((c: any) => ({
       id: c.id,
-      fullname: c.fullname,
+      // Some courses carry a "[SIAP] ..." prefix (SIAP integration) — keep only
+      // the real course name. parseSemester still reads the UN-stripped fullname
+      // because the semester marker sits inside the name, not in the prefix.
+      fullname: c.fullname.replace(/^\[SIAP\]\s*/i, '').trim(),
       shortname: c.shortname,
       idnumber: c.idnumber ?? '',
       semester: parseSemester(c.fullname ?? '', c.idnumber ?? ''),
@@ -333,7 +366,11 @@ export class KulonService {
       .map(async () => {
         while (queue.length) {
           const c = queue.shift()!;
-          results.push(await this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname));
+          const [assignRows, quizRows] = await Promise.all([
+            this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname),
+            this.fetchQuizIndex(sessionCookie, c.id, c.fullname),
+          ]);
+          results.push(assignRows, quizRows);
         }
       });
     await Promise.all(workers);
@@ -356,6 +393,71 @@ export class KulonService {
     } catch {
       return [];
     }
+  }
+
+  /** Fetch and parse one course's quiz index page; [] on any failure. */
+  private async fetchQuizIndex(
+    sessionCookie: string,
+    courseId: number,
+    courseName: string,
+  ): Promise<KulonAssignment[]> {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/mod/quiz/index.php?id=${courseId}`,
+        { headers: { Cookie: sessionCookie }, redirect: 'follow' },
+      );
+      if (!res.ok) return [];
+      return this.parseQuizIndex(await res.text(), courseId, courseName);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Parse `/mod/quiz/index.php` HTML into quiz entries. Real Kulon (moove
+   * theme) table columns: c0 Week, c1 Name (link), c2 Quiz closes, c3 Grade.
+   * The quiz link href is RELATIVE ("view.php?id=105222"), not an absolute
+   * /mod/quiz/view.php path. We iterate all BUT the last `<tr>` blocks and
+   * keep those linking to a quiz page.
+   */
+  private parseQuizIndex(
+    html: string,
+    courseId: number,
+    courseName: string,
+  ): KulonAssignment[] {
+    const out: KulonAssignment[] = [];
+    const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let tr: RegExpExecArray | null;
+    while ((tr = trRe.exec(html)) !== null) {
+      const link = tr[1].match(/href="[^"]*\/mod\/quiz\/view\.php\?id=(\d+)"|<a\s+href="view\.php\?id=(\d+)"/i);
+      if (!link) continue;
+      const cmid = Number(link[1] ?? link[2]);
+      // Quiz closes column (c2) — may be a date, "No close date", or "-".
+      const closesRaw = ((tr[1].match(/<td[^>]*class="cell c2"[^>]*>([\s\S]*?)<\/td>/i) ?? [])[1] ?? '')
+        .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      const name = (tr[1].match(/(?:view\.php\?id=\d+|mod\/quiz\/view\.php\?id=\d+)">([\s\S]*?)<\/a>/i) ??
+        tr[1].match(/<a[^>]*>([\s\S]*?)<\/a>/i))?.[1];
+      if (!name) continue;
+      const due = this.parseMoodleDate(closesRaw);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const hasNoLimit = /no limit|no close date/i.test(closesRaw);
+      const isOverdueRelative = /overdue/i.test(closesRaw);
+      const noDue = closesRaw === '' || closesRaw === '-' || hasNoLimit;
+      out.push({
+        id: cmid,
+        name: name.replace(/<[^>]*>/g, '').trim(),
+        module: 'quiz',
+        eventType: 'due',
+        duedate: due ?? 0,
+        overdue: noDue ? false : due !== null ? due < nowSec : isOverdueRelative,
+        course: courseName,
+        courseId,
+        assignmentId: cmid,
+        courseModuleId: cmid,
+        submissionStatus: 'unknown',
+      });
+    }
+    return out;
   }
 
   /**

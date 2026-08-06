@@ -106,23 +106,87 @@ describe('KulonService', () => {
     (global.fetch as jest.Mock).mockReset();
   });
 
-  it('gets courses from timeline classification endpoint', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => [
-        {
-          error: false,
-          data: {
-            courses: [
-              { id: 1, fullname: 'Course A', shortname: 'CA', idnumber: '1' },
-            ],
+  it('gets courses from timeline endpoint (all + inprogress + hidden), strips [SIAP] prefix, tags timelineStatus', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            error: false,
+            data: {
+              courses: [
+                { id: 1, fullname: '[SIAP] Course A', shortname: 'CA', idnumber: '1' },
+                { id: 2, fullname: 'Course B', shortname: 'CB', idnumber: '2' },
+              ],
+            },
           },
-        },
-      ],
-    });
+        ],
+      })
+      // inprogress classification = Moodle's own "active now" bucket (id 1)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            error: false,
+            data: {
+              courses: [{ id: 1, fullname: '[SIAP] Course A', shortname: 'CA', idnumber: '1' }],
+            },
+          },
+        ],
+      })
+      // hidden classification returns the "removed from view" course (id 3)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            error: false,
+            data: {
+              courses: [
+                { id: 1, fullname: '[SIAP] Course A', shortname: 'CA', idnumber: '1' },
+                { id: 3, fullname: 'Course C', shortname: 'CC', idnumber: '3' },
+              ],
+            },
+          },
+        ],
+      });
+
     const courses = await svc.getCourses('session-cookie', 'sesskey');
-    expect(courses[0].fullname).toBe('Course A');
-    expect(courses[0].id).toBe(1);
+
+    // merge + dedupe: A and B visible, C hidden
+    expect(courses.map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+
+    // [SIAP] prefix stripped
+    const courseA = courses.find((c) => c.id === 1);
+    expect(courseA?.fullname).toBe('Course A');
+    // non-prefixed course left untouched
+    expect(courses.find((c) => c.id === 2)?.fullname).toBe('Course B');
+
+    // timelineStatus: id 1 is in the 'inprogress' bucket -> active; id 2/3 -> past
+    expect(courses.find((c) => c.id === 1)?.timelineStatus).toBe('inprogress');
+    expect(courses.find((c) => c.id === 2)?.timelineStatus).toBe('past');
+    expect(courses.find((c) => c.id === 3)?.timelineStatus).toBe('past');
+  });
+
+  it('gets courses with semester extracted from fullname', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { error: false, data: { courses: [{ id: 1, fullname: 'S1 2025/2026 Genap Kripto', shortname: 'K', idnumber: '' }] } },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: { courses: [] } }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: { courses: [] } }],
+      });
+    const courses = await svc.getCourses('session-cookie', 'sesskey');
+    expect(courses[0].semester).toBe('2025/2026 Genap');
+    // not present in the 'inprogress' bucket -> past
+    expect(courses[0].timelineStatus).toBe('past');
   });
 
   it('gets assignments with deadlines from calendar endpoint', async () => {
@@ -397,6 +461,40 @@ describe('KulonService', () => {
 
     it('returns empty when page has no mod-index table', () => {
       const rows = (svc as any).parseAssignmentIndex('<html>no table</html>', 1, 'C');
+      expect(rows).toEqual([]);
+    });
+  });
+
+  describe('parseQuizIndex', () => {
+    // Real Kulon (moove) structure: c0 Week, c1 Name(link, RELATIVE view.php),
+    // c2 Quiz closes, c3 Grade.
+    const quizHtml =
+      '<table class="generaltable">' +
+      '<tr><td class="cell c0">2 March - 8 March</td><td class="cell c1"><a href="view.php?id=114796">quis 4</a></td><td class="cell c2">No close date</td><td class="cell c3 lastcol">-</td></tr>' +
+      '<tr><td class="cell c0"></td><td class="cell c1"><a href="view.php?id=108786">Quis 3</a></td><td class="cell c2">Thursday, 19 February 2026, 9:20 AM</td><td class="cell c3 lastcol">60.00/100.00</td></tr>' +
+      '<tr><td class="cell c0"></td><td class="cell c1"><a href="view.php?id=99999">Quis Future</a></td><td class="cell c2">Monday, 1 December 2030, 11:59 PM</td><td class="cell c3 lastcol">-</td></tr>' +
+      '</table>';
+
+    it('parses quiz rows from relative links (module: quiz, closes from c2)', () => {
+      const rows = (svc as any).parseQuizIndex(quizHtml, 15452, 'Analisis dan Strategi Algoritma E');
+      expect(rows).toHaveLength(3);
+      const [noLimit, past, future] = rows;
+      expect(noLimit.name).toBe('quis 4');
+      expect(noLimit.module).toBe('quiz');
+      expect(noLimit.courseModuleId).toBe(114796);
+      expect(noLimit.overdue).toBe(false); // No close date
+      expect(noLimit.duedate).toBe(0); // no deadline sentinel
+
+      expect(past.name).toBe('Quis 3');
+      expect(past.courseModuleId).toBe(108786);
+      expect(past.overdue).toBe(true); // Feb 2026 is in the past
+
+      expect(future.name).toBe('Quis Future');
+      expect(future.overdue).toBe(false); // Dec 2030
+    });
+
+    it('returns empty when page has no quiz table', () => {
+      const rows = (svc as any).parseQuizIndex('<html>no table</html>', 1, 'C');
       expect(rows).toEqual([]);
     });
   });
