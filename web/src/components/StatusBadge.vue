@@ -1,24 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { AssignmentStatus } from '../types';
+import type { DisplayTone } from '../utils/assignment';
 import { Badge } from '@/components/ui/badge';
 
-const props = defineProps<{ status: AssignmentStatus }>();
-
-const label = computed(() =>
-  props.status === 'overdue' ? 'Terlambat' : props.status === 'dueSoon' ? 'Segera' : 'On track',
-);
+const props = defineProps<{ label: string; tone: DisplayTone }>();
 
 const cls = computed(() => {
-  if (props.status === 'overdue') return 'bg-danger/10 text-danger';
-  if (props.status === 'dueSoon') return 'bg-gold/20 text-ink';
-  return 'bg-success/10 text-success';
+  if (props.tone === 'danger') return 'bg-danger/10 text-danger';
+  if (props.tone === 'warn') return 'bg-gold/20 text-ink';
+  if (props.tone === 'success') return 'bg-success/10 text-success';
+  return 'bg-ink/5 text-ink-muted';
 });
 
 const dot = computed(() => {
-  if (props.status === 'overdue') return 'bg-danger';
-  if (props.status === 'dueSoon') return 'bg-warn';
-  return 'bg-success';
+  if (props.tone === 'danger') return 'bg-danger';
+  if (props.tone === 'warn') return 'bg-warn';
+  if (props.tone === 'success') return 'bg-success';
+  return 'bg-ink-muted';
 });
 </script>
 

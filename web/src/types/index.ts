@@ -9,6 +9,7 @@ export interface Assignment {
   courseId: number;
   assignmentId?: number; // Moodle assign instance id
   courseModuleId?: number; // Moodle cmid (used for detail URL)
+  submissionStatus?: SubmissionStatus; // from full-list scan (assign-index)
 }
 
 export type SubmissionStatus = 'not_submitted' | 'submitted' | 'graded' | 'unknown';

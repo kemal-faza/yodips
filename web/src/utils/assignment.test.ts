@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignStatus } from './assignment';
+import { assignStatus, assignmentDisplayStatus, deadlineStatus } from './assignment';
 
 const now = Date.now();
 const sec = 1000;
@@ -22,5 +22,38 @@ describe('assignStatus', () => {
   it('returns dueSoon exactly at 48h boundary', () => {
     const due = now + 48 * 3600 * sec; // exactly 48h
     expect(assignStatus(false, due / sec, now)).toBe('dueSoon');
+  });
+});
+
+describe('assignmentDisplayStatus', () => {
+  it('overdue + not_submitted => Terlambat, belum dikumpulkan (danger)', () => {
+    expect(assignmentDisplayStatus(true, now / sec, 'not_submitted'))
+      .toEqual({ label: 'Terlambat, belum dikumpulkan', tone: 'danger' });
+  });
+  it('overdue + submitted => Terlambat, sudah dikumpulkan (warn)', () => {
+    expect(assignmentDisplayStatus(true, now / sec, 'submitted'))
+      .toEqual({ label: 'Terlambat, sudah dikumpulkan', tone: 'warn' });
+  });
+  it('overdue + graded => Terlambat, sudah dikumpulkan (warn)', () => {
+    expect(assignmentDisplayStatus(true, now / sec, 'graded'))
+      .toEqual({ label: 'Terlambat, sudah dikumpulkan', tone: 'warn' });
+  });
+  it('on-track + not_submitted => Belum dikumpulkan (muted)', () => {
+    expect(assignmentDisplayStatus(false, now / sec + 5 * 24 * 3600, 'not_submitted'))
+      .toEqual({ label: 'Belum dikumpulkan', tone: 'muted' });
+  });
+  it('on-track + submitted => Selesai (success)', () => {
+    expect(assignmentDisplayStatus(false, now / sec + 5 * 24 * 3600, 'submitted'))
+      .toEqual({ label: 'Selesai', tone: 'success' });
+  });
+  it('unknown submission falls back to deadline', () => {
+    expect(assignmentDisplayStatus(true, now / sec, undefined))
+      .toEqual({ label: 'Terlambat', tone: 'danger' });
+  });
+  it('deadlineStatus maps to display', () => {
+    expect(deadlineStatus(false, now / sec + 5 * 24 * 3600, now))
+      .toEqual({ label: 'On track', tone: 'success' });
+    expect(deadlineStatus(false, now / sec + 24 * 3600, now))
+      .toEqual({ label: 'Segera', tone: 'warn' });
   });
 });

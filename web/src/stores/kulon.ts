@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { getAssignments, getCourses, getCourseContent } from '../api/client';
+import { getAllAssignments, getCourses, getCourseContent } from '../api/client';
 import type { Assignment, Course, KulonCourseContent } from '../types';
 
 export const useKulonStore = defineStore('kulon', {
@@ -13,7 +13,7 @@ export const useKulonStore = defineStore('kulon', {
   actions: {
     async ensureAssignments(): Promise<void> {
       if (this.assignmentsLoaded) return;
-      this.assignments = await getAssignments();
+      this.assignments = await getAllAssignments();
       this.assignmentsLoaded = true;
     },
     async ensureCourses(): Promise<void> {

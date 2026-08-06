@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { X } from '@lucide/vue';
 import { getAssignmentDetail } from '../api/client';
 import type { Assignment, AssignmentDetail, SubmissionStatus } from '../types';
-import { assignStatus } from '../utils/assignment';
+import { deadlineStatus } from '../utils/assignment';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -32,8 +32,8 @@ const SUBMISSION_LABELS: Record<SubmissionStatus, string> = {
 
 const status = computed(() =>
   props.assignment
-    ? assignStatus(props.assignment.overdue, props.assignment.duedate, Date.now())
-    : 'onTrack',
+    ? deadlineStatus(props.assignment.overdue, props.assignment.duedate, Date.now())
+    : { label: 'On track', tone: 'success' as const },
 );
 
 const deadline = computed(() => {
@@ -149,7 +149,7 @@ watch(
             </span>
           </SheetTitle>
           <div class="flex flex-col items-end gap-2">
-            <StatusBadge :status="status" />
+            <StatusBadge :label="status.label" :tone="status.tone" />
             <Button
               variant="ghost"
               size="icon"

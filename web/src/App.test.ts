@@ -9,6 +9,7 @@ import * as api from './api/client';
 
 vi.mock('./api/client', () => ({
   getAssignments: vi.fn().mockResolvedValue([]),
+  getAllAssignments: vi.fn().mockResolvedValue([]),
   getCourses: vi.fn().mockResolvedValue([]),
   capture: vi.fn(),
   me: vi.fn(),

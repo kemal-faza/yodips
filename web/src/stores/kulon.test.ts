@@ -4,7 +4,7 @@ import { useKulonStore } from './kulon';
 import * as api from '../api/client';
 
 vi.mock('../api/client', () => ({
-  getAssignments: vi.fn(),
+  getAllAssignments: vi.fn(), getAssignments: vi.fn(),
   getCourses: vi.fn(),
   getCourseContent: vi.fn(),
 }));
@@ -14,10 +14,10 @@ describe('KulonStore', () => {
 
   it('fetches assignments lazily and caches', async () => {
     const store = useKulonStore();
-    (api.getAssignments as any).mockResolvedValue([{ id: 1 }]);
+    (api.getAllAssignments as any).mockResolvedValue([{ id: 1 }]);
     await store.ensureAssignments();
     await store.ensureAssignments();
-    expect(api.getAssignments).toHaveBeenCalledTimes(1);
+    expect(api.getAllAssignments).toHaveBeenCalledTimes(1);
     expect(store.assignments).toEqual([{ id: 1 }]);
   });
 
@@ -39,7 +39,7 @@ describe('KulonStore', () => {
 
   it('reset clears caches', async () => {
     const store = useKulonStore();
-    (api.getAssignments as any).mockResolvedValue([]);
+    (api.getAllAssignments as any).mockResolvedValue([]);
     await store.ensureAssignments();
     store.reset();
     expect(store.assignmentsLoaded).toBe(false);

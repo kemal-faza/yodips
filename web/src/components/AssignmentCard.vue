@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Assignment } from '../types';
-import { assignStatus } from '../utils/assignment';
+import { assignmentDisplayStatus } from '../utils/assignment';
 import { formatRelativeDate } from '../utils/date';
 import { Card, CardContent } from '@/components/ui/card';
 import StatusBadge from './StatusBadge.vue';
@@ -10,7 +10,11 @@ const props = defineProps<{ assignment: Assignment }>();
 const emit = defineEmits<{ open: [] }>();
 
 const status = computed(() =>
-  assignStatus(props.assignment.overdue, props.assignment.duedate, Date.now()),
+  assignmentDisplayStatus(
+    props.assignment.overdue,
+    props.assignment.duedate,
+    props.assignment.submissionStatus,
+  ),
 );
 
 const dateText = computed(() => formatRelativeDate(props.assignment.duedate));
@@ -30,7 +34,7 @@ const dateText = computed(() => formatRelativeDate(props.assignment.duedate));
         <p class="mt-0.5 truncate text-xs text-ink-muted">{{ assignment.course }}</p>
       </div>
       <div class="flex shrink-0 flex-col items-end gap-0.5">
-        <StatusBadge :status="status" />
+        <StatusBadge :label="status.label" :tone="status.tone" />
         <span class="text-[10px] text-ink-muted">{{ dateText }}</span>
       </div>
     </CardContent>

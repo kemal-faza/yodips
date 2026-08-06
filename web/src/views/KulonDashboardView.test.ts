@@ -8,7 +8,8 @@ import * as api from '../api/client';
 import { useAuthStore } from '../stores/auth';
 
 vi.mock('../api/client', () => ({
-  getAssignments: vi.fn(),
+  getAllAssignments: vi.fn(),
+getAssignments: vi.fn(),
   getCourses: vi.fn(),
   getCourseContent: vi.fn(),
   getAssignmentDetail: vi.fn().mockResolvedValue({
@@ -41,7 +42,7 @@ describe('KulonDashboardView', () => {
   });
 
   it('renders assignments sorted by deadline', async () => {
-    (api.getAssignments as any).mockResolvedValue([
+    (api.getAllAssignments as any).mockResolvedValue([
       mk(1, 'B', now + 200 * sec, 'Matkul A', 1),
       mk(2, 'A', now + 100 * sec, 'Matkul B', 2),
     ]);
@@ -55,7 +56,7 @@ describe('KulonDashboardView', () => {
   });
 
   it('filters by search on name or course', async () => {
-    (api.getAssignments as any).mockResolvedValue([
+    (api.getAllAssignments as any).mockResolvedValue([
       mk(1, 'Tugas Kripto', now + 100 * sec, 'Keamanan', 1),
       mk(2, 'Tugas Numerik', now + 200 * sec, 'Metode Numerik', 2),
     ]);
@@ -72,7 +73,7 @@ describe('KulonDashboardView', () => {
 
   it('paginates when > PAGE_SIZE items', async () => {
     const items = Array.from({ length: 15 }, (_, i) => mk(i, `T${i}`, now + (i + 1) * 100 * sec, 'Matkul', 1));
-    (api.getAssignments as any).mockResolvedValue(items);
+    (api.getAllAssignments as any).mockResolvedValue(items);
     const router = buildRouter(createMemoryHistory());
     await router.push('/kulon/dashboard');
     const w = mount(KulonDashboardView, { global: { plugins: [router] } });
@@ -84,7 +85,7 @@ describe('KulonDashboardView', () => {
   });
 
   it('shows empty state when no match', async () => {
-    (api.getAssignments as any).mockResolvedValue([mk(1, 'T1', now + 100 * sec, 'Matkul', 1)]);
+    (api.getAllAssignments as any).mockResolvedValue([mk(1, 'T1', now + 100 * sec, 'Matkul', 1)]);
     const router = buildRouter(createMemoryHistory());
     await router.push('/kulon/dashboard');
     const w = mount(KulonDashboardView, { global: { plugins: [router] } });
@@ -92,5 +93,24 @@ describe('KulonDashboardView', () => {
     await w.find('[data-test="search"]').setValue('zzz');
     await flushPromises();
     expect(w.text()).toContain('Tidak ada tugas yang cocok');
+  });
+
+  it('filters by view chip to show only submitted (done)', async () => {
+    const past = (now - 200 * sec) / sec; // overdue
+    (api.getAllAssignments as any).mockResolvedValue([
+      mk(1, 'A', past, 'Matkul', 1),
+      { ...mk(2, 'B', past, 'Matkul', 1), submissionStatus: 'submitted' },
+    ]);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/kulon/dashboard');
+    const w = mount(KulonDashboardView, { global: { plugins: [router] } });
+    await flushPromises();
+    // click "Sudah dikerjakan"
+    const chips = w.findAll('[data-test="view-filter"]');
+    await chips[2].trigger('click'); // index 2 = done
+    await flushPromises();
+    const names = w.findAll('.assignment-card').map((c) => c.text());
+    expect(names.length).toBe(1);
+    expect(names[0]).toContain('B');
   });
 });

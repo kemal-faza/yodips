@@ -3,16 +3,21 @@ import { mount } from '@vue/test-utils';
 import StatusBadge from './StatusBadge.vue';
 
 describe('StatusBadge', () => {
-  it('renders Terlambat for overdue', () => {
-    const w = mount(StatusBadge, { props: { status: 'overdue' } });
-    expect(w.text()).toContain('Terlambat');
+  it('renders the label', () => {
+    const w = mount(StatusBadge, { props: { label: 'Terlambat, belum dikumpulkan', tone: 'danger' } });
+    expect(w.text()).toContain('Terlambat, belum dikumpulkan');
   });
-  it('renders Segera for dueSoon', () => {
-    const w = mount(StatusBadge, { props: { status: 'dueSoon' } });
-    expect(w.text()).toContain('Segera');
+  it('applies danger tone for danger', () => {
+    const w = mount(StatusBadge, { props: { label: 'X', tone: 'danger' } });
+    expect(w.classes()).toContain('bg-danger/10');
+    expect(w.classes()).toContain('text-danger');
   });
-  it('renders On track for onTrack', () => {
-    const w = mount(StatusBadge, { props: { status: 'onTrack' } });
-    expect(w.text()).toContain('On track');
+  it('applies success tone for success', () => {
+    const w = mount(StatusBadge, { props: { label: 'Selesai', tone: 'success' } });
+    expect(w.classes()).toContain('bg-success/10');
+  });
+  it('applies muted tone by default', () => {
+    const w = mount(StatusBadge, { props: { label: 'Belum dikumpulkan', tone: 'muted' } });
+    expect(w.classes()).toContain('bg-ink/5');
   });
 });

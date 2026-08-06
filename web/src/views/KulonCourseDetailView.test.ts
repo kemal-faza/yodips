@@ -10,7 +10,7 @@ import { useAuthStore } from '../stores/auth';
 vi.mock('../api/client', () => ({
   getCourses: vi.fn(),
   getAssignments: vi.fn(),
-  getCourseContent: vi.fn(),
+  getAllAssignments: vi.fn(),  getCourseContent: vi.fn(),
   getAssignmentDetail: vi.fn().mockResolvedValue({
     assignmentId: 1,
     name: 'T1',

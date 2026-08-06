@@ -62,6 +62,11 @@ export async function getAssignments(): Promise<Assignment[]> {
   return data;
 }
 
+export async function getAllAssignments(): Promise<Assignment[]> {
+  const { data } = await apiClient.get<Assignment[]>('/api/kulon/assignments/all');
+  return data;
+}
+
 export async function getCourses(): Promise<Course[]> {
   const { data } = await apiClient.get<Course[]>('/api/kulon/courses');
   return data;

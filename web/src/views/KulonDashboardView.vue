@@ -24,13 +24,32 @@ const { sessionExpired, error, extract, relogin, clear } = useKulonSession();
 
 const search = ref('');
 const page = ref(1);
+const view = ref<'all' | 'need' | 'done' | 'late'>('all');
 const loading = ref(false);
 const selected = ref<Assignment | null>(null);
 const panelOpen = ref(false);
 
+const filters = [
+  { key: 'all', label: 'Semua' },
+  { key: 'need', label: 'Perlu dikerjakan' },
+  { key: 'done', label: 'Sudah dikerjakan' },
+  { key: 'late', label: 'Terlambat' },
+] as const;
+
+function matchesView(v: 'all' | 'need' | 'done' | 'late', a: Assignment): boolean {
+  const sub = a.submissionStatus;
+  const done = sub === 'submitted' || sub === 'graded';
+  if (v === 'all') return true;
+  if (v === 'need') return sub === 'not_submitted' || sub === undefined;
+  if (v === 'done') return done;
+  return a.overdue; // late
+}
+
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase();
-  const list = [...store.assignments].sort((a, b) => a.duedate - b.duedate);
+  const list = [...store.assignments]
+    .filter((a) => matchesView(view.value, a))
+    .sort((a, b) => a.duedate - b.duedate);
   if (!q) return list;
   return list.filter((a) => a.name.toLowerCase().includes(q) || a.course.toLowerCase().includes(q));
 });
@@ -42,6 +61,7 @@ const pageItems = computed(() => {
 });
 
 watch(search, () => { page.value = 1; });
+watch(view, () => { page.value = 1; });
 
 async function load() {
   loading.value = true;
@@ -69,6 +89,20 @@ load();
   <div>
     <div class="flex flex-wrap items-center justify-between gap-3">
       <Input v-model="search" data-test="search" type="text" placeholder="Cari tugas atau mata kuliah…" class="w-64" />
+    </div>
+
+    <div class="mt-3 flex flex-wrap gap-2">
+      <Button
+        v-for="f in filters"
+        :key="f.key"
+        variant="outline"
+        size="sm"
+        data-test="view-filter"
+        :class="view === f.key && 'border-navy bg-navy text-white hover:bg-navy'"
+        @click="view = f.key"
+      >
+        {{ f.label }}
+      </Button>
     </div>
 
     <div v-if="loading" class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
