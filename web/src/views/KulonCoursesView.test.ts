@@ -15,6 +15,10 @@ function mockStore() {
   (useAuthStore as any).mockReturnValue(store);
 }
 
+function course(id: number, fullname: string, timelineStatus: 'inprogress' | 'past', semester: string | null = null) {
+  return { id, fullname, shortname: fullname[0], idnumber: '', semester, timelineStatus };
+}
+
 async function mountView(courses: unknown[]) {
   (api.getCourses as any).mockResolvedValue(courses);
   const router = buildRouter(createMemoryHistory());
@@ -35,18 +39,20 @@ describe('KulonCoursesView', () => {
 
   it('menampilkan section aktif berjudul "Aktif" + subtitle semester tanpa badge pil', async () => {
     const w = await mountView([
-      { id: 1, fullname: 'Matkul Baru', shortname: 'B', idnumber: '', semester: '2025/2026 Genap' },
+      course(1, 'Matkul Baru', 'inprogress', '2025/2026 Genap'),
+      course(2, 'Matkul Baru Lagi', 'inprogress', '2025/2026 Genap'),
     ]);
     const section = w.get('section');
     expect(section.find('h2').text()).toBe('Aktif');
     expect(section.text()).toContain('2025/2026 Genap');
+    expect(w.findAll('[data-test="course-card"]').length).toBe(2);
     expect(w.findAll('span').filter((s) => s.classes().includes('rounded-full') && s.text() === 'Aktif')).toHaveLength(0);
   });
 
   it('menyembunyikan semester lama di satu collapse "Mata Kuliah Sebelumnya"', async () => {
     const w = await mountView([
-      { id: 1, fullname: 'Matkul Baru', shortname: 'B', idnumber: '', semester: '2025/2026 Genap' },
-      { id: 2, fullname: 'Matkul Lama', shortname: 'L', idnumber: '', semester: '2024/2025 Ganjil' },
+      course(1, 'Matkul Baru', 'inprogress', '2025/2026 Genap'),
+      course(2, 'Matkul Lama', 'past', '2024/2025 Ganjil'),
     ]);
     expect(w.findAll('[data-test="course-card"]').length).toBe(1);
     const btn = w.get('[data-test="expand-past"]');
@@ -59,10 +65,10 @@ describe('KulonCoursesView', () => {
     expect(w.findAll('[data-test="course-card"]').length).toBe(2);
   });
 
-  it('melabeli matkul tanpa semester sebagai "Tanpa semester" tanpa kata "Lainnya"', async () => {
+  it('melabeli matkul previous tanpa semester sebagai "Tanpa semester" tanpa kata "Lainnya"', async () => {
     const w = await mountView([
-      { id: 1, fullname: 'Matkul Baru', shortname: 'B', idnumber: '', semester: '2025/2026 Genap' },
-      { id: 2, fullname: 'Matkul Anomali', shortname: 'A', idnumber: '', semester: null },
+      course(1, 'Matkul Baru', 'inprogress', '2025/2026 Genap'),
+      course(2, 'Matkul Anomali', 'past'),
     ]);
     await w.get('[data-test="expand-past"]').trigger('click');
     await flushPromises();
@@ -70,21 +76,35 @@ describe('KulonCoursesView', () => {
     expect(w.text()).not.toContain('Lainnya');
   });
 
-  it('tidak merender collapse saat semua matkul di semester sekarang', async () => {
+  it('tidak merender collapse saat semua matkul ada di semester aktif', async () => {
     const w = await mountView([
-      { id: 1, fullname: 'Matkul Baru', shortname: 'B', idnumber: '', semester: '2025/2026 Genap' },
+      course(1, 'Matkul Baru', 'inprogress', '2025/2026 Genap'),
+      course(2, 'Matkul Aktif Lagi', 'inprogress'),
     ]);
     expect(w.find('[data-test="expand-past"]').exists()).toBe(false);
+    expect(w.findAll('[data-test="course-card"]').length).toBe(2);
   });
 
   it('tidak menampilkan subtitle semester saat semester aktif tidak terdeteksi', async () => {
     const w = await mountView([
-      { id: 1, fullname: 'Matkul Tanpa Semester', shortname: 'T', idnumber: '', semester: null },
+      course(1, 'Matkul Tanpa Semester', 'inprogress'),
+      course(2, 'Matkul Tanpa Semester Lagi', 'inprogress'),
     ]);
     const section = w.get('section');
     expect(section.find('h2').text()).toBe('Aktif');
     expect(section.text()).not.toContain('Lainnya');
-    expect(w.findAll('[data-test="course-card"]').length).toBe(1);
+    expect(w.findAll('[data-test="course-card"]').length).toBe(2);
+  });
+
+  it('menampilkan pesan aktif kosong + semua matkul di collapse saat tidak ada yang inprogress', async () => {
+    const w = await mountView([
+      course(1, 'Matkul Lama 1', 'past', '2024/2025 Ganjil'),
+      course(2, 'Matkul Lama 2', 'past'),
+    ]);
+    const section = w.get('section');
+    expect(section.text()).toContain('Belum ada mata kuliah aktif di semester ini.');
+    expect(section.findAll('[data-test="course-card"]').length).toBe(0);
+    expect(w.get('[data-test="expand-past"]').text()).toContain('(2 mata kuliah)');
   });
 
   it('menampilkan empty state saat tidak ada mata kuliah', async () => {

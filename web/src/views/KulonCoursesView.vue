@@ -18,11 +18,17 @@ const { sessionExpired, error, extract, relogin, clear } = useKulonSession();
 const loading = ref(false);
 const pastExpanded = ref(false);
 
-const groups = computed(() => groupCoursesBySemester(store.courses));
-const current = computed(() => groups.value[0]);
-const past = computed(() => groups.value.slice(1));
-const activeSemester = computed(() => current.value?.semester ?? null);
-const pastCount = computed(() => past.value.reduce((n, g) => n + g.courses.length, 0));
+// Moodle's own timeline classification (backend `timelineStatus`) is the
+// source of truth for "aktif": a course Moodle reports as 'inprogress' is
+// the current semester. Semester name-parsing is display-only (sub-labels).
+const activeCourses = computed(() => store.courses.filter((c) => c.timelineStatus === 'inprogress'));
+const pastCourses = computed(() => store.courses.filter((c) => c.timelineStatus !== 'inprogress'));
+const pastGroups = computed(() => groupCoursesBySemester(pastCourses.value));
+const actualSemester = computed(() => {
+  const sems = new Set(activeCourses.value.map((c) => c.semester).filter((s): s is string => !!s));
+  return sems.size === 1 ? [...sems][0] : null; // subtitle hanya bila seragam
+});
+const pastCount = computed(() => pastCourses.value.length);
 
 function openCourse(courseId: number) {
   router.push(`/kulon/matakuliah/${courseId}`);
@@ -65,14 +71,15 @@ load();
       <section>
         <div class="mb-3 flex items-baseline gap-2">
           <h2 class="text-base font-bold text-ink">Aktif</h2>
-          <span v-if="activeSemester && activeSemester !== 'Lainnya'" class="text-xs text-ink-muted">{{ activeSemester }}</span>
+          <span v-if="actualSemester" class="text-xs text-ink-muted">{{ actualSemester }}</span>
         </div>
         <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-          <CourseCard v-for="c in current?.courses ?? []" :key="c.id" :course="c" @open="openCourse(c.id)" />
+          <CourseCard v-for="c in activeCourses" :key="c.id" :course="c" @open="openCourse(c.id)" />
         </div>
+        <p v-if="activeCourses.length === 0" class="text-sm text-ink-muted">Belum ada mata kuliah aktif di semester ini.</p>
       </section>
 
-      <section v-if="past.length > 0">
+      <section v-if="pastGroups.length > 0">
         <button
           type="button"
           class="flex w-full items-center justify-between rounded-xl border border-line bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50 cursor-pointer"
@@ -87,7 +94,7 @@ load();
           </div>
         </button>
         <template v-if="pastExpanded">
-          <div v-for="g in past" :key="g.semester" class="mt-3 space-y-3">
+          <div v-for="g in pastGroups" :key="g.semester" class="mt-3 space-y-3">
             <h3 :class="['text-sm font-semibold', g.semester === 'Lainnya' ? 'text-ink-muted' : 'text-ink']">
               {{ g.semester === 'Lainnya' ? 'Tanpa semester' : 'Semester ' + g.semester }} ({{ g.courses.length }})
             </h3>
