@@ -9,27 +9,21 @@ import CourseCard from '../components/CourseCard.vue';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ChevronDown, ChevronRight } from '@lucide/vue';
 
 const store = useKulonStore();
 const auth = useAuthStore();
 const router = useRouter();
 const { sessionExpired, error, extract, relogin, clear } = useKulonSession();
 const loading = ref(false);
-const expandedSemesters = ref<Set<string>>(new Set());
+const pastExpanded = ref(false);
 
 const groups = computed(() => groupCoursesBySemester(store.courses));
 const current = computed(() => groups.value[0]);
 const past = computed(() => groups.value.slice(1));
-const activeSemester = computed(() => current.value?.semester);
+const activeSemester = computed(() => current.value?.semester ?? null);
+const pastCount = computed(() => past.value.reduce((n, g) => n + g.courses.length, 0));
 
-function isExpanded(semester: string) {
-  return expandedSemesters.value.has(semester);
-}
-function toggle(semester: string) {
-  const next = new Set(expandedSemesters.value);
-  if (next.has(semester)) next.delete(semester); else next.add(semester);
-  expandedSemesters.value = next;
-}
 function openCourse(courseId: number) {
   router.push(`/kulon/matakuliah/${courseId}`);
 }
@@ -45,47 +39,64 @@ load();
 </script>
 
 <template>
-  <div>
+  <div class="space-y-6">
     <div v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <Skeleton v-for="i in 6" :key="i" class="h-28 rounded-card" />
     </div>
 
     <Alert v-else-if="sessionExpired" class="border-gold/40 bg-gold/20 p-6 text-center">
       <AlertDescription class="font-semibold text-ink">Session login kedaluwarsa</AlertDescription>
-      <Button class="mt-3" :disabled="auth.checking" @click="relogin(reloadAfter)">
+      <Button class="mt-3 cursor-pointer" :disabled="auth.checking" @click="relogin(reloadAfter)">
         {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
       </Button>
     </Alert>
 
     <Alert v-else-if="error" variant="destructive" class="bg-danger/10 p-4">
       <AlertDescription>{{ error }}</AlertDescription>
-      <Button class="mt-2" @click="load">Coba lagi</Button>
+      <Button class="mt-2 cursor-pointer" @click="load">Coba lagi</Button>
     </Alert>
 
-    <div v-else-if="store.courses.length === 0" class="py-12 text-center text-ink-muted">
-      Belum ada mata kuliah yang diambil
+    <div v-else-if="store.courses.length === 0" class="flex flex-col items-center justify-center py-16 text-center bg-card rounded-xl border border-line px-6">
+      <p class="font-semibold text-ink text-sm">Belum ada mata kuliah yang diambil</p>
+      <p class="text-xs text-ink-muted mt-1">Data akan muncul setelah semester aktif dimulai.</p>
     </div>
 
     <template v-else>
-      <h2 class="mb-3 text-lg font-bold text-ink">{{ activeSemester ?? 'Semester aktif' }}</h2>
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <CourseCard v-for="c in current?.courses ?? []" :key="c.id" :course="c" @open="openCourse(c.id)" />
-      </div>
+      <section>
+        <div class="mb-3 flex items-baseline gap-2">
+          <h2 class="text-base font-bold text-ink">Aktif</h2>
+          <span v-if="activeSemester && activeSemester !== 'Lainnya'" class="text-xs text-ink-muted">{{ activeSemester }}</span>
+        </div>
+        <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+          <CourseCard v-for="c in current?.courses ?? []" :key="c.id" :course="c" @open="openCourse(c.id)" />
+        </div>
+      </section>
 
-      <div v-for="g in past" :key="g.semester" class="mt-8">
+      <section v-if="past.length > 0">
         <button
           type="button"
-          class="flex w-full items-center justify-between rounded-lg border border-line px-4 py-3 text-left hover:bg-muted/50"
+          class="flex w-full items-center justify-between rounded-xl border border-line bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50 cursor-pointer"
           data-test="expand-past"
-          @click="toggle(g.semester)"
+          :aria-expanded="pastExpanded"
+          @click="pastExpanded = !pastExpanded"
         >
-          <span class="font-semibold text-ink">Semester {{ g.semester }} ({{ g.courses.length }})</span>
-          <span>{{ isExpanded(g.semester) ? '–' : '+' }}</span>
+          <div class="flex items-center gap-2">
+            <component :is="pastExpanded ? ChevronDown : ChevronRight" class="size-4 text-ink-muted" />
+            <span class="font-semibold text-sm text-ink">Mata Kuliah Sebelumnya</span>
+            <span class="text-xs font-normal text-ink-muted">({{ pastCount }} mata kuliah)</span>
+          </div>
         </button>
-        <div v-if="isExpanded(g.semester)" class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <CourseCard v-for="c in g.courses" :key="c.id" :course="c" @open="openCourse(c.id)" />
-        </div>
-      </div>
+        <template v-if="pastExpanded">
+          <div v-for="g in past" :key="g.semester" class="mt-3 space-y-3">
+            <h3 :class="['text-sm font-semibold', g.semester === 'Lainnya' ? 'text-ink-muted' : 'text-ink']">
+              {{ g.semester === 'Lainnya' ? 'Tanpa semester' : 'Semester ' + g.semester }} ({{ g.courses.length }})
+            </h3>
+            <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+              <CourseCard v-for="c in g.courses" :key="c.id" :course="c" @open="openCourse(c.id)" />
+            </div>
+          </div>
+        </template>
+      </section>
     </template>
   </div>
 </template>
