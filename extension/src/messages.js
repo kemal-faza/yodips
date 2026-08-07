@@ -7,9 +7,13 @@ export const KULON_OIDC_URL = 'https://kulon2.undip.ac.id/auth/oidc/';
 /**
  * Generate a SSO ticket compatible with the backend's SSOTicketService:
  * base64 of the current unix second timestamp.
+ *
+ * Uses `btoa` (not Node `Buffer`) because MV3 service workers run in the
+ * browser, where Buffer is undefined. For the ASCII digit timestamp the
+ * output is identical to `Buffer.from(...).toString('base64')`.
  */
 export function generateTicket() {
-  return Buffer.from(String(Math.floor(Date.now() / 1000))).toString('base64');
+  return btoa(String(Math.floor(Date.now() / 1000)));
 }
 
 /** Build the Kulon OIDC service URL with a fresh ticket. */

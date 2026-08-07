@@ -36,6 +36,19 @@ describe('Kulon ticket URL', () => {
     expect(generateTicket()).toBe(Buffer.from(String(now)).toString('base64'));
   });
 
+  it('generateTicket works without Node Buffer (MV3 service worker)', () => {
+    // MV3 service workers have no `Buffer` global — only browser APIs like btoa.
+    const original = globalThis.Buffer;
+    delete globalThis.Buffer;
+    try {
+      const ticket = generateTicket();
+      expect(typeof ticket).toBe('string');
+      expect(ticket).toMatch(/^[A-Za-z0-9+/=]+$/);
+    } finally {
+      globalThis.Buffer = original;
+    }
+  });
+
   it('buildKulonTicketUrl points at the Kulon OIDC endpoint with a fresh ticket', () => {
     const url = buildKulonTicketUrl();
     expect(url.startsWith('https://kulon2.undip.ac.id/auth/oidc/?t=')).toBe(true);
