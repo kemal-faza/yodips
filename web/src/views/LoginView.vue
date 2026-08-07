@@ -1,18 +1,24 @@
 <script setup lang="ts">
-import { getCurrentInstance, onMounted } from 'vue';
+import { getCurrentInstance, onMounted, ref } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 
 const store = useAuthStore();
-// Read $route/$router from the instance proxy: vue-router exposes them as
-// global instance properties in the app, and tests inject them via global.mocks.
-// The proxy is only fully wired after setup, so resolve it lazily when needed.
 const inst = getCurrentInstance()!;
 const proxy = () => inst.proxy as any;
 
-onMounted(() => {
+const extInstalled = ref(false);
+const extBusy = ref(false);
+const extMsg = ref<string | null>(null);
+
+async function checkExtension() {
+  extInstalled.value = await store.isExtensionInstalled();
+}
+
+onMounted(async () => {
+  await checkExtension();
   if (store.isHandoffMode) {
     const token = proxy().$route?.query?.token as string | undefined;
     if (token) {
@@ -27,6 +33,25 @@ async function handleLogin() {
   if (store.isAuthenticated) {
     await proxy().$router?.push('/');
   }
+}
+
+async function handleExtensionLogin() {
+  extBusy.value = true;
+  extMsg.value = null;
+  const status = await store.loginViaExtension();
+  if (status === 'ok') {
+    await proxy().$router?.push('/');
+    extBusy.value = false;
+    return;
+  }
+  if (status === 'need-login') {
+    extMsg.value = 'Login dulu di tab yang baru terbuka, lalu klik "Login via Extension" lagi.';
+  } else if (status === 'error') {
+    extMsg.value = store.error ?? 'Login via extension gagal. Pastikan server berjalan.';
+  } else {
+    extMsg.value = 'Extension belum terpasang atau tidak merespons.';
+  }
+  extBusy.value = false;
 }
 </script>
 
@@ -76,6 +101,19 @@ async function handleLogin() {
         >
           {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
         </Button>
+        <Button
+          v-if="extInstalled"
+          variant="outline"
+          size="lg"
+          class="mt-3 h-11 w-full"
+          :disabled="extBusy"
+          @click="handleExtensionLogin"
+        >
+          {{ extBusy ? 'Menghubungkan…' : 'Login via Extension' }}
+        </Button>
+        <Alert v-if="extMsg" variant="destructive" class="mt-4 bg-danger/10 p-3">
+          <AlertDescription>{{ extMsg }}</AlertDescription>
+        </Alert>
         <p class="mt-3 text-center text-xs text-ink-muted">
           Login membuka window Chrome terpisah. Jika langsung masuk tanpa window, sesi kamu masih
           valid — tidak perlu menekan ulang.
