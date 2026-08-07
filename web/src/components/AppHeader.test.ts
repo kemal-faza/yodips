@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount } from '@vue/test-utils';
 import AppHeader from './AppHeader.vue';
 import { useAuthStore } from '../stores/auth';
@@ -6,6 +6,12 @@ import { useThemeStore } from '../stores/theme';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 vi.mock('../stores/theme', () => ({ useThemeStore: vi.fn() }));
+const mockPush = vi.fn();
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: mockPush }) }));
+
+beforeEach(() => {
+  mockPush.mockClear();
+});
 
 function mockStores(auth: Record<string, unknown> = { isAuthenticated: true, logout: vi.fn(), user: null }, theme: Record<string, unknown> = { dark: false, toggle: vi.fn() }) {
   (useAuthStore as any).mockReturnValue(auth);
@@ -41,5 +47,25 @@ describe('AppHeader', () => {
     const w = mount(AppHeader);
     await w.find('[data-test="theme-toggle"]').trigger('click');
     expect(theme.toggle).toHaveBeenCalled();
+  });
+
+  it('shows the SIAP photo when the store has a fotoUrl', () => {
+    mockStores({ isAuthenticated: true, logout: vi.fn(), user: null, fotoUrl: 'https://disk.undip.ac.id/ktm.jpg' });
+    const w = mount(AppHeader);
+    expect(w.find('[data-test="avatar-siap"] img').attributes('src')).toBe('https://disk.undip.ac.id/ktm.jpg');
+  });
+
+  it('shows the fallback initial when there is no fotoUrl', () => {
+    mockStores({ isAuthenticated: true, logout: vi.fn(), user: null, fotoUrl: null });
+    const w = mount(AppHeader);
+    expect(w.find('[data-test="avatar-siap"] img').exists()).toBe(false);
+    expect(w.find('[data-test="avatar-siap"]').text()).toContain('U');
+  });
+
+  it('navigates to /siap when the avatar is clicked', async () => {
+    mockStores({ isAuthenticated: true, logout: vi.fn(), user: null });
+    const w = mount(AppHeader);
+    await w.find('[data-test="avatar-siap"]').trigger('click');
+    expect(mockPush).toHaveBeenCalledWith('/siap');
   });
 });

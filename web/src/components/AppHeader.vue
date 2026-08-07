@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Bell, Moon, Sun } from '@lucide/vue';
 
@@ -10,8 +12,13 @@ const emit = defineEmits<{ (e: 'back'): void }>();
 
 const store = useAuthStore();
 const theme = useThemeStore();
+const router = useRouter();
 // Avatar initial from the logged-in identity (NIM in store.user.sub), else 'U'.
-const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
+const initial = computed(() => store.user?.sub?.[0]?.toUpperCase() ?? 'U');
+
+function goToSiap() {
+  router.push('/siap');
+}
 </script>
 
 <template>
@@ -56,9 +63,18 @@ const initial = store.user?.sub?.[0]?.toUpperCase() ?? 'U';
         >
           <Bell class="size-4" aria-hidden="true" />
         </Button>
-        <Avatar size="default" class="bg-white/20 text-white">
-          <AvatarFallback class="bg-transparent font-bold">{{ initial }}</AvatarFallback>
-        </Avatar>
+        <button
+          type="button"
+          class="rounded-full transition-opacity hover:opacity-90 cursor-pointer"
+          aria-label="Buka halaman SIAP"
+          data-test="avatar-siap"
+          @click="goToSiap"
+        >
+          <Avatar size="default" class="bg-white/20 text-white">
+            <AvatarImage v-if="store.fotoUrl" :src="store.fotoUrl" alt="Foto" />
+            <AvatarFallback class="bg-transparent font-bold">{{ initial }}</AvatarFallback>
+          </Avatar>
+        </button>
         <Button
           v-if="store.isAuthenticated"
           variant="ghost"

@@ -7,6 +7,7 @@ import { EXTENSION_ID } from '../config/extension';
 vi.mock('../api/client', () => ({
   capture: vi.fn(),
   me: vi.fn(),
+  getSiapProfile: vi.fn().mockResolvedValue(null),
 }));
 
 // Test env has no VITE_EXTENSION_ID; give the store a stable non-empty ID so the
@@ -109,6 +110,40 @@ describe('auth store', () => {
     const store = useAuthStore();
     const status = await store.fetchMe();
     expect(status).toBe('invalid');
+  });
+
+  it('fetchMe loads the SIAP photo when hasSiap is true', async () => {
+    (api.me as any).mockResolvedValue({
+      sub: 'n', authenticated: true, hasSso: true, hasMicrosoft: false,
+      hasKulon: true, hasSiap: true, complete: true,
+    });
+    (api.getSiapProfile as any).mockResolvedValue({ fotoUrl: 'https://disk.undip.ac.id/ktm.jpg', nama: 'Budi' });
+    const store = useAuthStore();
+    await store.fetchMe();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(store.fotoUrl).toBe('https://disk.undip.ac.id/ktm.jpg');
+    expect(api.getSiapProfile).toHaveBeenCalled();
+  });
+
+  it('fetchMe clears fotoUrl via logout when session is incomplete (no SIAP)', async () => {
+    (api.me as any).mockResolvedValue({
+      sub: 'n', authenticated: true, hasSso: true, hasMicrosoft: false,
+      hasKulon: false, hasSiap: false, complete: false,
+    });
+    const store = useAuthStore();
+    store.fotoUrl = 'https://example.com/old.jpg';
+    await store.fetchMe();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.getSiapProfile).not.toHaveBeenCalled();
+    expect(store.fotoUrl).toBeNull();
+  });
+
+  it('logout clears fotoUrl', () => {
+    localStorage.setItem('sso_token', 'x');
+    const store = useAuthStore();
+    store.fotoUrl = 'https://example.com/x.jpg';
+    store.logout();
+    expect(store.fotoUrl).toBeNull();
   });
 
   it('isHandoffMode reflects VITE_LOGIN_MODE', () => {

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { capture, me } from '../api/client';
+import { capture, me, getSiapProfile } from '../api/client';
 import type { User } from '../types';
 import { EXTENSION_ID } from '../config/extension';
 
@@ -29,6 +29,7 @@ export const useAuthStore = defineStore('auth', {
     error: null as string | null,
     hasSiap: false, // SIAP session validity (from GET /me)
     hasKulon: false, // Kulon session validity (from GET /me)
+    fotoUrl: null as string | null, // SIAP profile photo (header avatar)
   }),
   getters: {
     isAuthenticated: (state) => !!state.token,
@@ -86,6 +87,13 @@ export const useAuthStore = defineStore('auth', {
           this.logout();
           return 'incomplete';
         }
+        // Load the SIAP profile photo for the header avatar (best-effort; the
+        // fallback letter stays when SIAP is unavailable or the fetch fails).
+        if (this.hasSiap) {
+          getSiapProfile()
+            .then((profile) => { this.fotoUrl = profile?.fotoUrl ?? null; })
+            .catch(() => {});
+        }
         return 'ok';
       } catch (e: any) {
         // 401 = invalid JWT: the axios interceptor wipes the token and
@@ -130,6 +138,7 @@ export const useAuthStore = defineStore('auth', {
     logout() {
       this.token = null;
       this.user = null;
+      this.fotoUrl = null;
       localStorage.removeItem(TOKEN_KEY);
     },
   },
