@@ -14,15 +14,18 @@ halaman web app. Menggantikan peran `tools/capture-client/` untuk produksi.
 ## Alur
 
 - Buka web app — tombol **Login via Extension** muncul (jika extension terpasang).
-- Klik — extension baca cookie — handoff — JWT dikirim balik ke halaman — dashboard.
-- Jika cookie Kulon belum ada, extension membuka tab login SSO Undip — login — klik lagi.
+- Klik sekali — extension membuka **satu tab** ke service yang cookie-nya belum ada
+  (Kulon dulu, lalu SIAP di tab yang sama), redirect ke login Microsoft — user login/MFA.
+- `chrome.cookies.onChanged` mendeteksi cookie dan memicu handoff otomatis — tab **ditutup
+  otomatis** — JWT dikirim ke web app via content-script bridge — **masuk dashboard tanpa klik ulang**.
+- Jika login belum selesai dalam 3 menit per service, extension mengirim pesan error dan menutup tab.
 
 ## Konfigurasi
 
 - **Server API:** popup extension (ikon toolbar) — field *Server API* (default `http://localhost:3000`),
   disimpan di `chrome.storage.sync`.
-- **Domain yang boleh kirim pesan:** `externally_connectable.matches` di `manifest.json`.
-  Tambahkan origin web app produksi di sini saat deploy.
+- **Domain web app yang boleh kirim pesan & menerima hasil:** `externally_connectable.matches` +
+  `content_scripts.matches` di `manifest.json`. Tambahkan origin web app produksi di kedua tempat saat deploy.
 
 ## Test
 
@@ -44,8 +47,8 @@ npm test
 
 1. Logout/clear cookie Kulon di browser.
 2. Buka `http://localhost:5173` — klik **Login via Extension**.
-3. **Expected:** tab baru ke `sso.undip.ac.id` terbuka; web app tampil notice "Login dulu di tab".
-4. Login SSO — Kulon di tab itu — klik lagi **Login via Extension** — dashboard tampil.
+3. **Expected:** satu tab terbuka ke Kulon → redirect login Microsoft; web app tampil notice "Menunggu login di tab".
+4. Login Microsoft di tab itu — tab beralih/tertutup otomatis — **dashboard tampil tanpa klik ulang**.
 
 ### Skenario C — popup config server
 
@@ -55,6 +58,7 @@ tetap bekerja (POST `/api/auth/session/handoff` ke server yang dipilih, verifika
 ## Keamanan
 
 - Tidak pernah menerima/menyimpan kredensial; cookie dibaca & dikirim langsung ke backend.
-- `host_permissions` minimal (4 domain akademik), bukan `<all_urls>`.
-- Token tidak pernah lewat URL — dikirim balik lewat response `sendMessage`.
-- `externally_connectable` membatasi origin yang bisa memicu handoff.
+- `host_permissions` dibatasi ke domain akademik (`*://*.undip.ac.id/*`) + backend dev, bukan `<all_urls>`.
+- Token tidak pernah lewat URL — dikirim ke web app lewat `postMessage` dari content-script bridge.
+- `externally_connectable` (SPA→extension) dan tag `source: 'undip-sso-extension'` (extension→SPA)
+  membatasi siapa yang bisa memicu/menerima hasil handoff.
