@@ -123,17 +123,16 @@ function logout() {
 
       <!-- Bottom Sticky Section: User & Logout -->
       <div class="sticky bottom-0 shrink-0 border-t border-line bg-card p-3 space-y-2">
-        <Button
+        <button
           v-if="auth.isAuthenticated"
-          variant="ghost"
-          size="sm"
+          type="button"
           data-test="sidebar-logout"
-          class="w-full justify-start gap-2.5 text-danger hover:bg-danger/10 hover:text-danger cursor-pointer"
+          class="group flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-sm font-medium transition-colors cursor-pointer text-danger hover:bg-danger/10 hover:text-danger"
           @click="logout"
         >
-          <LogOut class="size-4 shrink-0" aria-hidden="true" />
-          <span class="font-medium text-sm">Keluar</span>
-        </Button>
+          <LogOut class="size-4 shrink-0 transition-transform duration-150 group-hover:scale-110" aria-hidden="true" />
+          <span class="truncate">Keluar</span>
+        </button>
       </div>
     </aside>
   </div>
