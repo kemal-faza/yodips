@@ -18,10 +18,11 @@ This project centralizes that. Sign in **once** (through the backend, in one of 
 
 ## How sign‑in works
 
-The backend supports two complementary flows. Pick whichever fits the situation:
+The backend supports a few complementary flows. Pick whichever fits the situation:
 
-1. **Automated browser capture** — the backend drives a headless Chrome via **Playwright** (CDP at `CDP_URL`), signs into SSO, and captures the session cookie. Good for scripts and background jobs.
-2. **Interactive login** — if you'd rather watch it happen, the backend pops up a *visible* browser window for you to log in yourself, then captures the resulting session. It always uses an isolated fresh profile (`CHROME_PROFILE_DIR`) — never your everyday Chrome profile with its stored sessions.
+1. **Browser extension (recommended)** — the `extension/` folder ships a Chrome MV3 extension that reads your SSO/Kulon/SIAP cookies directly from your everyday browser, opens a single tab to any missing service (Kulon first, then SIAP), waits for the login to complete automatically (`cookies.onChanged` + a 3‑minute deadline), closes the tab, and POSTs the session to `/api/auth/session/handoff`. No credentials ever leave the browser; the JWT comes back to the web app through a content‑script bridge. When the extension is installed, the web app hides the older interactive button.
+2. **Automated browser capture** — *deprecated for production*; kept as a dev/testing fallback. The backend drives a headless Chrome via **Playwright** (CDP at `CDP_URL`), signs into SSO, and captures the session cookie.
+3. **Interactive login** — *deprecated for production*; kept as a fallback when the extension isn't installed. The backend pops up a *visible* browser window for you to log in yourself, then captures the resulting session. It always uses an isolated fresh profile (`CHROME_PROFILE_DIR`) — never your everyday Chrome profile.
 
 **Microsoft / Entra (Kulon)** — Kulon uses Microsoft OIDC rather than the Undip SSO page, so it gets its own callback flow: `/api/auth/microsoft/login` → `/api/auth/microsoft/callback`.
 
@@ -46,6 +47,8 @@ All routes live under `/api`.
 | `GET` | `/siap/khs` | KHS (grades) records |
 
 > Every request except the login/callback entry points requires a JWT `Authorization: Bearer …` header.
+>
+> `POST /auth/sso/capture` (Playwright interactive capture) is **deprecated** for production — the browser extension is the supported path. It stays for dev/test fallback.
 
 ## Getting started
 
@@ -72,13 +75,13 @@ cp web/.env.example web/.env
 | `JWT_SECRET` / `JWT_EXPIRES_IN` | Token signing secret (generate with `openssl rand -hex 32`) and lifetime |
 | `CORS_ORIGIN` | Allowed frontend origin(s), comma‑separated |
 | `MS_*` | Microsoft Entra app credentials for Kulon OIDC |
-| `CDP_URL` / `SSO_LOGIN_URL` / `SSO_CAPTURE_TIMEOUT_MS` | Playwright capture tuning |
-| `CHROME_PATH` | Browser binary for the interactive window. Defaults to Chrome; point it at Edge and it uses that instead |
+| `CDP_URL` / `SSO_LOGIN_URL` / `SSO_CAPTURE_TIMEOUT_MS` | Playwright capture tuning (deprecated path) |
+| `CHROME_PATH` | Browser binary for the interactive window (deprecated path) |
 | `SESSION_BACKEND` | `memory` (dev/test, no Redis) or `redis` (production) |
 
 **Production only** (`SESSION_BACKEND=redis`): also set `REDIS_URL`, `SESSION_ENC_KEY`, and `SESSION_TTL_MS`.
 
-> `CHROME_PATH` example: the interactive login window can open in whatever browser you prefer — set `CHROME_PATH=/usr/bin/microsoft-edge` to use Edge, for instance. The window *always* runs in an isolated fresh profile.
+> `CHROME_PATH` example: the interactive login window can open in whatever browser you prefer — set `CHROME_PATH=/usr/bin/microsoft-edge` to use Edge, for instance. The window *always* runs in an isolated fresh profile. (This interactive path is deprecated — the browser extension replaces it for production.)
 
 ### 2. Backend
 
@@ -122,4 +125,4 @@ npm test
 
 ---
 
-Built with [Nest](https://nestjs.com), [Vue](https://vuejs.org), and [Playwright](https://playwright.dev).
+Built with [Nest](https://nestjs.com), [Vue](https://vuejs.org), and [Playwright](https://playwright.dev) (deprecated path — the browser extension is the recommended login method).
