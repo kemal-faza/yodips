@@ -4,15 +4,17 @@ import {
   cookiesToStr,
   generateTicket,
   buildKulonTicketUrl,
+  buildSiapTicketUrl,
 } from './messages.js';
 
 function makeDeps(overrides = {}) {
   const deps = {
-    getCookies: vi.fn().mockResolvedValue([KULON]),
+    getCookies: vi.fn().mockResolvedValue([KULON, SIAP]),
     getServerUrl: vi.fn().mockResolvedValue('http://localhost:3000'),
     fetchHandoff: vi.fn().mockResolvedValue({ ok: true, status: 200, accessToken: 'jwt' }),
     openTab: vi.fn().mockResolvedValue(undefined),
-    ssologinUrl: 'https://sso.undip.ac.id/',
+    kulonLoginUrl: 'https://kulon2.undip.ac.id/auth/oidc/?t=k',
+    siapLoginUrl: 'https://siap.undip.ac.id/sso/login?t=s',
     ...overrides,
   };
   return deps;
@@ -56,6 +58,13 @@ describe('Kulon ticket URL', () => {
     // The ticket decodes back to the current unix second (fresh per call).
     expect(Buffer.from(ticket, 'base64').toString()).toBe(String(Math.floor(Date.now() / 1000)));
   });
+
+  it('buildSiapTicketUrl points at the SIAP SSO endpoint with a fresh ticket', () => {
+    const url = buildSiapTicketUrl();
+    expect(url.startsWith('https://siap.undip.ac.id/sso/login?t=')).toBe(true);
+    const ticket = url.split('?t=')[1];
+    expect(Buffer.from(ticket, 'base64').toString()).toBe(String(Math.floor(Date.now() / 1000)));
+  });
 });
 
 describe('handleHandoffMessage', () => {
@@ -74,15 +83,24 @@ describe('handleHandoffMessage', () => {
   });
 
   it('returns need-login and opens the Kulon OIDC login tab when kulon cookie missing', async () => {
-    const loginUrl = buildKulonTicketUrl();
     const deps = makeDeps({
       getCookies: vi.fn().mockResolvedValue([SSO]),
-      ssologinUrl: loginUrl,
     });
     const res = await handleHandoffMessage({ action: 'handoff' }, deps);
-    expect(res).toEqual({ status: 'need-login' });
-    // openTab receives the exact ssologinUrl dep value (buildKulonTicketUrl output).
-    expect(deps.openTab).toHaveBeenCalledWith(loginUrl);
+    expect(res).toEqual({ status: 'need-login', service: 'kulon' });
+    // openTab receives the kulonLoginUrl dep value (buildKulonTicketUrl output).
+    expect(deps.openTab).toHaveBeenCalledWith(deps.kulonLoginUrl);
+    expect(deps.fetchHandoff).not.toHaveBeenCalled();
+  });
+
+  it('returns need-login and opens the SIAP SSO login tab when siap cookie missing', async () => {
+    const deps = makeDeps({
+      getCookies: vi.fn().mockResolvedValue([KULON, SSO]),
+    });
+    const res = await handleHandoffMessage({ action: 'handoff' }, deps);
+    expect(res).toEqual({ status: 'need-login', service: 'siap' });
+    // openTab receives the siapLoginUrl dep value (buildSiapTicketUrl output).
+    expect(deps.openTab).toHaveBeenCalledWith(deps.siapLoginUrl);
     expect(deps.fetchHandoff).not.toHaveBeenCalled();
   });
 
