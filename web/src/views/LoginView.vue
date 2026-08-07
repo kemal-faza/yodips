@@ -116,6 +116,7 @@ async function handleExtensionLogin() {
           </AlertDescription>
         </Alert>
         <Button
+          v-if="!extInstalled"
           size="lg"
           class="mt-6 h-11 w-full"
           :disabled="store.checking"
@@ -125,9 +126,8 @@ async function handleExtensionLogin() {
         </Button>
         <Button
           v-if="extInstalled"
-          variant="outline"
           size="lg"
-          class="mt-3 h-11 w-full"
+          class="mt-6 h-11 w-full"
           :disabled="extBusy"
           @click="handleExtensionLogin"
         >
@@ -142,7 +142,7 @@ async function handleExtensionLogin() {
         <Alert v-if="extMsg" variant="destructive" class="mt-4 bg-danger/10 p-3">
           <AlertDescription>{{ extMsg }}</AlertDescription>
         </Alert>
-        <p class="mt-3 text-center text-xs text-ink-muted">
+        <p v-if="!extInstalled" class="mt-3 text-center text-xs text-ink-muted">
           Login membuka window Chrome terpisah. Jika langsung masuk tanpa window, sesi kamu masih
           valid — tidak perlu menekan ulang.
         </p>

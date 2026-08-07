@@ -34,6 +34,20 @@ describe('LoginView', () => {
     expect(w.text()).toContain('Login via SSO');
   });
 
+  it('hides the interactive Login via SSO button when the extension is installed', async () => {
+    makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(true) });
+    const w = mount(LoginView);
+    await flushPromises();
+    expect(w.text()).not.toContain('Login via SSO');
+  });
+
+  it('keeps the interactive Login via SSO button when the extension is not installed', async () => {
+    makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(false) });
+    const w = mount(LoginView);
+    await flushPromises();
+    expect(w.text()).toContain('Login via SSO');
+  });
+
   it('calls store.login on button click', async () => {
     const store = makeStore();
     const w = mount(LoginView);
