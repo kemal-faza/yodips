@@ -5,6 +5,8 @@
   "description": "Login SSO Undip via browser tanpa kredensial: baca cookie Kazan SSO/Kulon/SIAP dan hubungkan ke dashboard.",
   "permissions": ["cookies", "storage", "tabs"],
   "host_permissions": [
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
     "https://sso.undip.ac.id/*",
     "https://kulon2.undip.ac.id/*",
     "https://siap.undip.ac.id/*",
