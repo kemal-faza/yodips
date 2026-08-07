@@ -1,8 +1,25 @@
 import { defineStore } from 'pinia';
 import { capture, me } from '../api/client';
 import type { User } from '../types';
+import { EXTENSION_ID } from '../config/extension';
 
 const TOKEN_KEY = 'sso_token';
+
+/** Kirim pesan ke extension. Mengecek chrome.runtime tersedia, membungkus
+ *  callback chrome style ke Promise. Bisa melempar bila ekstensi tak terpasang
+ *  (sendMessage throw synchronously tanpa receiver). */
+async function sendToExtension(message: Record<string, unknown>): Promise<any> {
+  const rt = (globalThis as any).chrome?.runtime;
+  if (!rt?.sendMessage || !EXTENSION_ID) {
+    throw new Error('Extension tidak tersedia');
+  }
+  return new Promise((resolve, reject) => {
+    rt.sendMessage(EXTENSION_ID, message, (resp: any) => {
+      if (rt.lastError) reject(new Error(rt.lastError.message));
+      else resolve(resp);
+    });
+  });
+}
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -65,6 +82,34 @@ export const useAuthStore = defineStore('auth', {
         return e?.response?.status === 401 ? 'invalid' : 'error';
       }
     },
+    async isExtensionInstalled(): Promise<boolean> {
+      try {
+        const resp = await sendToExtension({ action: 'ping' });
+        return resp?.status === 'ok';
+      } catch {
+        return false;
+      }
+    },
+
+    async loginViaExtension(): Promise<'ok' | 'need-login' | 'error' | 'not-installed'> {
+      this.error = null;
+      try {
+        const resp = await sendToExtension({ action: 'handoff' });
+        if (resp?.status === 'ok' && resp.accessToken) {
+          this.finishHandoff(resp.accessToken);
+          return 'ok';
+        }
+        if (resp?.status === 'need-login') {
+          // UI menampilkan pesan sendiri; error store tetap null (bersih dari error lama).
+          return 'need-login';
+        }
+        this.error = resp?.message ?? 'Login via extension gagal.';
+        return 'error';
+      } catch {
+        return 'not-installed';
+      }
+    },
+
     finishHandoff(token: string) {
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);

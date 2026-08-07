@@ -2,11 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from './auth';
 import * as api from '../api/client';
+import { EXTENSION_ID } from '../config/extension';
 
 vi.mock('../api/client', () => ({
   capture: vi.fn(),
   me: vi.fn(),
 }));
+
+// Test env has no VITE_EXTENSION_ID; give the store a stable non-empty ID so the
+// sendToExtension guard passes and messages reach the stubbed chrome.runtime.
+vi.mock('../config/extension', () => ({ EXTENSION_ID: 'test-extension-id' }));
 
 describe('auth store', () => {
   beforeEach(() => {
@@ -111,5 +116,73 @@ describe('auth store', () => {
     const store = useAuthStore();
     expect(store.isHandoffMode).toBe(true);
     vi.unstubAllEnvs();
+  });
+});
+
+describe('extension login', () => {
+  function stubChrome(status: 'ok' | 'need-login' | 'error' | 'throw', accessToken?: string) {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: status === 'throw' ? { message: 'Could not establish connection' } : null,
+        sendMessage: (id: string, msg: any, cb: (resp: any) => void) => {
+          expect(id).toBe(EXTENSION_ID);
+          if (status === 'throw') {
+            // Real chrome: no receiver -> callback fires with runtime.lastError set.
+            cb(undefined);
+            return;
+          }
+          cb(status === 'ok' ? { status: 'ok', accessToken } : { status });
+        },
+      },
+    };
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    delete (globalThis as any).chrome;
+  });
+
+  it('reports not extension installed when chrome missing', async () => {
+    const store = useAuthStore();
+    expect(await store.isExtensionInstalled()).toBe(false);
+    expect(await store.loginViaExtension()).toBe('not-installed');
+  });
+
+  it('reports not installed and does not crash on sendMessage throw', async () => {
+    stubChrome('throw');
+    const store = useAuthStore();
+    expect(await store.isExtensionInstalled()).toBe(false);
+    expect(await store.loginViaExtension()).toBe('not-installed');
+    expect(store.token).toBeNull();
+  });
+
+  it('detects extension via ping', async () => {
+    stubChrome('ok', 'jwt');
+    const store = useAuthStore();
+    expect(await store.isExtensionInstalled()).toBe(true);
+  });
+
+  it('loginViaExtension stores token and returns ok', async () => {
+    stubChrome('ok', 'jwt-ext');
+    const store = useAuthStore();
+    expect(await store.loginViaExtension()).toBe('ok');
+    expect(store.token).toBe('jwt-ext');
+    expect(localStorage.getItem('sso_token')).toBe('jwt-ext');
+  });
+
+  it('loginViaExtension returns need-login and clears stale error', async () => {
+    stubChrome('need-login');
+    const store = useAuthStore();
+    store.error = 'old';
+    expect(await store.loginViaExtension()).toBe('need-login');
+    expect(store.error).toBeNull();
+  });
+
+  it('loginViaExtension returns error on handoff failure', async () => {
+    stubChrome('error');
+    const store = useAuthStore();
+    expect(await store.loginViaExtension()).toBe('error');
+    expect(store.token).toBeNull();
   });
 });
