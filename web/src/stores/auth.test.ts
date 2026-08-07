@@ -120,7 +120,7 @@ describe('auth store', () => {
 });
 
 describe('extension login', () => {
-  function stubChrome(status: 'ok' | 'need-login' | 'error' | 'throw', accessToken?: string) {
+  function stubChrome(status: 'ok' | 'started' | 'error' | 'throw', accessToken?: string) {
     (globalThis as any).chrome = {
       runtime: {
         lastError: status === 'throw' ? { message: 'Could not establish connection' } : null,
@@ -171,12 +171,13 @@ describe('extension login', () => {
     expect(localStorage.getItem('sso_token')).toBe('jwt-ext');
   });
 
-  it('loginViaExtension returns need-login and clears stale error', async () => {
-    stubChrome('need-login');
+  it('loginViaExtension returns started (background drives the rest)', async () => {
+    stubChrome('started');
     const store = useAuthStore();
     store.error = 'old';
-    expect(await store.loginViaExtension()).toBe('need-login');
+    expect(await store.loginViaExtension()).toBe('started');
     expect(store.error).toBeNull();
+    expect(store.token).toBeNull();
   });
 
   it('loginViaExtension returns error on handoff failure', async () => {
@@ -184,5 +185,28 @@ describe('extension login', () => {
     const store = useAuthStore();
     expect(await store.loginViaExtension()).toBe('error');
     expect(store.token).toBeNull();
+  });
+
+  it('onExtensionResult forwards the extension window message payload to the handler', async () => {
+    const store = useAuthStore();
+    const handler = vi.fn();
+    const cleanup = store.onExtensionResult(handler);
+    window.postMessage(
+      { source: 'undip-sso-extension', payload: { status: 'ok', accessToken: 'jwt-msg' } },
+      '*',
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(handler).toHaveBeenCalledWith({ status: 'ok', accessToken: 'jwt-msg' });
+    cleanup();
+  });
+
+  it('onExtensionResult ignores messages from other sources', async () => {
+    const store = useAuthStore();
+    const handler = vi.fn();
+    const cleanup = store.onExtensionResult(handler);
+    window.postMessage({ source: 'other-app', payload: { status: 'ok', accessToken: 'x' } }, '*');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(handler).not.toHaveBeenCalled();
+    cleanup();
   });
 });

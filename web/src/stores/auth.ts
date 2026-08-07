@@ -35,6 +35,18 @@ export const useAuthStore = defineStore('auth', {
     isHandoffMode: () => import.meta.env.VITE_LOGIN_MODE === 'handoff',
   },
   actions: {
+    /** Receive the extension's final result posted to the window by the content bridge. */
+    onExtensionResult(handler: (payload: any) => void): () => void {
+      const listener = (event: MessageEvent) => {
+        // The extension's content bridge tags every payload with source
+        // 'undip-sso-extension' when forwarding a background result. Validate
+        // that tag — no other page/script can forge it without the bridge.
+        if (event.data?.source !== 'undip-sso-extension') return;
+        handler(event.data.payload);
+      };
+      window.addEventListener('message', listener);
+      return () => window.removeEventListener('message', listener);
+    },
     async login() {
       this.checking = true;
       this.error = null;
@@ -91,7 +103,7 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
-    async loginViaExtension(): Promise<'ok' | 'need-login' | 'error' | 'not-installed'> {
+    async loginViaExtension(): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
       this.error = null;
       try {
         const resp = await sendToExtension({ action: 'handoff' });
@@ -99,9 +111,10 @@ export const useAuthStore = defineStore('auth', {
           this.finishHandoff(resp.accessToken);
           return 'ok';
         }
-        if (resp?.status === 'need-login') {
-          // UI menampilkan pesan sendiri; error store tetap null (bersih dari error lama).
-          return 'need-login';
+        if (resp?.status === 'started') {
+          // The background opened a login tab and will notify us via the window
+          // message bridge when the handoff completes.
+          return 'started';
         }
         this.error = resp?.message ?? 'Login via extension gagal.';
         return 'error';
