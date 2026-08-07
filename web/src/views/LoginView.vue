@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getCurrentInstance, onMounted, ref } from 'vue';
+import { getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -11,7 +11,9 @@ const proxy = () => inst.proxy as any;
 
 const extInstalled = ref(false);
 const extBusy = ref(false);
+const extWaiting = ref(false); // extension login tab is open; result arrives via window message
 const extMsg = ref<string | null>(null);
+let stopListening: (() => void) | null = null;
 
 async function checkExtension() {
   extInstalled.value = await store.isExtensionInstalled();
@@ -19,6 +21,18 @@ async function checkExtension() {
 
 onMounted(async () => {
   await checkExtension();
+  // Listen for the extension's final result (posted to the window by the
+  // content-script bridge). Handles both success (JWT) and failure/timeout.
+  stopListening = store.onExtensionResult((payload: any) => {
+    extWaiting.value = false;
+    extBusy.value = false;
+    if (payload?.status === 'ok' && payload.accessToken) {
+      store.finishHandoff(payload.accessToken);
+      proxy().$router?.push('/');
+    } else if (payload?.status === 'error') {
+      extMsg.value = payload.message ?? 'Login via extension gagal.';
+    }
+  });
   if (store.isHandoffMode) {
     const token = proxy().$route?.query?.token as string | undefined;
     if (token) {
@@ -26,6 +40,10 @@ onMounted(async () => {
       proxy().$router?.push('/');
     }
   }
+});
+
+onUnmounted(() => {
+  stopListening?.();
 });
 
 async function handleLogin() {
@@ -44,10 +62,13 @@ async function handleExtensionLogin() {
     extBusy.value = false;
     return;
   }
-  if (status === 'need-login') {
-    extMsg.value =
-      'Login dulu di tab Kulon/Microsoft yang baru terbuka, lalu klik "Login via Extension" lagi.';
-  } else if (status === 'error') {
+  if (status === 'started') {
+    // Background opened a login tab and will notify us via the window bridge.
+    extWaiting.value = true;
+    extBusy.value = false;
+    return;
+  }
+  if (status === 'error') {
     extMsg.value = store.error ?? 'Login via extension gagal. Pastikan server berjalan.';
   } else {
     extMsg.value = 'Extension belum terpasang atau tidak merespons.';
@@ -112,6 +133,12 @@ async function handleExtensionLogin() {
         >
           {{ extBusy ? 'Menghubungkan…' : 'Login via Extension' }}
         </Button>
+        <Alert v-if="extWaiting" class="mt-4 border-warn/40 bg-warn/10 p-3">
+          <AlertDescription>
+            Menunggu login di tab yang baru terbuka… selesai login di tab itu, lalu tab akan
+            tertutup otomatis dan kamu masuk ke dashboard.
+          </AlertDescription>
+        </Alert>
         <Alert v-if="extMsg" variant="destructive" class="mt-4 bg-danger/10 p-3">
           <AlertDescription>{{ extMsg }}</AlertDescription>
         </Alert>
