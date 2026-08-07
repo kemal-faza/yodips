@@ -13,6 +13,9 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       return url || DEFAULT_SERVER_URL;
     },
     openTab: (url) => chrome.tabs.create({ url }),
+    // Polling wait — setTimeout is fine within the ~25s handoff window; a
+    // chrome.alarms-based wait can replace this later without contract change.
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     fetchHandoff: async (url, body) => {
       const res = await fetch(url, {
         method: 'POST',

@@ -13,12 +13,18 @@ function makeDeps(overrides = {}) {
     getServerUrl: vi.fn().mockResolvedValue('http://localhost:3000'),
     fetchHandoff: vi.fn().mockResolvedValue({ ok: true, status: 200, accessToken: 'jwt' }),
     openTab: vi.fn().mockResolvedValue(undefined),
+    sleep: vi.fn().mockResolvedValue(undefined),
     kulonLoginUrl: 'https://kulon2.undip.ac.id/auth/oidc/?t=k',
     siapLoginUrl: 'https://siap.undip.ac.id/sso/login?t=s',
     ...overrides,
   };
   return deps;
 }
+
+// Real timer but tiny, so polling loops advance Date.now() without slowing tests.
+const realSleep = (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5)));
+// Spy wrapping the real timer: callable as a normal sleep AND assertable.
+const sleepSpy = vi.fn().mockImplementation(realSleep);
 
 const KULON = { domain: 'sub.kulon2.undip.ac.id', name: 'MoodleSession', value: 'abc' };
 const SSO = { domain: 'sso.undip.ac.id', name: 'csrftoken', value: 'sso1' };
@@ -82,26 +88,66 @@ describe('handleHandoffMessage', () => {
     expect(deps.getCookies).not.toHaveBeenCalled();
   });
 
-  it('returns need-login and opens the Kulon OIDC login tab when kulon cookie missing', async () => {
+  it('polls for the kulon cookie then times out to need-login when it never appears', async () => {
     const deps = makeDeps({
-      getCookies: vi.fn().mockResolvedValue([SSO]),
+      getCookies: vi.fn().mockResolvedValue([SSO]), // kulon never appears
+      sleep: sleepSpy,
+      pollIntervalMs: 5,
+      pollTimeoutMs: 40,
     });
     const res = await handleHandoffMessage({ action: 'handoff' }, deps);
     expect(res).toEqual({ status: 'need-login', service: 'kulon' });
     // openTab receives the kulonLoginUrl dep value (buildKulonTicketUrl output).
     expect(deps.openTab).toHaveBeenCalledWith(deps.kulonLoginUrl);
+    expect(deps.sleep).toHaveBeenCalled();
     expect(deps.fetchHandoff).not.toHaveBeenCalled();
   });
 
-  it('returns need-login and opens the SIAP SSO login tab when siap cookie missing', async () => {
+  it('polls for the siap cookie then times out to need-login when it never appears', async () => {
     const deps = makeDeps({
-      getCookies: vi.fn().mockResolvedValue([KULON, SSO]),
+      getCookies: vi.fn().mockResolvedValue([KULON, SSO]), // siap never appears
+      sleep: sleepSpy,
+      pollIntervalMs: 5,
+      pollTimeoutMs: 40,
     });
     const res = await handleHandoffMessage({ action: 'handoff' }, deps);
     expect(res).toEqual({ status: 'need-login', service: 'siap' });
-    // openTab receives the siapLoginUrl dep value (buildSiapTicketUrl output).
+    // Only the SIAP tab is opened (Kulon cookie already present).
     expect(deps.openTab).toHaveBeenCalledWith(deps.siapLoginUrl);
+    expect(deps.openTab).not.toHaveBeenCalledWith(deps.kulonLoginUrl);
+    expect(deps.sleep).toHaveBeenCalled();
     expect(deps.fetchHandoff).not.toHaveBeenCalled();
+  });
+
+  it('polls until the kulon cookie appears, then handoffs automatically', async () => {
+    // initial check: missing -> open tab -> poll 1: still missing (sleep) -> poll 2: found
+    const getCookies = vi
+      .fn()
+      .mockResolvedValueOnce([SSO])
+      .mockResolvedValueOnce([SSO])
+      .mockResolvedValueOnce([KULON, SIAP]);
+    const deps = makeDeps({ getCookies, sleep: sleepSpy, pollIntervalMs: 5, pollTimeoutMs: 5000 });
+    const res = await handleHandoffMessage({ action: 'handoff' }, deps);
+    expect(res).toEqual({ status: 'ok', accessToken: 'jwt' });
+    expect(deps.openTab).toHaveBeenCalledWith(deps.kulonLoginUrl);
+    expect(deps.sleep).toHaveBeenCalled();
+    expect(deps.fetchHandoff).toHaveBeenCalled();
+  });
+
+  it('polls until the siap cookie appears after kulon, then handoffs automatically', async () => {
+    // initial: kulon present, siap missing -> open siap tab -> poll 1: missing (sleep) -> poll 2: found
+    const getCookies = vi
+      .fn()
+      .mockResolvedValueOnce([KULON, SSO])
+      .mockResolvedValueOnce([KULON, SSO])
+      .mockResolvedValueOnce([KULON, SIAP]);
+    const deps = makeDeps({ getCookies, sleep: sleepSpy, pollIntervalMs: 5, pollTimeoutMs: 5000 });
+    const res = await handleHandoffMessage({ action: 'handoff' }, deps);
+    expect(res).toEqual({ status: 'ok', accessToken: 'jwt' });
+    expect(deps.openTab).not.toHaveBeenCalledWith(deps.kulonLoginUrl);
+    expect(deps.openTab).toHaveBeenCalledWith(deps.siapLoginUrl);
+    expect(deps.sleep).toHaveBeenCalled();
+    expect(deps.fetchHandoff).toHaveBeenCalled();
   });
 
   it('posts cookies to handoff and returns accessToken on success', async () => {
