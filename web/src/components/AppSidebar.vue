@@ -122,12 +122,12 @@ function logout() {
       </nav>
 
       <!-- Bottom Sticky Section: User & Logout -->
-      <div class="sticky bottom-0 shrink-0 border-t border-line bg-card p-3 space-y-2">
+      <div class="sticky bottom-0 shrink-0 border-t border-line bg-card">
         <button
           v-if="auth.isAuthenticated"
           type="button"
           data-test="sidebar-logout"
-          class="group flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-sm font-medium transition-colors cursor-pointer text-danger hover:bg-danger/10 hover:text-danger"
+          class="group flex w-full items-center gap-3 px-3.5 py-2.5 text-sm font-medium transition-colors cursor-pointer text-danger hover:bg-danger/10 hover:text-danger"
           @click="logout"
         >
           <LogOut class="size-4 shrink-0 transition-transform duration-150 group-hover:scale-110" aria-hidden="true" />
