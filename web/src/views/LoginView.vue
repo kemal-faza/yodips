@@ -45,7 +45,8 @@ async function handleExtensionLogin() {
     return;
   }
   if (status === 'need-login') {
-    extMsg.value = 'Login dulu di tab yang baru terbuka, lalu klik "Login via Extension" lagi.';
+    extMsg.value =
+      'Login dulu di tab Kulon/Microsoft yang baru terbuka, lalu klik "Login via Extension" lagi.';
   } else if (status === 'error') {
     extMsg.value = store.error ?? 'Login via extension gagal. Pastikan server berjalan.';
   } else {

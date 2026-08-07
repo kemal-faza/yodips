@@ -1,7 +1,7 @@
 // MV3 service worker. Satu-satunya pintu handoff: membaca cookie (chrome.cookies),
 // menyimpan serverUrl (chrome.storage.sync), membuka tab login, dan POST handoff
 // (fetch di background = bebas CORS). Logika inti ada di messages.js (testable).
-import { handleHandoffMessage, DEFAULT_SERVER_URL, SSO_LOGIN_URL } from './messages.js';
+import { handleHandoffMessage, DEFAULT_SERVER_URL, buildKulonTicketUrl } from './messages.js';
 
 const STORAGE_KEY = 'serverUrl';
 
@@ -22,7 +22,9 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       const data = await res.json().catch(() => ({}));
       return { ok: res.ok, status: res.status, ...data };
     },
-    ssologinUrl: SSO_LOGIN_URL,
+    // Membuka service URL Kulon (redirect ke login Microsoft OIDC), bukan root
+    // SSO: cookie Kulon baru terbentuk setelah browser menavigasi ke Kulon.
+    ssologinUrl: buildKulonTicketUrl(),
   })
     .then(sendResponse)
     .catch((err) => sendResponse({ status: 'error', message: err.message ?? 'Error internal' }));

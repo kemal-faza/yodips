@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { handleHandoffMessage, cookiesToStr } from './messages.js';
+import {
+  handleHandoffMessage,
+  cookiesToStr,
+  generateTicket,
+  buildKulonTicketUrl,
+} from './messages.js';
 
 function makeDeps(overrides = {}) {
   const deps = {
@@ -25,6 +30,21 @@ describe('cookiesToStr', () => {
   });
 });
 
+describe('Kulon ticket URL', () => {
+  it('generateTicket returns base64 of the current unix second (backend-compatible)', () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(generateTicket()).toBe(Buffer.from(String(now)).toString('base64'));
+  });
+
+  it('buildKulonTicketUrl points at the Kulon OIDC endpoint with a fresh ticket', () => {
+    const url = buildKulonTicketUrl();
+    expect(url.startsWith('https://kulon2.undip.ac.id/auth/oidc/?t=')).toBe(true);
+    const ticket = url.split('?t=')[1];
+    // The ticket decodes back to the current unix second (fresh per call).
+    expect(Buffer.from(ticket, 'base64').toString()).toBe(String(Math.floor(Date.now() / 1000)));
+  });
+});
+
 describe('handleHandoffMessage', () => {
   it('answers ping with ok without touching cookies', async () => {
     const deps = makeDeps();
@@ -40,11 +60,16 @@ describe('handleHandoffMessage', () => {
     expect(deps.getCookies).not.toHaveBeenCalled();
   });
 
-  it('returns need-login and opens SSO login tab when kulon cookie missing', async () => {
-    const deps = makeDeps({ getCookies: vi.fn().mockResolvedValue([SSO]) });
+  it('returns need-login and opens the Kulon OIDC login tab when kulon cookie missing', async () => {
+    const loginUrl = buildKulonTicketUrl();
+    const deps = makeDeps({
+      getCookies: vi.fn().mockResolvedValue([SSO]),
+      ssologinUrl: loginUrl,
+    });
     const res = await handleHandoffMessage({ action: 'handoff' }, deps);
     expect(res).toEqual({ status: 'need-login' });
-    expect(deps.openTab).toHaveBeenCalledWith('https://sso.undip.ac.id/');
+    // openTab receives the exact ssologinUrl dep value (buildKulonTicketUrl output).
+    expect(deps.openTab).toHaveBeenCalledWith(loginUrl);
     expect(deps.fetchHandoff).not.toHaveBeenCalled();
   });
 

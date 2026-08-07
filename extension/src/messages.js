@@ -2,7 +2,20 @@
 // effects (cookie read, storage, tab open, HTTP) arrive via `deps`. This keeps
 // the whole handoff logic unit-testable without a browser.
 export const DEFAULT_SERVER_URL = 'http://localhost:3000';
-export const SSO_LOGIN_URL = 'https://sso.undip.ac.id/';
+export const KULON_OIDC_URL = 'https://kulon2.undip.ac.id/auth/oidc/';
+
+/**
+ * Generate a SSO ticket compatible with the backend's SSOTicketService:
+ * base64 of the current unix second timestamp.
+ */
+export function generateTicket() {
+  return Buffer.from(String(Math.floor(Date.now() / 1000))).toString('base64');
+}
+
+/** Build the Kulon OIDC service URL with a fresh ticket. */
+export function buildKulonTicketUrl() {
+  return `${KULON_OIDC_URL}?t=${generateTicket()}`;
+}
 
 export function cookiesToStr(cookies, pred) {
   return cookies
