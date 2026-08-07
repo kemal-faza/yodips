@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Undip SSO Login",
+  "version": "0.1.0",
+  "description": "Login SSO Undip via browser tanpa kredensial: baca cookie Kazan SSO/Kulon/SIAP dan hubungkan ke dashboard.",
+  "permissions": ["cookies", "storage", "tabs"],
+  "host_permissions": [
+    "https://sso.undip.ac.id/*",
+    "https://kulon2.undip.ac.id/*",
+    "https://siap.undip.ac.id/*",
+    "https://login.live.com/*",
+    "https://login.microsoftonline.com/*"
+  ],
+  "externally_connectable": {
+    "matches": ["http://localhost:5173/*"]
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "Undip SSO Login"
+  }
+}
