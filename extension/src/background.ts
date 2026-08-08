@@ -16,6 +16,7 @@ const SERVER_KEY = 'serverUrl';
 const STATE_KEY = 'ssoLoginState';
 const ALARM_KEY = 'handoff-timeout';
 const POLL_KEY = 'handoff-poll';
+const LAST_RESULT_KEY = 'lastHandoffResult';
 const POLL_PERIOD_MIN = 0.5;
 const MAX_RELOGIN = 2;
 const PHASE_TIMEOUT_MS = 3 * 60_000;
@@ -65,6 +66,10 @@ async function clearSessionCookies(): Promise<void> {
 }
 
 async function sendToApp(appTabId: number | null, payload: OutboundStatus): Promise<void> {
+  // Cache the final payload so the SPA's self-healing poll ({action:'status'})
+  // can recover the JWT even if every push channel is missed. storage.session
+  // is in-memory and cleared on browser restart.
+  await chrome.storage.session.set({ [LAST_RESULT_KEY]: payload }).catch(() => {});
   if (appTabId != null) {
     await chrome.tabs.sendMessage(appTabId, { action: 'handoff-result', ...payload }).catch(() => {});
   }
@@ -180,6 +185,11 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         case 'ping':
           return void sendResponse({ status: 'ok' });
         case 'status': {
+          // Self-healing poll: return the last completed handoff result when
+          // one exists (lets the SPA recover the JWT), otherwise report the
+          // current flow state.
+          const cached = (await chrome.storage.session.get(LAST_RESULT_KEY))[LAST_RESULT_KEY];
+          if (cached) return void sendResponse(cached);
           const s = await getState();
           const active = s.core === 'authing' || s.core === 'handoff';
           return void sendResponse({ status: 'ok', active, phase: s.service });
