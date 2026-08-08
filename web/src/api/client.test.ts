@@ -88,6 +88,19 @@ describe('api client', () => {
     expect(localStorage.getItem('sso_token')).toBe('keep-me');
   });
 
+  it('SIAP 401 does NOT clear token or redirect (back-end session stale, JWT valid)', async () => {
+    localStorage.setItem('sso_token', 'keep-me');
+    await vi.resetModules();
+    const { apiClient } = await import('./client');
+    const onRejected = responseHandlers.onRejected!;
+    const error = {
+      response: { status: 401, data: { message: 'SIAP session expired' } },
+      config: { url: '/api/siap/profile' },
+    };
+    await expect(onRejected(error)).rejects.toMatchObject(error);
+    expect(localStorage.getItem('sso_token')).toBe('keep-me');
+  });
+
   it('auth 401 clears token and redirects to /login', async () => {
     localStorage.setItem('sso_token', 'drop-me');
     await vi.resetModules();

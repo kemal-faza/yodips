@@ -25,6 +25,10 @@ function mockFetchRouting(
         return {
           ok: true,
           url,
+          headers: {
+            get: (k: string) =>
+              k.toLowerCase() === 'content-type' ? 'application/json' : null,
+          },
           text: async () => r.body,
           json: async () => JSON.parse(r.body),
         };
@@ -133,6 +137,71 @@ describe('SiapService', () => {
         status: 401,
       });
     });
+
+    it('throws 401 when a stale session returns HTML instead of JSON (same URL)', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null,
+        },
+        text: async () => '<!DOCTYPE html><html><body>login</body></html>',
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<'");
+        },
+      });
+      await expect(svc.getIrs('sia_app_session=K')).rejects.toMatchObject({
+        status: 401,
+      });
+    });
+
+    it('throws 401 when Content-Type is missing and the body is HTML (hard parse guard)', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
+        headers: { get: () => null },
+        text: async () => '<!DOCTYPE html><html><body>login</body></html>',
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<'");
+        },
+      });
+      await expect(svc.getIrs('sia_app_session=K')).rejects.toMatchObject({
+        status: 401,
+      });
+    });
+
+    it('accepts JSON with a non-HTML content-type (e.g. text/plain)', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'content-type' ? 'text/plain; charset=utf-8' : null,
+        },
+        json: async () => ({ total_sks: 23, html: '' }),
+      });
+      const irs = await svc.getIrs('sia_app_session=K');
+      expect(irs.totalSks).toBe(23);
+    });
+
+    it('parses a JSON body even when Content-Type claims text/html (real SIAP transport)', async () => {
+      // Verified live: SIAP returns a VALID JSON body with a misleading
+      // `Content-Type: text/html; charset=UTF-8`. The JSON must be parsed, not
+      // rejected as a stale session (which surfaced as a false 401 on /api/siap/irs).
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'content-type' ? 'text/html; charset=UTF-8' : null,
+        },
+        text: async () => '{"total_sks":23,"html":""}',
+        json: async () => ({ total_sks: 23, html: '' }),
+      });
+      const irs = await svc.getIrs('sia_app_session=K');
+      expect(irs.totalSks).toBe(23);
+    });
   });
 
   describe('getKhs', () => {
@@ -156,6 +225,48 @@ describe('SiapService', () => {
       expect(khs.semesters[0].nilai[0].bobot).toBe(4);
       // All fixture semesters are identical => weighted IPK equals the semester IP.
       expect(khs.ipk).toBe(3.95);
+    });
+
+    it('computes IPK from RAW per-semester sums, not pre-rounded semester IPs (B11)', async () => {
+      const row = (kode: string, sks: number, bobot: number, huruf: string) =>
+        '<tr><td>1</td><td>' + kode + '</td><td>MK</td><td>TIU</td><td>TI</td>' +
+        `<td>${sks}</td><td>${huruf}</td><td>${bobot}</td></tr>`;
+      // Semester 1: 200×1sks bobot4 + 100×1sks bobot3 => Σ(b·sks)=1100, Σsks=300,
+      //   raw IP = 1100/300 = 3.6667 (rounds to 3.67 for display).
+      let sem1Rows = '';
+      for (let i = 0; i < 200; i++) sem1Rows += row('S1x' + i, 1, 4, 'A');
+      for (let i = 0; i < 100; i++) sem1Rows += row('S1y' + i, 1, 3, 'B');
+      const sem1 = '<table>' + sem1Rows + '</table>';
+      // Semester 2: 300×1sks bobot4 => Σ=1200, Σsks=300, raw IP = 4.0.
+      let sem2Rows = '';
+      for (let i = 0; i < 300; i++) sem2Rows += row('S2x' + i, 1, 4, 'A');
+      const sem2 = '<table>' + sem2Rows + '</table>';
+
+      // Profile: angkatan 2024, semester berjalan "2024/2025 Genap" => 2 semesters.
+      const profileHtml =
+        '<html><div id="tabmhs_profile">' +
+        '<b>NIM</b>:</div><div class="col-sm-9">24060121130000</div>' +
+        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
+        '<p class="text-muted">2024/2025 Genap</p>' +
+        '</div></html>';
+      let khsCalls = 0;
+      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.includes('/pages/mhs/dashboard')) return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, json: async () => ({}), status: 200 };
+        if (url.includes('/get_khs')) {
+          khsCalls++;
+          return { ok: true, url, headers: { get: () => null }, text: async () => (khsCalls === 1 ? sem1 : sem2), json: async () => ({}), status: 200 };
+        }
+        if (url.includes('/get_total_sks')) return { ok: true, url, headers: { get: (k: string) => k.toLowerCase() === 'content-type' ? 'application/json' : null }, text: async () => JSON.stringify({ total_sks: 300 }), json: async () => ({ total_sks: 300 }), status: 200 };
+        throw new Error('unmocked: ' + url);
+      });
+
+      const khs = await svc.getKhs('sia_app_session=K');
+      expect(khs.semesters.length).toBe(2);
+      expect(khs.semesters[0].ip).toBe(3.67); // display uses rounded per-semester IP
+      // IPK from RAW sums: Σ(b·sks)=1100+1200=2300, Σsks=600 => 2300/600 = 3.8333 => 3.83.
+      // (Per-semester rounding: 3.67*300 + 4.0*300 = 2301 => 2301/600 = 3.835 => 3.84 — the bug.)
+      expect(khs.ipk).toBe(3.83);
     });
   });
 });

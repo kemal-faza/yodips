@@ -31,17 +31,21 @@ apiClient.interceptors.response.use(
     const status = error?.response?.status;
     const url: string = error?.config?.url ?? '';
     if (status === 401) {
-      const isKulon = url.startsWith('/api/kulon');
-      if (!isKulon) {
+      // A backend session can report 401 even when the JWT is still valid
+      // (Kulon/SIAP cookies expired server-side). For those routes keep the
+      // token — the view shows a re-login card. Only a genuine auth-token 401
+      // (invalid/expired JWT) is a full logout + redirect.
+      const isServiceSession = url.startsWith('/api/kulon') || url.startsWith('/api/siap');
+      if (!isServiceSession) {
         // Auth-token 401 (invalid/expired JWT): full logout + redirect.
         localStorage.removeItem(TOKEN_KEY);
         if (window.location.pathname !== '/login') {
           window.location.href = '/login';
         }
       }
-      // Kulon 401 = back-end session expired; the view shows a re-login card.
-      // We deliberately keep the token (the JWT is still valid) so the user
-      // can re-capture without losing their auth state.
+      // Service 401 (Kulon/SIAP back-end session expired); JWT is still valid.
+      // We deliberately keep the token so the user can re-capture without
+      // losing their auth state.
     }
     return Promise.reject(error);
   },

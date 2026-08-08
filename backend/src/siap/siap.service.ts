@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 
 export interface SiapSessionCheck {
   valid: boolean;
@@ -60,6 +60,7 @@ export interface SiapKhs {
 
 @Injectable()
 export class SiapService {
+  private readonly logger = new Logger(SiapService.name);
   private readonly baseUrl = 'https://siap.undip.ac.id';
   // Probe + authenticated-page fingerprint from docs/2026-08-04-siap-spike.md §2.
   // The dashboard page is the validity probe; `id="tabmhs_profile"` is present
@@ -103,12 +104,116 @@ export class SiapService {
     let res: Response;
     try {
       res = await fetch(url, init);
-    } catch {
+    } catch (e) {
+      this.logStale(url, null, 'fetch-threw', (e as Error)?.message);
       throw this.stale();
     }
-    if (!res.ok) throw this.stale();
-    if (/\/login(?:\/|$)/i.test(res.url ?? '')) throw this.stale();
+    if (!res.ok) {
+      this.logStale(url, res, 'http-not-ok');
+      throw this.stale();
+    }
+    if (/\/login(?:\/|$)/i.test(res.url ?? '')) {
+      this.logStale(url, res, 'login-redirect');
+      throw this.stale();
+    }
     return res.text();
+  }
+
+  /**
+   * Canonical entry point for SIAP AJAX/JSON endpoints. Like siapFetch, but
+   * asserts the response is a JSON body. A stale (or only partially valid)
+   * SIAP session commonly makes an AJAX URL return HTTP 200 with `text/html`
+   * — the login page rendered in place — which would crash callers calling
+   * JSON.parse and surface as a raw 500. Any such HTML (via Content-Type or a
+   * bad parse) maps to the uniform `stale()` 401 so the SPA shows a clean
+   * "silakan login ulang" prompt instead.
+   */
+  private async siapFetchJson<T = unknown>(url: string, init?: RequestInit): Promise<T> {
+    let res: Response;
+    try {
+      res = await fetch(url, init);
+    } catch (e) {
+      this.logStale(url, null, 'fetch-threw', (e as Error)?.message);
+      throw this.stale();
+    }
+    if (!res.ok) {
+      this.logStale(url, res, 'http-not-ok');
+      throw this.stale();
+    }
+    if (/\/login(?:\/|$)/i.test(res.url ?? '')) {
+      this.logStale(url, res, 'login-redirect');
+      throw this.stale();
+    }
+    // Tee the body so we can preview it if parsing fails (res.json would consume
+    // the original stream first).
+    let previewTee: Response | null = null;
+    try {
+      previewTee = res.clone();
+    } catch {
+      previewTee = null;
+    }
+    // Try to parse the body as JSON FIRST. Real SIAP hides a valid JSON body
+    // behind a misleading `Content-Type: text/html; charset=UTF-8` (verified
+    // live), so rejecting purely on content-type would mislabel a working
+    // session as expired. Only when the JSON parse fails do we use the body
+    // shape (Content-Type + preview) to decide stale vs upstream error.
+    try {
+      return (await res.json()) as T;
+    } catch {
+      const contentType = res.headers.get('content-type') ?? '';
+      const preview = await this.readHtmlPreview(previewTee);
+      // A `text/html` body that is not parseable JSON is the classic stale-session
+      // shape (the login page rendered in place) → uniform stale 401.
+      if (/text\/html/i.test(contentType)) {
+        this.logStale(url, res, 'html-content-type', `${contentType} body=${preview}`);
+        throw this.stale();
+      }
+      this.logStale(url, res, 'malformed-json', `${contentType} body=${preview}`);
+      throw this.stale();
+    }
+  }
+
+  /**
+   * Read the first ~160 chars of an HTML response body (stripped of tags/whitespace)
+   * so the log shows whether it is a login page or a real page that needs extra
+   * request context. Only safe to call right before throwing, when the body has
+   * not already been consumed.
+   */
+  private async readHtmlPreview(res: Response | null): Promise<string> {
+    try {
+      if (!res || typeof (res as Response).clone !== 'function') return 'no-preview';
+      const body = await res.clone().text();
+      return this.truncate(
+        body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+        160,
+      );
+    } catch {
+      return 'unreadable';
+    }
+  }
+
+  /**
+   * Log the evidence for a `stale()` decision so we can distinguish a genuinely
+   * expired session (final URL on /login, or a login-page HTML body) from a
+   * valid session whose AJAX endpoint returned something unexpected (e.g. an
+   * HTML error page / framework page that needs extra request context).
+   */
+  private logStale(
+    url: string,
+    res: Response | null,
+    reason: string,
+    extra?: string,
+  ): void {
+    const status = res?.status ?? 'n/a';
+    const finalUrl = res?.url ? this.truncate(res.url, 120) : 'n/a';
+    const contentType = res?.headers?.get('content-type') ?? 'n/a';
+    this.logger.warn(
+      `SIAP stale(${reason}) status=${status} finalUrl=${finalUrl} contentType=${contentType} extra=${extra ?? 'n/a'}`,
+    );
+  }
+
+  private truncate(s: string, n: number): string {
+    return s.length <= n ? s : `${s.slice(0, n)}…`;
   }
 
   /** Extract a `<b>LABEL</b>:</div><div class="col-sm-9">VALUE</div>` row. */
@@ -229,11 +334,10 @@ export class SiapService {
    * the contract fields, kelas/status are carried as optional extras.
    */
   async getIrs(siapCookie: string): Promise<SiapIrs> {
-    const body = await this.siapFetch(`${this.baseUrl}/irs/mhs/irs/ajax_irs_diambil`, {
-      headers: { Cookie: siapCookie },
-      redirect: 'follow',
-    });
-    const data = JSON.parse(body) as { total_sks?: number | string; html?: string };
+    const data = await this.siapFetchJson<{ total_sks?: number | string; html?: string }>(
+      `${this.baseUrl}/irs/mhs/irs/ajax_irs_diambil`,
+      { headers: { Cookie: siapCookie }, redirect: 'follow' },
+    );
 
     const mataKuliah = this.dataRows(data.html ?? '').map((row) => {
       const c = this.rowCells(row);
@@ -287,7 +391,7 @@ export class SiapService {
     khsHtml: string,
   ): Promise<number> {
     try {
-      const res = await this.siapFetch(
+      const data = await this.siapFetchJson<{ total_sks?: number | string }>(
         `${this.baseUrl}/irs/mhs/irs/get_total_sks`,
         {
           method: 'POST',
@@ -298,7 +402,6 @@ export class SiapService {
           body,
         },
       );
-      const data = JSON.parse(res) as { total_sks?: number | string };
       if (data.total_sks != null) return Number(data.total_sks) || 0;
     } catch {
       // fall through to the tfoot total
@@ -364,18 +467,22 @@ export class SiapService {
       const nilai = this.parseKhsNilai(khsHtml);
       const semesterSks = await this.fetchTotalSks(siapCookie, body, khsHtml);
 
-      const ip = nilai.length
-        ? this.round(nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) / nilai.reduce((s, n) => s + n.sks, 0))
+      // Compute the raw (unrounded) per-semester IP for aggregation, and a
+      // rounded copy for display. Rounding the per-semester IP before summing
+      // into the IPK accumulates error (B11) — e.g. 3.6667→3.67 then ×300
+      // drifts the cumulative IPK by a cent.
+      const rawIp = nilai.length
+        ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) / nilai.reduce((s, n) => s + n.sks, 0)
         : 0;
 
       semesters.push({
         semester: this.semesterLabel(profile.angkatan, smt),
-        ip,
+        ip: this.round(rawIp),
         totalSks: semesterSks,
         nilai,
       });
 
-      totalWeighted += ip * semesterSks;
+      totalWeighted += rawIp * semesterSks;
       totalSks += semesterSks;
     }
 
