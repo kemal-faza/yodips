@@ -59,6 +59,31 @@ describe('auth store', () => {
     expect(localStorage.getItem('sso_token')).toBeNull();
   });
 
+  it('logout notifies the extension to clear session cookies (best-effort)', async () => {
+    let sentAction: string | null = null;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          sentAction = msg?.action ?? null;
+          cb({ status: 'ok' });
+        },
+      },
+    };
+    const store = useAuthStore();
+    store.token = 'x';
+    await store.logout();
+    expect(sentAction).toBe('logout');
+    delete (globalThis as any).chrome;
+  });
+
+  it('logout does not throw when the extension is not installed', async () => {
+    const store = useAuthStore();
+    store.token = 'x';
+    await store.logout();
+    expect(store.token).toBeNull();
+  });
+
   it('finishHandoff stores the token and authenticates', () => {
     const store = useAuthStore();
     store.finishHandoff('jwt-handoff');
@@ -256,5 +281,36 @@ describe('extension login', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(handler).not.toHaveBeenCalled();
     cleanup();
+  });
+
+  it('readExtensionResult returns the ok payload from the extension result poll', async () => {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          expect(msg.action).toBe('result');
+          cb({ status: 'ok', accessToken: 'jwt-poll' });
+        },
+      },
+    };
+    const store = useAuthStore();
+    const res = await store.readExtensionResult();
+    expect(res).toEqual({ status: 'ok', accessToken: 'jwt-poll' });
+  });
+
+  it('readExtensionResult returns active when the extension has no result yet', async () => {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => cb({ status: 'active' }),
+      },
+    };
+    const store = useAuthStore();
+    expect(await store.readExtensionResult()).toEqual({ status: 'active' });
+  });
+
+  it('readExtensionResult resolves null when the extension is not installed', async () => {
+    const store = useAuthStore();
+    expect(await store.readExtensionResult()).toBeNull();
   });
 });

@@ -5,5 +5,8 @@ h1 { font-size: 15px; margin: 0 0 6px; }
 label { display: block; font-size: 12px; margin-bottom: 4px; }
 input { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid #2e4d82; background: #121b2d; color: #e6ebf5; }
 .status { font-size: 12px; min-height: 16px; margin: 8px 0; color: #7ee2a8; }
+.phase { font-size: 12px; margin: 0 0 12px; padding: 8px; border-radius: 6px; background: #121b2d; border: 1px solid #2e4d82; }
+.phase-label { color: #8fa0bb; }
+#phaseValue { color: #e6ebf5; font-weight: 600; }
 button { width: 100%; padding: 8px; border: 0; border-radius: 6px; background: #0a1931; color: #fff; border: 1px solid #2e4d82; cursor: pointer; }
 button:hover { background: #2e4d82; }

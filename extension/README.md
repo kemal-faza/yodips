@@ -18,13 +18,27 @@ halaman web app. Menggantikan peran `tools/capture-client/` untuk produksi.
   (Kulon dulu, lalu SIAP di tab yang sama), redirect ke login Microsoft — user login/MFA.
   Jika session SSO masih valid, extension **melewati halaman SSO** (membukanya tak mengubah
   cookie → deadlock), langsung ke service yang basi.
-- `chrome.cookies.onChanged` (didukung periodic poll ~30s sbg safety net) mendeteksi cookie
-  dan memicu handoff otomatis — tab **ditutup otomatis** hanya setelah SSO+Kulon+SIAP
-  terverifikasi valid oleh backend — JWT dikirim ke web app via content-script bridge —
-  **masuk dashboard tanpa klik ulang**. Kalau ada layanan yang basi, hanya service itu
-  yang dibuka ulang (bukan semua dari awal).
+- Auto-cascade maju dengan **`chrome.cookies.onChanged` + `tabs.onUpdated` + poll ~30s** sebagai
+  safety-net — begitu cookie satu service terdeteksi, tab langsung dinavigasi ke service berikutnya
+  (Kulon → SIAP → handoff), tanpa perlu klik apa pun di aplikasi.
+- Hasil handoff dikirim ke web app lewat **3 kanal** (direct tab message ke content bridge + broadcast
+  + cache `storage.session`), dan web app **mem-poll hasil tiap 3 detik** saat menunggu — jadi JWT
+  selalu sampai & kamu **masuk dashboard tanpa klik ulang**, bahkan jika pesan push terlewat.
+  Tab login **ditutup otomatis** setelah SSO+Kulon+SIAP terverifikasi valid oleh backend, dan
+  **tab aplikasi difokuskan kembali**. Kalau ada layanan yang basi, hanya service itu yang dibuka ulang.
+- Indikator fase login aktif bisa dilihat di **popup extension** (ikon toolbar) untuk debugging.
 - Jika login belum selesai dalam 3 menit per service (atau ada langkah yang macet), extension
   mengirim pesan error dan menutup tab.
+
+### Logout & login ulang
+
+- **"Keluar" di aplikasi** kini melakukan *full logout*: menghapus JWT (`localStorage.sso_token`)
+  **dan** (melalui extension) membersihkan cookie sesi `ci_session_sso` (SSO), `MoodleSession*`
+  (Kulon), dan `sia_app_session` (SIAP). Jadi login berikutnya **tidak bisa fast-path-reuse** sesi
+  lama dan **dipaksa membuka tab login baru**.
+- Extension menjamin **hanya satu tab login** per flow: listener `tabs.onUpdated` di-gate ke tab
+  yang diorkestrasi, `startLogin`/`processCookies` diserialisasi via lock global, dan semua tab yang
+  dibuat selama flow (termasuk pivot relogin) ditutup otomatis saat selesai/fail — tidak ada tab menumpuk.
 
 ## Konfigurasi
 

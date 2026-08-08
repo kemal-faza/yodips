@@ -18,6 +18,8 @@ import {
   buildKulonTicketUrl,
   buildSiapTicketUrl,
   PHASE_TIMEOUT_MS,
+  cookiePatternsForPhase,
+  phasesToClear,
 } from './messages.js';
 
 const STORAGE_KEY = 'serverUrl';
@@ -29,6 +31,10 @@ const ALARM_KEY = 'handoff-timeout';
 // whose session is already live). Chrome clamps packed alarms to ~30s minimum.
 const POLL_KEY = 'handoff-poll';
 const POLL_PERIOD_MIN = 0.5;
+// Last completed handoff payload, cached in session storage so the SPA can
+// recover the JWT even if every content-bridge push was missed. `storage.session`
+// is in-memory and cleared on browser restart — never persisted to disk.
+const LAST_RESULT_KEY = 'lastHandoffResult';
 // Cap automatic re-login pivots so a cookie that flips stale mid-flow (or a
 // rapid cookies.onChanged burst) cannot loop reopening login tabs forever.
 const RELOGIN_MAX = 2;
@@ -52,6 +58,46 @@ function deps() {
     openTab: async (url) => ({ id: (await chrome.tabs.create({ url })).id }),
     navigateTab: (id, url) => chrome.tabs.update(id, { url }),
     closeTab: (id) => chrome.tabs.remove(id),
+    getLastResult: async () => {
+      const { [LAST_RESULT_KEY]: last } = await chrome.storage.session.get(LAST_RESULT_KEY);
+      return last ?? null;
+    },
+    // Current orchestration state (may be null). Used by handleHandoffMessage to
+    // detect an already-active flow so a re-click cannot open a second login tab.
+    getFlowState: async () => getState(),
+    setLastResult: async (payload) => {
+      await chrome.storage.session.set({ [LAST_RESULT_KEY]: payload });
+    },
+    clearLastResult: async () => {
+      await chrome.storage.session.remove(LAST_RESULT_KEY);
+    },
+    // Remove the SSO/Kulon/SIAP session cookies so a later login cannot reuse a
+    // stale session and is forced to open a fresh tab. Best-effort per cookie so
+    // one failure never aborts the whole logout.
+    clearSessionCookies: async () => {
+      const patterns = [
+        { domain: 'sso.undip.ac.id', name: 'ci_session_sso' },
+        { domain: 'undip.ac.id', name: 'ci_session_sso' },
+        { domain: 'kulon2.undip.ac.id', name: /^MoodleSession/ },
+        { domain: 'siap.undip.ac.id', name: /^(?:sia_|sipp|ciapp_)/ },
+        { domain: 'undip.ac.id', name: /^(?:sia_|sipp|ciapp_)/ },
+      ];
+      for (const p of patterns) {
+        try {
+          const cookies = await chrome.cookies.getAll({ domain: p.domain });
+          for (const c of cookies) {
+            if (typeof p.name === 'string' ? c.name === p.name : p.name.test(c.name)) {
+              // chrome.cookies.remove needs a URL matching the cookie's domain.
+              await chrome.cookies
+                .remove({ name: c.name, url: `https://${c.domain.replace(/^\./, '')}/` })
+                .catch(() => {});
+            }
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+    },
     kulonLoginUrl: buildKulonTicketUrl(),
     siapLoginUrl: buildSiapTicketUrl(),
     ssoLoginUrl: SSO_LOGIN_URL,
@@ -72,16 +118,29 @@ async function clearState() {
 }
 
 async function sendResult(payload) {
-  // Forward to the SPA via the content-script bridge (all extension contexts).
+  // Cache the payload in session storage first so the SPA can recover it via
+  // the {action:'result'} poll even if both push channels below are missed.
+  await deps().setLastResult(payload).catch(() => {});
+  const state = await getState();
+  const appTabId = state?.appTabId;
+  // Primary: direct to the SPA's content-script bridge (most reliable — we
+  // recorded the app tab when the handoff message arrived).
+  if (appTabId != null) {
+    await chrome.tabs.sendMessage(appTabId, { action: 'handoff-result', ...payload }).catch(() => {});
+  }
+  // Fallback: broadcast to all extension contexts (legacy path).
   await chrome.runtime.sendMessage({ action: 'handoff-result', ...payload }).catch(() => {});
+  // Bring the app tab to the foreground so the user lands back in the app
+  // without hunting for the right tab.
+  if (appTabId != null) {
+    await chrome.tabs.update(appTabId, { active: true }).catch(() => {});
+  }
 }
 
 async function fail(message) {
   await sendResult({ status: 'error', message });
   const state = await getState();
-  if (state?.tabId != null) {
-    await chrome.tabs.remove(state.tabId).catch(() => {});
-  }
+  await closeAllFlowTabs(state);
   await chrome.alarms.clear(ALARM_KEY);
   await chrome.alarms.clear(POLL_KEY);
   await clearState();
@@ -94,7 +153,7 @@ async function fail(message) {
  * mirrors the working CDP flow: central Kazan SSO first, then Kulon and SIAP
  * auto-login via the SSO session ("sso" → "kulon" → "siap" → handoff).
  */
-async function startLogin(deps, requestedPhase, reloginCount = 0) {
+async function startLogin(deps, requestedPhase, reloginCount = 0, appTabId = null) {
   const cookies = await chrome.cookies.getAll({});
   const { hasSso, hasKulon } = evaluateCookies(cookies);
   // `requestedPhase` may be 'sso' while the central SSO session is already live
@@ -112,24 +171,100 @@ async function startLogin(deps, requestedPhase, reloginCount = 0) {
       : phase === 'kulon'
         ? deps.kulonLoginUrl
         : deps.siapLoginUrl;
+  // Clear the stale session cookies of this phase AND its downstream cascade
+  // BEFORE opening the login tab. A stale cookie (Kulon/SIAP/SSO expired
+  // server-side but still present in the browser) otherwise makes processCookies
+  // immediately POST a handoff — which the backend rejects as expired — on
+  // every tab load, producing the fast open→close→reopen loop. With the stale
+  // cookie gone, evaluateCookies reports the service as logged-out and the flow
+  // waits for the user to actually log in.
+  for (const p of phasesToClear(phase)) {
+    await clearCookiesForPhase(p);
+  }
   const { id } = await chrome.tabs.create({ url: loginUrl });
+  const existing = await getState();
+  // Keep every tab this flow created so cleanup can close them all (prevents
+  // orphan tabs from a relogin pivot). `tabId` stays the current login tab.
+  const tabs = [...(existing?.tabs ?? []), id];
   await setState({
     tabId: id,
+    tabs,
     phase,
     deadline: Date.now() + PHASE_TIMEOUT_MS,
     reloginCount,
+    ...(appTabId != null ? { appTabId } : {}),
   });
   await chrome.alarms.create(ALARM_KEY, { when: Date.now() + PHASE_TIMEOUT_MS });
   await chrome.alarms.create(POLL_KEY, { periodInMinutes: POLL_PERIOD_MIN }).catch(() => {});
 }
 
-let isProcessing = false;
+// Global lock so only ONE flow mutation (startLogin / processCookies) runs at a
+// time. MV3 wakes the SW on several independent events (cookies.onChanged,
+// tabs.onUpdated, alarms) — without serializing these, two of them could each
+// call startLogin → duplicate login tabs.
+let flowBusy = false;
+
+async function withFlowLock(fn) {
+  if (flowBusy) return;
+  flowBusy = true;
+  try {
+    await fn();
+  } finally {
+    flowBusy = false;
+  }
+}
+
+/** Navigate/remove the login tab. If the user closed it mid-flow, surface a
+ *  clear message instead of a raw "No tab with id" error or a silent loop. */
+async function runTabAction(tabId, action) {
+  try {
+    await action();
+  } catch (err) {
+    const msg = err?.message ?? '';
+    if (/No tab with id|not found/i.test(msg)) {
+      throw new Error('Tab login ditutup. Silakan klik "Login via Extension" lagi.');
+    }
+    throw err;
+  }
+}
+
+/** Close every tab this flow created (all relogin pivots included). */
+async function closeAllFlowTabs(state) {
+  const ids = state?.tabs?.length ? state.tabs : state?.tabId != null ? [state.tabId] : [];
+  for (const id of ids) {
+    await chrome.tabs.remove(id).catch(() => {});
+  }
+}
+
+/**
+ * Remove the stale session cookies of a single service phase, best-effort per
+ * cookie so one failure never aborts the orchestration. Clearing is the key to
+ * breaking the close/reopen loop: a stale MoodleSession/sia_app_session cookie
+ * stays in the browser after server-side expiry, so `evaluateCookies` keeps
+ * reporting the service as "logged in" and `processCookies` immediately re-POSTs
+ * a handoff the backend rejects as expired — over and over. Removing the stale
+ * cookie first makes the orchestration truly wait for the user to log in again.
+ */
+async function clearCookiesForPhase(phase) {
+  for (const p of cookiePatternsForPhase(phase)) {
+    try {
+      const cookies = await chrome.cookies.getAll({ domain: p.domain });
+      for (const c of cookies) {
+        if (typeof p.name === 'string' ? c.name === p.name : p.name.test(c.name)) {
+          await chrome.cookies
+            .remove({ name: c.name, url: `https://${c.domain.replace(/^\./, '')}/` })
+            .catch(() => {});
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+}
 
 /** One processing pass after a cookie change or timer. */
 async function processCookies() {
-  if (isProcessing) return;
-  isProcessing = true;
-  try {
+  await withFlowLock(async () => {
     const state = await getState();
     if (!state) return;
     const cookies = await chrome.cookies.getAll({});
@@ -138,7 +273,7 @@ async function processCookies() {
     if (action === 'open-kulon') {
       // SSO done — navigate the SAME tab to the Kulon ticket (SSO-propagates to
       // Kulon, Mirrors the CDP flow). Microsoft OIDC may still require a sign-in.
-      await chrome.tabs.update(state.tabId, { url: buildKulonTicketUrl() });
+      await runTabAction(state.tabId, () => chrome.tabs.update(state.tabId, { url: buildKulonTicketUrl() }));
       await setState({ ...state, phase: 'kulon', deadline: Date.now() + PHASE_TIMEOUT_MS });
       return;
     }
@@ -146,7 +281,7 @@ async function processCookies() {
     if (action === 'open-siap') {
       // Kulon done — navigate the SAME tab to SIAP (Microsoft session already
       // exists, so it auto-logs-in).
-      await chrome.tabs.update(state.tabId, { url: buildSiapTicketUrl() });
+      await runTabAction(state.tabId, () => chrome.tabs.update(state.tabId, { url: buildSiapTicketUrl() }));
       await setState({ ...state, phase: 'siap', deadline: Date.now() + PHASE_TIMEOUT_MS });
       return;
     }
@@ -160,13 +295,19 @@ async function processCookies() {
         // browser). Re-capture that service in the SAME tab instead of sending
         // an "ok" for an incomplete session (which used to surface as a 500 on
         // the SIAP page). Reuse is only allowed when ALL services are verified.
+        // Clear the stale cookie first so the next processCookies pass waits for
+        // a FRESH one instead of immediately re-handoffing the same stale one
+        // (which would loop the tab through its own login page forever).
+        for (const p of phasesToClear(step.phase)) {
+          await clearCookiesForPhase(p);
+        }
         const url =
           step.phase === 'sso'
             ? deps().ssoLoginUrl
             : step.phase === 'kulon'
               ? deps().kulonLoginUrl
               : deps().siapLoginUrl;
-        await chrome.tabs.update(state.tabId, { url });
+        await runTabAction(state.tabId, () => chrome.tabs.update(state.tabId, { url }));
         await setState({ ...state, phase: step.phase, deadline: Date.now() + PHASE_TIMEOUT_MS });
         return;
       }
@@ -174,12 +315,14 @@ async function processCookies() {
       // the handoff, or a pre-auth cookie set during the Microsoft OIDC redirect
       // was captured while the session was not yet live). Re-establish from the
       // central Kazan SSO session — Kulon and SIAP then re-follow automatically
-      // — instead of failing permanently.
-      if (!result.ok && result.code === 'KULON_STALE' && (state.reloginCount ?? 0) < RELOGIN_MAX) {
-        if (state.tabId != null) {
-          await chrome.tabs.remove(state.tabId).catch(() => {});
-        }
-        await startLogin(deps(), 'sso', (state.reloginCount ?? 0) + 1);
+      // — instead of failing permanently. The reloginCount check is done against
+      // a freshly-read state (inside the flow lock) so two queued passes cannot
+      // both read the same count and each spawn a new tab.
+      const freshState = await getState();
+      const reloginCount = freshState?.reloginCount ?? 0;
+      if (!result.ok && result.code === 'KULON_STALE' && reloginCount < RELOGIN_MAX) {
+        await closeAllFlowTabs(freshState);
+        await startLogin(deps(), 'sso', reloginCount + 1, freshState?.appTabId ?? null);
         await sendResult({ status: 'started', relogin: true });
         return;
       }
@@ -188,9 +331,7 @@ async function processCookies() {
           ? { status: 'ok', accessToken: result.accessToken }
           : { status: 'error', message: result.message },
       );
-      if (state.tabId != null) {
-        await chrome.tabs.remove(state.tabId).catch(() => {});
-      }
+      await closeAllFlowTabs(state);
       await chrome.alarms.clear(ALARM_KEY);
       await chrome.alarms.clear(POLL_KEY);
       await clearState();
@@ -199,22 +340,35 @@ async function processCookies() {
 
     // action === 'wait' → nothing to do; the cookies.onChanged listener or the
     // alarm will drive the next pass.
-  } finally {
-    isProcessing = false;
-  }
+  });
 }
 
 // --- Message from the SPA (externally_connectable) ---
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  // The SPA tab that initiated the flow — used to deliver the final result
+  // directly and to focus the app tab when the login completes.
+  const appTabId = sender?.tab?.id ?? null;
   handleHandoffMessage(message, deps())
     .then((res) => {
-      if (res.status === 'started' || res.status === 'relogin') {
+      if (res.status === 'started' && res.resume) {
+        // A flow is ALREADY running with a login tab open (the user re-clicked
+        // while waiting). Do NOT open a second tab — keep the existing flow and
+        // tell the SPA to keep waiting.
+        sendResponse({
+          status: 'started',
+          relogin: false,
+          incomplete: false,
+          phase: res.phase,
+        });
+      } else if (res.status === 'started' || res.status === 'relogin') {
         // Begin (or re-begin) the orchestrated flow: open a login tab for the
         // missing service and arm the per-service deadline. 'relogin' means the
         // captured session went stale — `res.phase` already resolves whether to
         // restart from SSO or (if SSO is still live) re-open the stale service
         // directly. 'started' also carries which service is missing in `res.phase`.
-        startLogin(deps(), res.phase)
+        // withFlowLock serializes this against processCookies so a second handoff
+        // message while a flow is already running cannot open a duplicate tab.
+        withFlowLock(() => startLogin(deps(), res.phase, 0, appTabId))
           .then(() =>
             sendResponse({
               status: 'started',
@@ -239,6 +393,25 @@ chrome.cookies.onChanged.addListener((changeInfo) => {
   processCookies().catch((err) => {
     fail(err.message ?? 'Error internal').catch(() => {});
   });
+});
+
+// --- Deterministic kick: every time the flow's login tab finishes loading a page
+// we re-evaluate cookies. Gated to the exact tab we orchestrate (state.tabId) so
+// unrelated tabs' loads never advance the flow. Catches the case where a session
+// cookie is set without a cookies.onChanged event we can observe (e.g. a lazy
+// redirect that only rewrites a path, or a cookie flipped while the SW was
+// suspended). This makes the Kulon→SIAP→handoff cascade advance on its own
+// instead of stalling until the user re-clicks.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== 'complete') return;
+  const state = getState();
+  state
+    .then((s) => {
+      if (s && tabId === s.tabId) return processCookies();
+    })
+    .catch((err) => {
+      fail(err.message ?? 'Error internal').catch(() => {});
+    });
 });
 
 // --- Deadline guard: user did not finish the login in time ---

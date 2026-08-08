@@ -11,6 +11,8 @@ import {
   reloginPhase,
   buildHandoffBody,
   performHandoff,
+  cookiePatternsForPhase,
+  phasesToClear,
 } from './messages.js';
 
 function makeDeps(overrides = {}) {
@@ -21,6 +23,10 @@ function makeDeps(overrides = {}) {
     openTab: vi.fn().mockResolvedValue({ id: 1 }),
     navigateTab: vi.fn().mockResolvedValue(undefined),
     closeTab: vi.fn().mockResolvedValue(undefined),
+    getLastResult: vi.fn().mockResolvedValue(null),
+    clearLastResult: vi.fn().mockResolvedValue(undefined),
+    clearSessionCookies: vi.fn().mockResolvedValue(undefined),
+    getFlowState: vi.fn().mockResolvedValue(null),
     kulonLoginUrl: 'https://kulon2.undip.ac.id/auth/oidc/?t=k',
     siapLoginUrl: 'https://siap.undip.ac.id/sso/login?t=s',
     ...overrides,
@@ -236,9 +242,34 @@ describe('handleHandoffMessage', () => {
     expect(deps.getCookies).not.toHaveBeenCalled();
   });
 
+  it('result returns the last stored payload without side effects', async () => {
+    const deps = makeDeps({
+      getLastResult: vi.fn().mockResolvedValue({ status: 'ok', accessToken: 'jwt' }),
+    });
+    const res = await handleHandoffMessage({ action: 'result' }, deps);
+    expect(res).toEqual({ status: 'ok', accessToken: 'jwt' });
+    expect(deps.getCookies).not.toHaveBeenCalled();
+    expect(deps.getLastResult).toHaveBeenCalled();
+  });
+
+  it('result returns {status: active} when no result is stored yet', async () => {
+    const deps = makeDeps({ getLastResult: vi.fn().mockResolvedValue(null) });
+    const res = await handleHandoffMessage({ action: 'result' }, deps);
+    expect(res).toEqual({ status: 'active' });
+  });
+
   it('rejects an unknown action with error', async () => {
     const res = await handleHandoffMessage({ action: 'explode' }, makeDeps());
     expect(res.status).toBe('error');
+  });
+
+  it('logout clears the session cookies and returns ok (no tab opened)', async () => {
+    const deps = makeDeps();
+    const res = await handleHandoffMessage({ action: 'logout' }, deps);
+    expect(res).toEqual({ status: 'ok' });
+    expect(deps.clearSessionCookies).toHaveBeenCalled();
+    expect(deps.openTab).not.toHaveBeenCalled();
+    expect(deps.getCookies).not.toHaveBeenCalled();
   });
 
   it('performs handoff immediately when backend verifies sso, kulon and siap', async () => {
@@ -258,6 +289,12 @@ describe('handleHandoffMessage', () => {
     const deps = makeDeps({ getCookies: vi.fn().mockResolvedValue([KULON]) });
     const res = await handleHandoffMessage({ action: 'handoff' }, deps);
     expect(res).toEqual({ status: 'started', incomplete: true, phase: 'sso' });
+  });
+
+  it('clears the stored last result when a new handoff/orchestration starts', async () => {
+    const deps = makeDeps({ getCookies: vi.fn().mockResolvedValue([KULON]) });
+    await handleHandoffMessage({ action: 'handoff' }, deps);
+    expect(deps.clearLastResult).toHaveBeenCalled();
   });
 
   it('returns started with phase sso when the SSO session is missing even with kulon+siap present', async () => {
@@ -323,6 +360,43 @@ describe('handleHandoffMessage', () => {
     expect(res.status).toBe('error');
     expect(res.code).toBe('KULON_NO_COOKIE');
   });
+
+  it('does NOT open a second flow when one is already active (re-click while a login tab is open)', async () => {
+    const deps = makeDeps({
+      getFlowState: vi.fn().mockResolvedValue({
+        tabId: 7,
+        tabs: [7],
+        phase: 'sso',
+        deadline: Date.now() + 60_000,
+      }),
+      getCookies: vi.fn().mockResolvedValue([]),
+    });
+    const res = await handleHandoffMessage({ action: 'handoff' }, deps);
+    expect(res.status).toBe('started');
+    expect(res.resume).toBe(true);
+    expect(res.phase).toBe('sso');
+    // A re-click while a flow is running must be a pure read — no cookie
+    // capture, no cached-result wipe, no handoff POST (would burn throttle).
+    expect(deps.getCookies).not.toHaveBeenCalled();
+    expect(deps.clearLastResult).not.toHaveBeenCalled();
+    expect(deps.fetchHandoff).not.toHaveBeenCalled();
+  });
+
+  it('starts a FRESH flow when the previous flow state has expired', async () => {
+    const deps = makeDeps({
+      getFlowState: vi.fn().mockResolvedValue({
+        tabId: 7,
+        tabs: [7],
+        phase: 'sso',
+        deadline: Date.now() - 1000,
+      }),
+      getCookies: vi.fn().mockResolvedValue([]),
+    });
+    const res = await handleHandoffMessage({ action: 'handoff' }, deps);
+    expect(res.status).toBe('started');
+    expect(res.resume).toBeUndefined();
+    expect(deps.getCookies).toHaveBeenCalled();
+  });
 });
 
 describe('nextHandoffStep', () => {
@@ -364,5 +438,51 @@ describe('reloginPhase', () => {
 
   it('returns sso when the SSO session is missing (must re-establish from the start)', () => {
     expect(reloginPhase({ hasSso: false })).toBe('sso');
+  });
+});
+
+describe('cookiePatternsForPhase', () => {
+  it('targets the Kazan ci_session_sso cookie for phase sso', () => {
+    const patterns = cookiePatternsForPhase('sso');
+    expect(patterns).toHaveLength(2);
+    for (const p of patterns) expect(p.name).toBe('ci_session_sso');
+    expect(patterns.some((p) => p.domain.includes('sso.undip.ac.id'))).toBe(true);
+  });
+
+  it('targets only MoodleSession cookies for phase kulon', () => {
+    const patterns = cookiePatternsForPhase('kulon');
+    expect(patterns).toHaveLength(1);
+    expect(patterns[0].domain).toContain('kulon2.undip.ac.id');
+    expect(patterns[0].name.test('MoodleSessionabc')).toBe(true);
+    expect(patterns[0].name.test('csrftoken')).toBe(false);
+  });
+
+  it('targets SIAP session cookies for phase siap', () => {
+    const patterns = cookiePatternsForPhase('siap');
+    expect(patterns.length).toBeGreaterThanOrEqual(2);
+    const names = patterns.map((p) => p.name);
+    for (const n of names) {
+      expect(n.test('sia_app_session')).toBe(true);
+      expect(n.test('ci_session_sso')).toBe(false);
+      expect(n.test('MoodleSession')).toBe(false);
+    }
+  });
+});
+
+describe('phasesToClear', () => {
+  it('clears the whole cascade when restarting from SSO (sso → kulon → siap)', () => {
+    expect(phasesToClear('sso')).toEqual(['sso', 'kulon', 'siap']);
+  });
+
+  it('clears kulon and its downstream siap when only Kulon needs re-establishment', () => {
+    expect(phasesToClear('kulon')).toEqual(['kulon', 'siap']);
+  });
+
+  it('clears only siap when only SIAP needs re-establishment', () => {
+    expect(phasesToClear('siap')).toEqual(['siap']);
+  });
+
+  it('returns an empty list for an unknown phase', () => {
+    expect(phasesToClear('nope')).toEqual([]);
   });
 });

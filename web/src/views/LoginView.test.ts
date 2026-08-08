@@ -13,6 +13,7 @@ function makeStore(overrides: Record<string, any> = {}) {
     isExtensionInstalled: vi.fn().mockResolvedValue(false),
     finishHandoff: vi.fn(),
     onExtensionResult: vi.fn().mockReturnValue(() => {}),
+    readExtensionResult: vi.fn().mockResolvedValue({ status: 'active' }),
     checking: false,
     error: null,
     isHandoffMode: false,
@@ -140,6 +141,50 @@ describe('LoginView', () => {
     await w.findAll('button').find((b) => b.text().includes('Login via Extension'))!.trigger('click');
     await flushPromises();
     expect(w.text()).toContain('Menunggu login di tab');
+  });
+
+  it('polls the extension result while waiting and finishes handoff when it returns ok', async () => {
+    vi.useFakeTimers();
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue('started'),
+      readExtensionResult: vi.fn().mockResolvedValue({ status: 'active' }),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    await w.findAll('button').find((b) => b.text().includes('Login via Extension'))!.trigger('click');
+    await flushPromises();
+    // First poll returns active → keeps waiting, no finish yet.
+    store.readExtensionResult.mockResolvedValue({ status: 'ok', accessToken: 'jwt-poll' });
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(store.readExtensionResult).toHaveBeenCalled();
+    expect(store.finishHandoff).toHaveBeenCalledWith('jwt-poll');
+    expect(router.push).toHaveBeenCalledWith('/');
+    vi.useRealTimers();
+  });
+
+  it('stops polling and shows the error when the extension result poll returns an error', async () => {
+    vi.useFakeTimers();
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue('started'),
+      readExtensionResult: vi.fn().mockResolvedValue({ status: 'error', message: 'Login belum selesai' }),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
+    });
+    await flushPromises();
+    await w.findAll('button').find((b) => b.text().includes('Login via Extension'))!.trigger('click');
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(w.text()).toContain('Login belum selesai');
+    const callsBefore = (store.readExtensionResult as any).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect((store.readExtensionResult as any).mock.calls.length).toBe(callsBefore);
+    vi.useRealTimers();
   });
 
   it('shows the stale-session re-login notice when loginViaExtension returns relogin', async () => {

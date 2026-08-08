@@ -132,6 +132,22 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
+    /**
+     * Pull the last completed handoff result from the extension (action 'result').
+     * Pure read — no cookie access, no tab opens, no throttle consumption. This is
+     * the self-healing path: the LoginView polls it while waiting so the user is
+     * taken into the app even if every content-bridge push message was missed.
+     * Returns the extension payload (e.g. {status:'ok', accessToken}) or null when
+     * the extension is unavailable.
+     */
+    async readExtensionResult(): Promise<any | null> {
+      try {
+        return await sendToExtension({ action: 'result' });
+      } catch {
+        return null;
+      }
+    },
+
     finishHandoff(token: string) {
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
@@ -141,6 +157,10 @@ export const useAuthStore = defineStore('auth', {
       this.user = null;
       this.fotoUrl = null;
       localStorage.removeItem(TOKEN_KEY);
+      // Best-effort: ask the extension to clear the SSO/Kulon/SIAP session
+      // cookies so the next login cannot fast-path-reuse a stale session and is
+      // forced to open a fresh tab. Never blocks or throws the UI.
+      sendToExtension({ action: 'logout' }).catch(() => {});
     },
   },
 });

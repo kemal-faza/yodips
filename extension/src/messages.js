@@ -12,6 +12,44 @@ export const SSO_SESSION_COOKIE = 'ci_session_sso';
 export const POLL_INTERVAL_MS = 3000;
 export const PHASE_TIMEOUT_MS = 3 * 60_000; // per-service login deadline (like CDP)
 
+// The orchestration cascade order: central Kazan SSO first, then Kulon and SIAP
+// auto-login via the SSO session. Used to derive which cookies must be cleared
+// before (re)opening a login tab so stale session cookies cannot fast-track a
+// premature handoff (which the backend then rejects as expired → relogin loop).
+export const PHASE_CHAIN = ['sso', 'kulon', 'siap'];
+
+/**
+ * Cookie patterns to clear for a single service phase. Clearing a stale session
+ * cookie BEFORE opening its login tab makes `evaluateCookies` return false for
+ * that service, so the orchestration genuinely waits for the user to log in
+ * instead of immediately POSTing a handoff on the stale cookie (which the
+ * backend rejects → close/reopen loop).
+ */
+export function cookiePatternsForPhase(phase) {
+  if (phase === 'sso') {
+    return [
+      { domain: 'sso.undip.ac.id', name: SSO_SESSION_COOKIE },
+      { domain: 'undip.ac.id', name: SSO_SESSION_COOKIE },
+    ];
+  }
+  if (phase === 'kulon') {
+    return [{ domain: 'kulon2.undip.ac.id', name: /^MoodleSession/ }];
+  }
+  // 'siap'
+  return [
+    { domain: 'siap.undip.ac.id', name: /^(?:sia_|sipp|ciapp_)/ },
+    { domain: 'undip.ac.id', name: /^(?:sia_|sipp|ciapp_)/ },
+  ];
+}
+
+/** Downstream phases (including `phase`) whose cookies must be cleared. The SSO
+ *  cascade auto-propagates sso → kulon → siap, so a stale downstream cookie
+ *  would otherwise fast-track a premature handoff after the upstream login. */
+export function phasesToClear(phase) {
+  const idx = PHASE_CHAIN.indexOf(phase);
+  return idx === -1 ? [] : PHASE_CHAIN.slice(idx);
+}
+
 /**
  * Generate a SSO ticket compatible with the backend's SSOTicketService:
  * base64 of the current unix second timestamp.
@@ -205,11 +243,41 @@ export async function handleHandoffMessage(message, deps) {
   if (message && message.action === 'ping') {
     return { status: 'ok' };
   }
+  // Cheap read of the last completed handoff result (no cookies, no side
+  // effects, no tab opens). Lets the SPA recover the JWT even if every
+  // content-bridge push was missed — the self-healing poll polls this.
+  if (message && message.action === 'result') {
+    const last = await deps.getLastResult();
+    return last ?? { status: 'active' };
+  }
+  // Full logout: clear the SSO/Kulon/SIAP session cookies so the next login
+  // cannot fast-path-reuse a stale session and is forced to open a fresh tab.
+  if (message && message.action === 'logout') {
+    await deps.clearSessionCookies();
+    return { status: 'ok' };
+  }
   if (!message || message.action !== 'handoff') {
     return { status: 'error', message: 'Unknown action' };
   }
+
+  // One flow, one tab: if an orchestrated login is already active (a login tab
+  // is open and its deadline has not passed), a re-click / duplicate handoff
+  // message must NOT open a second tab, re-capture cookies, wipe the cached
+  // result, or POST another handoff (which would burn the backend throttle).
+  // Instead it answers "resume" — the background keeps the existing flow and
+  // the SPA simply keeps waiting on the already-open tab. The deadline check
+  // lets an expired (orphaned) state start a fresh flow instead.
+  const activeFlow = await deps.getFlowState();
+  if (activeFlow && activeFlow.deadline > Date.now()) {
+    return { status: 'started', resume: true, phase: activeFlow.phase };
+  }
+
   const cookies = await deps.getCookies();
   const cookieFlags = evaluateCookies(cookies);
+
+  // A new flow invalidates any previously stored result so the SPA cannot
+  // accidentally pull a stale JWT from a prior (completed) login.
+  await deps.clearLastResult();
 
   // Without a Kulon cookie there is nothing to hand off — orchestrate from SSO.
   if (!cookieFlags.hasKulon) {
