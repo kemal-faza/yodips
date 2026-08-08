@@ -26,7 +26,15 @@ const loginUrl = (s: Service): string =>
 
 async function getState(): Promise<FlowState> {
   const res = await chrome.storage.local.get(STATE_KEY);
-  return res[STATE_KEY] ?? initialState('auto');
+  const state: FlowState = res[STATE_KEY] ?? initialState('auto');
+  // A terminal state (done/error) has no live login tab; treat it as idle so
+  // the next REQUEST always starts a fresh flow. Without this, a stale
+  // core:'error' persisted after a failed login blocks every later login
+  // (REQUEST was only handled from idle).
+  if ((state.core === 'done' || state.core === 'error') && state.tabId == null) {
+    return initialState(state.mode);
+  }
+  return state;
 }
 async function setState(s: FlowState): Promise<void> {
   await chrome.storage.local.set({ [STATE_KEY]: s });
@@ -241,6 +249,14 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
               return void sendResponse({ status: 'ok', accessToken: cached.accessToken });
             }
             return void sendResponse({ status: 'error', message: 'Sesi login selesai tanpa token. Coba lagi.' });
+          }
+          if (after.core === 'error') {
+            // The flow failed within this pass (e.g. KULON_STALE maxed out) —
+            // surface the error immediately instead of answering "started",
+            // which left the SPA waiting on a tab that will never open.
+            const cached = (await chrome.storage.session.get(LAST_RESULT_KEY))[LAST_RESULT_KEY] as OutboundStatus | undefined;
+            const msg = cached?.status === 'error' ? cached.message : undefined;
+            return void sendResponse({ status: 'error', message: msg ?? 'Sesi layanan gagal diperbarui. Silakan coba lagi.' });
           }
           return void sendResponse({ status: 'started', mode: after.mode });
         }
