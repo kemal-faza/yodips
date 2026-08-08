@@ -32,6 +32,20 @@ describe('LoginView', () => {
   it('renders login button', () => {
     makeStore();
     const w = mount(LoginView);
+    expect(w.text()).toContain('Memeriksa extension');
+    expect(w.text()).not.toContain('Login via SSO');
+  });
+
+  it('does not expose the legacy SSO capture button while extension detection is pending', async () => {
+    let resolveDetection!: (value: boolean) => void;
+    const detection = new Promise<boolean>((resolve) => { resolveDetection = resolve; });
+    makeStore({ isExtensionInstalled: vi.fn().mockReturnValue(detection) });
+    const w = mount(LoginView);
+    expect(w.text()).toContain('Memeriksa extension');
+    expect(w.find('button').attributes('disabled')).toBeDefined();
+    expect(w.text()).not.toContain('Login via SSO');
+    resolveDetection(false);
+    await flushPromises();
     expect(w.text()).toContain('Login via SSO');
   });
 
@@ -49,9 +63,21 @@ describe('LoginView', () => {
     expect(w.text()).toContain('Login via SSO');
   });
 
+  it('explains how to fix an undetected extension before falling back to SSO', async () => {
+    makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(false),
+      extensionError: 'Extension tidak terdeteksi.',
+    });
+    const w = mount(LoginView);
+    await flushPromises();
+    expect(w.text()).toContain('Extension tidak terdeteksi.');
+    expect(w.text()).toContain('VITE_EXTENSION_ID');
+  });
+
   it('calls store.login on button click', async () => {
     const store = makeStore();
     const w = mount(LoginView);
+    await flushPromises();
     await w.find('button').trigger('click');
     await flushPromises();
     expect(store.login).toHaveBeenCalled();

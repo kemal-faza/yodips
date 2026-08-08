@@ -108,7 +108,7 @@ export class PlaywrightAuthService {
       const deadline = Date.now() + loginTimeoutMs;
       while (!this.isOnDashboard(page.url(), dashboardUrl)) {
         if (Date.now() > deadline) {
-          throw new Error('Timed out waiting for SSO login');
+          throw new Error(`Timed out waiting for SSO login (last URL: ${page.url()})`);
         }
         await this.sleep(POLL_INTERVAL_MS);
       }

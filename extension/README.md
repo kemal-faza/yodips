@@ -11,6 +11,10 @@ halaman web app. Menggantikan peran `tools/capture-client/` untuk produksi.
 3. Salin **ID extension** yang tampil, lalu isi ke `web/.env` sebagai `VITE_EXTENSION_ID`.
 4. Pastikan backend (`localhost:3000`) dan web (`localhost:5173`) berjalan.
 
+> Jika web dibuka lewat `http://127.0.0.1:5173`, manifest juga sudah mengizinkan origin
+> tersebut. Setelah mengubah manifest atau `.env`, reload extension di `chrome://extensions`
+> dan restart Vite agar ID baru ikut masuk ke bundle.
+
 ## Alur
 
 - Buka web app — tombol **Login via Extension** muncul (jika extension terpasang).
@@ -52,6 +56,12 @@ halaman web app. Menggantikan peran `tools/capture-client/` untuk produksi.
 ```bash
 npm test
 ```
+
+Jika tombol yang tampil adalah **Login via SSO**, extension tidak terdeteksi. Periksa
+`VITE_EXTENSION_ID` terhadap ID aktual di `chrome://extensions`, origin web (`localhost`
+vs `127.0.0.1`), lalu buka Console service worker extension untuk melihat log aman seperti
+`external action`, `handoff decision`, dan `login tab opened`. Log tersebut tidak mencetak
+cookie atau JWT.
 
 ## Verifikasi manual E2E (lakukan setelah setup)
 

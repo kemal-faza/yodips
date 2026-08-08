@@ -20,6 +20,7 @@ import {
   PHASE_TIMEOUT_MS,
   cookiePatternsForPhase,
   phasesToClear,
+  summarizeHandoff,
 } from './messages.js';
 
 const STORAGE_KEY = 'serverUrl';
@@ -182,6 +183,7 @@ async function startLogin(deps, requestedPhase, reloginCount = 0, appTabId = nul
     await clearCookiesForPhase(p);
   }
   const { id } = await chrome.tabs.create({ url: loginUrl });
+  console.info('[Undip SSO] login tab opened', { tabId: id, phase, reloginCount });
   const existing = await getState();
   // Keep every tab this flow created so cleanup can close them all (prevents
   // orphan tabs from a relogin pivot). `tabId` stays the current login tab.
@@ -288,6 +290,7 @@ async function processCookies() {
 
     if (action === 'handoff') {
       const result = await performHandoff(deps(), cookies);
+      console.info('[Undip SSO] automatic handoff result', summarizeHandoff(result));
       const step = nextHandoffStep(result);
       if (step.action === 'open') {
         // The backend verified the handoff but reports at least one service
@@ -348,8 +351,17 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   // The SPA tab that initiated the flow — used to deliver the final result
   // directly and to focus the app tab when the login completes.
   const appTabId = sender?.tab?.id ?? null;
+  console.info('[Undip SSO] external action', message?.action ?? 'unknown', {
+    senderTabId: appTabId,
+  });
   handleHandoffMessage(message, deps())
     .then((res) => {
+      console.info('[Undip SSO] handoff decision', {
+        status: res.status,
+        phase: res.phase,
+        resume: res.resume === true,
+        relogin: res.relogin === true,
+      });
       if (res.status === 'started' && res.resume) {
         // A flow is ALREADY running with a login tab open (the user re-clicked
         // while waiting). Do NOT open a second tab — keep the existing flow and

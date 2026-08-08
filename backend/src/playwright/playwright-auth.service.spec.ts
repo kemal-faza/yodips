@@ -204,7 +204,9 @@ describe('launchAndCaptureSession', () => {
         SIAP_URL,
         50,
       ),
-    ).rejects.toThrow('Timed out waiting for SSO login');
+    ).rejects.toThrow(
+      `Timed out waiting for SSO login (last URL: ${LOGIN_URL})`,
+    );
     expect(mockContext.close).toHaveBeenCalled();
   });
 

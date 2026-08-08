@@ -50,6 +50,18 @@ export function phasesToClear(phase) {
   return idx === -1 ? [] : PHASE_CHAIN.slice(idx);
 }
 
+/** Safe, non-secret handoff diagnostics for the MV3 service-worker console. */
+export function summarizeHandoff(result) {
+  return {
+    ok: result?.ok,
+    status: result?.status,
+    code: result?.code,
+    hasSso: result?.hasSso,
+    hasKulon: result?.hasKulon,
+    hasSiap: result?.hasSiap,
+  };
+}
+
 /**
  * Generate a SSO ticket compatible with the backend's SSOTicketService:
  * base64 of the current unix second timestamp.

@@ -10,6 +10,7 @@ const inst = getCurrentInstance()!;
 const proxy = () => inst.proxy as any;
 
 const extInstalled = ref(false);
+const extChecking = ref(true);
 const extBusy = ref(false);
 const extWaiting = ref(false); // extension login tab is open; result arrives via window message
 const extRelogin = ref(false); // a stale Kulon session is being re-established via a fresh login tab
@@ -58,7 +59,12 @@ function startWaiting(state: 'started' | 'relogin') {
 }
 
 async function checkExtension() {
-  extInstalled.value = await store.isExtensionInstalled();
+  extChecking.value = true;
+  try {
+    extInstalled.value = await store.isExtensionInstalled();
+  } finally {
+    extChecking.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -178,7 +184,15 @@ async function handleExtensionLogin() {
           </AlertDescription>
         </Alert>
         <Button
-          v-if="!extInstalled"
+          v-if="extChecking"
+          size="lg"
+          class="mt-6 h-11 w-full"
+          disabled
+        >
+          Memeriksa extension…
+        </Button>
+        <Button
+          v-else-if="!extInstalled"
           size="lg"
           class="mt-6 h-11 w-full"
           :disabled="store.checking"
@@ -195,6 +209,12 @@ async function handleExtensionLogin() {
         >
           {{ extBusy ? 'Menghubungkan…' : extWaiting ? 'Menunggu login…' : 'Login via Extension' }}
         </Button>
+        <Alert v-if="!extInstalled && store.extensionError" class="mt-4 border-warn/40 bg-warn/10 p-3">
+          <AlertDescription class="text-ink">
+            {{ store.extensionError }} Muat ulang extension di <code>chrome://extensions</code>,
+            lalu pastikan <code>VITE_EXTENSION_ID</code> di <code>web/.env</code> sama dengan ID extension.
+          </AlertDescription>
+        </Alert>
         <Alert v-if="extWaiting && extRelogin" class="mt-4 border-warn/40 bg-warn/10 p-3">
           <AlertDescription>
             Salah satu sesi layanan (Kulon/SIAP) telah kedaluwarsa. Tab login baru terbuka dan akan

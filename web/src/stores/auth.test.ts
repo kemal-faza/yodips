@@ -213,6 +213,7 @@ describe('extension login', () => {
     stubChrome('throw');
     const store = useAuthStore();
     expect(await store.isExtensionInstalled()).toBe(false);
+    expect(store.extensionError).toContain('Extension tidak terdeteksi');
     expect(await store.loginViaExtension()).toBe('not-installed');
     expect(store.token).toBeNull();
   });

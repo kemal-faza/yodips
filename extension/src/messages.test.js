@@ -13,6 +13,7 @@ import {
   performHandoff,
   cookiePatternsForPhase,
   phasesToClear,
+  summarizeHandoff,
 } from './messages.js';
 
 function makeDeps(overrides = {}) {
@@ -484,5 +485,27 @@ describe('phasesToClear', () => {
 
   it('returns an empty list for an unknown phase', () => {
     expect(phasesToClear('nope')).toEqual([]);
+  });
+});
+
+describe('summarizeHandoff', () => {
+  it('keeps handoff diagnostics safe and excludes cookies and access tokens', () => {
+    expect(summarizeHandoff({
+      ok: false,
+      status: 401,
+      code: 'KULON_STALE',
+      accessToken: 'jwt-secret',
+      kulonCookie: 'MoodleSession=secret',
+      hasSso: true,
+      hasKulon: false,
+      hasSiap: false,
+    })).toEqual({
+      ok: false,
+      status: 401,
+      code: 'KULON_STALE',
+      hasSso: true,
+      hasKulon: false,
+      hasSiap: false,
+    });
   });
 });

@@ -30,6 +30,7 @@ export const useAuthStore = defineStore('auth', {
     hasSiap: false, // SIAP session validity (from GET /me)
     hasKulon: false, // Kulon session validity (from GET /me)
     fotoUrl: null as string | null, // SIAP profile photo (header avatar)
+    extensionError: null as string | null,
   }),
   getters: {
     isAuthenticated: (state) => !!state.token,
@@ -105,8 +106,16 @@ export const useAuthStore = defineStore('auth', {
     async isExtensionInstalled(): Promise<boolean> {
       try {
         const resp = await sendToExtension({ action: 'ping' });
-        return resp?.status === 'ok';
-      } catch {
+        if (resp?.status === 'ok') {
+          this.extensionError = null;
+          return true;
+        }
+        this.extensionError = 'Extension tidak terdeteksi atau tidak merespons.';
+        return false;
+      } catch (e) {
+        this.extensionError = `Extension tidak terdeteksi. ${
+          (e as Error)?.message ?? 'Pastikan ID extension dan origin web benar.'
+        }`;
         return false;
       }
     },
