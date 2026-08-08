@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 const SEMESTER_RE = /(20\d{2}\/\d{4})\s+(Ganjil|Genap|Pendek)/i;
 
@@ -141,6 +141,7 @@ export function deriveSectionLabel(
 @Injectable()
 export class KulonService {
   private readonly baseUrl = 'https://kulon2.undip.ac.id';
+  private readonly logger = new Logger(KulonService.name);
 
   private async ajax(
     sessionCookie: string,
@@ -190,15 +191,27 @@ export class KulonService {
         headers: { Cookie: sessionCookie },
         redirect: 'follow',
       });
-    } catch {
+    } catch (e) {
+      // "redirect count exceeded" (redirect loop) is the classic sign of a
+      // pre-auth/stale Moodle session — logged for diagnostics (no cookie value).
+      if ((e as { cause?: Error })?.cause && /redirect count exceeded/i.test(String((e as { cause?: Error }).cause))) {
+        this.logger.warn('Kulon session probe: redirect loop');
+      }
       return { valid: false, reason: 'stale' };
     }
-    if (!res.ok) return { valid: false, reason: 'stale' };
+    if (!res.ok) {
+      this.logger.warn(`Kulon session probe: http ${res.status}`);
+      return { valid: false, reason: 'stale' };
+    }
     if (/(login\.microsoftonline\.com|\/login\/)/i.test(res.url)) {
+      this.logger.warn(`Kulon session probe: redirected to ${res.url.slice(0, 80)}`);
       return { valid: false, reason: 'stale' };
     }
     const html = await res.text();
-    if (!/name="sesskey"/.test(html)) return { valid: false, reason: 'stale' };
+    if (!/name="sesskey"/.test(html)) {
+      this.logger.warn('Kulon session probe: page missing sesskey (login redirect)');
+      return { valid: false, reason: 'stale' };
+    }
     return { valid: true, reason: 'ok' };
   }
 

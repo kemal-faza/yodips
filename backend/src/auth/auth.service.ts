@@ -186,9 +186,23 @@ export class AuthService {
    * Remote-production login: accept session cookies already captured on the
    * user's device (via the capture tool). No credentials ever reach the backend.
    * Verify the Kulon session, derive identity, store per-user, issue a JWT.
+   *
+   * The Kulon probe is retried on `stale` because after the SSO→Kulon cascade
+   * the MoodleSession cookie is set BEFORE the Kulon session is fully
+   * established (a few seconds of in-flight redirects). A single immediate
+   * probe would reject a perfectly fresh login. `no-cookie` is NOT retried —
+   * waiting cannot conjure a cookie that was never sent.
    */
   async handleSessionHandoff(dto: HandoffDto) {
-    const check = await this.kulon.checkSessionValid(dto.kulonCookie);
+    const retryMs = Number(this.config.get('HANDOFF_KULON_RETRY_DELAY_MS') ?? 2000);
+    let check = await this.kulon.checkSessionValid(dto.kulonCookie);
+    for (let attempt = 1; !check.valid && check.reason === 'stale' && attempt < 3; attempt++) {
+      this.logger.warn(
+        `Kulon probe stale (attempt ${attempt}/3) — retrying in ${retryMs}ms`,
+      );
+      await new Promise((r) => setTimeout(r, retryMs));
+      check = await this.kulon.checkSessionValid(dto.kulonCookie);
+    }
     if (!check.valid) {
       const code = check.reason === 'no-cookie' ? 'KULON_NO_COOKIE' : 'KULON_STALE';
       throw new HttpException(

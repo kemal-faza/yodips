@@ -29,6 +29,7 @@ const mockConfig = {
       SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
       SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
       CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
+      HANDOFF_KULON_RETRY_DELAY_MS: '1',
     };
     return map[k];
   }),
@@ -275,6 +276,36 @@ describe('AuthService.handleSessionHandoff', () => {
     ).rejects.toMatchObject({
       response: { message: 'Session Kulon tidak valid — silakan login ulang', code: 'KULON_STALE', reason: 'stale' },
     });
+  });
+
+  it('retries a transient KULON_STALE probe and succeeds once the session is live', async () => {
+    mockKulon.checkSessionValid
+      .mockResolvedValueOnce({ valid: false, reason: 'stale' }) // pre-auth/in-flight
+      .mockResolvedValueOnce({ valid: true, reason: 'ok' }); // established on retry
+    mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
+    const svc = makeService();
+    const res = await svc.handleSessionHandoff({ kulonCookie: 'MoodleSession=K' } as any);
+    expect(res.hasKulon).toBe(true);
+    expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops retrying after the attempt cap and still throws KULON_STALE', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    const svc = makeService();
+    await expect(
+      svc.handleSessionHandoff({ kulonCookie: 'MoodleSession=STALE' } as any),
+    ).rejects.toMatchObject({ response: { code: 'KULON_STALE' } });
+    // initial probe + N retries = total attempts
+    expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry when the probe fails as no-cookie (no point waiting)', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'no-cookie' });
+    const svc = makeService();
+    await expect(
+      svc.handleSessionHandoff({ kulonCookie: '' } as any),
+    ).rejects.toMatchObject({ response: { code: 'KULON_NO_COOKIE' } });
+    expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(1);
   });
 
   it('throws 401 with code KULON_NO_COOKIE when no kulon cookie is provided', async () => {
