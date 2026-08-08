@@ -1,5 +1,23 @@
 <!DOCTYPE html>
 <html lang="id">
-  <head><meta charset="UTF-8" /><title>Undip SSO Login</title></head>
-  <body><script type="module" src="./popup.ts"></script></body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./popup.css" />
+    <title>Undip SSO Login</title>
+  </head>
+  <body>
+    <main class="popup">
+      <h1>Undip SSO Login</h1>
+      <p class="hint">Login otomatis dilakukan dari dalam halaman web app. Konfigurasi di sini hanya untuk server API.</p>
+      <div id="phase" class="phase" role="status">
+        <span class="phase-label">Fase login:</span> <span id="phaseValue">tidak aktif</span>
+      </div>
+      <label for="serverUrl">Server API</label>
+      <input id="serverUrl" type="url" placeholder="http://localhost:3000" />
+      <p id="status" class="status" role="status"></p>
+      <button id="save" type="button">Simpan</button>
+    </main>
+    <script type="module" src="./popup.ts"></script>
+  </body>
 </html>
