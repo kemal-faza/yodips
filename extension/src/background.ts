@@ -1,1 +1,234 @@
-export {};
+// MV3 service worker adapter. All Chrome events (external message, cookies
+// onChanged, tabs.onUpdated, alarms) funnel into a single serialized `runFlow`
+// which drives the pure state machine in core/flow.ts. Side effects (cookie
+// read, tab open/navigate/close, storage, HTTP handoff) live ONLY here — the
+// core never touches `chrome`.
+import {
+  initialState, advance, attachTab,
+  type FlowState, type FlowEvent, type FlowEffect,
+} from './core/flow.js';
+import { evaluateCookies, buildHandoffBody, cookiePatternsForPhase } from './core/cookies.js';
+import { interpretHandoff, summarizeHandoff } from './core/handoff.js';
+import { DEFAULT_SERVER_URL, SSO_LOGIN_URL, buildKulonTicketUrl, buildSiapTicketUrl } from './core/urls.js';
+import type { HandoffRaw, Service, OutboundStatus } from './core/contract.js';
+
+const SERVER_KEY = 'serverUrl';
+const STATE_KEY = 'ssoLoginState';
+const ALARM_KEY = 'handoff-timeout';
+const POLL_KEY = 'handoff-poll';
+const POLL_PERIOD_MIN = 0.5;
+const MAX_RELOGIN = 2;
+const PHASE_TIMEOUT_MS = 3 * 60_000;
+
+const loginUrl = (s: Service): string =>
+  s === 'sso' ? SSO_LOGIN_URL : s === 'kulon' ? buildKulonTicketUrl() : buildSiapTicketUrl();
+
+async function getState(): Promise<FlowState> {
+  const res = await chrome.storage.local.get(STATE_KEY);
+  return res[STATE_KEY] ?? initialState('auto');
+}
+async function setState(s: FlowState): Promise<void> {
+  await chrome.storage.local.set({ [STATE_KEY]: s });
+}
+async function getServerUrl(): Promise<string> {
+  const res = await chrome.storage.sync.get(SERVER_KEY);
+  return (res[SERVER_KEY] as string) || DEFAULT_SERVER_URL;
+}
+async function fetchHandoff(url: string, body: unknown): Promise<HandoffRaw> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, ...data };
+}
+
+async function clearCookies(service: Service): Promise<void> {
+  for (const p of cookiePatternsForPhase(service)) {
+    try {
+      const cookies = await chrome.cookies.getAll({ domain: p.domain });
+      for (const c of cookies) {
+        const match = typeof p.name === 'string' ? c.name === p.name : p.name.test(c.name);
+        if (!match) continue;
+        await chrome.cookies
+          .remove({ name: c.name, url: `https://${c.domain.replace(/^\./, '')}/` })
+          .catch(() => {});
+      }
+    } catch { /* best-effort */ }
+  }
+}
+
+async function clearSessionCookies(): Promise<void> {
+  const all: Service[] = ['sso', 'kulon', 'siap'];
+  for (const s of all) await clearCookies(s);
+}
+
+async function sendToApp(appTabId: number | null, payload: OutboundStatus): Promise<void> {
+  if (appTabId != null) {
+    await chrome.tabs.sendMessage(appTabId, { action: 'handoff-result', ...payload }).catch(() => {});
+  }
+  await chrome.runtime.sendMessage({ action: 'handoff-result', ...payload }).catch(() => {});
+  if (appTabId != null) {
+    await chrome.tabs.update(appTabId, { active: true }).catch(() => {});
+  }
+}
+
+/**
+ * Run the handoff HTTP call and translate the backend result into the next
+ * state-machine event. Called by the `postHandoff` effect, which re-enters the
+ * loop with this event to keep everything within a single lock pass.
+ */
+async function postHandoffDecision(state: FlowState): Promise<FlowEvent> {
+  const cookies = await chrome.cookies.getAll({});
+  const serverUrl = (await getServerUrl()).replace(/\/+$/, '');
+  const raw = await fetchHandoff(`${serverUrl}/api/auth/session/handoff`, buildHandoffBody(cookies));
+  console.info('[Undip SSO] handoff', summarizeHandoff(raw));
+  const decision = interpretHandoff(raw);
+  if (decision.action === 'ok') return { type: 'HANDOFF_OK', token: decision.token };
+  if (decision.action === 'needsService') return { type: 'HANDOFF_NEEDS_SERVICE', service: decision.service };
+  if (decision.action === 'stale') return { type: 'HANDOFF_STALE' };
+  return { type: 'HANDOFF_ERROR', message: decision.message };
+}
+
+/** Apply a single effect, returning an optional follow-up event + possibly
+ *  updated state (tab id from openTab) for the next loop iteration. */
+async function applyEffect(
+  state: FlowState,
+  e: FlowEffect,
+): Promise<{ state: FlowState; follow?: FlowEvent }> {
+  switch (e.kind) {
+    case 'openTab': {
+      const tab = await chrome.tabs.create({ url: e.url });
+      return { state: attachTab(state, tab.id ?? -1) };
+    }
+    case 'navigateTab': {
+      if (state.tabId != null) await chrome.tabs.update(state.tabId, { url: e.url }).catch(() => {});
+      return { state };
+    }
+    case 'closeAllTabs': {
+      for (const id of state.tabs) await chrome.tabs.remove(id).catch(() => {});
+      return { state: { ...state, tabs: [], tabId: null } };
+    }
+    case 'clearCookies':
+      await clearCookies(e.service);
+      return { state };
+    case 'postHandoff': {
+      const follow = await postHandoffDecision(state);
+      return { state, follow };
+    }
+    case 'sendResult':
+      await sendToApp(state.appTabId, e.payload);
+      return { state };
+    case 'focusAppTab':
+      if (state.appTabId != null) await chrome.tabs.update(state.appTabId, { active: true }).catch(() => {});
+      return { state };
+    case 'scheduleTimers': {
+      await chrome.alarms.create(ALARM_KEY, { when: e.deadline }).catch(() => {});
+      await chrome.alarms.create(POLL_KEY, { periodInMinutes: POLL_PERIOD_MIN }).catch(() => {});
+      return { state };
+    }
+    case 'clearTimers':
+      await chrome.alarms.clear(ALARM_KEY).catch(() => {});
+      await chrome.alarms.clear(POLL_KEY).catch(() => {});
+      return { state };
+    default:
+      return { state };
+  }
+}
+
+let runBusy = false;
+/**
+ * Single serialized entry point. Reads state + cookies, feeds the event into
+ * the pure state machine, applies generated effects, and — when an effect
+ * yields a follow-up event (e.g. HANDOFF_*) — continues within the same pass.
+ */
+async function runFlow(initialEvent: FlowEvent): Promise<void> {
+  if (runBusy) return;
+  runBusy = true;
+  try {
+    let event: FlowEvent | null = initialEvent;
+    let guard = 0;
+    while (event && guard < 10) {
+      guard++;
+      const state = await getState();
+      const cookies = await chrome.cookies.getAll({});
+      const flags = evaluateCookies(cookies);
+      const deps = { flags, now: Date.now, MAX_RELOGIN, PHASE_TIMEOUT_MS, loginUrl };
+      const { state: next, effects } = advance(state, event, deps);
+
+      let current = next;
+      let follow: FlowEvent | null = null;
+      for (const e of effects) {
+        const r = await applyEffect(current, e);
+        if (r.follow) follow = r.follow;
+        current = r.state;
+      }
+      await setState(current);
+      event = follow;
+    }
+  } finally {
+    runBusy = false;
+  }
+}
+
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  void (async () => {
+    const appTabId = sender?.tab?.id ?? null;
+    try {
+      switch ((message as { action?: string })?.action) {
+        case 'ping':
+          return void sendResponse({ status: 'ok' });
+        case 'status': {
+          const s = await getState();
+          const active = s.core === 'authing' || s.core === 'handoff';
+          return void sendResponse({ status: 'ok', active, phase: s.service });
+        }
+        case 'logout':
+          await clearSessionCookies();
+          return void sendResponse({ status: 'ok' });
+        case 'done': {
+          await runFlow({ type: 'USER_DONE' });
+          return void sendResponse({ status: 'started' });
+        }
+        case 'handoff': {
+          const state = await getState();
+          const active = state.core === 'authing' || state.core === 'handoff';
+          if (active) {
+            return void sendResponse({ status: 'started', mode: state.mode, message: 'Login sedang berjalan.' });
+          }
+          await setState({ ...state, appTabId });
+          await runFlow({ type: 'REQUEST', mode: 'auto' });
+          const after = await getState();
+          if (after.core === 'done') return void sendResponse({ status: 'ok', accessToken: 'handled' });
+          return void sendResponse({ status: 'started', mode: after.mode });
+        }
+        default:
+          return void sendResponse({ status: 'error', message: 'Unknown action' });
+      }
+    } catch (err) {
+      sendResponse({ status: 'error', message: (err as Error)?.message ?? 'Error internal' });
+    }
+  })();
+  return true;
+});
+
+chrome.cookies.onChanged.addListener((info) => {
+  if (!info.cookie?.domain?.includes('undip.ac.id')) return;
+  void runFlow({ type: 'COOKIE_SET' }).catch(() => {});
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== 'complete') return;
+  void (async () => {
+    const s = await getState();
+    if (s.tabId === tabId && s.core === 'authing') {
+      await runFlow({ type: 'TAB_LOADED' }).catch(() => {});
+    }
+  })();
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === ALARM_KEY) void runFlow({ type: 'TIMEOUT' }).catch(() => {});
+  if (alarm.name === POLL_KEY) void runFlow({ type: 'COOKIE_SET' }).catch(() => {});
+});

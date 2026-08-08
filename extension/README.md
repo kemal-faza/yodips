@@ -6,8 +6,9 @@ halaman web app. Menggantikan peran `tools/capture-client/` untuk produksi.
 
 ## Build & load (dev lokal)
 
-1. `npm install` (untuk menjalankan test).
-2. Buka `chrome://extensions` — aktifkan **Developer mode** — **Load unpacked** — pilih folder `extension/`.
+1. `npm install` (untuk menjalankan test), lalu `npm run build` untuk menghasilkan `dist/`.
+2. Buka `chrome://extensions` — aktifkan **Developer mode** — **Load unpacked** — pilih folder `extension/`
+   (manifest menunjuk ke `dist/`; pastikan build sudah dijalankan dan `dist/` ada).
 3. Salin **ID extension** yang tampil, lalu isi ke `web/.env` sebagai `VITE_EXTENSION_ID`.
 4. Pastikan backend (`localhost:3000`) dan web (`localhost:5173`) berjalan.
 
