@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import AppSidebar from '../components/AppSidebar.vue';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Bell, Menu, Moon, Sun } from '@lucide/vue';
 
@@ -86,7 +86,12 @@ const pageTitle = computed(() => {
             <Bell class="size-4" aria-hidden="true" />
           </Button>
 
-          <Avatar size="sm" class="size-8 bg-primary/10 text-primary border border-line">
+          <Avatar
+            size="sm"
+            class="size-8 bg-primary/10 text-primary border border-line"
+            data-test="user-avatar"
+          >
+            <AvatarImage v-if="auth.fotoUrl" :src="auth.fotoUrl" alt="Foto profil" />
             <AvatarFallback class="bg-transparent font-bold text-xs">
               {{ initial }}
             </AvatarFallback>

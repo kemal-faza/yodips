@@ -10,12 +10,14 @@ import { useThemeStore } from '../stores/theme';
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 vi.mock('../stores/theme', () => ({ useThemeStore: vi.fn() }));
 
-function mockStores() {
+function mockStores(overrides: Record<string, unknown> = {}) {
   (useAuthStore as any).mockReturnValue({
     isAuthenticated: true,
     fetchMe: vi.fn().mockResolvedValue('ok'),
     logout: vi.fn(),
     user: { sub: 'M12345' },
+    fotoUrl: null,
+    ...overrides,
   });
   (useThemeStore as any).mockReturnValue({ dark: false, toggle: vi.fn() });
 }
@@ -54,5 +56,26 @@ describe('AppLayout', () => {
     const toggleBtn = w.find('[data-test="mobile-menu-toggle"]');
     await toggleBtn.trigger('click');
     expect(w.find('[data-test="sidebar-backdrop"]').exists()).toBe(true);
+  });
+
+  it('shows the SIAP photo in the header avatar when store has a fotoUrl', async () => {
+    mockStores({ fotoUrl: 'https://disk.undip.ac.id/ktm.jpg' });
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/');
+    await flushPromises();
+    const w = mount(AppLayout, { global: { plugins: [router] } });
+    const img = w.find('[data-test="user-avatar"] img');
+    expect(img.exists()).toBe(true);
+    expect(img.attributes('src')).toBe('https://disk.undip.ac.id/ktm.jpg');
+  });
+
+  it('shows the fallback initial when there is no fotoUrl', async () => {
+    mockStores({ fotoUrl: null });
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/');
+    await flushPromises();
+    const w = mount(AppLayout, { global: { plugins: [router] } });
+    expect(w.find('[data-test="user-avatar"] img').exists()).toBe(false);
+    expect(w.find('[data-test="user-avatar"]').text()).toContain('M');
   });
 });
