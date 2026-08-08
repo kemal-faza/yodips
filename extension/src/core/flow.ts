@@ -155,12 +155,29 @@ export function advance(
         };
       case 'HANDOFF_STALE': {
         if (state.reloginCount < deps.MAX_RELOGIN) {
+          // The Kulon session was rejected as stale (KULON_STALE). If the
+          // central Kazan SSO session is still live, re-establish Kulon
+          // DIRECTLY — the SSO session auto-propagates into a fresh Kulon
+          // session, and reopening the SSO page would change no cookie
+          // (deadlock until timeout). Only when SSO itself is gone do we
+          // re-auth from the root. Reuse the SAME login tab (navigate, not
+          // closeAllTabs+openTab) so the user never sees the tab slam shut.
+          const target: Service = flags.hasSso ? 'kulon' : 'sso';
+          const nav: FlowEffect =
+            state.tabId != null
+              ? { kind: 'navigateTab', url: deps.loginUrl(target) }
+              : { kind: 'openTab', url: deps.loginUrl(target) };
           return {
-            state: { ...state, core: 'authing', service: 'sso', reloginCount: state.reloginCount + 1, deadline: deadline(deps) },
+            state: {
+              ...state,
+              core: 'authing',
+              service: target,
+              reloginCount: state.reloginCount + 1,
+              deadline: deadline(deps),
+            },
             effects: [
-              ...clearFor('sso'),
-              { kind: 'closeAllTabs' },
-              { kind: 'openTab', url: deps.loginUrl('sso') },
+              ...clearFor(target),
+              nav,
               { kind: 'scheduleTimers', deadline: deadline(deps) },
             ],
           };

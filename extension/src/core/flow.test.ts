@@ -69,12 +69,26 @@ describe('handoff decisions', () => {
     expect(r.state.service).toBe('siap');
     expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'siap' });
   });
-  it('HANDOFF_STALE under MAX_RELOGIN → authing:sso + reloginCount++', () => {
+  it('HANDOFF_STALE with live SSO → re-auth kulon in the SAME tab (no closeAllTabs, no sso clear)', () => {
     const s = { ...st(), core: 'handoff', tabId: 7, reloginCount: 0 } as FlowState;
-    const r = advance(s, { type: 'HANDOFF_STALE' }, D);
+    const r = advance(s, { type: 'HANDOFF_STALE' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
+    expect(r.state.service).toBe('kulon');
+    expect(r.state.reloginCount).toBe(1);
+    expect(r.effects).not.toContainEqual({ kind: 'closeAllTabs' });
+    expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'KULON_URL' });
+    // down gust downstream kulon+siap — the live SSO cookie must survive
+    expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'kulon' });
+    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'sso' });
+  });
+  it('HANDOFF_STALE without live SSO → re-auth sso in the same tab', () => {
+    const r = advance({ ...st(), core: 'handoff', tabId: 7, reloginCount: 0 } as FlowState, { type: 'HANDOFF_STALE' }, D);
     expect(r.state.service).toBe('sso');
     expect(r.state.reloginCount).toBe(1);
-    expect(r.effects).toContainEqual({ kind: 'closeAllTabs' });
+    expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'SSO_URL' });
+  });
+  it('HANDOFF_STALE without any tab yet → opens a new tab', () => {
+    const r = advance({ ...st(), core: 'handoff', tabId: null, reloginCount: 0 } as FlowState, { type: 'HANDOFF_STALE' }, D);
+    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'SSO_URL' });
   });
   it('HANDOFF_STALE at MAX_RELOGIN → error', () => {
     const s = { ...st(), core: 'handoff', tabId: 7, reloginCount: 2 } as FlowState;
