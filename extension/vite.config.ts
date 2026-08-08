@@ -1,6 +1,8 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
+const ROOT = import.meta.dirname;
+
 export default defineConfig({
   build: {
     outDir: 'dist',
@@ -8,9 +10,9 @@ export default defineConfig({
     target: 'es2022',
     rollupOptions: {
       input: {
-        background: resolve(__dirname, 'src/background.ts'),
-        'content-bridge': resolve(__dirname, 'src/content-bridge.ts'),
-        popup: resolve(__dirname, 'src/popup/popup.html'),
+        background: resolve(ROOT, 'src/background.ts'),
+        'content-bridge': resolve(ROOT, 'src/content-bridge.ts'),
+        popup: resolve(ROOT, 'src/popup/popup.html'),
       },
       output: {
         entryFileNames: '[name].js',

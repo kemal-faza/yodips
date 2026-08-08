@@ -1,15 +1,17 @@
 // Post-build: Vite writes the popup HTML entry preserving its source-relative
-// path (dist/src/popup/popup.html) with an absolute /popup.js reference. The
-// manifest expects `dist/popup.html`. Move it to the dist root and make its
-// asset references relative so it resolves inside chrome-extension://<id>/.
+// path (dist/src/popup/popup.html) with absolute /popup.js and /urls.js asset
+// references. The manifest expects `dist/popup.html`. Move it to the dist root
+// and rewrite ALL absolute asset refs to relative so they resolve inside
+// chrome-extension://<id>/dist/.
 import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 
 const SRC = 'dist/src/popup/popup.html';
 if (!existsSync(SRC)) process.exit(0);
 
 let html = readFileSync(SRC, 'utf8');
-// Rewrite absolute /popup.* asset refs to relative ./popup.* (resolves at dist root).
-html = html.replace(/((?:src|href)=")\/popup\./g, '$1./popup.');
+// Rewrite absolute /<asset> references (script src, link href, modulepreload)
+// to relative ./<asset> (resolves at dist root).
+html = html.replace(/((?:src|href)=")\/([^"]+)"/g, '$1./$2"');
 writeFileSync('dist/popup.html', html);
 
 // Copy the popup stylesheet next to the html if it was emitted beside it.
