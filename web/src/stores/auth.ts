@@ -1,25 +1,9 @@
 import { defineStore } from 'pinia';
 import { capture, me, getSiapProfile } from '../api/client';
 import type { User } from '../types';
-import { EXTENSION_ID } from '../config/extension';
+import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 
 const TOKEN_KEY = 'sso_token';
-
-/** Kirim pesan ke extension. Mengecek chrome.runtime tersedia, membungkus
- *  callback chrome style ke Promise. Bisa melempar bila ekstensi tak terpasang
- *  (sendMessage throw synchronously tanpa receiver). */
-async function sendToExtension(message: Record<string, unknown>): Promise<any> {
-  const rt = (globalThis as any).chrome?.runtime;
-  if (!rt?.sendMessage || !EXTENSION_ID) {
-    throw new Error('Extension tidak tersedia');
-  }
-  return new Promise((resolve, reject) => {
-    rt.sendMessage(EXTENSION_ID, message, (resp: any) => {
-      if (rt.lastError) reject(new Error(rt.lastError.message));
-      else resolve(resp);
-    });
-  });
-}
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -31,6 +15,7 @@ export const useAuthStore = defineStore('auth', {
     hasKulon: false, // Kulon session validity (from GET /me)
     fotoUrl: null as string | null, // SIAP profile photo (header avatar)
     extensionError: null as string | null,
+    extensionMode: 'auto' as 'auto' | 'semi', // how the background drives the login flow
   }),
   getters: {
     isAuthenticated: (state) => !!state.token,
@@ -38,16 +23,8 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     /** Receive the extension's final result posted to the window by the content bridge. */
-    onExtensionResult(handler: (payload: any) => void): () => void {
-      const listener = (event: MessageEvent) => {
-        // The extension's content bridge tags every payload with source
-        // 'undip-sso-extension' when forwarding a background result. Validate
-        // that tag — no other page/script can forge it without the bridge.
-        if (event.data?.source !== 'undip-sso-extension') return;
-        handler(event.data.payload);
-      };
-      window.addEventListener('message', listener);
-      return () => window.removeEventListener('message', listener);
+    onExtensionResult(handler: (payload: ExtOutboundStatus) => void): () => void {
+      return useExtension().onResult(handler);
     },
     async login() {
       this.checking = true;
@@ -104,59 +81,41 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     async isExtensionInstalled(): Promise<boolean> {
-      try {
-        const resp = await sendToExtension({ action: 'ping' });
-        if (resp?.status === 'ok') {
-          this.extensionError = null;
-          return true;
-        }
-        this.extensionError = 'Extension tidak terdeteksi atau tidak merespons.';
-        return false;
-      } catch (e) {
-        this.extensionError = `Extension tidak terdeteksi. ${
-          (e as Error)?.message ?? 'Pastikan ID extension dan origin web benar.'
-        }`;
-        return false;
+      const status = await useExtension().readStatus();
+      if (status !== null) {
+        this.extensionError = null;
+        return true;
       }
+      this.extensionError = 'Extension tidak terdeteksi atau tidak merespons.';
+      return false;
     },
-
-    async loginViaExtension(): Promise<'ok' | 'started' | 'relogin' | 'error' | 'not-installed'> {
+    async loginViaExtension(): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
       this.error = null;
-      try {
-        const resp = await sendToExtension({ action: 'handoff' });
-        if (resp?.status === 'ok' && resp.accessToken) {
-          this.finishHandoff(resp.accessToken);
-          return 'ok';
-        }
-        if (resp?.status === 'started') {
-          // The background opened a login tab and will notify us via the window
-          // message bridge when the handoff completes. `relogin` signals that a
-          // stale Kulon session is being re-established (fresh login tab).
-          return resp.relogin ? 'relogin' : 'started';
-        }
-        this.error = resp?.message ?? 'Login via extension gagal.';
-        return 'error';
-      } catch {
+      const resp = await useExtension().sendHandoff();
+      if (resp === 'not-installed') {
+        this.extensionError = 'Extension tidak terdeteksi. Pastikan ID extension dan origin web benar.';
         return 'not-installed';
       }
-    },
-
-    /**
-     * Pull the last completed handoff result from the extension (action 'result').
-     * Pure read — no cookie access, no tab opens, no throttle consumption. This is
-     * the self-healing path: the LoginView polls it while waiting so the user is
-     * taken into the app even if every content-bridge push message was missed.
-     * Returns the extension payload (e.g. {status:'ok', accessToken}) or null when
-     * the extension is unavailable.
-     */
-    async readExtensionResult(): Promise<any | null> {
-      try {
-        return await sendToExtension({ action: 'result' });
-      } catch {
-        return null;
+      if (resp.status === 'ok' && resp.accessToken) {
+        this.finishHandoff(resp.accessToken);
+        return 'ok';
       }
+      if (resp.status === 'error') {
+        this.error = resp.message ?? 'Login via extension gagal.';
+        return 'error';
+      }
+      // status 'started' — the background opened a login tab (auto) or waits for
+      // the user to confirm (semi); the view reacts via onResult / status poll.
+      if (resp.status === 'started') {
+        this.extensionMode = resp.mode ?? 'auto';
+        return 'started';
+      }
+      return 'error';
     },
-
+    /** Pull the current extension state / last result (self-healing poll). */
+    async readExtensionResult(): Promise<any | null> {
+      return useExtension().readStatus();
+    },
     finishHandoff(token: string) {
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
@@ -169,7 +128,7 @@ export const useAuthStore = defineStore('auth', {
       // Best-effort: ask the extension to clear the SSO/Kulon/SIAP session
       // cookies so the next login cannot fast-path-reuse a stale session and is
       // forced to open a fresh tab. Never blocks or throws the UI.
-      sendToExtension({ action: 'logout' }).catch(() => {});
+      useExtension().logout();
     },
   },
 });

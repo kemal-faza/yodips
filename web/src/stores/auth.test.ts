@@ -241,19 +241,6 @@ describe('extension login', () => {
     expect(store.token).toBeNull();
   });
 
-  it('loginViaExtension returns relogin when the background signals a stale session', async () => {
-    (globalThis as any).chrome = {
-      runtime: {
-        lastError: null,
-        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) =>
-          cb({ status: 'started', relogin: true }),
-      },
-    };
-    const store = useAuthStore();
-    expect(await store.loginViaExtension()).toBe('relogin');
-    expect(store.token).toBeNull();
-  });
-
   it('loginViaExtension returns error on handoff failure', async () => {
     stubChrome('error');
     const store = useAuthStore();
@@ -289,7 +276,7 @@ describe('extension login', () => {
       runtime: {
         lastError: null,
         sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
-          expect(msg.action).toBe('result');
+          expect(msg.action).toBe('status');
           cb({ status: 'ok', accessToken: 'jwt-poll' });
         },
       },
@@ -299,15 +286,16 @@ describe('extension login', () => {
     expect(res).toEqual({ status: 'ok', accessToken: 'jwt-poll' });
   });
 
-  it('readExtensionResult returns active when the extension has no result yet', async () => {
+  it('readExtensionResult returns the poll state when the flow is still active', async () => {
     (globalThis as any).chrome = {
       runtime: {
         lastError: null,
-        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => cb({ status: 'active' }),
+        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) =>
+          cb({ status: 'ok', active: true, phase: 'sso' }),
       },
     };
     const store = useAuthStore();
-    expect(await store.readExtensionResult()).toEqual({ status: 'active' });
+    expect(await store.readExtensionResult()).toEqual({ status: 'ok', active: true, phase: 'sso' });
   });
 
   it('readExtensionResult resolves null when the extension is not installed', async () => {

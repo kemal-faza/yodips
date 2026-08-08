@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
 import { useAuthStore } from '../stores/auth';
+import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -8,12 +9,13 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 const store = useAuthStore();
 const inst = getCurrentInstance()!;
 const proxy = () => inst.proxy as any;
+const ext = useExtension();
 
 const extInstalled = ref(false);
 const extChecking = ref(true);
-const extBusy = ref(false);
-const extWaiting = ref(false); // extension login tab is open; result arrives via window message
-const extRelogin = ref(false); // a stale Kulon session is being re-established via a fresh login tab
+const extBusy = ref(false); // initial handoff request in flight
+const extWaiting = ref(false); // extension flow active (login tab open / semi confirm)
+const extMode = ref<'auto' | 'semi'>('auto');
 const extMsg = ref<string | null>(null);
 let stopListening: (() => void) | null = null;
 let stopFocusListeners: (() => void) | null = null;
@@ -29,8 +31,8 @@ function stopPoll() {
 }
 
 /**
- * Self-healing wait: while the extension tab is open, poll its cached result
- * (action 'result') until it reports ok/error. This makes the app enter the
+ * Self-healing wait: while the extension flow is active, poll its state
+ * ({action:'status'}) until it reports ok/error. This makes the app enter the
  * dashboard on its own even if every content-bridge push message was missed —
  * the user never has to re-click "Login via Extension".
  */
@@ -47,12 +49,12 @@ async function pollExtensionResult() {
     extBusy.value = false;
     extMsg.value = payload.message ?? 'Login via extension gagal.';
   }
-  // 'active' / 'started' → still in progress, keep waiting.
+  // {status:'ok', active:true} → still in progress, keep waiting.
 }
 
-function startWaiting(state: 'started' | 'relogin') {
+function startWaiting(mode: 'auto' | 'semi') {
   extWaiting.value = true;
-  extRelogin.value = state === 'relogin';
+  extMode.value = mode;
   extBusy.value = false;
   stopPoll(); // avoid stacking intervals
   pollTimer = setInterval(pollExtensionResult, POLL_INTERVAL_MS);
@@ -71,7 +73,7 @@ onMounted(async () => {
   await checkExtension();
   // Listen for the extension's final result (posted to the window by the
   // content-script bridge). Handles both success (JWT) and failure/timeout.
-  stopListening = store.onExtensionResult((payload: any) => {
+  stopListening = store.onExtensionResult((payload: ExtOutboundStatus) => {
     extWaiting.value = false;
     extBusy.value = false;
     stopPoll();
@@ -80,10 +82,6 @@ onMounted(async () => {
       proxy().$router?.push('/');
     } else if (payload?.status === 'error') {
       extMsg.value = payload.message ?? 'Login via extension gagal.';
-    } else if (payload?.status === 'started' && payload.relogin) {
-      // The background pivoted to a fresh Kulon login because the captured
-      // session was stale — keep waiting and explain why a new tab opened.
-      startWaiting('relogin');
     }
   });
   // When the user switches back from the login tab (focus/visibility), do an
@@ -122,26 +120,29 @@ async function handleLogin() {
 async function handleExtensionLogin() {
   extBusy.value = true;
   extMsg.value = null;
-  extRelogin.value = false;
   const status = await store.loginViaExtension();
   if (status === 'ok') {
     await proxy().$router?.push('/');
     extBusy.value = false;
     return;
   }
-  if (status === 'started' || status === 'relogin') {
-    // Background opened a login tab and will notify us via the window bridge.
-    // 'relogin' means the captured Kulon session was stale — a fresh login tab
-    // is being opened to re-establish it.
-    startWaiting(status === 'relogin' ? 'relogin' : 'started');
+  if (status === 'started') {
+    // The background opened a login tab (auto) or waits for explicit "Selesai"
+    // confirmation (semi). The bridge result/status poll delivers the JWT.
+    startWaiting(store.extensionMode ?? 'auto');
     return;
   }
   if (status === 'error') {
     extMsg.value = store.error ?? 'Login via extension gagal. Pastikan server berjalan.';
+    extBusy.value = false;
   } else {
     extMsg.value = 'Extension belum terpasang atau tidak merespons.';
+    extBusy.value = false;
   }
-  extBusy.value = false;
+}
+
+async function handleExtensionDone() {
+  await ext.sendDone();
 }
 </script>
 
@@ -201,33 +202,36 @@ async function handleExtensionLogin() {
           {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
         </Button>
         <Button
-          v-if="extInstalled"
+          v-if="extInstalled && !extWaiting"
           size="lg"
           class="mt-6 h-11 w-full"
-          :disabled="extBusy || extWaiting"
+          :disabled="extBusy"
           @click="handleExtensionLogin"
         >
-          {{ extBusy ? 'Menghubungkan…' : extWaiting ? 'Menunggu login…' : 'Login via Extension' }}
+          {{ extBusy ? 'Menghubungkan…' : 'Login via Extension' }}
         </Button>
+        <div v-if="extWaiting" class="mt-6 flex flex-col gap-3">
+          <Alert v-if="extMode === 'auto'" class="border-warn/40 bg-warn/10 p-3">
+            <AlertDescription>
+              Menunggu login di tab yang baru terbuka. Tab dinavigasi otomatis melalui SSO → Kulon → SIAP
+              dan kamu akan dialihkan kembali ke aplikasi tanpa perlu klik ulang (tab ditutup setelah semua
+              sesi terverifikasi).
+            </AlertDescription>
+          </Alert>
+          <Alert v-else class="border-warn/40 bg-warn/10 p-3">
+            <AlertDescription>
+              Selesaikan login layanan di tab yang terbuka, lalu klik tombol di bawah untuk melanjutkan.
+            </AlertDescription>
+          </Alert>
+          <Button v-if="extMode === 'semi'" size="lg" class="w-full" @click="handleExtensionDone">
+            Selesai login
+          </Button>
+          <p v-else class="text-center text-xs text-ink-muted">Menunggu… tab akan ditutup otomatis.</p>
+        </div>
         <Alert v-if="!extInstalled && store.extensionError" class="mt-4 border-warn/40 bg-warn/10 p-3">
           <AlertDescription class="text-ink">
             {{ store.extensionError }} Muat ulang extension di <code>chrome://extensions</code>,
             lalu pastikan <code>VITE_EXTENSION_ID</code> di <code>web/.env</code> sama dengan ID extension.
-          </AlertDescription>
-        </Alert>
-        <Alert v-if="extWaiting && extRelogin" class="mt-4 border-warn/40 bg-warn/10 p-3">
-          <AlertDescription>
-            Salah satu sesi layanan (Kulon/SIAP) telah kedaluwarsa. Tab login baru terbuka dan akan
-            dinavigasi otomatis melalui SSO → Kulon → SIAP. Selesaikan setiap langkah di tab tersebut;
-            tab ditutup otomatis setelah semua sesi terverifikasi (atau setelah beberapa saat bila ada
-            langkah yang macet).
-          </AlertDescription>
-        </Alert>
-        <Alert v-else-if="extWaiting" class="mt-4 border-warn/40 bg-warn/10 p-3">
-          <AlertDescription>
-            Menunggu login di tab yang baru terbuka. Tab dinavigasi otomatis melalui SSO → Kulon → SIAP
-            dan kamu akan dialihkan kembali ke aplikasi tanpa perlu klik ulang (tab ditutup setelah semua
-            sesi terverifikasi).
           </AlertDescription>
         </Alert>
         <Alert v-if="extMsg" variant="destructive" class="mt-4 bg-danger/10 p-3">
