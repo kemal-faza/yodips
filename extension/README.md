@@ -16,9 +16,15 @@ halaman web app. Menggantikan peran `tools/capture-client/` untuk produksi.
 - Buka web app — tombol **Login via Extension** muncul (jika extension terpasang).
 - Klik sekali — extension membuka **satu tab** ke service yang cookie-nya belum ada
   (Kulon dulu, lalu SIAP di tab yang sama), redirect ke login Microsoft — user login/MFA.
-- `chrome.cookies.onChanged` mendeteksi cookie dan memicu handoff otomatis — tab **ditutup
-  otomatis** — JWT dikirim ke web app via content-script bridge — **masuk dashboard tanpa klik ulang**.
-- Jika login belum selesai dalam 3 menit per service, extension mengirim pesan error dan menutup tab.
+  Jika session SSO masih valid, extension **melewati halaman SSO** (membukanya tak mengubah
+  cookie → deadlock), langsung ke service yang basi.
+- `chrome.cookies.onChanged` (didukung periodic poll ~30s sbg safety net) mendeteksi cookie
+  dan memicu handoff otomatis — tab **ditutup otomatis** hanya setelah SSO+Kulon+SIAP
+  terverifikasi valid oleh backend — JWT dikirim ke web app via content-script bridge —
+  **masuk dashboard tanpa klik ulang**. Kalau ada layanan yang basi, hanya service itu
+  yang dibuka ulang (bukan semua dari awal).
+- Jika login belum selesai dalam 3 menit per service (atau ada langkah yang macet), extension
+  mengirim pesan error dan menutup tab.
 
 ## Konfigurasi
 

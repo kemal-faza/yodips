@@ -12,6 +12,7 @@ const proxy = () => inst.proxy as any;
 const extInstalled = ref(false);
 const extBusy = ref(false);
 const extWaiting = ref(false); // extension login tab is open; result arrives via window message
+const extRelogin = ref(false); // a stale Kulon session is being re-established via a fresh login tab
 const extMsg = ref<string | null>(null);
 let stopListening: (() => void) | null = null;
 
@@ -31,6 +32,11 @@ onMounted(async () => {
       proxy().$router?.push('/');
     } else if (payload?.status === 'error') {
       extMsg.value = payload.message ?? 'Login via extension gagal.';
+    } else if (payload?.status === 'started' && payload.relogin) {
+      // The background pivoted to a fresh Kulon login because the captured
+      // session was stale — keep waiting and explain why a new tab opened.
+      extWaiting.value = true;
+      extRelogin.value = true;
     }
   });
   if (store.isHandoffMode) {
@@ -56,15 +62,19 @@ async function handleLogin() {
 async function handleExtensionLogin() {
   extBusy.value = true;
   extMsg.value = null;
+  extRelogin.value = false;
   const status = await store.loginViaExtension();
   if (status === 'ok') {
     await proxy().$router?.push('/');
     extBusy.value = false;
     return;
   }
-  if (status === 'started') {
+  if (status === 'started' || status === 'relogin') {
     // Background opened a login tab and will notify us via the window bridge.
+    // 'relogin' means the captured Kulon session was stale — a fresh login tab
+    // is being opened to re-establish it.
     extWaiting.value = true;
+    extRelogin.value = status === 'relogin';
     extBusy.value = false;
     return;
   }
@@ -133,10 +143,18 @@ async function handleExtensionLogin() {
         >
           {{ extBusy ? 'Menghubungkan…' : 'Login via Extension' }}
         </Button>
-        <Alert v-if="extWaiting" class="mt-4 border-warn/40 bg-warn/10 p-3">
+        <Alert v-if="extWaiting && extRelogin" class="mt-4 border-warn/40 bg-warn/10 p-3">
           <AlertDescription>
-            Menunggu login di tab yang baru terbuka… selesai login di tab itu, lalu tab akan
-            tertutup otomatis dan kamu masuk ke dashboard.
+            Salah satu sesi layanan (Kulon/SIAP) telah kedaluwarsa. Tab login baru terbuka dan akan
+            dinavigasi otomatis melalui SSO → Kulon → SIAP. Selesaikan setiap langkah di tab tersebut;
+            tab ditutup otomatis setelah semua sesi terverifikasi (atau setelah beberapa saat bila ada
+            langkah yang macet).
+          </AlertDescription>
+        </Alert>
+        <Alert v-else-if="extWaiting" class="mt-4 border-warn/40 bg-warn/10 p-3">
+          <AlertDescription>
+            Menunggu login di tab yang baru terbuka. Tab dinavigasi otomatis melalui SSO → Kulon → SIAP;
+            tab ditutup setelah semua sesi terverifikasi (atau setelah beberapa saat bila ada langkah yang macet).
           </AlertDescription>
         </Alert>
         <Alert v-if="extMsg" variant="destructive" class="mt-4 bg-danger/10 p-3">

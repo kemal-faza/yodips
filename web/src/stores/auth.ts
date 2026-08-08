@@ -111,7 +111,7 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
-    async loginViaExtension(): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
+    async loginViaExtension(): Promise<'ok' | 'started' | 'relogin' | 'error' | 'not-installed'> {
       this.error = null;
       try {
         const resp = await sendToExtension({ action: 'handoff' });
@@ -121,8 +121,9 @@ export const useAuthStore = defineStore('auth', {
         }
         if (resp?.status === 'started') {
           // The background opened a login tab and will notify us via the window
-          // message bridge when the handoff completes.
-          return 'started';
+          // message bridge when the handoff completes. `relogin` signals that a
+          // stale Kulon session is being re-established (fresh login tab).
+          return resp.relogin ? 'relogin' : 'started';
         }
         this.error = resp?.message ?? 'Login via extension gagal.';
         return 'error';

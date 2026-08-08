@@ -38,7 +38,7 @@ export class AuthController {
 
   // Handoff is THE remote login mechanism (it issues the JWT), so it must NOT
   // require a JWT. DoS is mitigated by the aggressive @Throttle below.
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('session/handoff')
   sessionHandoff(@Body() dto: HandoffDto) {
     return this.authService.handleSessionHandoff(dto);

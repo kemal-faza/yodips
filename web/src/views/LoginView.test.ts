@@ -142,6 +142,33 @@ describe('LoginView', () => {
     expect(w.text()).toContain('Menunggu login di tab');
   });
 
+  it('shows the stale-session re-login notice when loginViaExtension returns relogin', async () => {
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue('relogin'),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
+    });
+    await flushPromises();
+    await w.findAll('button').find((b) => b.text().includes('Login via Extension'))!.trigger('click');
+    await flushPromises();
+    expect(w.text()).toContain('telah kedaluwarsa');
+  });
+
+  it('keeps waiting and shows the re-login notice when the window bridge reports a stale pivot', async () => {
+    const store = makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(true) });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
+    });
+    await flushPromises();
+    const handler = (store.onExtensionResult as any).mock.calls[0][0];
+    handler({ status: 'started', relogin: true });
+    await flushPromises();
+    expect(w.text()).toContain('telah kedaluwarsa');
+    expect(w.text()).toContain('Tab login baru terbuka');
+  });
+
   it('finishes handoff when the extension posts an ok result to the window', async () => {
     const router = { push: vi.fn() };
     const store = makeStore({

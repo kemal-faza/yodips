@@ -215,6 +215,19 @@ describe('extension login', () => {
     expect(store.token).toBeNull();
   });
 
+  it('loginViaExtension returns relogin when the background signals a stale session', async () => {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) =>
+          cb({ status: 'started', relogin: true }),
+      },
+    };
+    const store = useAuthStore();
+    expect(await store.loginViaExtension()).toBe('relogin');
+    expect(store.token).toBeNull();
+  });
+
   it('loginViaExtension returns error on handoff failure', async () => {
     stubChrome('error');
     const store = useAuthStore();
