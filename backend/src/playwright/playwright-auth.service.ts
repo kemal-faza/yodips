@@ -217,8 +217,10 @@ export class PlaywrightAuthService {
 
   /** Extract the sso/microsoft/kulon/siap cookie strings from a cookie list. */
   private buildSession(cookies: { name: string; value: string; domain: string }[], identity: string): CapturedSession {
+    // B6: match a subdomain OR its parent domain, so cookies set at the
+    // `.undip.ac.id` parent (common for cross-subdomain SSO) are not dropped.
     const ssoCookie = cookies
-      .filter((c) => c.domain.includes('sso.undip.ac.id'))
+      .filter((c) => this.matchesDomain(c.domain, 'sso.undip.ac.id'))
       .map((c) => `${c.name}=${c.value}`)
       .join('; ');
     const microsoftCookie = cookies
@@ -226,10 +228,7 @@ export class PlaywrightAuthService {
       .map((c) => `${c.name}=${c.value}`)
       .join('; ');
     const kulonCookie = this.kulonCookieString(cookies);
-    const siapCookie = cookies
-      .filter((c) => c.domain.includes('siap.undip.ac.id'))
-      .map((c) => `${c.name}=${c.value}`)
-      .join('; ');
+    const siapCookie = this.siapCookieString(cookies);
 
     return {
       identity,
@@ -239,6 +238,18 @@ export class PlaywrightAuthService {
       siapCookie,
       capturedAt: Date.now(),
     };
+  }
+
+  /**
+   * True when a cookie's domain is (a) the given `subdomain`, (b) its parent
+   * (`.<parent>` / bare `parent`), so parent-domain-scoped cookies are retained.
+   */
+  private matchesDomain(domain: string, subdomain: string): boolean {
+    return (
+      domain.includes(subdomain) ||
+      domain === subdomain.replace(/^[^.]+\./, '.') || // .undip.ac.id
+      domain === subdomain.replace(/^[^.]+\./, '')      // undip.ac.id
+    );
   }
 
   private sleep(ms: number): Promise<void> {

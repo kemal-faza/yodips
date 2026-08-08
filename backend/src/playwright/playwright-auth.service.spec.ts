@@ -50,6 +50,29 @@ describe('PlaywrightAuthService', () => {
     expect(chromium.connectOverCDP).toHaveBeenCalledWith('http://127.0.0.1:9223');
   });
 
+  it('captures parent-domain (.undip.ac.id) SSO cookies (B6)', async () => {
+    const mockContext = {
+      pages: () => [{ url: () => 'https://sso.undip.ac.id/dashboard', goto: jest.fn() }],
+      cookies: jest.fn().mockResolvedValue([
+        // SSO cookie scoped to the parent domain, not the subdomain.
+        { name: 'ci_session_sso', value: 'SSO', domain: '.undip.ac.id' },
+        { name: 'MoodleSession', value: 'KULON', domain: 'kulon2.undip.ac.id' },
+      ]),
+    };
+    (chromium.connectOverCDP as jest.Mock).mockResolvedValue({
+      contexts: () => [mockContext],
+      close: jest.fn(),
+    });
+
+    const session = await svc.captureSession(
+      'http://127.0.0.1:9223',
+      'https://sso.undip.ac.id/pages/dashboard',
+    );
+
+    // A parent-domain-set SSO cookie must not be silently dropped.
+    expect(session.ssoCookie).toContain('ci_session_sso=SSO');
+  });
+
   it('throws when no SSO session cookie found', async () => {
     const mockContext = {
       pages: () => [{ url: () => 'https://sso.undip.ac.id/dashboard', goto: jest.fn() }],

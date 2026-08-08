@@ -93,6 +93,61 @@ describe('getCourseContent (HTML fixture)', () => {
     const s13 = content.sections.find((s) => s.id === 13);
     expect(s13?.label).toBe('Pertemuan 11');
   });
+
+  it('captures items whose description contains nested divs before the link (B12)', async () => {
+    const svc = new KulonService();
+    // An activity-item whose intro has nested <div>s (HTML rich description)
+    // BEFORE the <a> link. The old div-pairing regex (`</div></div>`) would
+    // truncate the wrapper at the inner `</div></div>` and drop the link.
+    const html =
+      '<li id="section-2" data-sectionname="Pertemuan 2">' +
+      '<ul class="section ">' +
+      '<li class="activity modtype_assign ">' +
+      '<div class="activity-item focus-control " data-activityname="Tugas Berdokumen" data-region="activity-card">' +
+      '<div class="activity-instruction"><div><p>Kumpulkan laporan.</p></div></div>' +
+      '<a href="https://kulon2.undip.ac.id/mod/assign/view.php?id=50501" class="aalink">Tugas Berdokumen</a>' +
+      '</div>' +
+      '</li>' +
+      '</ul>' +
+      '</li>';
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/course/view.php?id=77',
+      text: async () => html,
+    }) as any;
+
+    const content = await svc.getCourseContent('cookie', 'sk', 77);
+    const s2 = content.sections.find((s) => s.id === 2);
+    const item = s2?.items[0];
+    expect(item?.kind).toBe('assign');
+    expect(item?.name).toBe('Tugas Berdokumen');
+    expect(item?.cmid).toBe(50501);
+  });
+
+  it('skips activity items that carry no module link (Moodle labels)', async () => {
+    const svc = new KulonService();
+    const html =
+      '<li id="section-1" data-sectionname="Pertemuan 1">' +
+      '<ul class="section ">' +
+      '<li class="activity modtype_label ">' +
+      '<div class="activity-item focus-control " data-activityname="Sekedar label" data-region="activity-card">' +
+      '<div class="activity-grid noname-grid"><div class="activity-altcontent"><p>Sekedar label</p></div></div>' +
+      '</div>' +
+      '</li>' +
+      '</ul>' +
+      '</li>';
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/course/view.php?id=77',
+      text: async () => html,
+    }) as any;
+    const content = await svc.getCourseContent('cookie', 'sk', 77);
+    const s1 = content.sections.find((s) => s.id === 1);
+    expect(s1?.items).toEqual([]);
+  });
 });
 
 describe('KulonService', () => {
@@ -334,9 +389,7 @@ describe('KulonService', () => {
     expect(detail.submission.status).toBe('graded');
     expect(detail.submission.grade).toBe(85);
     expect(detail.submission.maxGrade).toBe(100);
-    expect(detail.submission.submittedAt).toBe(
-      Math.floor(new Date(2026, 4, 7, 23, 50).getTime() / 1000),
-    );
+    expect(detail.submission.submittedAt).toBe(1778172600); // 7 May 2026 11:50 PM WIB
     expect(detail.kulonUrl).toContain('view.php?id=777');
   });
 
@@ -358,9 +411,7 @@ describe('KulonService', () => {
     expect(detail.submission.status).toBe('submitted');
     expect(detail.submission.grade).toBeNull();
     expect(detail.submission.maxGrade).toBeNull();
-    expect(detail.submission.submittedAt).toBe(
-      Math.floor(new Date(2026, 4, 7, 23, 50).getTime() / 1000),
-    );
+    expect(detail.submission.submittedAt).toBe(1778172600); // 7 May 2026 11:50 PM WIB
     expect(detail.files.some((f) => f.name === 'x.pdf')).toBe(true);
   });
 
@@ -617,6 +668,27 @@ describe('KulonService', () => {
       expect(id).toBe('24060121130000');
     });
 
+    it('prefers the NIM that precedes ": Public profile" when other 8+ digit numbers appear (B13)', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          url: 'https://kulon2.undip.ac.id/my/',
+          text: async () => '<input type="hidden" name="sesskey" value="sess123">',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [{ error: true, exception: { message: 'disabled' } }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          url: 'https://kulon2.undip.ac.id/user/profile.php',
+          // A phone/NIK-like number appears first; the NIM is right before the colon.
+          text: async () => '<head><title>080000000000 Anonim Uji 24060121130000: Public profile</title></head>',
+        });
+      const id = await svc.getSessionIdentity('MoodleSession=K');
+      expect(id).toBe('24060121130000');
+    });
+
     it('returns null when profile page has no NIM in title', async () => {
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
@@ -636,5 +708,30 @@ describe('KulonService', () => {
       const id = await svc.getSessionIdentity('MoodleSession=K');
       expect(id).toBeNull();
     });
+  });
+});
+
+describe('parseMoodleDate (B8 - WIB timezone)', () => {
+  let svc: KulonService;
+  beforeEach(() => {
+    svc = new KulonService();
+  });
+
+  it('interprets Moodle timestamps as WIB (UTC+7) regardless of server timezone', () => {
+    // "Thursday, 7 May 2026, 11:50 PM" rendered by Moodle in WIB (UTC+7).
+    // WIB-23:50 == UTC-16:50 on the same day. Expected epoch (seconds):
+    // Date.UTC(2026,4,7,16,50) = 1778172600.
+    const parsed = (svc as any).parseMoodleDate(
+      'Thursday, 7 May 2026, 11:50 PM',
+    );
+    expect(parsed).toBe(1778172600);
+  });
+
+  it('returns null for an empty value', () => {
+    expect((svc as any).parseMoodleDate('')).toBe(null);
+  });
+
+  it('returns null for a malformed value', () => {
+    expect((svc as any).parseMoodleDate('nonsense')).toBe(null);
   });
 });

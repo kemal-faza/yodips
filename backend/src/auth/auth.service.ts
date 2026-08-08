@@ -16,6 +16,10 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   // Reuse a stored session only if it was captured within this window.
   private readonly SESSION_TTL_MS = 30 * 60_000; // 30 minutes
+  // Live-probe validity is cached 60s so /me (called on polls) doesn't hammer
+  // the upstream Kulon/SIAP services on every request.
+  private readonly PROBE_CACHE_TTL_MS = 60_000;
+  private readonly probeCache = new Map<string, { valid: boolean; at: number }>();
 
   constructor(
     private readonly ssoAuth: SSOAuthService,
@@ -136,12 +140,19 @@ export class AuthService {
     return check.valid;
   }
 
-  /** Return the first fresh, still-valid stored session across all users. */
+  /**
+   * Return a fresh, still-valid stored session to reuse — but ONLY when exactly
+   * one session exists in the store (single-admin dev path). Once the store
+   * holds multiple users' sessions, silently handing any one of them out to an
+   * unauthenticated `/sso/capture` caller would leak User A's session to User B
+   * (B3). In the multi-user case we force the interactive flow instead.
+   */
   private async findReusableSession(): Promise<CapturedSession | null> {
-    for (const s of await this.sessionStore.all()) {
-      if (this.isFresh(s) && (await this.kulonProbeOk(s.kulonCookie))) {
-        return s;
-      }
+    const all = await this.sessionStore.all();
+    if (all.length !== 1) return null;
+    const [s] = all;
+    if (this.isFresh(s) && (await this.kulonProbeOk(s.kulonCookie))) {
+      return s;
     }
     return null;
   }
@@ -153,16 +164,20 @@ export class AuthService {
   async handleMicrosoftCallback(code: string, state?: string) {
     const { accessToken, sessionCookies } =
       await this.microsoftAuth.handleCallback(code, state);
-    // Store microsoft session server-side keyed by fixed identity; JWT carries only a reference.
-    await this.sessionStore.set('microsoft', {
-      identity: 'microsoft',
+    // Key the stored Microsoft session by the OIDC `state` (already validated
+    // for CSRF) instead of a shared literal — otherwise concurrent users would
+    // overwrite each other's session (B10). The `state` is unique per login
+    // attempt, so the JWT sub is a stable reference to that session.
+    const identity = state ? `microsoft:${state}` : 'microsoft';
+    await this.sessionStore.set(identity, {
+      identity,
       ssoCookie: '',
       microsoftCookie: sessionCookies,
       kulonCookie: '',
       siapCookie: '',
       capturedAt: Date.now(),
     });
-    const payload = { sub: 'microsoft', via: 'oidc' };
+    const payload = { sub: identity, via: 'oidc' };
     const jwt = await this.jwt.signAsync(payload);
     return { accessToken: jwt };
   }
@@ -175,32 +190,42 @@ export class AuthService {
   async handleSessionHandoff(dto: HandoffDto) {
     const check = await this.kulon.checkSessionValid(dto.kulonCookie);
     if (!check.valid) {
+      const code = check.reason === 'no-cookie' ? 'KULON_NO_COOKIE' : 'KULON_STALE';
       throw new HttpException(
-        { message: 'Session Kulon tidak valid' },
+        {
+          message: 'Session Kulon tidak valid — silakan login ulang',
+          code,
+          reason: check.reason,
+        },
         HttpStatus.UNAUTHORIZED,
       );
     }
     const derived = await this.kulon.getSessionIdentity(dto.kulonCookie);
-    const identity = derived ?? dto.identity;
+    // B4: never trust a client-supplied identity. If we cannot derive one from
+    // the Kulon session (the only verifiable source), fail instead of storing
+    // the attacker's cookie under a spoofed identity.
+    const identity = derived;
     if (!identity) {
       throw new HttpException(
-        { message: 'Identitas tidak dapat ditentukan' },
+        { message: 'Identitas tidak dapat ditentukan', code: 'IDENTITY_UNRESOLVED' },
         HttpStatus.BAD_REQUEST,
       );
     }
+    // B5: validate the SIAP cookie BEFORE storing so a stale cookie is never
+    // persisted (mirrors how an unverified Kulon cookie is stripped above).
+    const siapCheck = dto.siapCookie
+      ? await this.siap.checkSessionValid(dto.siapCookie)
+      : { valid: false, reason: 'no-cookie' as const };
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: dto.ssoCookie ?? '',
       microsoftCookie: dto.microsoftCookie ?? '',
       kulonCookie: dto.kulonCookie,
-      siapCookie: dto.siapCookie ?? '',
+      siapCookie: siapCheck.valid ? dto.siapCookie ?? '' : '',
       capturedAt: Date.now(),
     });
     const payload = { sub: identity, via: 'handoff' };
     const accessToken = await this.jwt.signAsync(payload);
-    const siapCheck = dto.siapCookie
-      ? await this.siap.checkSessionValid(dto.siapCookie)
-      : { valid: false, reason: 'no-cookie' as const };
     return {
       accessToken,
       capturedAt: Date.now(),
@@ -215,15 +240,47 @@ export class AuthService {
   async me(user: any) {
     const session = await this.sessionStore.get(user?.sub);
     const present = !!session;
+    // B1: live-probe validity (Kulon/SIAP) instead of only checking cookie
+    // presence. Results are cached ~60s so the boot gate & polls get accurate
+    // answers without hammering upstream on every /me.
+    const kulonValid =
+      present && session.kulonCookie
+        ? await this.probeValid(`${user.sub}:kulon`, session.kulonCookie, () =>
+            this.kulon.checkSessionValid(session.kulonCookie),
+          )
+        : false;
+    const siapValid =
+      present && session.siapCookie
+        ? await this.probeValid(`${user.sub}:siap`, session.siapCookie, () =>
+            this.siap.checkSessionValid(session.siapCookie),
+          )
+        : false;
     return {
       sub: user?.sub,
       authenticated: present,
       hasSso: present ? !!session.ssoCookie : false,
       hasMicrosoft: present ? !!session.microsoftCookie : false,
-      hasKulon: present ? !!session.kulonCookie : false,
-      hasSiap: present ? !!session.siapCookie : false,
-      complete:
-        present && !!session.ssoCookie && !!session.kulonCookie && !!session.siapCookie,
+      hasKulon: kulonValid,
+      hasSiap: siapValid,
+      complete: present && !!session.ssoCookie && kulonValid && siapValid,
     };
+  }
+
+  /**
+   * Run `probe()` and cache its boolean result for PROBE_CACHE_TTL_MS, keyed by
+   * `key` (which embeds the user sub + service). The cookie value acts as a
+   * natural invalidation signal: a changed cookie produces a different key.
+   */
+  private async probeValid(
+    key: string,
+    cookie: string,
+    probe: () => Promise<{ valid: boolean }>,
+  ): Promise<boolean> {
+    const cacheKey = `${key}:${cookie}`;
+    const hit = this.probeCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < this.PROBE_CACHE_TTL_MS) return hit.valid;
+    const result = await probe();
+    this.probeCache.set(cacheKey, { valid: result.valid, at: Date.now() });
+    return result.valid;
   }
 }

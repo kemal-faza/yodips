@@ -61,7 +61,7 @@ export class KulonController {
     }
     const assignmentId = Number(id);
     const courseModuleId = Number(cmid);
-    if (!Number.isInteger(assignmentId) || !Number.isInteger(courseModuleId) || assignmentId <= 0) {
+    if (!Number.isInteger(assignmentId) || !Number.isInteger(courseModuleId) || assignmentId <= 0 || courseModuleId <= 0) {
       throw new HttpException(
         { message: 'Detail tugas tidak ditemukan' },
         HttpStatus.NOT_FOUND,

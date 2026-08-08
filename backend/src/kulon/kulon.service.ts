@@ -255,7 +255,13 @@ export class KulonService {
       if (!res.ok) return null;
       const page = await res.text();
       const title = page.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
-      // NIM = 8-16 digit number appearing in the profile title.
+      // The page title is "Full Name NIM: Public profile". Prefer the number
+      // that directly precedes ": Public profile" — a phone/NIK-like number
+      // elsewhere in the title (home address, NIP, etc.) can be 8-16 digits and
+      // would otherwise be mistaken for the NIM (B13). Fall back to the first
+      // 8-16 digit run only if the ": Public profile" anchor is absent.
+      const anchored = title.match(/(\d{8,16})\s*:\s*Public profile/i);
+      if (anchored) return anchored[1];
       return title.match(/\b\d{8,16}\b/)?.[0] ?? null;
     } catch {
       return null;
@@ -610,8 +616,11 @@ export class KulonService {
 
   /**
    * Parse a Moodle "Last modified" value like
-   * `Thursday, 7 May 2026, 11:50 PM` into epoch seconds. Best-effort; null on
-   * any unexpected shape (caller maps to undefined).
+   * `Thursday, 7 May 2026, 11:50 PM` into epoch seconds. Moodle renders these
+   * in WIB (UTC+7), so interpret the wall-clock as WIB via Date.UTC minus the
+   * 7-hour offset — otherwise a server running in UTC (containers/cloud) shifts
+   * every timestamp by +7h (B8). Best-effort; null on any unexpected shape
+   * (caller maps to undefined).
    */
   private parseMoodleDate(text: string): number | null {
     if (!text) return null;
@@ -628,7 +637,10 @@ export class KulonService {
     const ampm = (m[6] || '').toUpperCase();
     if (ampm === 'PM' && hour < 12) hour += 12;
     if (ampm === 'AM' && hour === 12) hour = 0;
-    return Math.floor(new Date(Number(m[3]), month, Number(m[1]), hour, minute).getTime() / 1000);
+    // Date.UTC gives the instant UTC would show for that wall-clock; subtracting
+    // 7h converts from WIB (UTC+7) to the true UTC instant. Date.UTC normalizes
+    // hour < 0 / > 24 across day boundaries correctly.
+    return Math.floor((Date.UTC(Number(m[3]), month, Number(m[1]), hour, minute) - 7 * 3_600_000) / 1000);
   }
 
   /**
@@ -717,8 +729,12 @@ export class KulonService {
     }
 
     // Pass 2: wrapper item (nama dari data-activityname; icon f/<type> utk fileType).
+    // Capture from `data-activityname=` up to the NEXT activity-item or the
+    // enclosing section `</ul>` — NOT a div-pairing boundary. Moodle items embed
+    // nested <div>s (rich descriptions, activity-instruction, icon, etc.) that
+    // make `</div></div>`-based regexes truncate before the <a> link (B12).
     const itemRe =
-      /<div class="activity-item[^"]*" data-activityname="([^"]*)"([\s\S]*?)<\/div>\s*<\/div>/g;
+      /<div class="activity-item[^"]*" data-activityname="([^"]*)"([\s\S]*?)(?=<div class="activity-item|<\/ul>)/g;
     const linkRe = /<a[^>]+href="([^"]*\/mod\/([a-z]+)\/view\.php\?id=(\d+)[^"]*)"[^>]*>/;
     const iconRe = /<img[^>]+src="([^"]*\/f\/([A-Za-z0-9.\-]+))[?"]/;
 

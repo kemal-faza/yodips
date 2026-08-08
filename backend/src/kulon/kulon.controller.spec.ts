@@ -124,6 +124,18 @@ describe('KulonController', () => {
     });
   });
 
+  it('throws 404 when cmid is zero or negative (B9)', async () => {
+    sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
+    await expect(controller.getAssignmentDetail('42', '0', req() as any)).rejects.toMatchObject({
+      status: HttpStatus.NOT_FOUND,
+      response: { message: 'Detail tugas tidak ditemukan' },
+    });
+    await expect(controller.getAssignmentDetail('42', '-5', req() as any)).rejects.toMatchObject({
+      status: HttpStatus.NOT_FOUND,
+    });
+    expect(service.getAssignmentDetail).not.toHaveBeenCalled();
+  });
+
   it('throws 404 when service reports assignment not found', async () => {
     sessionStore.get.mockReturnValue({ kulonCookie: 'MoodleSession=K' });
     service.getAssignmentDetail.mockRejectedValue(new Error('ASSIGNMENT_NOT_FOUND'));
