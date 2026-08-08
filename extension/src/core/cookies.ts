@@ -1,6 +1,7 @@
 import type { CookieFlags, Service } from './contract.js';
 
 export const SSO_SESSION_COOKIE = 'ci_session_sso';
+export const SIAP_SESSION_COOKIE_RE = /^(?:sia_|sipp|siapp|ciapp_)/i;
 export const PHASE_CHAIN: Service[] = ['sso', 'kulon', 'siap'];
 
 export interface CookieP {
@@ -20,8 +21,8 @@ export function cookiePatternsForPhase(phase: Service): CookieP[] {
   }
   // 'siap'
   return [
-    { domain: 'siap.undip.ac.id', name: /^(?:sia_|sipp|ciapp_)/ },
-    { domain: 'undip.ac.id', name: /^(?:sia_|sipp|ciapp_)/ },
+    { domain: 'siap.undip.ac.id', name: SIAP_SESSION_COOKIE_RE },
+    { domain: 'undip.ac.id', name: SIAP_SESSION_COOKIE_RE },
   ];
 }
 
@@ -34,12 +35,13 @@ function isUndipParent(d: string): boolean {
   return d === 'undip.ac.id' || d.endsWith('.undip.ac.id');
 }
 
-/** A SIAP cookie: sessions usually live on siap.* but some deploy on the parent
- *  `.undip.ac.id` domain. On the parent, only name-precise matches count (so a
- *  bare `csrftoken` or the Kazan `ci_session_sso` cannot trip SIAP detection). */
+/** True only for a SIAP *session* cookie (name-precise). The bare domain is
+ *  NOT enough: siap.undip.ac.id also carries `cookiesession1` — an F5
+ *  load-balancer/sticky cookie set on ANY page load — which must never be
+ *  read as evidence of a logged-in SIAP session (it caused an endless
+ *  KULON_STALE loop: hasSiap stayed true pre-login). */
 function isSiapCookie(c: { name: string; domain: string }): boolean {
-  if (c.domain.includes('siap.undip.ac.id')) return true;
-  return isUndipParent(c.domain) && /^(?:sia_|siap|ciapp_)/i.test(c.name);
+  return (c.domain.includes('siap.undip.ac.id') || isUndipParent(c.domain)) && SIAP_SESSION_COOKIE_RE.test(c.name);
 }
 
 export interface CookieLite {

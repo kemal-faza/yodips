@@ -1,5 +1,5 @@
 import type { CookieFlags, FlowMode, OutboundStatus, Service } from './contract.js';
-import { phasesToClear } from './cookies.js';
+import { phasesToClear, SSO_SESSION_COOKIE, SIAP_SESSION_COOKIE_RE } from './cookies.js';
 
 export interface FlowState {
   core: 'idle' | 'authing' | 'handoff' | 'done' | 'error';
@@ -10,11 +10,15 @@ export interface FlowState {
   deadline: number;
   reloginCount: number;
   mode: FlowMode;
+  /** Until this timestamp (ms), COOKIE_SET is ignored: the login tab was just
+   *  navigated, and its landing page fires transient cookies (F5 `cookiesession1`,
+   *  CSRF, pre-auth MoodleSession) that are NOT evidence of a completed login. */
+  cooldownUntil: number;
 }
 
 export type FlowEvent =
   | { type: 'REQUEST'; mode: FlowMode }
-  | { type: 'COOKIE_SET' }
+  | { type: 'COOKIE_SET'; changed?: string[] }
   | { type: 'TAB_LOADED' }
   | { type: 'HANDOFF_OK'; token: string }
   | { type: 'HANDOFF_NEEDS_SERVICE'; service: Service }
@@ -29,6 +33,7 @@ export interface FlowDeps {
   now: () => number;
   MAX_RELOGIN: number;
   PHASE_TIMEOUT_MS: number;
+  NAV_COOLDOWN_MS: number;
   loginUrl: (s: Service) => string;
 }
 
@@ -44,11 +49,33 @@ export type FlowEffect =
   | { kind: 'focusAppTab' };
 
 export function initialState(mode: FlowMode = 'auto'): FlowState {
-  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode };
+  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, cooldownUntil: 0 };
 }
 
 export function attachTab(state: FlowState, tabId: number): FlowState {
   return { ...state, tabId, tabs: state.tabs.includes(tabId) ? state.tabs : [...state.tabs, tabId] };
+}
+
+/**
+ * Recover a persisted flow state that is no longer real before treating it as
+ * live:
+ *  - terminal `done`/`error` WITHOUT a live login tab → reset to idle (the next
+ *    REQUEST must start fresh; a stale core:'error' must not block a login).
+ *  - `authing`/`handoff` whose phase deadline already passed → zombie: a
+ *    killed service worker or an extension reload left the flow half-alive
+ *    (chrome.alarms do NOT survive a reload, so TIMEOUT never fired). Reset to
+ *    idle too, otherwise `active` stays true forever and no tab ever opens.
+ * Any other state (live flow, terminal with a still-relevant tab) is kept.
+ */
+export function normalizeState(state: FlowState, now: number): FlowState {
+  if (state.core === 'done' || state.core === 'error') {
+    if (state.tabId == null) return initialState(state.mode);
+    return state;
+  }
+  if ((state.core === 'authing' || state.core === 'handoff') && now > state.deadline) {
+    return initialState(state.mode);
+  }
+  return state;
 }
 
 export function redact(state: FlowState): { core: string; phase: string | null; tabId: number | null } {
@@ -61,6 +88,31 @@ function deadline(deps: FlowDeps): number {
 
 function clearFor(service: Service): FlowEffect[] {
   return phasesToClear(service).map((s) => ({ kind: 'clearCookies' as const, service: s }));
+}
+
+const KULON_SESSION_COOKIE_RE = /^MoodleSession/;
+
+/**
+ * A `COOKIE_SET` event may carry the names of the cookies that actually
+ * changed (from `chrome.cookies.onChanged`). Advance ONLY when that set names
+ * the CURRENT phase's real session cookie — transient cookies the login page
+ * drops on load (F5 `cookiesession1`, CSRF, pre-auth MoodleSession, pre-auth
+ * guest `ci_session_sso`) are exactly what used to trigger endless premature
+ * handoffs before the user ever logged in.
+ *
+ * `changed` stays absent for the POLL safety net. For `sso` the poll must
+ * still NOT advance: `ci_session_sso` exists even on a guest session cookie
+ * (present BEFORE login), so presence proves nothing. Kulon/SIAP on the other
+ * hand are only ever entered AFTER an SSO login (or a validated handoff), so
+ * their flag checks are meaningful — the poll may finish them.
+ */
+function sessionCookieChanged(event: Extract<FlowEvent, { type: 'COOKIE_SET' }>, phase: Service | null): boolean {
+  const changed = event.changed;
+  if (!changed || changed.length === 0) return phase !== 'sso'; // poll: flags decide EXCEPT sso
+  if (phase === 'sso') return changed.includes(SSO_SESSION_COOKIE);
+  if (phase === 'kulon') return changed.some((n) => KULON_SESSION_COOKIE_RE.test(n));
+  if (phase === 'siap') return changed.some((n) => SIAP_SESSION_COOKIE_RE.test(n));
+  return true;
 }
 
 export function advance(
@@ -83,7 +135,7 @@ export function advance(
     const base: FlowState = { ...initialState(event.mode), appTabId: state.appTabId ?? null };
     if (!flags.hasKulon) {
       return {
-        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps) },
+        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS },
         effects: [
           ...clearFor('sso'),
           { kind: 'openTab', url: deps.loginUrl('sso') },
@@ -91,7 +143,7 @@ export function advance(
         ],
       };
     }
-    return { state: { ...base, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
+    return { state: { ...base, core: 'handoff', deadline: deadline(deps) }, effects: [{ kind: 'postHandoff' }] };
   }
 
   if (event.type === 'TIMEOUT' && (state.core === 'authing' || state.core === 'handoff')) {
@@ -109,11 +161,23 @@ export function advance(
     const triggered = state.mode === 'semi' ? event.type === 'USER_DONE' : event.type === 'COOKIE_SET';
     if (!triggered) return { state, effects: [] };
 
+    // Post-navigation cooldown: the login tab's landing page fires transient
+    // cookies immediately on load (F5 cookiesession1, CSRF, guest sessions).
+    // Ignore ALL cookie events until the page settles, so the user actually
+    // gets time to log in before the cascade starts judging cookies again.
+    if (event.type === 'COOKIE_SET' && deps.now() < state.cooldownUntil) return { state, effects: [] };
+
+    // Auto mode: only a change of the CURRENT phase's real session cookie is
+    // allowed to advance — csrf/guest/LB cookie events must not.
+    if (state.mode === 'auto' && event.type === 'COOKIE_SET' && !sessionCookieChanged(event, state.service)) {
+      return { state, effects: [] };
+    }
+
     const svc = state.service;
     if (svc === 'sso') {
       if (!flags.hasSso) return { state, effects: [] };
       return {
-        state: { ...state, service: 'kulon', deadline: deadline(deps) },
+        state: { ...state, service: 'kulon', deadline: deadline(deps), cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS },
         effects: [
           { kind: 'navigateTab', url: deps.loginUrl('kulon') },
           { kind: 'scheduleTimers', deadline: deadline(deps) },
@@ -124,7 +188,7 @@ export function advance(
       if (!flags.hasKulon) return { state, effects: [] };
       if (!flags.hasSiap) {
         return {
-          state: { ...state, service: 'siap', deadline: deadline(deps) },
+          state: { ...state, service: 'siap', deadline: deadline(deps), cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS },
           effects: [
             { kind: 'navigateTab', url: deps.loginUrl('siap') },
             { kind: 'scheduleTimers', deadline: deadline(deps) },
@@ -152,7 +216,7 @@ export function advance(
         };
       case 'HANDOFF_NEEDS_SERVICE':
         return {
-          state: { ...state, core: 'authing', service: event.service, deadline: deadline(deps) },
+          state: { ...state, core: 'authing', service: event.service, deadline: deadline(deps), cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS },
           effects: [
             ...clearFor(event.service),
             { kind: 'navigateTab', url: deps.loginUrl(event.service) },
@@ -161,14 +225,12 @@ export function advance(
         };
       case 'HANDOFF_STALE': {
         if (state.reloginCount < deps.MAX_RELOGIN) {
-          // The Kulon session was rejected as stale (KULON_STALE). If the
-          // central Kazan SSO session is still live, re-establish Kulon
-          // DIRECTLY — the SSO session auto-propagates into a fresh Kulon
-          // session, and reopening the SSO page would change no cookie
-          // (deadlock until timeout). Only when SSO itself is gone do we
-          // re-auth from the root. Reuse the SAME login tab (navigate, not
-          // closeAllTabs+openTab) so the user never sees the tab slam shut.
-          const target: Service = flags.hasSso ? 'kulon' : 'sso';
+          // The Kulon session was rejected as stale (KULON_STALE). The browser
+          // holds stale cookies (`ci_session_sso` may still present) whose
+          // PRESENCE proves nothing — so re-auth ALWAYS from the SSO login page
+          // (never a "smart" kulon hop: that hop is what looped this flow).
+          // Reuse the SAME login tab (navigate, not closeAllTabs+openTab).
+          const target: Service = 'sso';
           const nav: FlowEffect =
             state.tabId != null
               ? { kind: 'navigateTab', url: deps.loginUrl(target) }
@@ -180,6 +242,7 @@ export function advance(
               service: target,
               reloginCount: state.reloginCount + 1,
               deadline: deadline(deps),
+              cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS,
             },
             effects: [
               ...clearFor(target),

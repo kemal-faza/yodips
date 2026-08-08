@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { initialState, advance, attachTab, type FlowState, type FlowDeps } from './flow.js';
+import { initialState, advance, attachTab, normalizeState, type FlowState, type FlowDeps } from './flow.js';
 
 const LOGIN = { sso: 'SSO_URL', kulon: 'KULON_URL', siap: 'SIAP_URL' };
-const D: FlowDeps = { flags: { hasSso: false, hasKulon: false, hasSiap: false }, now: () => 1_000_000, MAX_RELOGIN: 2, PHASE_TIMEOUT_MS: 1000, loginUrl: (s) => LOGIN[s] };
+const D: FlowDeps = { flags: { hasSso: false, hasKulon: false, hasSiap: false }, now: () => 1_000_000, MAX_RELOGIN: 2, PHASE_TIMEOUT_MS: 1000, NAV_COOLDOWN_MS: 3000, loginUrl: (s) => LOGIN[s] };
 
 function st(mode: 'auto' | 'semi' = 'auto'): FlowState {
   return initialState(mode);
@@ -11,6 +11,9 @@ function st(mode: 'auto' | 'semi' = 'auto'): FlowState {
 function auth(svc: FlowState['service'], mode: 'auto' | 'semi' = 'auto', tabId = 7): FlowState {
   return { ...st(mode), core: 'authing', service: svc, tabId };
 }
+
+/** COOKIE_SET carries the name(s) of cookies that actually changed. */
+const COOKIE_SET = (changed: string[] | undefined = ['ci_session_sso']) => ({ type: 'COOKIE_SET' as const, changed });
 
 describe('REQUEST', () => {
   it('starts authing:sso with no kulon cookie', () => {
@@ -22,6 +25,7 @@ describe('REQUEST', () => {
   it('goes to handoff when kulon cookie present (verify before deciding)', () => {
     const r = advance(st(), { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
     expect(r.state.core).toBe('handoff');
+    expect(r.state.deadline).toBe(D.now() + D.PHASE_TIMEOUT_MS);
     expect(r.effects).toContainEqual({ kind: 'postHandoff' });
   });
   it('resets from a terminal core:"error" state (stale persisted login failure)', () => {
@@ -54,24 +58,52 @@ describe('REQUEST', () => {
 });
 
 describe('COOKIE_SET cascade (mode auto)', () => {
-  it('sso → navigate kulon', () => {
-    const r = advance(auth('sso'), { type: 'COOKIE_SET' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+  it('sso → navigate kulon when the SSO session cookie actually changed', () => {
+    const r = advance(auth('sso'), COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
     expect(r.state.service).toBe('kulon');
     expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'KULON_URL' });
   });
+  it('sso does NOT advance on a mere csrf/transient cookie change', () => {
+    const r = advance(auth('sso'), COOKIE_SET(['csrf_cookie_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.service).toBe('sso');
+    expect(r.effects).toEqual([]);
+  });
+  it('sso ignores cookie events during the post-navigation cooldown', () => {
+    const s = { ...auth('sso'), cooldownUntil: 1_000_000 + 2000 } as FlowState;
+    const r = advance(s, COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.service).toBe('sso');
+    expect(r.effects).toEqual([]);
+  });
   it('kulon with siap → handoff', () => {
-    const r = advance(auth('kulon'), { type: 'COOKIE_SET' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+    const r = advance(auth('kulon'), COOKIE_SET(['MoodleSession']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
     expect(r.state.core).toBe('handoff');
   });
+  it('kulon with siap ignores an LB/transient cookie change', () => {
+    const r = advance(auth('kulon'), COOKIE_SET(['cookiesession1']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+    expect(r.state.core).toBe('authing');
+    expect(r.effects).toEqual([]);
+  });
   it('kulon without siap → navigate siap', () => {
-    const r = advance(auth('kulon'), { type: 'COOKIE_SET' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
+    const r = advance(auth('kulon'), COOKIE_SET(['MoodleSession']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
     expect(r.state.service).toBe('siap');
+  });
+  it('siap → handoff when a SIAP session cookie changed', () => {
+    const r = advance(auth('siap'), COOKIE_SET(['sia_app_session']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+    expect(r.state.core).toBe('handoff');
+  });
+  it('siap ignores a non-session cookie change', () => {
+    const r = advance(auth('siap'), COOKIE_SET(['cookiesession1']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+    expect(r.state.core).toBe('authing');
+  });
+  it('COOKIE_SET without a payload (poll safety net) still advances on flags', () => {
+    const r = advance(auth('sso'), COOKIE_SET(undefined), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.service).toBe('kulon');
   });
 });
 
 describe('mode semi ignores COOKIE_SET, waits USER_DONE', () => {
-  it('COOKIE_SET does not advance without USER_DONE', () => {
-    const r = advance(auth('sso', 'semi'), { type: 'COOKIE_SET' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+  it('COOKIE_SET does not advance without USER_DONE even with a session-cookie payload', () => {
+    const r = advance(auth('sso', 'semi'), COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
     expect(r.state.service).toBe('sso');
     expect(r.effects).toEqual([]);
   });
@@ -96,16 +128,19 @@ describe('handoff decisions', () => {
     expect(r.state.service).toBe('siap');
     expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'siap' });
   });
-  it('HANDOFF_STALE with live SSO → re-auth kulon in the SAME tab (no closeAllTabs, no sso clear)', () => {
+  it('HANDOFF_STALE always re-auths sso in the SAME tab (no closeAllTabs; clear downstream + upstream)', () => {
     const s = { ...st(), core: 'handoff', tabId: 7, reloginCount: 0 } as FlowState;
     const r = advance(s, { type: 'HANDOFF_STALE' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
-    expect(r.state.service).toBe('kulon');
+    expect(r.state.service).toBe('sso');
     expect(r.state.reloginCount).toBe(1);
     expect(r.effects).not.toContainEqual({ kind: 'closeAllTabs' });
-    expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'KULON_URL' });
-    // down gust downstream kulon+siap — the live SSO cookie must survive
+    expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'SSO_URL' });
+    // Presence of ci_session_sso does NOT prove SSO still live — stale cookies
+    // were the whole problem, so the re-auth target must never assume hasSso.
+    // Even with hasSso:true the target is sso, clearing the full chain.
+    expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'sso' });
     expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'kulon' });
-    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'sso' });
+    expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'siap' });
   });
   it('HANDOFF_STALE without live SSO → re-auth sso in the same tab', () => {
     const r = advance({ ...st(), core: 'handoff', tabId: 7, reloginCount: 0 } as FlowState, { type: 'HANDOFF_STALE' }, D);
@@ -147,5 +182,33 @@ describe('attachTab', () => {
     const base = attachTab({ ...st(), core: 'authing', service: 'sso' }, 9);
     const again = attachTab(base, 9);
     expect(again.tabs).toEqual([9]);
+  });
+});
+
+describe('normalizeState (zombie-flow recovery)', () => {
+  const NOW = 2_000_000;
+  it('keeps an idle state as-is', () => {
+    expect(normalizeState(st(), NOW)).toEqual(st());
+  });
+  it('resets terminal done/error without a tab to idle', () => {
+    expect(normalizeState({ ...st(), core: 'error', service: 'kulon', tabId: null } as FlowState, NOW).core).toBe('idle');
+    expect(normalizeState({ ...st(), core: 'done', service: 'siap', tabId: null } as FlowState, NOW).core).toBe('idle');
+  });
+  it('keeps terminal state when a tab is still tracked (flow may be finishing)', () => {
+    expect(normalizeState({ ...st(), core: 'done', service: 'siap', tabId: 7 } as FlowState, NOW).core).toBe('done');
+  });
+  it('resets a zombie authing flow whose deadline already passed (SW killed / extension reloaded)', () => {
+    const zombie = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW - 1 } as FlowState;
+    const r = normalizeState(zombie, NOW);
+    expect(r.core).toBe('idle');
+    expect(r.tabId).toBeNull();
+  });
+  it('resets a zombie handoff flow whose deadline already passed', () => {
+    const zombie = { ...st(), core: 'handoff', service: null, tabId: 7, deadline: NOW - 1 } as FlowState;
+    expect(normalizeState(zombie, NOW).core).toBe('idle');
+  });
+  it('keeps an ACTIVE authing flow whose deadline is still in the future', () => {
+    const live = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000 } as FlowState;
+    expect(normalizeState(live, NOW).core).toBe('authing');
   });
 });

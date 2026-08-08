@@ -19,6 +19,15 @@ describe('evaluateCookies', () => {
     expect(evaluateCookies([SSO_SESS, SIAP]).hasKulon).toBe(false);
     expect(evaluateCookies([SSO_SESS, KULON, SIAP]).hasKulon).toBe(true);
   });
+  it('ignores a load-balancer cookie on the siap domain as evidence of a SIAP session', () => {
+    const LB = { name: 'cookiesession1', domain: 'siap.undip.ac.id', value: 'x' };
+    expect(evaluateCookies([LB]).hasSiap).toBe(false);
+  });
+  it('keys SIAP on a session-named cookie (sia_/sipp/ciapp_) on siap or parent domain', () => {
+    expect(evaluateCookies([{ name: 'sia_app_session', domain: 'siap.undip.ac.id', value: 'y' }]).hasSiap).toBe(true);
+    expect(evaluateCookies([{ name: 'sipp_session', domain: 'undip.ac.id', value: 'z' }]).hasSiap).toBe(true);
+    expect(evaluateCookies([{ name: 'csrftoken', domain: 'siap.undip.ac.id', value: 'w' }]).hasSiap).toBe(false);
+  });
 });
 
 describe('cookiesToStr', () => {

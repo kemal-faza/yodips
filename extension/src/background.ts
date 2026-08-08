@@ -4,7 +4,7 @@
 // read, tab open/navigate/close, storage, HTTP handoff) live ONLY here — the
 // core never touches `chrome`.
 import {
-  initialState, advance, attachTab, redact,
+  initialState, advance, attachTab, redact, normalizeState,
   type FlowState, type FlowEvent, type FlowEffect,
 } from './core/flow.js';
 import { evaluateCookies, buildHandoffBody, cookiePatternsForPhase } from './core/cookies.js';
@@ -20,6 +20,11 @@ const LAST_RESULT_KEY = 'lastHandoffResult';
 const POLL_PERIOD_MIN = 0.5;
 const MAX_RELOGIN = 2;
 const PHASE_TIMEOUT_MS = 3 * 60_000;
+const NAV_COOLDOWN_MS = 3000;
+// Debounce window for cookies.onChanged: a page load fires many undip cookie
+// events (session, csrf, F5 load-balancer) in a burst. Coalesce them into ONE
+// COOKIE_SET carrying the unique changed names instead of N serialized runs.
+const COOKIE_DEBOUNCE_MS = 400;
 
 const loginUrl = (s: Service): string =>
   s === 'sso' ? SSO_LOGIN_URL : s === 'kulon' ? buildKulonTicketUrl() : buildSiapTicketUrl();
@@ -27,17 +32,26 @@ const loginUrl = (s: Service): string =>
 async function getState(): Promise<FlowState> {
   const res = await chrome.storage.local.get(STATE_KEY);
   const state: FlowState = res[STATE_KEY] ?? initialState('auto');
-  // A terminal state (done/error) has no live login tab; treat it as idle so
-  // the next REQUEST always starts a fresh flow. Without this, a stale
-  // core:'error' persisted after a failed login blocks every later login
-  // (REQUEST was only handled from idle).
-  if ((state.core === 'done' || state.core === 'error') && state.tabId == null) {
-    return initialState(state.mode);
-  }
-  return state;
+  // Recover persisted states that are no longer real: terminal done/error
+  // without a live tab, or an authing/handoff flow whose phase deadline
+  // already passed (SW killed / extension reload — alarms do not survive a
+  // reload, so TIMEOUT never fired and the flow stays half-alive forever,
+  // blocking every later login with `active:true` and no tab ever opening).
+  return normalizeState(state, Date.now());
 }
 async function setState(s: FlowState): Promise<void> {
   await chrome.storage.local.set({ [STATE_KEY]: s });
+}
+
+/** True when the given tab still exists in the browser. */
+async function tabAlive(tabId: number | null): Promise<boolean> {
+  if (tabId == null) return false;
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 async function getServerUrl(): Promise<string> {
   const res = await chrome.storage.sync.get(SERVER_KEY);
@@ -198,7 +212,7 @@ async function runFlow(initialEvent: FlowEvent): Promise<void> {
       const state = await getState();
       const cookies = await chrome.cookies.getAll({});
       const flags = evaluateCookies(cookies);
-      const deps = { flags, now: Date.now, MAX_RELOGIN, PHASE_TIMEOUT_MS, loginUrl };
+      const deps = { flags, now: Date.now, MAX_RELOGIN, PHASE_TIMEOUT_MS, NAV_COOLDOWN_MS, loginUrl };
       console.info('[Undip SSO] transition', ev.type, { ...redact(state), flags });
       const { state: next, effects } = advance(state, ev, deps);
 
@@ -246,12 +260,22 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
           return void sendResponse({ status: 'started' });
         }
         case 'handoff': {
-          const state = await getState();
+          let state = await getState();
           // A fresh flow must not inherit a stale completed result (e.g. a
           // previous login's JWT surfacing via the status poll).
           await chrome.storage.session.remove(LAST_RESULT_KEY).catch(() => {});
+          // Zombie recovery: an "active" flow whose login tab no longer exists
+          // (user closed the tab, or the SW was killed mid-flow) can never
+          // finish — its deadline hasn't passed yet, so getState() keeps it
+          // alive. Reset to idle so the REQUEST below opens a fresh tab
+          // instead of answering "started" forever with no tab ever opening.
           const active = state.core === 'authing' || state.core === 'handoff';
-          if (active) {
+          if (active && !(await tabAlive(state.tabId))) {
+            console.info('[Undip SSO] zombie flow: login tab gone — resetting', { core: state.core, tabId: state.tabId });
+            state = initialState(state.mode);
+          }
+          const stillActive = state.core === 'authing' || state.core === 'handoff';
+          if (stillActive) {
             return void sendResponse({ status: 'started', mode: state.mode, message: 'Login sedang berjalan.' });
           }
           await setState({ ...state, appTabId });
@@ -286,9 +310,25 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   return true;
 });
 
+// Debounce buffer for cookies.onChanged. The state machine must not see every
+// cookie event of a page load (session + csrf + F5 load-balancer cookies all
+// fire in the same burst) — only ONE COOKIE_SET with the unique changed names.
+let pendingCookieNames: string[] = [];
+let cookieDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushCookieChange() {
+  cookieDebounceTimer = null;
+  const names = [...new Set(pendingCookieNames)];
+  pendingCookieNames = [];
+  if (names.length === 0) return;
+  void runFlow({ type: 'COOKIE_SET', changed: names }).catch(() => {});
+}
+
 chrome.cookies.onChanged.addListener((info) => {
   if (!info.cookie?.domain?.includes('undip.ac.id')) return;
-  void runFlow({ type: 'COOKIE_SET' }).catch(() => {});
+  if (info.cookie.name) pendingCookieNames.push(info.cookie.name);
+  if (cookieDebounceTimer) clearTimeout(cookieDebounceTimer);
+  cookieDebounceTimer = setTimeout(flushCookieChange, COOKIE_DEBOUNCE_MS);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
