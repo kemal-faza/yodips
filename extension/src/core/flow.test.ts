@@ -24,6 +24,33 @@ describe('REQUEST', () => {
     expect(r.state.core).toBe('handoff');
     expect(r.effects).toContainEqual({ kind: 'postHandoff' });
   });
+  it('resets from a terminal core:"error" state (stale persisted login failure)', () => {
+    // Reproduces the stuck-state bug: a previous failed flow left core:'error'
+    // in storage.local; the next REQUEST must start a fresh flow anyway.
+    const stale = { ...st(), core: 'error', service: 'kulon', tabId: null } as FlowState;
+    const r = advance(stale, { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: false, hasKulon: false, hasSiap: false } });
+    expect(r.state.core).toBe('authing');
+    expect(r.state.service).toBe('sso');
+    expect(r.state.reloginCount).toBe(0);
+    expect(r.effects).toEqual(expect.arrayContaining([{ kind: 'openTab', url: 'SSO_URL' }]));
+  });
+  it('resets from a terminal core:"done" state too', () => {
+    const stale = { ...st(), core: 'done', service: 'siap', tabId: 7 } as FlowState;
+    const r = advance(stale, { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: false, hasKulon: false, hasSiap: false } });
+    expect(r.state.core).toBe('authing');
+    expect(r.state.service).toBe('sso');
+  });
+  it('is a no-op while a flow is already active (no second tab)', () => {
+    const r = advance(auth('sso'), { type: 'REQUEST', mode: 'auto' }, D);
+    expect(r.state.core).toBe('authing');
+    expect(r.state.service).toBe('sso');
+    expect(r.effects).toEqual([]);
+  });
+  it('preserves appTabId when resetting from a terminal state', () => {
+    const stale = { ...st(), core: 'error', service: 'kulon', tabId: null, appTabId: 42 } as FlowState;
+    const r = advance(stale, { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: false, hasKulon: false, hasSiap: false } });
+    expect(r.state.appTabId).toBe(42);
+  });
 });
 
 describe('COOKIE_SET cascade (mode auto)', () => {

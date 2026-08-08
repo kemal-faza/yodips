@@ -74,10 +74,16 @@ export function advance(
     return { state: initialState(state.mode), effects: [{ kind: 'clearTimers' }, { kind: 'closeAllTabs' }] };
   }
 
-  if (event.type === 'REQUEST' && state.core === 'idle') {
+  // REQUEST is an explicit "start a fresh login" command: it restarts from ANY
+  // terminal state (idle/done/error) — a stale persisted `core:'error'` from a
+  // previous failed flow must not block the next login. It is a no-op only
+  // while a flow is already active (prevents a second login tab).
+  if (event.type === 'REQUEST' && state.core !== 'authing' && state.core !== 'handoff') {
+    // Fresh flow base preserves the SPA tab id so results can be delivered.
+    const base: FlowState = { ...initialState(event.mode), appTabId: state.appTabId ?? null };
     if (!flags.hasKulon) {
       return {
-        state: { ...initialState(event.mode), mode: event.mode, core: 'authing', service: 'sso', deadline: deadline(deps) },
+        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps) },
         effects: [
           ...clearFor('sso'),
           { kind: 'openTab', url: deps.loginUrl('sso') },
@@ -85,7 +91,7 @@ export function advance(
         ],
       };
     }
-    return { state: { ...initialState(event.mode), mode: event.mode, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
+    return { state: { ...base, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
   }
 
   if (event.type === 'TIMEOUT' && (state.core === 'authing' || state.core === 'handoff')) {
