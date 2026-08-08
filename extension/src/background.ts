@@ -88,12 +88,28 @@ async function sendToApp(appTabId: number | null, payload: OutboundStatus): Prom
 }
 
 /**
+ * Non-secret cookie diagnostics: WHICH cookie names exist per service at the
+ * moment of the handoff (values are NEVER logged). Lets us see whether the
+ * browser actually holds a MoodleSession (and on which domain) when the
+ * backend rejects it as stale.
+ */
+function cookieNamesDiag(cookies: { name: string; domain: string }[]) {
+  return {
+    kulon: cookies.filter((c) => c.domain.includes('kulon2.undip.ac.id')).map((c) => ({ name: c.name, domain: c.domain })),
+    sso: cookies.filter((c) => c.domain.includes('sso.undip.ac.id')).map((c) => ({ name: c.name, domain: c.domain })),
+    siap: cookies.filter((c) => c.domain.includes('siap.undip.ac.id')).map((c) => ({ name: c.name, domain: c.domain })),
+    microsoft: cookies.filter((c) => c.domain.includes('microsoftonline.com') || c.domain.includes('login.live.com')).map((c) => ({ name: c.name, domain: c.domain })),
+  };
+}
+
+/**
  * Run the handoff HTTP call and translate the backend result into the next
  * state-machine event. Called by the `postHandoff` effect, which re-enters the
  * loop with this event to keep everything within a single lock pass.
  */
 async function postHandoffDecision(state: FlowState): Promise<FlowEvent> {
   const cookies = await chrome.cookies.getAll({});
+  console.info('[Undip SSO] handoff cookie names', JSON.stringify(cookieNamesDiag(cookies)));
   const serverUrl = (await getServerUrl()).replace(/\/+$/, '');
   const raw = await fetchHandoff(`${serverUrl}/api/auth/session/handoff`, buildHandoffBody(cookies));
   console.info('[Undip SSO] handoff', summarizeHandoff(raw));
@@ -183,7 +199,7 @@ async function runFlow(initialEvent: FlowEvent): Promise<void> {
       const cookies = await chrome.cookies.getAll({});
       const flags = evaluateCookies(cookies);
       const deps = { flags, now: Date.now, MAX_RELOGIN, PHASE_TIMEOUT_MS, loginUrl };
-      console.info('[Undip SSO] transition', ev.type, redact(state));
+      console.info('[Undip SSO] transition', ev.type, { ...redact(state), flags });
       const { state: next, effects } = advance(state, ev, deps);
 
       let current = next;
