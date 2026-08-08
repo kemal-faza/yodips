@@ -4,7 +4,7 @@
 // read, tab open/navigate/close, storage, HTTP handoff) live ONLY here — the
 // core never touches `chrome`.
 import {
-  initialState, advance, attachTab,
+  initialState, advance, attachTab, redact,
   type FlowState, type FlowEvent, type FlowEffect,
 } from './core/flow.js';
 import { evaluateCookies, buildHandoffBody, cookiePatternsForPhase } from './core/cookies.js';
@@ -143,24 +143,40 @@ async function applyEffect(
 }
 
 let runBusy = false;
+// Event that arrived while the flow was busy — replay it right after the
+// current pass instead of silently dropping it (a dropped COOKIE_SET used to
+// stall the cascade until the next alarm tick).
+let pendingEvent: FlowEvent | null = null;
+
 /**
  * Single serialized entry point. Reads state + cookies, feeds the event into
  * the pure state machine, applies generated effects, and — when an effect
  * yields a follow-up event (e.g. HANDOFF_*) — continues within the same pass.
+ * Any event that arrives while this runs is parked in `pendingEvent` and
+ * drained immediately after, so no cookie change is ever lost.
  */
 async function runFlow(initialEvent: FlowEvent): Promise<void> {
-  if (runBusy) return;
+  if (runBusy) {
+    pendingEvent = initialEvent;
+    return;
+  }
   runBusy = true;
   try {
     let event: FlowEvent | null = initialEvent;
     let guard = 0;
-    while (event && guard < 10) {
+    // Process the initial event, its follow-up chain (handoff decisions), AND
+    // any events that arrived while we were inside effects — `pendingEvent` is
+    // drained inline so nothing is lost and nothing reconstructs the lock.
+    while ((event !== null || pendingEvent !== null) && guard < 20) {
       guard++;
+      const ev: FlowEvent = event ?? (pendingEvent as FlowEvent);
+      pendingEvent = null; // consumed below (fresh ones re-arrive via listeners)
       const state = await getState();
       const cookies = await chrome.cookies.getAll({});
       const flags = evaluateCookies(cookies);
       const deps = { flags, now: Date.now, MAX_RELOGIN, PHASE_TIMEOUT_MS, loginUrl };
-      const { state: next, effects } = advance(state, event, deps);
+      console.info('[Undip SSO] transition', ev.type, redact(state));
+      const { state: next, effects } = advance(state, ev, deps);
 
       let current = next;
       let follow: FlowEvent | null = null;
@@ -170,7 +186,10 @@ async function runFlow(initialEvent: FlowEvent): Promise<void> {
         current = r.state;
       }
       await setState(current);
-      event = follow;
+      // Follow-up (handoff → HANDOFF_*) takes precedence; otherwise pick up a
+      // parked event so e.g. a cookie change mid-pass is not lost.
+      event = follow ?? pendingEvent;
+      if (event !== follow) pendingEvent = null;
     }
   } finally {
     runBusy = false;
@@ -180,6 +199,7 @@ async function runFlow(initialEvent: FlowEvent): Promise<void> {
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   void (async () => {
     const appTabId = sender?.tab?.id ?? null;
+    console.info('[Undip SSO] external action', (message as { action?: string })?.action, { senderTabId: appTabId });
     try {
       switch ((message as { action?: string })?.action) {
         case 'ping':
@@ -203,6 +223,9 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         }
         case 'handoff': {
           const state = await getState();
+          // A fresh flow must not inherit a stale completed result (e.g. a
+          // previous login's JWT surfacing via the status poll).
+          await chrome.storage.session.remove(LAST_RESULT_KEY).catch(() => {});
           const active = state.core === 'authing' || state.core === 'handoff';
           if (active) {
             return void sendResponse({ status: 'started', mode: state.mode, message: 'Login sedang berjalan.' });
@@ -210,7 +233,15 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
           await setState({ ...state, appTabId });
           await runFlow({ type: 'REQUEST', mode: 'auto' });
           const after = await getState();
-          if (after.core === 'done') return void sendResponse({ status: 'ok', accessToken: 'handled' });
+          if (after.core === 'done') {
+            // The flow finished within this pass — return the REAL token (the
+            // sendResult effect cached it), never a placeholder.
+            const cached = (await chrome.storage.session.get(LAST_RESULT_KEY))[LAST_RESULT_KEY] as OutboundStatus | undefined;
+            if (cached?.status === 'ok' && cached.accessToken) {
+              return void sendResponse({ status: 'ok', accessToken: cached.accessToken });
+            }
+            return void sendResponse({ status: 'error', message: 'Sesi login selesai tanpa token. Coba lagi.' });
+          }
           return void sendResponse({ status: 'started', mode: after.mode });
         }
         default:
