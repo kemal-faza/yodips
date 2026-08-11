@@ -7,16 +7,16 @@ const props = defineProps<{ label: string; tone: DisplayTone }>();
 
 const cls = computed(() => {
   if (props.tone === 'danger') return 'bg-danger/10 text-danger';
-  if (props.tone === 'warn') return 'bg-gold/20 text-ink';
+  if (props.tone === 'warn') return 'bg-gold/20 text-foreground';
   if (props.tone === 'success') return 'bg-success/10 text-success';
-  return 'bg-ink/5 text-ink-muted';
+  return 'bg-foreground/5 text-muted-foreground';
 });
 
 const dot = computed(() => {
   if (props.tone === 'danger') return 'bg-danger';
   if (props.tone === 'warn') return 'bg-warn';
   if (props.tone === 'success') return 'bg-success';
-  return 'bg-ink-muted';
+  return 'bg-muted-foreground';
 });
 </script>
 

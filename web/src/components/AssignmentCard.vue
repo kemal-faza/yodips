@@ -27,7 +27,7 @@ const itemIcon = computed(() =>
 
 <template>
   <Card
-    class="assignment-card group cursor-pointer overflow-hidden border border-line bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/40"
+    class="group cursor-pointer overflow-hidden border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-primary/40"
     role="button"
     tabindex="0"
     @click="emit('open')"
@@ -36,17 +36,17 @@ const itemIcon = computed(() =>
     <CardContent class="flex items-center gap-5 px-5 py-4">
       <component :is="itemIcon" class="size-6 shrink-0 text-primary" aria-hidden="true" />
       <div class="min-w-0 flex-1">
-        <p class="truncate font-medium text-sm text-ink">{{ assignment.name }}</p>
-        <p class="mt-1.5 truncate text-xs text-ink-muted">{{ assignment.course }}</p>
+        <p class="truncate font-medium text-sm text-foreground">{{ assignment.name }}</p>
+        <p class="mt-1.5 truncate text-xs text-muted-foreground">{{ assignment.course }}</p>
       </div>
       <div class="flex shrink-0 flex-col items-end gap-1.5">
         <StatusBadge :label="status.label" :tone="status.tone" />
-        <span class="flex items-center gap-2 text-[10px] text-ink-muted">
+        <span class="flex items-center gap-2 text-[10px] text-muted-foreground">
           {{ dateText }}
           <button
             v-if="props.showHide"
             type="button"
-            class="text-ink-muted/50 transition-colors hover:text-danger cursor-pointer"
+            class="text-muted-foreground/50 transition-colors hover:text-danger cursor-pointer"
             :aria-label="`Sembunyikan ${assignment.name}`"
             data-test="hide-assignment"
             @click.stop="emit('hide')"

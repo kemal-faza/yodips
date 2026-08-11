@@ -33,15 +33,15 @@ function initial(name?: string): string {
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-2xl bg-navy text-white shadow-sm [--foreground:white]">
+  <div class="overflow-hidden rounded-2xl bg-primary text-primary-foreground shadow-sm [--foreground:white]">
     <div class="flex items-center gap-4 p-6">
-      <Avatar class="size-20 border-2 border-white/40 bg-white/20 text-white">
+      <Avatar class="size-20 border-2 border-primary-foreground/40 bg-primary-foreground/20 text-primary-foreground">
         <AvatarImage v-if="profile?.fotoUrl" :src="profile.fotoUrl" alt="Foto" />
         <AvatarFallback class="bg-transparent text-2xl font-bold">{{ initial(profile?.nama) }}</AvatarFallback>
       </Avatar>
       <div>
         <h1 class="text-xl font-bold">{{ profile?.nama ?? '—' }}</h1>
-        <p class="text-sm text-white/80">
+        <p class="text-sm text-primary-foreground/80">
           NIM {{ profile?.nim ?? '—' }} &middot; {{ profile?.prodi ?? '—' }}
         </p>
       </div>

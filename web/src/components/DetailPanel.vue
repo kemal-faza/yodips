@@ -126,15 +126,15 @@ watch(
       class="w-full max-w-md gap-0 p-0"
       data-test="detail-panel"
     >
-      <SheetHeader v-if="assignment" class="bg-navy p-5 text-white">
+      <SheetHeader v-if="assignment" class="bg-primary p-5 text-primary-foreground">
         <div class="flex items-start justify-between gap-3">
-          <SheetTitle class="text-left text-lg font-bold text-white">
-            <span class="block text-sm font-normal text-white/70">{{ assignment.course }}</span>
+          <SheetTitle class="text-left text-lg font-bold text-primary-foreground">
+            <span class="block text-sm font-normal text-primary-foreground/70">{{ assignment.course }}</span>
             {{ assignment.name }}
-            <span class="mt-1 block text-sm font-normal text-white/70">Deadline: {{ deadline }}</span>
+            <span class="mt-1 block text-sm font-normal text-primary-foreground/70">Deadline: {{ deadline }}</span>
             <span
               v-if="detail"
-              class="mt-2 flex items-center gap-1.5 text-sm font-normal text-white/85"
+              class="mt-2 flex items-center gap-1.5 text-sm font-normal text-primary-foreground/85"
             >
               <span
                 class="size-2 shrink-0 rounded-full"
@@ -155,7 +155,7 @@ watch(
               size="icon"
               data-test="close"
               aria-label="Tutup"
-              class="text-white/70 hover:bg-white/10 hover:text-white"
+              class="text-primary-foreground/70 hover:bg-primary-foreground/10 hover:text-primary-foreground"
               @click="emit('close')"
             >
               <X class="size-4" aria-hidden="true" />
@@ -166,7 +166,7 @@ watch(
 
       <template v-if="assignment?.courseModuleId">
         <Tabs v-model="activeTab" class="flex flex-1 flex-col">
-          <TabsList variant="line" class="w-full border-b border-line">
+          <TabsList variant="line" class="w-full border-b border-border">
             <TabsTrigger
               v-for="t in tabs"
               :key="t.key"
@@ -197,10 +197,10 @@ watch(
               <TabsContent value="description">
                 <div
                   v-if="detail.descriptionHtml"
-                  class="text-sm leading-relaxed text-ink"
+                  class="text-sm leading-relaxed text-foreground"
                   v-html="detail.descriptionHtml"
                 />
-                <p v-else class="text-ink-muted">Tidak ada deskripsi.</p>
+                <p v-else class="text-muted-foreground">Tidak ada deskripsi.</p>
               </TabsContent>
 
               <TabsContent value="files">
@@ -210,26 +210,26 @@ watch(
                       :href="f.url"
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="text-ink underline hover:text-gold"
+                      class="text-foreground underline hover:text-gold"
                     >
                       {{ f.name }}
                     </a>
                   </li>
-                  <li v-if="detail.files.length === 0" class="text-ink-muted">Tidak ada file.</li>
+                  <li v-if="detail.files.length === 0" class="text-muted-foreground">Tidak ada file.</li>
                 </ul>
               </TabsContent>
 
               <TabsContent value="submission" class="space-y-3 text-sm">
                 <p>
-                  <span class="font-semibold text-ink">Status:</span>
+                  <span class="font-semibold text-foreground">Status:</span>
                   {{ submissionLabel }}
                 </p>
                 <p v-if="submittedAt">
-                  <span class="font-semibold text-ink">Dikumpulkan:</span>
+                  <span class="font-semibold text-foreground">Dikumpulkan:</span>
                   {{ submittedAt }}
                 </p>
                 <p v-if="detail.submission.grade != null || detail.submission.maxGrade != null">
-                  <span class="font-semibold text-ink">Nilai:</span>
+                  <span class="font-semibold text-foreground">Nilai:</span>
                   {{ gradeText }}
                 </p>
               </TabsContent>
@@ -238,12 +238,12 @@ watch(
         </Tabs>
       </template>
 
-      <div class="border-t border-line p-4">
+      <div class="border-t border-border p-4">
         <a
           :href="kulonUrl"
           target="_blank"
           rel="noopener noreferrer"
-          class="inline-flex items-center gap-1 font-semibold text-ink hover:text-gold"
+          class="inline-flex items-center gap-1 font-semibold text-foreground hover:text-gold"
         >
           Buka di Kulon →
         </a>

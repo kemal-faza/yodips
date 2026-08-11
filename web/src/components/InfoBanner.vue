@@ -7,6 +7,6 @@ defineProps<{ message: string; title?: string }>();
 <template>
   <Alert class="border-warn/40 bg-warn/10 p-4">
     <AlertTitle>{{ title ?? 'Info' }}</AlertTitle>
-    <AlertDescription class="mt-0.5 text-ink-muted">{{ message }}</AlertDescription>
+    <AlertDescription class="mt-0.5 text-muted-foreground">{{ message }}</AlertDescription>
   </Alert>
 </template>
