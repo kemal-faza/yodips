@@ -60,12 +60,12 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
     <aside class="space-y-4">
       <Card>
         <CardContent class="p-6 text-center">
-          <Avatar class="mx-auto size-28 border-2 border-line bg-primary-50 text-primary-600 dark:bg-primary-500/15 dark:text-primary-400">
+          <Avatar class="mx-auto size-28 border-2 border-border bg-primary-50 text-primary-600 dark:bg-primary-500/15 dark:text-primary-400">
             <AvatarImage v-if="profile?.fotoUrl" :src="profile.fotoUrl" alt="Foto" />
             <AvatarFallback class="border-2 border-current font-bold">{{ initial(profile?.nama) }}</AvatarFallback>
           </Avatar>
-          <p class="mt-3 font-semibold text-ink">{{ profile?.semesterBerjalan ?? '—' }}</p>
-          <Badge class="mt-1 bg-gold/20 text-ink">
+          <p class="mt-3 font-semibold text-foreground">{{ profile?.semesterBerjalan ?? '—' }}</p>
+          <Badge class="mt-1 bg-gold/20 text-foreground">
             {{ profile?.status ?? '—' }}
           </Badge>
         </CardContent>
@@ -84,13 +84,13 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
       <Card>
         <CardContent class="p-6">
           <template v-for="g in groups" :key="g.name">
-            <h3 class="mb-2 mt-4 text-sm font-semibold uppercase tracking-wide text-ink-muted first:mt-0">
+            <h3 class="mb-2 mt-4 text-sm font-semibold uppercase tracking-wide text-muted-foreground first:mt-0">
               {{ g.name }}
             </h3>
             <dl class="space-y-2 text-sm">
               <div v-for="r in g.rows" :key="r.label" class="flex flex-col sm:flex-row sm:gap-4 sm:py-1">
-                <dt class="w-40 shrink-0 font-medium text-ink-muted">{{ r.label }}</dt>
-                <dd class="text-ink">
+                <dt class="w-40 shrink-0 font-medium text-muted-foreground">{{ r.label }}</dt>
+                <dd class="text-foreground">
                   <template v-if="r.masked">
                     <span>{{ showNamaIbu ? (r.value ?? '—') : '********' }}</span>
                     <Button

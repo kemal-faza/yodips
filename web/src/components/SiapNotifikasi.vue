@@ -10,11 +10,11 @@ import { Card, CardContent } from '@/components/ui/card';
       <div class="flex size-14 items-center justify-center rounded-full bg-primary-50 dark:bg-primary-500/15">
         <Bell class="size-7 text-primary-500 dark:text-primary-400" aria-hidden="true" />
       </div>
-      <h2 class="text-lg font-bold text-ink">Notifikasi</h2>
-      <p class="max-w-sm text-sm text-ink-muted">
+      <h2 class="text-lg font-bold text-foreground">Notifikasi</h2>
+      <p class="max-w-sm text-sm text-muted-foreground">
         Fitur notifikasi akan segera hadir. Pantau terus perkembangan aplikasi.
       </p>
-      <Badge class="bg-gold/20 text-ink">Coming Soon</Badge>
+      <Badge class="bg-gold/20 text-foreground">Coming Soon</Badge>
     </CardContent>
   </Card>
 </template>

@@ -13,6 +13,13 @@
   --color-siap-to: #2d5aa0;
   --color-sso-green: #48bb78;
   --color-sso-green-dark: #38a169;
+  /* Indigo accent shades (kept — used by SIAP status/labels & match --ring). */
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
   --font-sans: 'Inter', system-ui, sans-serif;
 }
 

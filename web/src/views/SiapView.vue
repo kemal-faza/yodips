@@ -60,8 +60,8 @@ onMounted(() => {
     </template>
     <Card v-else class="text-center">
       <CardContent class="px-4 py-8">
-        <p class="font-semibold text-ink">Belum ada session SIAP</p>
-        <p class="mt-1 text-sm text-ink-muted">
+        <p class="font-semibold text-foreground">Belum ada session SIAP</p>
+        <p class="mt-1 text-sm text-muted-foreground">
           Silakan login ulang via SSO untuk melihat data akademik.
         </p>
       </CardContent>
