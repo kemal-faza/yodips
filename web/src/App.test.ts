@@ -55,7 +55,7 @@ describe('App integration', () => {
     await router.push('/');
     await flushPromises();
     expect(router.currentRoute.value.name).toBe('dashboard');
-    expect(w.text()).toContain('Selamat datang di Undip SSO');
+    expect(w.text()).toContain('Layanan');
   });
 
   it('navigates to /siap after login and resolves the SIAP route', async () => {
