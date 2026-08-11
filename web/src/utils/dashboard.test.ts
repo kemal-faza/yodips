@@ -7,7 +7,7 @@ import {
   parseSchedule,
   parseJadwal,
 } from './dashboard';
-import type { SiapKhs, SiapIrs, SiapJadwal, Assignment } from '../types';
+import type { SiapKhs, SiapIrs, SiapJadwal, Assignment, Course } from '../types';
 
 const NOW = 1000 * 1000; // 1000s past epoch — only relative deltas matter
 
@@ -51,7 +51,7 @@ function mk(n: Partial<Assignment> & { duedate: number; submissionStatus: Assign
 
 describe('taskStats', () => {
   it('buckets need/late/done matching the Kulon filter semantics', () => {
-    const courses = [
+    const courses: Course[] = [
       { id: 1, fullname: 'KB', shortname: 'X', idnumber: '', semester: 'Gasal 25/26', timelineStatus: 'inprogress' },
       { id: 2, fullname: 'P', shortname: 'Y', idnumber: '', semester: 'Genap 24/25', timelineStatus: 'past' },
     ];
