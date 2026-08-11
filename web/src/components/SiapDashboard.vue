@@ -105,11 +105,11 @@ onUnmounted(() => clearInterval(timer!));
             <h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Prestasi</h2>
             <div class="mt-3 flex items-end gap-6">
               <div>
-                <p class="text-3xl font-bold text-primary-600 dark:text-primary-400">{{ khs?.ipk?.toFixed(2) ?? '—' }}</p>
+                <p class="text-3xl font-bold text-foreground">{{ khs?.ipk?.toFixed(2) ?? '—' }}</p>
                 <p class="text-xs text-muted-foreground">IPK</p>
               </div>
               <div>
-                <p class="text-3xl font-bold text-primary-600 dark:text-primary-400">{{ irs?.totalSks ?? '—' }}</p>
+                <p class="text-3xl font-bold text-foreground">{{ irs?.totalSks ?? '—' }}</p>
                 <p class="text-xs text-muted-foreground">SKS Semester Ini</p>
               </div>
             </div>
