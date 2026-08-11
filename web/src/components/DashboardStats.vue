@@ -7,10 +7,9 @@ const props = defineProps<{
   sksKumulatif: number | null;
   sksSemester: number | null;
   activeCourses: number;
-  notSubmitted: number;
-  overdue: number;
-  dueSoon: number;
-  submitted: number;
+  need: number;
+  late: number;
+  done: number;
   loading: boolean;
   hasKulon: boolean;
 }>();
@@ -28,7 +27,7 @@ function pct(v: number | null, max: number): string {
   <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
     <div class="space-y-2.5">
       <div class="flex items-center justify-between">
-        <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Indeks Prestasi (IPK)</span>
+        <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Kumulatif (IPK)</span>
         <Award :size="16" class="text-primary" />
       </div>
       <div class="flex items-baseline gap-2">
@@ -72,13 +71,12 @@ function pct(v: number | null, max: number): string {
         <ClipboardList :size="16" class="text-primary" />
       </div>
       <div class="flex items-baseline gap-2">
-        <span class="text-3xl font-extrabold tracking-tight text-foreground">{{ hasKulon ? notSubmitted : '—' }}</span>
-        <span class="text-xs text-muted-foreground">Belum Dikirim</span>
+        <span class="text-3xl font-extrabold tracking-tight text-foreground">{{ hasKulon ? need : '—' }}</span>
+        <span class="text-xs text-muted-foreground">Perlu Dikerjakan</span>
       </div>
       <div v-if="hasKulon" class="flex flex-wrap items-center gap-2 text-[10px]">
-        <span v-if="overdue > 0" class="border border-danger/40 bg-danger/10 px-2 py-0.5 font-semibold text-danger">{{ overdue }} Terlambat</span>
-        <span v-if="dueSoon > 0" class="border border-warn/40 bg-warn/10 px-2 py-0.5 font-semibold text-warn">{{ dueSoon }} Segera</span>
-        <span class="border border-success/40 bg-success/10 px-2 py-0.5 font-semibold text-success">{{ submitted }} Selesai</span>
+        <span v-if="late > 0" class="border border-danger/40 bg-danger/10 px-2 py-0.5 font-semibold text-danger">{{ late }} Terlambat</span>
+        <span class="border border-success/40 bg-success/10 px-2 py-0.5 font-semibold text-success">{{ done }} Selesai</span>
       </div>
     </div>
   </div>

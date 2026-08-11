@@ -3,19 +3,25 @@ import { mount } from '@vue/test-utils';
 import DashboardStats from './DashboardStats.vue';
 
 const base = {
-  ipk: 3.71, sksKumulatif: 108, sksSemester: 18, activeCourses: 6,
-  notSubmitted: 3, overdue: 1, dueSoon: 1, submitted: 6, loading: false, hasKulon: true,
+  ipk: 2.73, sksKumulatif: 84, sksSemester: 23, activeCourses: 8,
+  need: 0, late: 3, done: 9, loading: false, hasKulon: true,
 };
 
 describe('DashboardStats', () => {
-  it('renders metrics and status chips', () => {
+  it('renders metrics and status chips (need/late/done)', () => {
     const w = mount(DashboardStats, { props: base });
-    expect(w.text()).toContain('3.71');
-    expect(w.text()).toContain('IPK');
+    expect(w.text()).toContain('2.73');
+    expect(w.text()).toContain('IP Kumulatif (IPK)');
     expect(w.text()).toContain('SKS Semester Ini');
+    expect(w.text()).toContain('Perlu Dikerjakan');
     expect(w.text()).toContain('Terlambat');
-    expect(w.text()).toContain('Segera');
     expect(w.text()).toContain('Selesai');
+    expect(w.text()).not.toContain('Segera');
+  });
+  it('shows the need count as the main task number', () => {
+    const w = mount(DashboardStats, { props: { ...base, need: 2 } });
+    const main = w.findAll('span.text-3xl')[3];
+    expect(main?.text()).toBe('2');
   });
   it('renders dashes when Kulon unavailable', () => {
     const w = mount(DashboardStats, { props: { ...base, hasKulon: false } });

@@ -30,7 +30,7 @@ const sksValue = computed(() => {
   return khs.semesters.reduce((s, x) => s + x.totalSks, 0);
 });
 const activeCourses = computed(() => d.kulon.value.courses.filter((c) => c.timelineStatus === 'inprogress').length);
-const stats = computed(() => taskStats(d.kulon.value.assignments));
+const stats = computed(() => taskStats(d.kulon.value.assignments, d.kulon.value.courses));
 const ipRows = computed(() => ipTrend(d.siap.value.khs));
 const gradeRows = computed(() => gradeDistribution(d.siap.value.khs));
 const sksRows = computed(() => cumulativeSks(d.siap.value.khs));
@@ -81,10 +81,9 @@ function go(view: 'siap' | 'kulon') {
       :sks-kumulatif="sksValue"
       :sks-semester="d.siap.value.irs?.totalSks ?? null"
       :active-courses="activeCourses"
-      :not-submitted="stats.notSubmitted"
-      :overdue="stats.overdue"
-      :due-soon="stats.dueSoon"
-      :submitted="stats.submitted"
+      :need="stats.need"
+      :late="stats.late"
+      :done="stats.done"
       :loading="d.siapLoading.value || d.kulonLoading.value"
       :has-kulon="!d.kulonError.value && d.kulon.value.assignments.length > 0"
     />
