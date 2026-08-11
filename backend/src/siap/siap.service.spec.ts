@@ -300,5 +300,48 @@ describe('SiapService', () => {
         'ta=2025&smt_ambil=3&smt=1', // 2025/2026 Ganjil → within-year 1, NOT 3
       ]);
     });
+
+    it('excludes the current (ungraded) semester from the IPK denominator', async () => {
+      // Profile: angkatan 2024, semester berjalan "2026/2027 Ganjil" => 5 semesters.
+      // Semesters 1-4 return graded courses; semester 5 (current) returns enrolled
+      // courses with EMPTY nilaiHuruf / bobot 0 (rawIp 0) — its SKS must NOT count.
+      const profileHtml =
+        '<html><div id="tabmhs_profile">' +
+        '<b>NIM</b>:</div><div class="col-sm-9">24060121130000</div>' +
+        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
+        '<p class="text-muted">2026/2027 Ganjil</p>' +
+        '</div></html>';
+      const gradedRow = (kode: string, bobot: number) =>
+        '<tr><td>1</td><td>' + kode + '</td><td>MK</td><td>TIU</td><td>TI</td>' +
+        `<td>3</td><td>A</td><td>${bobot}</td></tr>`;
+      const gradedHtml = '<table>' + gradedRow('G1', 4) + gradedRow('G2', 4) + '</table>';
+      // Ungraded semester: courses present but EMPTY nilaiHuruf (cell 6 blank) and bobot 0.
+      const ungradedRow = (kode: string) =>
+        '<tr><td>1</td><td>' + kode + '</td><td>MK</td><td>TIU</td><td>TI</td>' +
+        '<td>3</td><td></td><td>0</td></tr>';
+      const ungradedHtml = '<table>' + ungradedRow('U1') + '</table>';
+      let khsCalls = 0;
+      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.includes('/pages/mhs/dashboard')) return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, status: 200 };
+        if (url.includes('/get_khs')) {
+          khsCalls++;
+          // Semesters 1-4 graded (identical), semester 5 ungraded.
+          const body = khsCalls <= 4 ? gradedHtml : ungradedHtml;
+          return { ok: true, url, headers: { get: () => null }, text: async () => body, status: 200 };
+        }
+        if (url.includes('/get_total_sks')) return { ok: true, url, headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) }, text: async () => JSON.stringify({ total_sks: 3 }), json: async () => ({ total_sks: 3 }), status: 200 };
+        throw new Error('unmocked: ' + url);
+      });
+
+      const khs = await svc.getKhs('sia_app_session=K');
+      expect(khs.semesters.length).toBe(5);
+      // 4 graded semesters each: rawIp = (4·3 + 4·3)/(3+3) = 4.0, semesterSks 3.
+      // IPK = Σ(4.0·3)/Σ(3) over the GRADED terms = 48/12 = 4.0. Ungraded sem 5 excluded.
+      expect(khs.ipk).toBe(4.0);
+      // The ungraded semester's per-semester totalSks is still reported.
+      expect(khs.semesters[4].totalSks).toBe(3);
+      expect(khs.semesters[4].ip).toBe(0);
+    });
   });
 });

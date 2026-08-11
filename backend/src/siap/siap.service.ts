@@ -489,8 +489,15 @@ export class SiapService {
         nilai,
       });
 
-      totalWeighted += rawIp * semesterSks;
-      totalSks += semesterSks;
+      // A semester counts toward the cumulative IPK only when it has at least one
+      // real letter grade. The current/ungraded term returns enrolled courses
+      // (nilai.length > 0) with empty nilaiHuruf / bobot 0 (rawIp 0) — its SKS must
+      // not inflate the IPK denominator (SIAP itself excludes it: 292/80 vs 292/84).
+      const hasGrades = nilai.some((n) => (n.nilaiHuruf ?? '').trim() !== '');
+      if (hasGrades) {
+        totalWeighted += rawIp * semesterSks;
+        totalSks += semesterSks;
+      }
     }
 
     const ipk = totalSks > 0 ? this.round(totalWeighted / totalSks) : 0;
