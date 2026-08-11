@@ -142,3 +142,13 @@ export interface SiapKhs {
   ipk: number;
   semesters: SiapKhsSemester[];
 }
+
+export interface SiapJadwal {
+  no?: number;
+  kode?: string;
+  hari: string;
+  matakuliah: string;
+  ruang?: string;
+  waktu: string;
+  sks: number;
+}

@@ -1,4 +1,4 @@
-import type { SiapKhs, SiapIrs, Assignment } from '../types';
+import type { SiapKhs, SiapIrs, SiapJadwal, Assignment } from '../types';
 import { assignStatus } from './assignment';
 
 export interface TaskStats {
@@ -120,6 +120,31 @@ export function parseSchedule(irs: SiapIrs | null): ScheduleItem[] {
       sks: mk.sks,
       status: mk.status,
       jadwalRaw: raw || undefined,
+    };
+  });
+}
+
+const JADWAL_TIME_RE = /(\d{1,2}:\d{2})(?::\d{2})?\s*(?:s\/d|[-–—])\s*(\d{1,2}:\d{2})(?::\d{2})?/;
+
+/** Convert the SIAP "jadwal kuliah" rows into schedule items for the dashboard.
+ * The jadwal view carries `hari`/`waktu`/`ruang` per course (unlike the IRS
+ * endpoint, which lacks them). */
+export function parseJadwal(rows: SiapJadwal[]): ScheduleItem[] {
+  return (rows ?? []).map((r, i) => {
+    const hari = (r.hari ?? '').trim();
+    const day = hari ? hari[0].toUpperCase() + hari.slice(1).toLowerCase() : undefined;
+    const m = JADWAL_TIME_RE.exec(r.waktu ?? '');
+    return {
+      id: `jadwal-${i}`,
+      code: r.kode ?? '',
+      courseName: r.matakuliah ?? '',
+      day,
+      timeStart: m?.[1],
+      timeEnd: m?.[2],
+      room: r.ruang,
+      sks: r.sks,
+      status: 'disetujui',
+      jadwalRaw: r.waktu,
     };
   });
 }

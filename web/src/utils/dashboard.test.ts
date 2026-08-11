@@ -5,8 +5,9 @@ import {
   cumulativeSks,
   gradeDistribution,
   parseSchedule,
+  parseJadwal,
 } from './dashboard';
-import type { SiapKhs, SiapIrs, Assignment } from '../types';
+import type { SiapKhs, SiapIrs, SiapJadwal, Assignment } from '../types';
 
 const NOW = 1000 * 1000; // 1000s past epoch — only relative deltas matter
 
@@ -124,4 +125,22 @@ describe('parseSchedule', () => {
     expect(items[1].jadwalRaw).toBeUndefined(); // empty string -> undefined
   });
   it('returns [] for null', () => expect(parseSchedule(null)).toEqual([]));
+});
+
+const jadwalRows: SiapJadwal[] = [
+  { no: 1, kode: 'PAIK6402', hari: 'senin', matakuliah: 'Kecerdasan Buatan', ruang: 'A301', waktu: '09:40:00 s/d 12:10:00', sks: 3 },
+  { no: 2, kode: 'PAIK6403', hari: 'KAMIS', matakuliah: 'Metode Numerik', ruang: 'A302', waktu: '13:00:00 s/d 15:30:00', sks: 3 },
+];
+
+describe('parseJadwal', () => {
+  it('normalizes day and parses s/d time with seconds', () => {
+    const items = parseJadwal(jadwalRows);
+    expect(items[0]).toMatchObject({ code: 'PAIK6402', day: 'Senin', courseName: 'Kecerdasan Buatan', timeStart: '09:40', timeEnd: '12:10', room: 'A301', sks: 3 });
+    expect(items[1].day).toBe('Kamis');
+  });
+  it('parses the dash-separated time form for backward compatibility', () => {
+    const items = parseJadwal([{ kode: 'X', hari: 'rabu', matakuliah: 'Statistika', ruang: 'B1', waktu: '13:00-15:30', sks: 2 }]);
+    expect(items[0]).toMatchObject({ timeStart: '13:00', timeEnd: '15:30' });
+  });
+  it('returns [] for empty input', () => expect(parseJadwal([])).toEqual([]));
 });

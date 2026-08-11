@@ -6,6 +6,7 @@ import type {
   Course,
   KulonCourseContent,
   SiapIrs,
+  SiapJadwal,
   SiapKhs,
   SiapProfile,
   User,
@@ -101,5 +102,10 @@ export async function getSiapIrs(): Promise<SiapIrs> {
 
 export async function getSiapKhs(): Promise<SiapKhs> {
   const { data } = await apiClient.get<SiapKhs>('/api/siap/khs');
+  return data;
+}
+
+export async function getSiapJadwal(): Promise<SiapJadwal[]> {
+  const { data } = await apiClient.get<SiapJadwal[]>('/api/siap/jadwal');
   return data;
 }

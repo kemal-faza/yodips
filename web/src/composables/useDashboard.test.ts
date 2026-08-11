@@ -8,6 +8,7 @@ vi.mock('../api/client', () => ({
   getSiapProfile: vi.fn(),
   getSiapIrs: vi.fn(),
   getSiapKhs: vi.fn(),
+  getSiapJadwal: vi.fn(),
 }));
 
 const mockApi = api as unknown as {
@@ -16,6 +17,7 @@ const mockApi = api as unknown as {
   getSiapProfile: ReturnType<typeof vi.fn>;
   getSiapIrs: ReturnType<typeof vi.fn>;
   getSiapKhs: ReturnType<typeof vi.fn>;
+  getSiapJadwal: ReturnType<typeof vi.fn>;
 };
 
 import { useDashboard } from './useDashboard';
@@ -28,6 +30,7 @@ describe('useDashboard', () => {
     mockApi.getSiapProfile.mockResolvedValue({ nama: 'A' } as never);
     mockApi.getSiapIrs.mockResolvedValue(null as never);
     mockApi.getSiapKhs.mockResolvedValue(null as never);
+    mockApi.getSiapJadwal.mockResolvedValue([]);
   });
 
   it('loads and splits data by source', async () => {
