@@ -76,7 +76,7 @@ function gradeTooltip(datum: unknown, x: number | Date): string {
         />
         <VisAxis type="x" :grid-line="false" :tick-format="xLabel" />
         <VisAxis type="y" :grid-line="true" :tick-line="false" :domain-line="false" />
-        <ChartCrosshair :template="gradeTooltip" />
+        <ChartCrosshair :template="gradeTooltip" color="var(--color-muted-foreground)" :circle-radius="4" />
       </VisXYContainer>
     </ChartContainer>
     <div class="mt-3 flex flex-wrap items-center justify-center gap-3 border-t border-border pt-3 font-label text-xs">
