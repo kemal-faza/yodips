@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { assignStatus, assignmentDisplayStatus, deadlineStatus } from './assignment';
+import { assignStatus, assignmentDisplayStatus, deadlineStatus, isDone, courseActive, matchesKulonFilter } from './assignment';
+import type { Assignment, Course } from '../types';
 
 const now = Date.now();
 const sec = 1000;
@@ -63,5 +64,53 @@ describe('assignmentDisplayStatus', () => {
       .toEqual({ label: 'On track', tone: 'success' });
     expect(deadlineStatus(false, now / sec + 24 * 3600, now))
       .toEqual({ label: 'Segera', tone: 'warn' });
+  });
+});
+
+const mk = (n: Partial<Assignment>): Assignment => ({
+  id: 1, name: 'x', module: 'assign', eventType: '', duedate: 1, overdue: false,
+  course: 'c', courseId: 1, submissionStatus: 'not_submitted', ...n,
+});
+const active = (): Course => ({ id: 1, fullname: 'KB', shortname: 'X', idnumber: '', semester: 'Gasal 25/26', timelineStatus: 'inprogress' });
+const past = (): Course => ({ id: 2, fullname: 'P', shortname: 'Y', idnumber: '', semester: 'Genap 24/25', timelineStatus: 'past' });
+
+describe('isDone', () => {
+  it('true for submitted or graded', () => {
+    expect(isDone(mk({ submissionStatus: 'submitted' }))).toBe(true);
+    expect(isDone(mk({ submissionStatus: 'graded' }))).toBe(true);
+  });
+  it('false for not_submitted / unknown', () => {
+    expect(isDone(mk({ submissionStatus: 'not_submitted' }))).toBe(false);
+    expect(isDone(mk({ submissionStatus: 'unknown' }))).toBe(false);
+  });
+});
+
+describe('courseActive', () => {
+  it('true when the course timelineStatus is inprogress', () => {
+    expect(courseActive(mk({ courseId: 1 }), [active(), past()])).toBe(true);
+  });
+  it('false when the course is past or missing', () => {
+    expect(courseActive(mk({ courseId: 2 }), [active(), past()])).toBe(false);
+    expect(courseActive(mk({ courseId: 99 }), [active(), past()])).toBe(false);
+  });
+});
+
+describe('matchesKulonFilter', () => {
+  const courses = [active(), past()];
+  it('all matches everything', () => {
+    expect(matchesKulonFilter('all', mk({}), courses)).toBe(true);
+  });
+  it('done matches submitted/graded', () => {
+    expect(matchesKulonFilter('done', mk({ submissionStatus: 'submitted' }), courses)).toBe(true);
+    expect(matchesKulonFilter('done', mk({ submissionStatus: 'not_submitted' }), courses)).toBe(false);
+  });
+  it('late = overdue AND not done', () => {
+    expect(matchesKulonFilter('late', mk({ overdue: true, submissionStatus: 'not_submitted' }), courses)).toBe(true);
+    expect(matchesKulonFilter('late', mk({ overdue: true, submissionStatus: 'submitted' }), courses)).toBe(false);
+  });
+  it('need = not done AND not overdue AND course active', () => {
+    expect(matchesKulonFilter('need', mk({ courseId: 1, overdue: false, submissionStatus: 'not_submitted' }), courses)).toBe(true);
+    expect(matchesKulonFilter('need', mk({ courseId: 2, overdue: false, submissionStatus: 'not_submitted' }), courses)).toBe(false); // past course
+    expect(matchesKulonFilter('need', mk({ overdue: true, submissionStatus: 'not_submitted' }), courses)).toBe(false); // late
   });
 });

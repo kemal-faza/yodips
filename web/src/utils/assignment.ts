@@ -1,4 +1,4 @@
-import type { AssignmentStatus, SubmissionStatus } from '../types';
+import type { AssignmentStatus, SubmissionStatus, Assignment, Course } from '../types';
 
 const DUE_SOON_MS = 48 * 3600 * 1000; // 48 hours
 
@@ -52,4 +52,30 @@ export function assignmentDisplayStatus(
   const s = assignStatus(overdue, duedateSec, Date.now());
   if (s === 'overdue') return { label: 'overdue', tone: 'danger' };
   return { label: 'due', tone: 'warn' };
+}
+
+/** True when the assignment is submitted or graded (regardless of timing). */
+export function isDone(a: Assignment): boolean {
+  return a.submissionStatus === 'submitted' || a.submissionStatus === 'graded';
+}
+
+/** True when the assignment's course is in the current (active) semester. */
+export function courseActive(a: Assignment, courses: Course[]): boolean {
+  return courses.find((c) => c.id === a.courseId)?.timelineStatus === 'inprogress';
+}
+
+export type KulonFilterKey = 'all' | 'need' | 'done' | 'late';
+
+/** Kulon dashboard filter predicate — single source of truth for task counts. */
+export function matchesKulonFilter(
+  key: KulonFilterKey,
+  a: Assignment,
+  courses: Course[],
+): boolean {
+  const done = isDone(a);
+  if (key === 'all') return true;
+  if (key === 'done') return done;
+  if (key === 'late') return a.overdue && !done;
+  // 'need' = active-semester course, not done, not past deadline
+  return !done && !a.overdue && courseActive(a, courses);
 }
