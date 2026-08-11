@@ -1,30 +1,29 @@
-import type { SiapKhs, SiapIrs, SiapJadwal, Assignment, SiapKhsSemester } from '../types';
-import { assignStatus } from './assignment';
+import type { SiapKhs, SiapIrs, SiapJadwal, Assignment, SiapKhsSemester, Course } from '../types';
+import { isDone, courseActive } from './assignment';
 
 export interface TaskStats {
-  notSubmitted: number;
-  overdue: number;
-  dueSoon: number;
-  submitted: number;
+  /** Kulon "perlu dikerjakan": active-semester course, not submitted, not overdue. */
+  need: number;
+  /** Kulon "terlambat": overdue and not submitted. */
+  late: number;
+  /** Kulon "sudah dikerjakan": submitted or graded. */
+  done: number;
 }
 
-export function taskStats(assignments: Assignment[], nowMs = Date.now()): TaskStats {
-  let notSubmitted = 0;
-  let overdue = 0;
-  let dueSoon = 0;
-  let submitted = 0;
+export function taskStats(assignments: Assignment[], courses: Course[]): TaskStats {
+  let need = 0;
+  let late = 0;
+  let done = 0;
   for (const a of assignments) {
-    const done = a.submissionStatus === 'submitted' || a.submissionStatus === 'graded';
-    if (done) {
-      submitted++;
-      continue;
+    if (isDone(a)) {
+      done++;
+    } else if (a.overdue) {
+      late++;
+    } else if (courseActive(a, courses)) {
+      need++;
     }
-    notSubmitted++;
-    const s = assignStatus(a.overdue, a.duedate, nowMs);
-    if (s === 'overdue') overdue++;
-    else if (s === 'dueSoon') dueSoon++;
   }
-  return { notSubmitted, overdue, dueSoon, submitted };
+  return { need, late, done };
 }
 
 export interface IpTrendRow {

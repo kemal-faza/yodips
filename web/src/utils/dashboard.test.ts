@@ -50,15 +50,19 @@ function mk(n: Partial<Assignment> & { duedate: number; submissionStatus: Assign
 }
 
 describe('taskStats', () => {
-  it('counts submitted, overdue, dueSoon, notSubmitted', () => {
-    const assignments = [
-      mk({ duedate: NOW / 1000 - 100, submissionStatus: 'graded' }),            // submitted
-      mk({ duedate: NOW / 1000 - 100, submissionStatus: 'not_submitted' }),      // overdue
-      mk({ duedate: NOW / 1000 + 1000, submissionStatus: 'not_submitted' }),     // dueSoon (<48h)
-      mk({ duedate: NOW / 1000 + 999999, submissionStatus: 'not_submitted' }),   // onTrack => notSubmitted only
+  it('buckets need/late/done matching the Kulon filter semantics', () => {
+    const courses = [
+      { id: 1, fullname: 'KB', shortname: 'X', idnumber: '', semester: 'Gasal 25/26', timelineStatus: 'inprogress' },
+      { id: 2, fullname: 'P', shortname: 'Y', idnumber: '', semester: 'Genap 24/25', timelineStatus: 'past' },
     ];
-    const s = taskStats(assignments, NOW);
-    expect(s).toEqual({ notSubmitted: 3, overdue: 1, dueSoon: 1, submitted: 1 });
+    const assignments = [
+      mk({ duedate: NOW / 1000 - 100, submissionStatus: 'graded' }),                      // done
+      mk({ duedate: NOW / 1000 - 100, submissionStatus: 'not_submitted', overdue: true }), // late
+      mk({ duedate: NOW / 1000 + 1000, submissionStatus: 'not_submitted' }),               // need (active course, not overdue)
+      mk({ duedate: NOW / 1000 + 1000, submissionStatus: 'not_submitted', courseId: 2 }),  // NOT need (past course)
+    ];
+    const s = taskStats(assignments, courses);
+    expect(s).toEqual({ need: 1, late: 1, done: 1 });
   });
 });
 
