@@ -31,7 +31,7 @@ const pageTitle = computed(() => {
 </script>
 
 <template>
-  <div class="flex min-h-screen w-full bg-canvas text-foreground">
+  <div class="flex min-h-screen w-full bg-background text-foreground">
     <!-- Sidebar -->
     <AppSidebar
       :mobile-open="mobileSidebarOpen"
@@ -42,14 +42,14 @@ const pageTitle = computed(() => {
     <div class="flex flex-1 flex-col min-w-0">
       <!-- Slim Sticky Header -->
       <header
-        class="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-line bg-card/85 px-4 backdrop-blur-md md:px-6 shadow-xs"
+        class="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-border bg-card/85 px-4 backdrop-blur-md md:px-6 shadow-xs"
         data-test="app-header"
       >
         <div class="flex items-center gap-3">
           <Button
             variant="ghost"
             size="icon"
-            class="size-9 text-ink-muted hover:text-ink md:hidden"
+            class="size-9 text-muted-foreground hover:text-foreground md:hidden"
             aria-label="Buka Menu"
             data-test="mobile-menu-toggle"
             @click="mobileSidebarOpen = true"
@@ -57,7 +57,7 @@ const pageTitle = computed(() => {
             <Menu class="size-5" aria-hidden="true" />
           </Button>
 
-          <h1 class="text-base md:text-lg font-bold text-ink truncate leading-tight">
+          <h1 class="text-base md:text-lg font-bold text-foreground truncate leading-tight">
             {{ pageTitle }}
           </h1>
         </div>
@@ -67,7 +67,7 @@ const pageTitle = computed(() => {
           <Button
             variant="ghost"
             size="icon"
-            class="size-9 text-ink-muted hover:bg-muted hover:text-ink cursor-pointer"
+            class="size-9 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
             :aria-label="theme.dark ? 'Pindah ke tema terang' : 'Pindah ke tema gelap'"
             data-test="theme-toggle"
             @click="theme.toggle()"
@@ -79,7 +79,7 @@ const pageTitle = computed(() => {
           <Button
             variant="ghost"
             size="icon"
-            class="size-9 text-ink-muted hover:bg-muted hover:text-ink cursor-pointer"
+            class="size-9 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
             aria-label="Notifikasi"
             data-test="notification-toggle"
           >
@@ -88,7 +88,7 @@ const pageTitle = computed(() => {
 
           <Avatar
             size="sm"
-            class="size-8 bg-primary/10 text-primary border border-line"
+            class="size-8 bg-primary/10 text-primary border border-border"
             data-test="user-avatar"
           >
             <AvatarImage v-if="auth.fotoUrl" :src="auth.fotoUrl" alt="Foto profil" />

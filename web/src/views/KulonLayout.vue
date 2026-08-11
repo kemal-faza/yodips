@@ -16,7 +16,7 @@ function goBack() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-canvas">
+  <div class="min-h-screen bg-background text-foreground">
     <AppHeader breadcrumb="Kulon" :show-back="showBack" @back="goBack" />
     <main class="mx-auto max-w-6xl px-4 py-6">
       <KulonNav />

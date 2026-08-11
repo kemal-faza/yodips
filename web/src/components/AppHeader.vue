@@ -22,24 +22,24 @@ function goToSiap() {
 </script>
 
 <template>
-  <header class="bg-navy text-white shadow-sm">
+  <header class="bg-primary text-primary-foreground shadow-sm">
     <div class="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4">
       <div class="flex items-center gap-3">
         <Button
           v-if="showBack"
           variant="ghost"
           size="icon"
-          class="text-white hover:bg-white/20 hover:text-white"
+          class="text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
           aria-label="Kembali"
           @click="emit('back')"
         >
           <ArrowLeft class="size-4" aria-hidden="true" />
         </Button>
-        <router-link to="/" class="flex items-center gap-2 text-white no-underline hover:opacity-90">
+        <router-link to="/" class="flex items-center gap-2 text-primary-foreground no-underline hover:opacity-90">
           <img src="/undip-logo.png" alt="Logo Undip" class="h-8 w-auto shrink-0" aria-hidden="true" />
           <div>
             <h1 class="text-lg font-bold leading-tight">SSO</h1>
-            <p v-if="breadcrumb" class="text-xs text-white/70">{{ breadcrumb }}</p>
+            <p v-if="breadcrumb" class="text-xs text-primary-foreground/70">{{ breadcrumb }}</p>
           </div>
         </router-link>
       </div>
@@ -47,7 +47,7 @@ function goToSiap() {
         <Button
           variant="ghost"
           size="icon"
-          class="text-white hover:bg-white/20 hover:text-white"
+          class="text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
           :aria-label="theme.dark ? 'Pindah ke tema terang' : 'Pindah ke tema gelap'"
           data-test="theme-toggle"
           @click="theme.toggle()"
@@ -58,7 +58,7 @@ function goToSiap() {
         <Button
           variant="ghost"
           size="icon"
-          class="text-white hover:bg-white/20 hover:text-white"
+          class="text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
           aria-label="Notifikasi"
         >
           <Bell class="size-4" aria-hidden="true" />
@@ -70,7 +70,7 @@ function goToSiap() {
           data-test="avatar-siap"
           @click="goToSiap"
         >
-          <Avatar size="default" class="bg-white/20 text-white">
+          <Avatar size="default" class="bg-primary-foreground/20 text-primary-foreground">
             <AvatarImage v-if="store.fotoUrl" :src="store.fotoUrl" alt="Foto" />
             <AvatarFallback class="bg-transparent font-bold">{{ initial }}</AvatarFallback>
           </Avatar>
@@ -79,7 +79,7 @@ function goToSiap() {
           v-if="store.isAuthenticated"
           variant="ghost"
           size="sm"
-          class="text-white hover:bg-white/20 hover:text-white"
+          class="text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
           @click="store.logout()"
         >
           Keluar
