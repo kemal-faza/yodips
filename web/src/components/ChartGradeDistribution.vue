@@ -22,7 +22,7 @@ const colors = keys.map((k) => config[k].color as string);
 // Unovis stacked bar positions bars on a NUMERIC x scale. Map index -> semester
 // for the category axis labels below.
 const xIndex = (d: GradeDistRow, i: number) => i;
-const xLabel = (i: number) => props.data[i]?.semester ?? '';
+const xLabel = (i: number) => String(i + 1);
 </script>
 
 <template>
