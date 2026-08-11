@@ -7,8 +7,8 @@ import { Card, CardContent } from '@/components/ui/card';
 <template>
   <Card class="flex flex-col items-center justify-center gap-3 p-10 text-center">
     <CardContent class="flex flex-col items-center gap-3 p-0">
-      <div class="flex size-14 items-center justify-center rounded-full bg-primary-50 dark:bg-primary-500/15">
-        <Bell class="size-7 text-primary-500 dark:text-primary-400" aria-hidden="true" />
+      <div class="flex size-14 items-center justify-center rounded-full bg-muted">
+        <Bell class="size-7 text-muted-foreground" aria-hidden="true" />
       </div>
       <h2 class="text-lg font-bold text-foreground">Notifikasi</h2>
       <p class="max-w-sm text-sm text-muted-foreground">
