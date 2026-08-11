@@ -453,7 +453,14 @@ export class SiapService {
 
     for (let smt = 1; smt <= count; smt++) {
       const ta = Number(profile.angkatan) + Math.floor((smt - 1) / 2);
-      const body = `ta=${ta}&smt_ambil=${smt}&smt=${smt}`;
+      // `smt_ambil` is the cumulative semester index; `smt` is the within-year
+      // index (1 = Ganjil, 2 = Genap) the KHS view keys on — NOT the cumulative
+      // index. Sending the cumulative value works for semesters 1–2 (where the
+      // two coincide) but makes semesters 3+ return "-kosong-"/empty (the idx
+      // has no matching within-year block). Verified live 2026-08-11: sending
+      // smt=3 for 2025/2026 Ganjil returns empty; within-year smt=1 grades.
+      const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+      const body = `ta=${ta}&smt_ambil=${smt}&smt=${smtWithinYear}`;
 
       const khsHtml = await this.siapFetch(`${this.baseUrl}/irs/mhs/irs/get_khs`, {
         method: 'POST',

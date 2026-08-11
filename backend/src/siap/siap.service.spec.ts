@@ -268,5 +268,37 @@ describe('SiapService', () => {
       // (Per-semester rounding: 3.67*300 + 4.0*300 = 2301 => 2301/600 = 3.835 => 3.84 — the bug.)
       expect(khs.ipk).toBe(3.83);
     });
+
+    it('sends the within-year `smt` (1 Ganjil / 2 Genap) so later semesters grade', async () => {
+      // Profile: angkatan 2024, semester berjalan "2025/2026 Ganjil" => 3 semesters,
+      // i.e. the third semester is 2025/2026 Ganjil (within-year smt=1), NOT smt=3.
+      const profileHtml =
+        '<html><div id="tabmhs_profile">' +
+        '<b>NIM</b>:</div><div class="col-sm-9">24060121130000</div>' +
+        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
+        '<p class="text-muted">2025/2026 Ganjil</p>' +
+        '</div></html>';
+      const bodies: string[] = [];
+      (global.fetch as jest.Mock).mockImplementation(async (input: any, init?: any) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.includes('/pages/mhs/dashboard'))
+          return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, status: 200 };
+        if (url.includes('/get_khs')) {
+          bodies.push(init?.body ?? '');
+          return { ok: true, url, headers: { get: () => null }, text: async () => fixture('khs.html'), status: 200 };
+        }
+        if (url.includes('/get_total_sks'))
+          return { ok: true, url, headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) }, text: async () => JSON.stringify({ total_sks: 20 }), status: 200 };
+        throw new Error('unmocked: ' + url);
+      });
+
+      await svc.getKhs('sia_app_session=K');
+      // smt_ambil stays cumulative; smt must be the within-year index (1 Ganjil / 2 Genap).
+      expect(bodies).toEqual([
+        'ta=2024&smt_ambil=1&smt=1',
+        'ta=2024&smt_ambil=2&smt=2',
+        'ta=2025&smt_ambil=3&smt=1', // 2025/2026 Ganjil → within-year 1, NOT 3
+      ]);
+    });
   });
 });
