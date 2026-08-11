@@ -8,6 +8,7 @@ import {
   cumulativeSks,
   gradeDistribution,
   parseSchedule,
+  parseJadwal,
 } from '../utils/dashboard';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -21,7 +22,7 @@ import ServiceGrid from '../components/ServiceGrid.vue';
 const router = useRouter();
 const d = useDashboard();
 
-const ipkValue = computed(() => d.siap.value.profile?.ipk ?? d.siap.value.khs?.ipk ?? null);
+const ipkValue = computed(() => d.siap.value.khs?.ipk ?? d.siap.value.profile?.ipk ?? null);
 const sksValue = computed(() => {
   if (typeof d.siap.value.profile?.sksLulus === 'number') return d.siap.value.profile.sksLulus;
   const khs = d.siap.value.khs;
@@ -34,7 +35,7 @@ const ipRows = computed(() => ipTrend(d.siap.value.khs));
 const gradeRows = computed(() => gradeDistribution(d.siap.value.khs));
 const sksRows = computed(() => cumulativeSks(d.siap.value.khs));
 const ipMax = computed(() => Math.max(3, ...ipRows.value.map((r) => r.ip)));
-const scheduleItems = computed(() => parseSchedule(d.siap.value.irs));
+const scheduleItems = computed(() => [...parseJadwal(d.siap.value.jadwal), ...parseSchedule(d.siap.value.irs)]);
 
 function go(view: 'siap' | 'kulon') {
   router.push(view === 'siap' ? '/siap' : '/kulon/dashboard');

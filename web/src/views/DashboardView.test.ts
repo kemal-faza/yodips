@@ -9,12 +9,13 @@ import { useAuthStore } from '../stores/auth';
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 vi.mock('../api/client', () => ({
   getCourses: vi.fn(), getAllAssignments: vi.fn(),
-  getSiapProfile: vi.fn(), getSiapIrs: vi.fn(), getSiapKhs: vi.fn(),
+  getSiapProfile: vi.fn(), getSiapIrs: vi.fn(), getSiapKhs: vi.fn(), getSiapJadwal: vi.fn(),
 }));
 
 const mockApi = api as unknown as {
   getCourses: ReturnType<typeof vi.fn>; getAllAssignments: ReturnType<typeof vi.fn>;
   getSiapProfile: ReturnType<typeof vi.fn>; getSiapIrs: ReturnType<typeof vi.fn>; getSiapKhs: ReturnType<typeof vi.fn>;
+  getSiapJadwal: ReturnType<typeof vi.fn>;
 };
 
 const stubs = {
@@ -29,6 +30,7 @@ function healthyApi() {
   mockApi.getSiapProfile.mockResolvedValue({ nama: 'Anindita Rahmawati', nim: '24010122130001', prodi: 'S1 Informatika', fakultas: 'FSM', angkatan: '2022', ipk: 3.71, sksLulus: 108, status: 'AKTIF' });
   mockApi.getSiapKhs.mockResolvedValue({ ipk: 3.71, semesters: [{ semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [] }] });
   mockApi.getSiapIrs.mockResolvedValue({ semester: 'Ganjil 2025/2026', totalSks: 18, mataKuliah: [] });
+  mockApi.getSiapJadwal.mockResolvedValue([]);
 }
 
 function mockStore() {
@@ -89,5 +91,24 @@ describe('DashboardView (academic dashboard)', () => {
     await flushPromises();
     expect(w.text()).toContain('SIAP down');
     expect(w.text()).toContain('Halo, Pengguna'); // header fallback still renders
+  });
+
+  it('renders chart paths without NaN coordinates (numeric-x regression guard)', async () => {
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
+    await flushPromises();
+    const paths = w.findAll('path');
+    const nanPaths = paths.filter((p) => (p.attributes('d') ?? '').includes('NaN'));
+    expect(nanPaths.length).toBe(0);
+  });
+
+  it('prefers KHS-computed IPK over the fragile profile IPK', async () => {
+    mockApi.getSiapKhs.mockResolvedValue({ ipk: 3.78, semesters: [] });
+    mockApi.getSiapProfile.mockResolvedValue({ nama: 'Aplin Nasution', nim: 'x', prodi: 'S1', fakultas: 'FSM', angkatan: '2024', ipk: 1, sksLulus: 108, status: 'AKTIF' });
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
+    await flushPromises();
+    expect(w.text()).toContain('3.78');
+    expect(w.text()).not.toContain('1.00');
   });
 });
