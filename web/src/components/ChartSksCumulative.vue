@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChartConfig } from '@/components/ui/chart';
-import { ChartContainer, ChartCrosshair, ChartTooltipContent, componentToString } from '@/components/ui/chart';
+import { ChartContainer, ChartCrosshair, ChartTooltip, ChartTooltipContent, componentToString } from '@/components/ui/chart';
 import { VisXYContainer, VisArea, VisAxis, VisPlotline, VisScatter } from '@unovis/vue';
 import type { CumulativeSksRow } from '../utils/dashboard';
 
@@ -33,6 +33,7 @@ const labelFormatter = (d: number | Date) => `Semester ${(typeof d === 'number' 
         :circle-radius="6"
         :template="componentToString(config, ChartTooltipContent, { labelFormatter, hideIndicator: false, class: 'rounded-none' })"
       />
+      <ChartTooltip />
     </VisXYContainer>
   </ChartContainer>
 </template>

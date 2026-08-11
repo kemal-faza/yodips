@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChartConfig } from '@/components/ui/chart';
-import { ChartContainer, ChartCrosshair } from '@/components/ui/chart';
+import { ChartContainer, ChartCrosshair, ChartTooltip } from '@/components/ui/chart';
 import { VisXYContainer, VisStackedBar, VisAxis } from '@unovis/vue';
 import type { GradeDistRow, GradeKey } from '../utils/dashboard';
 
@@ -77,6 +77,7 @@ function gradeTooltip(datum: unknown, x: number | Date): string {
         <VisAxis type="x" :grid-line="false" :tick-format="xLabel" />
         <VisAxis type="y" :grid-line="true" :tick-line="false" :domain-line="false" />
         <ChartCrosshair :template="gradeTooltip" color="var(--color-muted-foreground)" :circle-radius="4" />
+        <ChartTooltip />
       </VisXYContainer>
     </ChartContainer>
     <div class="mt-3 flex flex-wrap items-center justify-center gap-3 border-t border-border pt-3 font-label text-xs">
