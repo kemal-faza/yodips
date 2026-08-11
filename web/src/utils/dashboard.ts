@@ -33,7 +33,9 @@ export interface IpTrendRow {
 }
 
 export function ipTrend(khs: SiapKhs | null): IpTrendRow[] {
-  return (khs?.semesters ?? []).map((s) => ({ semester: s.semester, ip: s.ip }));
+  return (khs?.semesters ?? [])
+    .filter(gradedSemester)
+    .map((s) => ({ semester: s.semester, ip: s.ip }));
 }
 
 export interface CumulativeSksRow {
@@ -43,10 +45,12 @@ export interface CumulativeSksRow {
 
 export function cumulativeSks(khs: SiapKhs | null): CumulativeSksRow[] {
   let running = 0;
-  return (khs?.semesters ?? []).map((s) => {
-    running += s.totalSks;
-    return { semester: s.semester, sksKumulatif: running };
-  });
+  return (khs?.semesters ?? [])
+    .filter(gradedSemester)
+    .map((s) => {
+      running += s.totalSks;
+      return { semester: s.semester, sksKumulatif: running };
+    });
 }
 
 const GRADE_KEYS = ['A', 'AB', 'B', 'BC', 'C', 'D', 'E'] as const;
@@ -64,14 +68,23 @@ export interface GradeDistRow {
 }
 
 export function gradeDistribution(khs: SiapKhs | null): GradeDistRow[] {
-  return (khs?.semesters ?? []).map((s) => {
-    const row: GradeDistRow = { semester: s.semester, A: 0, AB: 0, B: 0, BC: 0, C: 0, D: 0, E: 0 };
-    for (const n of s.nilai) {
-      const k = n.nilaiHuruf.toUpperCase() as GradeKey;
-      if (k in row) row[k] += 1;
-    }
-    return row;
-  });
+  return (khs?.semesters ?? [])
+    .filter(gradedSemester)
+    .map((s) => {
+      const row: GradeDistRow = { semester: s.semester, A: 0, AB: 0, B: 0, BC: 0, C: 0, D: 0, E: 0 };
+      for (const n of s.nilai) {
+        const k = n.nilaiHuruf.toUpperCase() as GradeKey;
+        if (k in row) row[k] += 1;
+      }
+      return row;
+    });
+}
+
+/** A semester is "graded" when it carries earned SKS. Ungraded KHS rows from
+ * current/future terms (ip 0, totalSks 0, empty nilai) must be excluded so
+ * charts do not crash to 0 or render empty bars. */
+function gradedSemester(s: { totalSks: number }): boolean {
+  return s.totalSks > 0;
 }
 
 export interface ScheduleItem {

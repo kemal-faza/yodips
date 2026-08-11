@@ -61,12 +61,25 @@ describe('taskStats', () => {
   });
 });
 
+// A semester from a current/future term that is not yet graded in KHS
+// (backend returns ip 0, totalSks 0, empty nilai). MUST NOT appear in charts.
+const khsWithUngraded: SiapKhs = {
+  ipk: 3.78,
+  semesters: [
+    { semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [{ mataKuliah: 'Aljabar', sks: 3, nilaiHuruf: 'A', bobot: 4 }] },
+    { semester: '2025/2026 Genap', ip: 0, totalSks: 0, nilai: [] },
+  ],
+};
+
 describe('ipTrend', () => {
   it('maps semesters to ip rows', () => {
     expect(ipTrend(khs)).toEqual([
       { semester: 'Gasal 22/23', ip: 3.52 },
       { semester: 'Genap 22/23', ip: 3.64 },
     ]);
+  });
+  it('excludes ungraded semesters (ip 0) so the line does not crash to 0', () => {
+    expect(ipTrend(khsWithUngraded)).toEqual([{ semester: 'Gasal 22/23', ip: 3.52 }]);
   });
   it('returns [] for null', () => expect(ipTrend(null)).toEqual([]));
 });
@@ -78,6 +91,9 @@ describe('cumulativeSks', () => {
       { semester: 'Genap 22/23', sksKumulatif: 42 },
     ]);
   });
+  it('excludes ungraded semesters (0 SKS) from the running total', () => {
+    expect(cumulativeSks(khsWithUngraded)).toEqual([{ semester: 'Gasal 22/23', sksKumulatif: 20 }]);
+  });
   it('returns [] for null', () => expect(cumulativeSks(null)).toEqual([]));
 });
 
@@ -86,6 +102,10 @@ describe('gradeDistribution', () => {
     const rows = gradeDistribution(khs);
     expect(rows[0]).toMatchObject({ semester: 'Gasal 22/23', A: 1, AB: 1, B: 0 });
     expect(rows[1]).toMatchObject({ semester: 'Genap 22/23', A: 1, AB: 0 });
+  });
+  it('excludes ungraded semesters (empty nilai) so bars are not empty', () => {
+    const rows = gradeDistribution(khsWithUngraded);
+    expect(rows.map((r) => r.semester)).toEqual(['Gasal 22/23']);
   });
 });
 
