@@ -18,6 +18,7 @@ describe('StatusBadge', () => {
   });
   it('applies muted tone by default', () => {
     const w = mount(StatusBadge, { props: { label: 'Belum dikumpulkan', tone: 'muted' } });
-    expect(w.classes()).toContain('bg-ink/5');
+    expect(w.classes()).toContain('bg-foreground/5');
+    expect(w.classes()).toContain('text-muted-foreground');
   });
 });
