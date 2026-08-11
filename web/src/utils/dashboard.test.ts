@@ -33,7 +33,19 @@ const irs: SiapIrs = {
 };
 
 function mk(n: Partial<Assignment> & { duedate: number; submissionStatus: Assignment['submissionStatus'] }): Assignment {
-  return { id: n.id ?? 0, name: n.name ?? 'x', module: 'assign', eventType: '', duedate: n.duedate, overdue: n.overdue ?? false, course: n.course ?? 'c', courseId: n.courseId ?? 1, submissionStatus: n.submissionStatus, ...n };
+  return {
+    id: n.id ?? 0,
+    name: n.name ?? 'x',
+    module: n.module ?? 'assign',
+    eventType: n.eventType ?? '',
+    duedate: n.duedate,
+    overdue: n.overdue ?? false,
+    course: n.course ?? 'c',
+    courseId: n.courseId ?? 1,
+    assignmentId: n.assignmentId,
+    courseModuleId: n.courseModuleId,
+    submissionStatus: n.submissionStatus,
+  };
 }
 
 describe('taskStats', () => {
