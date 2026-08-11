@@ -25,7 +25,7 @@ const labelFormatter = (d: number | Date) => `Semester ${(typeof d === 'number' 
     <VisXYContainer :data="props.data" :x="xIndex" :y="(d: CumulativeSksRow) => d.sksKumulatif" :y-domain="[0, 160]">
       <VisArea :x="xIndex" :y="(d: CumulativeSksRow) => d.sksKumulatif" color="var(--primary)" :opacity="0.15" />
       <VisScatter :x="xIndex" :y="(d: CumulativeSksRow) => d.sksKumulatif" :size="8" color="var(--primary)" />
-      <VisPlotline :value="target" axis="y" color="var(--danger)" :line-style="[4, 4]" label-text="Target Lulus 144 SKS" label-position="top" />
+      <VisPlotline :value="target" axis="y" color="var(--danger)" label-color="var(--danger)" :line-style="[4, 4]" label-text="Target Lulus 144 SKS" label-position="top" />
       <VisAxis type="x" :grid-line="false" :tick-format="xLabel" />
       <VisAxis type="y" :grid-line="true" :tick-line="false" :domain-line="false" />
       <ChartCrosshair

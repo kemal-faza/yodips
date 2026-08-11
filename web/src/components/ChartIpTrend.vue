@@ -31,6 +31,7 @@ const labelFormatter = (d: number | Date) => `Semester ${(typeof d === 'number' 
         :value="props.ipMax"
         axis="y"
         color="var(--color-success)"
+        label-color="var(--color-success)"
         :line-style="[3, 3]"
         :label-text="`Max: ${props.ipMax.toFixed(2)}`"
         label-position="top"
