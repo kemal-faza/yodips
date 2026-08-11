@@ -60,7 +60,7 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
     <aside class="space-y-4">
       <Card>
         <CardContent class="p-6 text-center">
-          <Avatar class="mx-auto size-28 border-2 border-border bg-primary-50 text-primary-600 dark:bg-primary-500/15 dark:text-primary-400">
+          <Avatar class="mx-auto size-28 border-2 border-border bg-muted text-foreground">
             <AvatarImage v-if="profile?.fotoUrl" :src="profile.fotoUrl" alt="Foto" />
             <AvatarFallback class="border-2 border-current font-bold">{{ initial(profile?.nama) }}</AvatarFallback>
           </Avatar>
@@ -95,7 +95,7 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
                     <span>{{ showNamaIbu ? (r.value ?? '—') : '********' }}</span>
                     <Button
                       variant="link"
-                      class="ml-2 dark:text-primary-400"
+                      class="ml-2 dark:text-foreground"
                       @click="showNamaIbu = !showNamaIbu"
                     >
                       {{ showNamaIbu ? 'Sembunyikan' : 'Tampilkan' }}
