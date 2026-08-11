@@ -40,7 +40,7 @@ function openService(s: Service) {
 </script>
 
 <template>
-  <div class="stagger-children space-y-6">
+  <div class="space-y-6">
     <div
       v-if="!dismissed"
       class="flex items-start justify-between gap-4 rounded-xl bg-sso-green p-5 text-white shadow-sm"
@@ -62,7 +62,7 @@ function openService(s: Service) {
     </div>
 
     <section>
-      <h2 class="mb-3 text-lg font-bold text-ink">Layanan</h2>
+      <h2 class="mb-3 text-lg font-bold text-foreground">Layanan</h2>
       <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <Card
           v-for="s in services"
@@ -72,7 +72,7 @@ function openService(s: Service) {
           :tabindex="s.ready ? 0 : undefined"
           :aria-disabled="!s.ready"
           class="text-left transition-all duration-200"
-          :class="s.ready ? 'card-hover cursor-pointer hover:border-primary/40' : 'opacity-60 cursor-default'"
+          :class="s.ready ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md hover:border-primary/40' : 'opacity-60 cursor-default'"
           @click="openService(s)"
           @keydown.enter="openService(s)"
         >
@@ -83,10 +83,10 @@ function openService(s: Service) {
               <component :is="s.icon" class="size-5" aria-hidden="true" />
             </span>
             <div class="min-w-0 flex-1">
-              <p class="truncate font-medium text-ink">{{ s.name }}</p>
-              <p class="truncate text-xs text-ink-muted">{{ s.desc }}</p>
+              <p class="truncate font-medium text-foreground">{{ s.name }}</p>
+              <p class="truncate text-xs text-muted-foreground">{{ s.desc }}</p>
             </div>
-            <Badge v-if="!s.ready" class="bg-gold/20 text-ink">Coming Soon</Badge>
+            <Badge v-if="!s.ready" class="bg-gold/20 text-foreground">Coming Soon</Badge>
           </CardContent>
         </Card>
       </div>

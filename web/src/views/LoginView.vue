@@ -147,8 +147,8 @@ async function handleExtensionDone() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-navy px-4">
-    <Card class="glass-card animate-fade-in-up w-full max-w-md border-white/20 shadow-2xl">
+  <div class="flex min-h-screen items-center justify-center bg-primary px-4">
+    <Card class="animate-fade-in-up w-full max-w-md border-border/20 shadow-2xl">
       <CardHeader class="flex flex-col items-center gap-3 px-6 pt-8 text-center">
         <img
           src="/undip-logo.png"
@@ -157,15 +157,15 @@ async function handleExtensionDone() {
           aria-hidden="true"
         />
         <h1 class="text-2xl font-bold">SSO</h1>
-        <p class="mt-2 text-sm text-ink-muted">
+        <p class="mt-2 text-sm text-muted-foreground">
           Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.
         </p>
       </CardHeader>
       <CardContent class="px-6 pb-6">
 
       <template v-if="store.isHandoffMode">
-        <div class="mt-6 rounded bg-navy/5 p-4 text-sm text-ink-muted">
-          <p class="font-semibold text-ink">Login via browser kamu</p>
+        <div class="mt-6 rounded bg-primary/5 p-4 text-sm text-muted-foreground">
+          <p class="font-semibold text-foreground">Login via browser kamu</p>
           <ol class="mt-2 list-decimal space-y-1 pl-5">
             <li>Buka Chrome dengan flag remote-debugging (lihat README capture-client).</li>
             <li>Login ke Kulon di window itu.</li>
@@ -180,7 +180,7 @@ async function handleExtensionDone() {
           v-if="proxy().$route?.query?.reason === 'incomplete'"
           class="mt-4 border-warn/40 bg-warn/10 p-3"
         >
-          <AlertDescription class="text-ink">
+          <AlertDescription class="text-foreground">
             Session login belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
           </AlertDescription>
         </Alert>
@@ -226,10 +226,10 @@ async function handleExtensionDone() {
           <Button v-if="extMode === 'semi'" size="lg" class="w-full" @click="handleExtensionDone">
             Selesai login
           </Button>
-          <p v-else class="text-center text-xs text-ink-muted">Menunggu… tab akan ditutup otomatis.</p>
+          <p v-else class="text-center text-xs text-muted-foreground">Menunggu… tab akan ditutup otomatis.</p>
         </div>
         <Alert v-if="!extInstalled && store.extensionError" class="mt-4 border-warn/40 bg-warn/10 p-3">
-          <AlertDescription class="text-ink">
+          <AlertDescription class="text-foreground">
             {{ store.extensionError }} Muat ulang extension di <code>chrome://extensions</code>,
             lalu pastikan <code>VITE_EXTENSION_ID</code> di <code>web/.env</code> sama dengan ID extension.
           </AlertDescription>
@@ -237,11 +237,11 @@ async function handleExtensionDone() {
         <Alert v-if="extMsg" variant="destructive" class="mt-4 bg-danger/10 p-3">
           <AlertDescription>{{ extMsg }}</AlertDescription>
         </Alert>
-        <p v-if="!extInstalled" class="mt-3 text-center text-xs text-ink-muted">
+        <p v-if="!extInstalled" class="mt-3 text-center text-xs text-muted-foreground">
           Login membuka window Chrome terpisah. Jika langsung masuk tanpa window, sesi kamu masih
           valid — tidak perlu menekan ulang.
         </p>
-        <p v-if="store.checking" class="mt-4 text-center text-sm text-ink-muted">
+        <p v-if="store.checking" class="mt-4 text-center text-sm text-muted-foreground">
           Tunggu — selesaikan login di window browser yang terbuka. Jika perlu, tunggu hingga halaman dashboard Kulon tampil.
         </p>
       </template>
