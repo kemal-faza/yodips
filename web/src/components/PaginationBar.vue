@@ -22,11 +22,11 @@ function go(p: number) {
         v-if="p !== '…'"
         variant="ghost"
         size="sm"
-        :class="p === page ? 'bg-navy text-white' : ''"
+        :class="p === page ? 'bg-primary text-primary-foreground' : ''"
         :data-test="`page-${p}`"
         @click="go(p as number)"
       >{{ p }}</Button>
-      <span v-else class="px-1 text-ink-muted">…</span>
+      <span v-else class="px-1 text-muted-foreground">…</span>
     </template>
     <Button variant="ghost" size="sm" data-test="next" :disabled="page >= totalPages" @click="go(page + 1)">›</Button>
   </nav>

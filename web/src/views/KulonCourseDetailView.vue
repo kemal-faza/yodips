@@ -233,10 +233,10 @@ async function reloadAfter() {
         <ArrowLeft class="size-4" aria-hidden="true" />
       </Button>
       <div class="min-w-0">
-        <h1 class="text-lg font-bold text-ink truncate leading-tight">
+        <h1 class="text-lg font-bold text-foreground truncate leading-tight">
           {{ course?.fullname ?? 'Detail Mata Kuliah' }}
         </h1>
-        <p v-if="course?.semester" class="text-xs text-ink-muted">
+        <p v-if="course?.semester" class="text-xs text-muted-foreground">
           {{ course.semester }}
         </p>
       </div>
@@ -244,12 +244,12 @@ async function reloadAfter() {
 
     <!-- Loading Skeleton -->
     <div v-if="loading" class="space-y-3">
-      <Skeleton v-for="i in 4" :key="i" class="h-16 rounded-card" />
+      <Skeleton v-for="i in 4" :key="i" class="h-16 rounded-lg" />
     </div>
 
     <!-- Session Expired Alert -->
     <Alert v-else-if="sessionExpired" class="border-gold/40 bg-gold/20 p-6 text-center">
-      <AlertDescription class="font-semibold text-ink">Session login kedaluwarsa</AlertDescription>
+      <AlertDescription class="font-semibold text-foreground">Session login kedaluwarsa</AlertDescription>
       <Button class="mt-3 cursor-pointer" :disabled="auth.checking" @click="relogin(reloadAfter)">
         {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
       </Button>
@@ -262,7 +262,7 @@ async function reloadAfter() {
     </Alert>
 
     <!-- Content Empty -->
-    <div v-else-if="!content" class="py-16 text-center text-ink-muted bg-card rounded-xl border border-line p-6">
+    <div v-else-if="!content" class="py-16 text-center text-muted-foreground bg-card rounded-xl border border-border p-6">
       Mata kuliah tidak ditemukan.
     </div>
 
@@ -271,7 +271,7 @@ async function reloadAfter() {
       <section
         v-for="s in content.sections"
         :key="s.id"
-        class="rounded-xl border border-line bg-card overflow-hidden transition-colors"
+        class="rounded-xl border border-border bg-card overflow-hidden transition-colors"
       >
         <!-- Section Toggle Header -->
         <button
@@ -283,10 +283,10 @@ async function reloadAfter() {
           <div class="flex items-center gap-2.5 min-w-0">
             <component
               :is="isCollapsed(s.id) ? ChevronRight : ChevronDown"
-              class="size-4 shrink-0 text-ink-muted transition-transform"
+              class="size-4 shrink-0 text-muted-foreground transition-transform"
               aria-hidden="true"
             />
-            <h2 class="text-sm font-semibold text-ink truncate">{{ s.label }}</h2>
+            <h2 class="text-sm font-semibold text-foreground truncate">{{ s.label }}</h2>
             <span
               v-if="isCurrentWeekSection(s.dateRange)"
               class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary dark:bg-primary/20"
@@ -295,15 +295,15 @@ async function reloadAfter() {
             </span>
           </div>
 
-          <span v-if="s.dateRange" class="flex items-center gap-1 text-xs text-ink-muted shrink-0">
+          <span v-if="s.dateRange" class="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
             <Calendar class="size-3" />
             {{ s.dateRange }}
           </span>
         </button>
 
         <!-- Section Content (Items) -->
-        <div v-if="!isCollapsed(s.id)" class="border-t border-line/60 bg-muted/10 px-3 py-2.5">
-          <div v-if="s.items.length === 0" class="px-2 py-3 text-xs text-ink-muted italic">
+        <div v-if="!isCollapsed(s.id)" class="border-t border-border/60 bg-muted/10 px-3 py-2.5">
+          <div v-if="s.items.length === 0" class="px-2 py-3 text-xs text-muted-foreground italic">
             Tidak ada materi pada pertemuan ini.
           </div>
 
@@ -311,13 +311,13 @@ async function reloadAfter() {
             <li v-for="item in s.items" :key="item.cmid ?? item.url">
               <button
                 type="button"
-                class="flex w-full items-center gap-3 rounded-lg border border-line/50 bg-card px-3 py-2 text-left transition-all hover:border-primary/40 hover:bg-muted/30 hover:shadow-2xs cursor-pointer"
+                class="flex w-full items-center gap-3 rounded-lg border border-border/50 bg-card px-3 py-2 text-left transition-all hover:border-primary/40 hover:bg-muted/30 hover:shadow-2xs cursor-pointer"
                 :data-test="`item-${item.kind}-${item.cmid}`"
                 @click="openItem(item)"
               >
                 <component :is="itemIcon(item.kind)" class="size-4 shrink-0 text-primary" aria-hidden="true" />
-                <span class="min-w-0 flex-1 truncate text-xs font-medium text-ink">{{ item.name }}</span>
-                <span v-if="itemBadge(item)" class="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-ink-muted">
+                <span class="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{{ item.name }}</span>
+                <span v-if="itemBadge(item)" class="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">
                   {{ itemBadge(item) }}
                 </span>
               </button>

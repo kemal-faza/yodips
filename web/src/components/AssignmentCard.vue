@@ -27,7 +27,7 @@ const itemIcon = computed(() =>
 
 <template>
   <Card
-    class="group cursor-pointer overflow-hidden border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-primary/40"
+    class="assignment-card group cursor-pointer overflow-hidden border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-primary/40"
     role="button"
     tabindex="0"
     @click="emit('open')"

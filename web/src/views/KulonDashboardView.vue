@@ -124,13 +124,13 @@ load();
   <div class="flex min-h-full flex-col space-y-4">
     <!-- Full-width Search Bar -->
     <div class="relative w-full">
-      <Search class="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-ink-muted" aria-hidden="true" />
+      <Search class="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
       <Input
         v-model="search"
         data-test="search"
         type="text"
         placeholder="Cari tugas atau mata kuliah…"
-        class="w-full pl-10 h-11 bg-card text-sm border-line shadow-xs focus:ring-2 focus:ring-primary/20"
+        class="w-full pl-10 h-11 bg-card text-sm border-border shadow-xs focus:ring-2 focus:ring-primary/20"
       />
     </div>
 
@@ -145,7 +145,7 @@ load();
         :class="
           view === f.key
             ? 'bg-primary text-primary-foreground border-primary shadow-xs'
-            : 'bg-card text-ink-muted border-line hover:bg-muted hover:text-ink'
+            : 'bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground'
         "
         @click="view = f.key"
       >
@@ -160,13 +160,13 @@ load();
 
     <!-- Loading Skeleton -->
     <div v-if="loading" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <Skeleton v-for="i in 6" :key="i" class="h-16 rounded-card" />
+      <Skeleton v-for="i in 6" :key="i" class="h-16 rounded-lg" />
     </div>
 
     <!-- Session Expired Alert -->
     <Alert v-else-if="sessionExpired" class="mt-4 gap-2 border-gold/40 bg-gold/20 p-6 text-center">
-      <AlertTitle class="font-semibold text-ink">Session login kedaluwarsa</AlertTitle>
-      <AlertDescription class="text-sm text-ink-muted">{{ error }}</AlertDescription>
+      <AlertTitle class="font-semibold text-foreground">Session login kedaluwarsa</AlertTitle>
+      <AlertDescription class="text-sm text-muted-foreground">{{ error }}</AlertDescription>
       <Button class="mt-4 justify-self-center cursor-pointer" :disabled="auth.checking" @click="relogin(reloadAfter)">
         {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
       </Button>
@@ -181,10 +181,10 @@ load();
     <!-- Empty State -->
     <div v-else-if="pageItems.length === 0" class="flex flex-1 flex-col items-center justify-center text-center">
       <div class="size-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
-        <Search class="size-5 text-ink-muted" aria-hidden="true" />
+        <Search class="size-5 text-muted-foreground" aria-hidden="true" />
       </div>
-      <p class="font-medium text-sm text-ink">Tidak ada tugas yang cocok</p>
-      <p class="text-xs text-ink-muted mt-1">Coba sesuaikan kata kunci atau filter status.</p>
+      <p class="font-medium text-sm text-foreground">Tidak ada tugas yang cocok</p>
+      <p class="text-xs text-muted-foreground mt-1">Coba sesuaikan kata kunci atau filter status.</p>
     </div>
 
     <!-- 2x2 Assignment Grid Layout -->
@@ -208,24 +208,24 @@ load();
     <DetailPanel :assignment="selected" :open="panelOpen" @close="panelOpen = false" />
 
     <!-- Hidden (Restore) -->
-    <section v-if="hiddenAssignments.length > 0" class="border-t border-line pt-4">
-      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+    <section v-if="hiddenAssignments.length > 0" class="border-t border-border pt-4">
+      <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Tugas tersembunyi ({{ hiddenAssignments.length }})
       </h2>
       <ul class="space-y-1.5">
         <li
           v-for="a in hiddenAssignments"
           :key="a.id"
-          class="flex items-center justify-between gap-3 rounded-lg border border-line/50 bg-card/60 px-3 py-2"
+          class="flex items-center justify-between gap-3 rounded-lg border border-border/50 bg-card/60 px-3 py-2"
         >
           <div class="min-w-0">
-            <p class="truncate text-sm text-ink">{{ a.name }}</p>
-            <p class="truncate text-xs text-ink-muted">{{ a.course }}</p>
+            <p class="truncate text-sm text-foreground">{{ a.name }}</p>
+            <p class="truncate text-xs text-muted-foreground">{{ a.course }}</p>
           </div>
           <Button
             variant="ghost"
             size="sm"
-            class="shrink-0 text-ink-muted hover:text-ink cursor-pointer"
+            class="shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
             data-test="unhide-assignment"
             @click="store.unhide(a.id)"
           >

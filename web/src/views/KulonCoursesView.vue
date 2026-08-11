@@ -47,11 +47,11 @@ load();
 <template>
   <div class="space-y-6">
     <div v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <Skeleton v-for="i in 6" :key="i" class="h-28 rounded-card" />
+      <Skeleton v-for="i in 6" :key="i" class="h-28 rounded-lg" />
     </div>
 
     <Alert v-else-if="sessionExpired" class="border-gold/40 bg-gold/20 p-6 text-center">
-      <AlertDescription class="font-semibold text-ink">Session login kedaluwarsa</AlertDescription>
+      <AlertDescription class="font-semibold text-foreground">Session login kedaluwarsa</AlertDescription>
       <Button class="mt-3 cursor-pointer" :disabled="auth.checking" @click="relogin(reloadAfter)">
         {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
       </Button>
@@ -62,40 +62,40 @@ load();
       <Button class="mt-2 cursor-pointer" @click="load">Coba lagi</Button>
     </Alert>
 
-    <div v-else-if="store.courses.length === 0" class="flex flex-col items-center justify-center py-16 text-center bg-card rounded-xl border border-line px-6">
-      <p class="font-semibold text-ink text-sm">Belum ada mata kuliah yang diambil</p>
-      <p class="text-xs text-ink-muted mt-1">Data akan muncul setelah semester aktif dimulai.</p>
+    <div v-else-if="store.courses.length === 0" class="flex flex-col items-center justify-center py-16 text-center bg-card rounded-xl border border-border px-6">
+      <p class="font-semibold text-foreground text-sm">Belum ada mata kuliah yang diambil</p>
+      <p class="text-xs text-muted-foreground mt-1">Data akan muncul setelah semester aktif dimulai.</p>
     </div>
 
     <template v-else>
       <section>
         <div class="mb-3 flex items-baseline gap-2">
-          <h2 class="text-base font-bold text-ink">Aktif</h2>
-          <span v-if="actualSemester" class="text-xs text-ink-muted">{{ actualSemester }}</span>
+          <h2 class="text-base font-bold text-foreground">Aktif</h2>
+          <span v-if="actualSemester" class="text-xs text-muted-foreground">{{ actualSemester }}</span>
         </div>
         <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
           <CourseCard v-for="c in activeCourses" :key="c.id" :course="c" @open="openCourse(c.id)" />
         </div>
-        <p v-if="activeCourses.length === 0" class="text-sm text-ink-muted">Belum ada mata kuliah aktif di semester ini.</p>
+        <p v-if="activeCourses.length === 0" class="text-sm text-muted-foreground">Belum ada mata kuliah aktif di semester ini.</p>
       </section>
 
       <section v-if="pastGroups.length > 0">
         <button
           type="button"
-          class="flex w-full items-center justify-between rounded-xl border border-line bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50 cursor-pointer"
+          class="flex w-full items-center justify-between rounded-xl border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50 cursor-pointer"
           data-test="expand-past"
           :aria-expanded="pastExpanded"
           @click="pastExpanded = !pastExpanded"
         >
           <div class="flex items-center gap-2">
-            <component :is="pastExpanded ? ChevronDown : ChevronRight" class="size-4 text-ink-muted" />
-            <span class="font-semibold text-sm text-ink">Mata Kuliah Sebelumnya</span>
-            <span class="text-xs font-normal text-ink-muted">({{ pastCount }} mata kuliah)</span>
+            <component :is="pastExpanded ? ChevronDown : ChevronRight" class="size-4 text-muted-foreground" />
+            <span class="font-semibold text-sm text-foreground">Mata Kuliah Sebelumnya</span>
+            <span class="text-xs font-normal text-muted-foreground">({{ pastCount }} mata kuliah)</span>
           </div>
         </button>
         <template v-if="pastExpanded">
           <div v-for="g in pastGroups" :key="g.semester" class="mt-3 space-y-3">
-            <h3 :class="['text-sm font-semibold', g.semester === 'Lainnya' ? 'text-ink-muted' : 'text-ink']">
+            <h3 :class="['text-sm font-semibold', g.semester === 'Lainnya' ? 'text-muted-foreground' : 'text-foreground']">
               {{ g.semester === 'Lainnya' ? 'Tanpa semester' : 'Semester ' + g.semester }} ({{ g.courses.length }})
             </h3>
             <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">

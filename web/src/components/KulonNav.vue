@@ -19,7 +19,7 @@ const active = computed({
 
 <template>
   <Tabs v-model="active">
-    <TabsList variant="line" class="w-full border-b border-line">
+    <TabsList variant="line" class="w-full border-b border-border">
       <TabsTrigger v-for="t in tabs" :key="t.value" :value="t.value" data-test="kulon-tab">
         {{ t.label }}
       </TabsTrigger>
