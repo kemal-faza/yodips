@@ -25,13 +25,22 @@ const labelFormatter = (d: number | Date) => `Semester ${(typeof d === 'number' 
   </div>
   <ChartContainer v-else :config="config" class="h-64 w-full" cursor>
     <VisXYContainer :data="props.data" :x="xIndex" :y="(d: IpTrendRow) => d.ip" :y-domain="[0, 4]">
-      <VisLine :x="xIndex" :y="(d: IpTrendRow) => d.ip" color="var(--primary)" />
+      <VisLine :x="xIndex" :y="(d: IpTrendRow) => d.ip" color="var(--primary)" :line-width="2.5" />
       <VisScatter :x="xIndex" :y="(d: IpTrendRow) => d.ip" :size="8" color="var(--primary)" />
-      <VisPlotline :value="props.ipMax" axis="y" color="var(--danger)" :line-style="[3, 3]" />
+      <VisPlotline
+        :value="props.ipMax"
+        axis="y"
+        color="var(--color-success)"
+        :line-style="[3, 3]"
+        :label-text="`Max: ${props.ipMax.toFixed(2)}`"
+        label-position="top"
+      />
       <VisAxis type="x" :grid-line="false" :tick-format="xLabel" />
       <VisAxis type="y" :grid-line="true" :tick-line="false" :domain-line="false" />
       <ChartCrosshair
-        :template="componentToString(config, ChartTooltipContent, { labelFormatter, hideIndicator: false })"
+        color="var(--primary)"
+        :circle-radius="6"
+        :template="componentToString(config, ChartTooltipContent, { labelFormatter, hideIndicator: false, class: 'rounded-none' })"
       />
     </VisXYContainer>
   </ChartContainer>
