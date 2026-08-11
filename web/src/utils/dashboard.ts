@@ -39,6 +39,7 @@ export function ipTrend(khs: SiapKhs | null): IpTrendRow[] {
 
 export interface CumulativeSksRow {
   semester: string;
+  sksSemester: number; // SKS taken in that semester
   sksKumulatif: number;
 }
 
@@ -48,7 +49,7 @@ export function cumulativeSks(khs: SiapKhs | null): CumulativeSksRow[] {
     .filter(sksSemester)
     .map((s) => {
       running += s.totalSks;
-      return { semester: s.semester, sksKumulatif: running };
+      return { semester: s.semester, sksSemester: s.totalSks, sksKumulatif: running };
     });
 }
 

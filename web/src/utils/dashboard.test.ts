@@ -92,12 +92,12 @@ describe('ipTrend', () => {
 describe('cumulativeSks', () => {
   it('computes a running total', () => {
     expect(cumulativeSks(khs)).toEqual([
-      { semester: 'Gasal 22/23', sksKumulatif: 20 },
-      { semester: 'Genap 22/23', sksKumulatif: 42 },
+      { semester: 'Gasal 22/23', sksSemester: 20, sksKumulatif: 20 },
+      { semester: 'Genap 22/23', sksSemester: 22, sksKumulatif: 42 },
     ]);
   });
   it('excludes ungraded semesters (0 SKS) from the running total', () => {
-    expect(cumulativeSks(khsWithUngraded)).toEqual([{ semester: 'Gasal 22/23', sksKumulatif: 20 }]);
+    expect(cumulativeSks(khsWithUngraded)).toEqual([{ semester: 'Gasal 22/23', sksSemester: 20, sksKumulatif: 20 }]);
   });
   it('returns [] for null', () => expect(cumulativeSks(null)).toEqual([]));
 });
@@ -172,8 +172,8 @@ describe('getKhs-fix regression', () => {
   });
   it('cumulativeSks keeps the current term via totalSks>0 filter', () => {
     expect(cumulativeSks(khsCurrentTerm)).toEqual([
-      { semester: 'Gasal 22/23', sksKumulatif: 20 },
-      { semester: '2026/2027 Ganjil', sksKumulatif: 43 },
+      { semester: 'Gasal 22/23', sksSemester: 20, sksKumulatif: 20 },
+      { semester: '2026/2027 Ganjil', sksSemester: 23, sksKumulatif: 43 },
     ]);
   });
   it('gradeDistribution tolerates a null nilaiHuruf', () => {

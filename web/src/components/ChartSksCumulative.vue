@@ -6,7 +6,7 @@ import type { CumulativeSksRow } from '../utils/dashboard';
 
 const props = defineProps<{ data: CumulativeSksRow[] }>();
 
-const config = { sks: { label: 'SKS Kumulatif', color: 'var(--primary)' } } satisfies ChartConfig;
+const config = { sksSemester:  { label: 'SKS Semester', color: 'var(--primary)' }, sksKumulatif: { label: 'SKS Kumulatif', color: 'var(--color-muted-foreground)' } } satisfies ChartConfig;
 const target = 144;
 
 const xIndex = (d: CumulativeSksRow, i: number) => i;
