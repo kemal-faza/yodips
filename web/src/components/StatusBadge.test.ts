@@ -10,7 +10,7 @@ describe('StatusBadge', () => {
   it('applies danger tone for danger', () => {
     const w = mount(StatusBadge, { props: { label: 'X', tone: 'danger' } });
     expect(w.classes()).toContain('bg-danger/10');
-    expect(w.classes()).toContain('text-danger');
+    expect(w.classes()).toContain('text-danger-foreground');
   });
   it('applies success tone for success', () => {
     const w = mount(StatusBadge, { props: { label: 'Selesai', tone: 'success' } });
