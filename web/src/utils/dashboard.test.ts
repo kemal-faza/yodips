@@ -144,3 +144,36 @@ describe('parseJadwal', () => {
   });
   it('returns [] for empty input', () => expect(parseJadwal([])).toEqual([]));
 });
+
+// Regression from the getKhs fix: the CURRENT term now returns enrolled courses
+// with SKS but NO grades (empty nilaiHuruf, bobot 0, ip 0). It must NOT appear
+// in IP/grade charts (would crash the line to 0), but the SKS cumulative chart
+// keeps the old totalSks>0 behavior (includes the current term's SKS).
+const khsCurrentTerm: SiapKhs = {
+  ipk: 2.73,
+  semesters: [
+    { semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [{ mataKuliah: 'Aljabar', sks: 3, nilaiHuruf: 'A', bobot: 4 }] },
+    { semester: '2026/2027 Ganjil', ip: 0, totalSks: 23, nilai: [
+      { mataKuliah: 'Sistem Informasi', sks: 3, nilaiHuruf: '', bobot: 0 },
+    ]},
+  ],
+};
+
+describe('getKhs-fix regression', () => {
+  it('ipTrend excludes a current term with SKS but no grades', () => {
+    expect(ipTrend(khsCurrentTerm)).toEqual([{ semester: 'Gasal 22/23', ip: 3.52 }]);
+  });
+  it('gradeDistribution excludes a current term with SKS but no grades', () => {
+    expect(gradeDistribution(khsCurrentTerm).map((r) => r.semester)).toEqual(['Gasal 22/23']);
+  });
+  it('cumulativeSks keeps the current term via totalSks>0 filter', () => {
+    expect(cumulativeSks(khsCurrentTerm)).toEqual([
+      { semester: 'Gasal 22/23', sksKumulatif: 20 },
+      { semester: '2026/2027 Ganjil', sksKumulatif: 43 },
+    ]);
+  });
+  it('gradeDistribution tolerates a null nilaiHuruf', () => {
+    const khsNull = { ...khs, semesters: [{ ...khs.semesters[0], nilai: [{ mataKuliah: 'X', sks: 2, nilaiHuruf: null as unknown as string, bobot: 4 }] }] };
+    expect(() => gradeDistribution(khsNull)).not.toThrow();
+  });
+});

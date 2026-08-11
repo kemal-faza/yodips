@@ -1,4 +1,4 @@
-import type { SiapKhs, SiapIrs, SiapJadwal, Assignment } from '../types';
+import type { SiapKhs, SiapIrs, SiapJadwal, Assignment, SiapKhsSemester } from '../types';
 import { assignStatus } from './assignment';
 
 export interface TaskStats {
@@ -46,7 +46,7 @@ export interface CumulativeSksRow {
 export function cumulativeSks(khs: SiapKhs | null): CumulativeSksRow[] {
   let running = 0;
   return (khs?.semesters ?? [])
-    .filter(gradedSemester)
+    .filter(sksSemester)
     .map((s) => {
       running += s.totalSks;
       return { semester: s.semester, sksKumulatif: running };
@@ -73,17 +73,24 @@ export function gradeDistribution(khs: SiapKhs | null): GradeDistRow[] {
     .map((s) => {
       const row: GradeDistRow = { semester: s.semester, A: 0, AB: 0, B: 0, BC: 0, C: 0, D: 0, E: 0 };
       for (const n of s.nilai) {
-        const k = n.nilaiHuruf.toUpperCase() as GradeKey;
+        const k = (n.nilaiHuruf ?? '').toUpperCase() as GradeKey;
         if (k in row) row[k] += 1;
       }
       return row;
     });
 }
 
-/** A semester is "graded" when it carries earned SKS. Ungraded KHS rows from
- * current/future terms (ip 0, totalSks 0, empty nilai) must be excluded so
- * charts do not crash to 0 or render empty bars. */
-function gradedSemester(s: { totalSks: number }): boolean {
+/** A semester is "graded" when it carries at least one real letter grade.
+ * The getKhs fix makes the CURRENT term return enrolled courses with SKS but
+ * empty nilaiHuruf / bobot 0 / ip 0 — `totalSks > 0` would let it leak into
+ * IP/grade charts and crash the line to 0. */
+function gradedSemester(s: SiapKhsSemester): boolean {
+  return s.nilai.some((n) => (n.nilaiHuruf ?? '').trim() !== '');
+}
+
+/** SKS cumulative keeps its own totalSks-based filter (unchanged behavior):
+ * the current term's taken SKS still counts toward the running total. */
+function sksSemester(s: { totalSks: number }): boolean {
   return s.totalSks > 0;
 }
 
