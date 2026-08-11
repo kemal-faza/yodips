@@ -8,6 +8,9 @@ const props = defineProps<{ data: CumulativeSksRow[] }>();
 
 const config = { sks: { label: 'SKS Kumulatif', color: 'var(--primary)' } } satisfies ChartConfig;
 const target = 144;
+
+const xIndex = (d: CumulativeSksRow, i: number) => i;
+const xLabel = (i: number) => props.data[i]?.semester ?? '';
 </script>
 
 <template>
@@ -15,10 +18,10 @@ const target = 144;
     Tidak ada data
   </div>
   <ChartContainer v-else :config="config" class="h-64 w-full">
-    <VisXYContainer :data="props.data" :x="(d: CumulativeSksRow) => d.semester" :y="(d: CumulativeSksRow) => d.sksKumulatif" :y-domain="[0, 160]">
-      <VisArea :x="(d: CumulativeSksRow) => d.semester" :y="(d: CumulativeSksRow) => d.sksKumulatif" color="var(--primary)" :opacity="0.15" />
+    <VisXYContainer :data="props.data" :x="xIndex" :y="(d: CumulativeSksRow) => d.sksKumulatif" :y-domain="[0, 160]">
+      <VisArea :x="xIndex" :y="(d: CumulativeSksRow) => d.sksKumulatif" color="var(--primary)" :opacity="0.15" />
       <VisPlotline :value="target" axis="y" color="var(--danger)" :line-style="[4, 4]" />
-      <VisAxis type="x" :grid-line="false" :tick-format="(d: string) => d" />
+      <VisAxis type="x" :grid-line="false" :tick-format="xLabel" />
       <VisAxis type="y" :grid-line="true" :tick-line="false" :domain-line="false" />
     </VisXYContainer>
   </ChartContainer>
