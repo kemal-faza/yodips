@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Search } from '@lucide/vue';
+import { matchesKulonFilter, courseActive } from '../utils/assignment';
 import type { Assignment } from '../types';
 
 const PAGE_SIZE = 20;
@@ -33,21 +34,6 @@ const filters = [
   { key: 'late', label: 'Terlambat' },
 ] as const;
 
-function matchesView(v: 'all' | 'need' | 'done' | 'late', a: Assignment): boolean {
-  const done = a.submissionStatus === 'submitted' || a.submissionStatus === 'graded';
-  if (v === 'all') return true;
-  if (v === 'done') return done;
-  // "terlambat" = overdue AND not done
-  if (v === 'late') return a.overdue && !done;
-  // "perlu dikerjakan" = active-semester course AND not done AND not past deadline
-  return !done && !a.overdue && courseActive(a);
-}
-
-/** True when the assignment's course is in the current (active) semester. */
-function courseActive(a: Assignment): boolean {
-  return store.courses.find((c) => c.id === a.courseId)?.timelineStatus === 'inprogress';
-}
-
 /** Semester label of the course an assignment belongs to (null if unknown). */
 function courseSemester(a: Assignment): string | null {
   return store.courses.find((c) => c.id === a.courseId)?.semester ?? null;
@@ -57,7 +43,7 @@ const filtered = computed(() => {
   const q = search.value.trim().toLowerCase();
   const list = [...store.assignments]
     .filter((a) => !store.isHidden(a.id))
-    .filter((a) => matchesView(view.value, a))
+    .filter((a) => matchesKulonFilter(view.value, a, store.courses))
     // "perlu dikerjakan": sort by nearest deadline (earliest first);
     // everywhere else: newest semester first, then newest deadline first.
     .sort((a, b) => {
@@ -66,8 +52,8 @@ const filtered = computed(() => {
         const b0 = b.duedate || Number.POSITIVE_INFINITY;
         return a0 - b0;
       }
-      const ra = courseActive(a) ? 0 : 1;
-      const rb = courseActive(b) ? 0 : 1;
+      const ra = courseActive(a, store.courses) ? 0 : 1;
+      const rb = courseActive(b, store.courses) ? 0 : 1;
       if (ra !== rb) return ra - rb; // active-semester tasks first
       const sa = courseSemester(a) ?? '';
       const sb = courseSemester(b) ?? '';
