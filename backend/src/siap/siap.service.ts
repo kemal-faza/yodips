@@ -584,19 +584,28 @@ export class SiapService {
    * Proxy SIAP's own notification list. The payload shape is pinned by the live
    * spike (Task 1 Step 1). Normalize the upstream response into SiapNotifications.
    *
-   * NOTE (spike unavailable): the live spike could not be captured this run —
-   * restarting the backend would wipe the in-memory SIAP session and it cannot
-   * be re-captured (no running Chrome/CDP). The upstream endpoint is
-   * `GET .../pages/mhs/dashboard/ajax/notifications` returning
-   * `{"status":"ok","data":{"_timestamp":"...","count":"0"}}` (count as a
-   * STRING). Normalize defensively: `items` from `data.items` if present, else
-   * `[]`; `count` from `data.count`. If a future spike reveals a different list
-   * shape, adjust this mapping + the fixture + tests to match the REAL payload.
+   * NOTE (live spike finding 2026-08-12): the endpoint is guarded by CI's
+   * is_ajax_request() — without `X-Requested-With: XMLHttpRequest` it returns a
+   * text/html "This endpoint cannot be accessed directly." body which siapFetchJson
+   * maps to a stale 401. The header (set below) is the fix. The upstream payload is
+   * `{"status":"ok","data":{"_timestamp":"...","count":"0"}}` (count as a STRING).
+   * Normalize defensively: `items` from `data.items` if present, else `[]`; `count`
+   * from `data.count`. If a future spike reveals a different list shape, adjust this
+   * mapping + the fixture + tests to match the REAL payload.
    */
   async getNotifications(siapCookie: string): Promise<SiapNotifications> {
     const data = await this.siapFetchJson<{ status?: string; data?: any }>(
       `${this.baseUrl}/pages/mhs/dashboard/ajax/notifications`,
-      { headers: { Cookie: siapCookie }, redirect: 'follow' },
+      {
+        headers: {
+          Cookie: siapCookie,
+          // SIAP is CodeIgniter-based; this /ajax/ route is guarded by CI's
+          // is_ajax_request() which requires the XMLHttpRequest header. Without
+          // it the endpoint returns "This endpoint cannot be accessed directly."
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        redirect: 'follow',
+      },
     );
     const raw = data?.data ?? {};
     const items: SiapNotification[] = Array.isArray(raw.items) ? raw.items : [];
@@ -616,6 +625,8 @@ export class SiapService {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           Cookie: siapCookie,
+          // Same CI is_ajax_request() guard as getNotifications.
+          'X-Requested-With': 'XMLHttpRequest',
         },
         body: `id=${encodeURIComponent(id)}`,
         redirect: 'follow',

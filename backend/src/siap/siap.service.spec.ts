@@ -283,6 +283,26 @@ describe('SiapService', () => {
       expect(res.count).toBeGreaterThanOrEqual(0);
     });
 
+    it('sends the CI is_ajax_request() guard header', async () => {
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      fetchMock.mockResolvedValue({
+        ok: true, url: 'https://siap.undip.ac.id/pages/mhs/dashboard/ajax/notifications',
+        headers: { get: () => 'application/json' },
+        text: async () => '{"status":"ok","data":{"count":"0"}}',
+        json: async () => ({ status: 'ok', data: { count: '0' } }),
+      });
+      await svc.getNotifications('cookie');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/ajax/notifications'),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-Requested-With': 'XMLHttpRequest',
+          }),
+        }),
+      );
+    });
+
     it('throws 401 on a stale session', async () => {
       (global.fetch as jest.Mock).mockResolvedValue({
         ok: true,
@@ -311,6 +331,9 @@ describe('SiapService', () => {
         expect.objectContaining({
           method: 'POST',
           body: expect.stringContaining('76927'),
+          headers: expect.objectContaining({
+            'X-Requested-With': 'XMLHttpRequest',
+          }),
         }),
       );
       expect(res.message).toBe('ok');
