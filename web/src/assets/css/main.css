@@ -13,6 +13,7 @@
   --color-siap-to: #2d5aa0;
   --color-sso-green: #48bb78;
   --color-sso-green-dark: #38a169;
+  --animate-aurora: aurora 60s linear infinite;
 }
 
 /* Class-based dark mode: `.dark` on <html> (set by index.html FOUC guard,
@@ -79,6 +80,23 @@
 }
 
 /* ===== Animations ===== */
+
+/* Aurora background — animates the layered gradient's background-position so
+   the aurora "flows" across the screen. Used by AuroraBackground.vue via the
+   `--animate-aurora` CSS var + `after:animate-aurora` (Tailwind v4 utility). */
+@keyframes aurora {
+  from {
+    background-position:
+      50% 50%,
+      50% 50%;
+  }
+  to {
+    background-position:
+      350% 50%,
+      350% 50%;
+  }
+}
+
 @keyframes fade-in-up {
   from {
     opacity: 0;
