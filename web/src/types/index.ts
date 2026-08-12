@@ -156,3 +156,17 @@ export interface SiapJadwal {
   waktu: string;
   sks: number;
 }
+
+export interface SiapNotification {
+  id: string;
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+  type: 'warning' | 'urgent' | 'success' | 'info';
+}
+
+export interface SiapNotifications {
+  count: number;
+  items: SiapNotification[];
+}

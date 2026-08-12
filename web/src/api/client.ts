@@ -8,6 +8,7 @@ import type {
   SiapIrs,
   SiapJadwal,
   SiapKhs,
+  SiapNotifications,
   SiapProfile,
   User,
 } from '../types';
@@ -108,4 +109,13 @@ export async function getSiapKhs(): Promise<SiapKhs> {
 export async function getSiapJadwal(): Promise<SiapJadwal[]> {
   const { data } = await apiClient.get<SiapJadwal[]>('/api/siap/jadwal');
   return data;
+}
+
+export async function getNotifications(): Promise<SiapNotifications> {
+  const { data } = await apiClient.get<SiapNotifications>('/api/siap/notifications');
+  return data;
+}
+
+export async function markNotificationRead(id: string): Promise<void> {
+  await apiClient.post(`/api/siap/notifications/${id}/unread`);
 }
