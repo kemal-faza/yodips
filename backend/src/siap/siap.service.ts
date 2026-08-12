@@ -520,10 +520,10 @@ export class SiapService {
 
   /**
    * Lecturer per course, scraped from the SIAP IRS page (`/irs/mhs/irs`).
-   * Each enrolled matkul is rendered as a collapser panel; its header carries the
-   * course kode and its body carries the lecturer ("dosen"). Layout is verified live
-   * on first run (semester must be approved to list courses). Returns [] when the IRS
-   * is empty/not yet approved, or when the page shape differs.
+   * The IRS table (per approved semester) has 8 columns:
+   *   NO, KODE, MATA KULIAH, KELAS, SKS, RUANG, STATUS, NAMA DOSEN
+   * We read KODE (col 1) + NAMA DOSEN (col 7). Returns [] when the IRS is
+   * empty/not yet approved, or when the page shape differs.
    */
   async getLecturers(siapCookie: string): Promise<{ kode: string; dosen: string }[]> {
     const html = await this.siapFetch(`${this.baseUrl}/irs/mhs/irs`, {
@@ -531,37 +531,30 @@ export class SiapService {
       redirect: 'follow',
     });
     if (this.isIrsEmpty(html)) return [];
-    return this.parseIrsCollapsers(html);
+    return this.parseIrsTable(html);
   }
 
   private isIrsEmpty(html: string): boolean {
-    // e.g. a "belum disetujui"/empty-state marker; extend as layout is verified.
-    return /belum disetujui|tidak ada|kosong/i.test(html);
+    // The approved-semester table carries a "SUDAH DISETUJUI" marker; an empty/
+    // unapproved IRS state instead renders a "belum disetujui"/"tidak ada data"
+    // placeholder. Treat those as empty.
+    return /belum disetujui|tidak ada (?:data|matakuliah)|mata kuliah kosong/i.test(html);
   }
 
-  private parseIrsCollapsers(html: string): { kode: string; dosen: string }[] {
+  /** Parse the 8-column IRS table: KODE = col 1, NAMA DOSEN = col 7. */
+  private parseIrsTable(html: string): { kode: string; dosen: string }[] {
     const out: { kode: string; dosen: string }[] = [];
-    const panelRe = /data-course-id="(\d+)"([\s\S]*?)(?=data-course-id=|<div id="tab)/gi;
+    const re = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let m: RegExpExecArray | null;
-    while ((m = panelRe.exec(html)) !== null) {
-      const body = m[2];
-      const kode = body.match(/[A-Z]{2,3}\d{5,}/)?.[0];
-      const dosen = body.match(/(?:dosen|pengampu)\s*:\s*([^<\n]+)/i)?.[1]?.trim();
-      if (kode && dosen) out.push({ kode, dosen });
-    }
-    // Fallback: if the collapser regex matched nothing (unconfirmed layout), try a
-    // table-based parse so a semester with lectures still surfaces.
-    if (out.length === 0) {
-      for (const row of this.dataRows(html)) {
-        const cells = this.rowCells(row);
-        const kode = cells.find((c) => /^[A-Z]{2,3}\d{5,}$/.test(c));
-        // A lecturer name starts with a capital, is NOT the kode, and is a
-        // multi-word human name (contains a space) — so the kode cell itself is
-        // never mistaken for the dosen.
-        const dosen = cells.find(
-          (c) => !!c && !/^[A-Z]{2,3}\d{5,}$/.test(c) && /^[A-Z]/.test(c) && c.includes(' '),
-        );
-        if (kode && dosen) out.push({ kode, dosen });
+    while ((m = re.exec(html)) !== null) {
+      if (!/<td/i.test(m[1])) continue;
+      const cells = this.rowCells(m[1]);
+      // Column 1 = KODE (e.g. MIK1624105); column 7 = NAMA DOSEN (may be empty,
+      // multiple names, or whitespace). Only keep rows with a real kode + dosen.
+      const kode = (cells[1] ?? '').trim();
+      const dosen = (cells[7] ?? '').trim();
+      if (/^[A-Z]{2,3}\d{5,}$/.test(kode) && dosen) {
+        out.push({ kode, dosen });
       }
     }
     return out;

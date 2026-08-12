@@ -216,16 +216,31 @@ describe('SiapService', () => {
       expect(await svc.getLecturers('sia_app_session=K')).toEqual([]);
     });
 
-    it('parses kode + dosen from IRS collapser panels', async () => {
+    it('parses kode + dosen from the 8-column IRS table', async () => {
+      // Real IRS table columns: NO, KODE, MATA KULIAH, KELAS, SKS, RUANG,
+      // STATUS, NAMA DOSEN. KODE = col 1, NAMA DOSEN = col 7.
       const html =
-        '<div id="accordion">' +
-        '<div data-course-id="123" data-course-name="MIK1624105">' +
-        '<span>MIK1624105</span><span>dosen : Dr. X</span>' +
-        '</div>' +
-        '<div data-course-id="456" data-course-name="MIK1624503">' +
-        '<span>MIK1624503</span><span>pengampu : Retno</span>' +
-        '</div>' +
-        '<div id="tabIRS">bye</div></div>';
+        '<table>' +
+        '<tr><td>1</td><td>MIK1624105</td><td>Aljabar Linier</td><td>D</td><td>3</td><td>A302</td><td>BARU</td><td>Dr. Helmie Arif Wibawa, S.Si., M.Cs.\nDr. Aris Sugiharto</td></tr>' +
+        '<tr><td>2</td><td>MIK1624503</td><td>Sistem Informasi</td><td>A</td><td>3</td><td>A301</td><td>BARU</td><td>Retno Wulandari</td></tr>' +
+        '</table>';
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: IRS_URL,
+        text: async () => html,
+      });
+      expect(await svc.getLecturers('sia_app_session=K')).toEqual([
+        { kode: 'MIK1624105', dosen: 'Dr. Helmie Arif Wibawa, S.Si., M.Cs. Dr. Aris Sugiharto' },
+        { kode: 'MIK1624503', dosen: 'Retno Wulandari' },
+      ]);
+    });
+
+    it('skips rows with a kode but empty NAMA DOSEN (col 7)', async () => {
+      const html =
+        '<table>' +
+        '<tr><td>1</td><td>MIK1624105</td><td>Aljabar Linier</td><td>D</td><td>3</td><td>A302</td><td>BARU</td><td>Dr. X</td></tr>' +
+        '<tr><td>2</td><td>MIK1624111</td><td>No Dosen</td><td>A</td><td>2</td><td>B01</td><td>BARU</td><td></td></tr>' +
+        '</table>';
       (global.fetch as jest.Mock).mockResolvedValue({
         ok: true,
         url: IRS_URL,
@@ -233,22 +248,6 @@ describe('SiapService', () => {
       });
       expect(await svc.getLecturers('sia_app_session=K')).toEqual([
         { kode: 'MIK1624105', dosen: 'Dr. X' },
-        { kode: 'MIK1624503', dosen: 'Retno' },
-      ]);
-    });
-
-    it('falls back to a table parse when no collapser panels match', async () => {
-      const html =
-        '<table><tr><td>1</td><td>MIK1624105</td><td>Retno Wulandari</td></tr>' +
-        '<tr><td>2</td><td>MIK1624503</td><td>Dr. Zulkanain</td></tr></table>';
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: IRS_URL,
-        text: async () => html,
-      });
-      expect(await svc.getLecturers('sia_app_session=K')).toEqual([
-        { kode: 'MIK1624105', dosen: 'Retno Wulandari' },
-        { kode: 'MIK1624503', dosen: 'Dr. Zulkanain' },
       ]);
     });
   });
