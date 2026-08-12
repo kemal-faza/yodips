@@ -5,7 +5,8 @@ import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Bell, Moon, Sun } from '@lucide/vue';
+import NotificationPopover from './ui/notification/NotificationPopover.vue';
+import { ArrowLeft, Moon, Sun } from '@lucide/vue';
 
 defineProps<{ showBack?: boolean; breadcrumb?: string }>();
 const emit = defineEmits<{ (e: 'back'): void }>();
@@ -55,14 +56,7 @@ function goToProfile() {
           <Sun v-if="theme.dark" class="size-4" aria-hidden="true" />
           <Moon v-else class="size-4" aria-hidden="true" />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          class="text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
-          aria-label="Notifikasi"
-        >
-          <Bell class="size-4" aria-hidden="true" />
-        </Button>
+        <NotificationPopover />
         <button
           type="button"
           class="rounded-full transition-opacity hover:opacity-90 cursor-pointer"

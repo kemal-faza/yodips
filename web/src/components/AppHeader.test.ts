@@ -6,6 +6,10 @@ import { useThemeStore } from '../stores/theme';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 vi.mock('../stores/theme', () => ({ useThemeStore: vi.fn() }));
+vi.mock('../api/client', () => ({
+  getNotifications: vi.fn().mockResolvedValue({ count: 0, items: [] }),
+  markNotificationRead: vi.fn(),
+}));
 const mockPush = vi.fn();
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mockPush }) }));
 

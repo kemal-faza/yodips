@@ -9,6 +9,10 @@ import { useThemeStore } from '../stores/theme';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 vi.mock('../stores/theme', () => ({ useThemeStore: vi.fn() }));
+vi.mock('../api/client', () => ({
+  getNotifications: vi.fn().mockResolvedValue({ count: 0, items: [] }),
+  markNotificationRead: vi.fn(),
+}));
 
 function mockStores() {
   (useAuthStore as any).mockReturnValue({ isAuthenticated: true, fetchMe: vi.fn().mockResolvedValue('ok'), logout: vi.fn(), user: null });

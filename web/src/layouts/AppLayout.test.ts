@@ -9,6 +9,10 @@ import { useThemeStore } from '../stores/theme';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 vi.mock('../stores/theme', () => ({ useThemeStore: vi.fn() }));
+vi.mock('../api/client', () => ({
+  getNotifications: vi.fn().mockResolvedValue({ count: 0, items: [] }),
+  markNotificationRead: vi.fn(),
+}));
 
 function mockStores(overrides: Record<string, unknown> = {}) {
   (useAuthStore as any).mockReturnValue({
@@ -77,5 +81,14 @@ describe('AppLayout', () => {
     const w = mount(AppLayout, { global: { plugins: [router] } });
     expect(w.find('[data-test="user-avatar"] img').exists()).toBe(false);
     expect(w.find('[data-test="user-avatar"]').text()).toContain('M');
+  });
+
+  it('opens the notification popover from the header bell', async () => {
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/');
+    await flushPromises();
+    const w = mount(AppLayout, { global: { plugins: [router] } });
+    await w.find('[data-test="notification-toggle"]').trigger('click');
+    expect(w.text()).toContain('Notifikasi');
   });
 });

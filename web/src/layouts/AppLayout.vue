@@ -4,9 +4,10 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import AppSidebar from '../components/AppSidebar.vue';
+import NotificationPopover from '../components/ui/notification/NotificationPopover.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { Bell, Menu, Moon, Sun } from '@lucide/vue';
+import { Menu, Moon, Sun } from '@lucide/vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -77,15 +78,7 @@ const pageTitle = computed(() => {
             <Moon v-else class="size-4" aria-hidden="true" />
           </Button>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-9 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-            aria-label="Notifikasi"
-            data-test="notification-toggle"
-          >
-            <Bell class="size-4" aria-hidden="true" />
-          </Button>
+          <NotificationPopover />
 
           <button
             type="button"
