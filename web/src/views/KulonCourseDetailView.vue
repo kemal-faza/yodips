@@ -62,7 +62,11 @@ function itemIcon(kind: CourseContentItem['kind']) {
 }
 
 function itemBadge(item: CourseContentItem): string {
-  if (item.kind === 'file') return item.fileType ?? '';
+  if (item.kind === 'file') {
+    // JSON course content (core_courseformat_get_state) provides no file type, so
+    // fileType is 'other' — hide the badge rather than show a noisy "OTHER".
+    return item.fileType && item.fileType !== 'other' ? item.fileType : '';
+  }
   return KIND_LABEL[item.kind] ?? '';
 }
 

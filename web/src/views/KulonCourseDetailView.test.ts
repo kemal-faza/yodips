@@ -166,4 +166,31 @@ describe('KulonCourseDetailView', () => {
     // Exactly one occurrence.
     expect(w.text().match(/Minggu Ini/g)?.length).toBe(1);
   });
+
+  it('shows a file-type badge for known types but hides it when fileType is "other" (JSON path)', async () => {
+    (api.getCourseContent as any).mockResolvedValue({
+      courseId: 9,
+      sections: [
+        {
+          id: 1,
+          label: 'Pertemuan 1',
+          items: [
+            { kind: 'file', name: 'PDF Materi', url: 'https://kulon/mod/resource/view.php?id=11', cmid: 11, fileType: 'pdf' },
+            { kind: 'file', name: 'File Tanpa Tipe', url: 'https://kulon/mod/resource/view.php?id=12', cmid: 12, fileType: 'other' },
+          ],
+        },
+      ],
+    });
+    (api.getCourses as any).mockResolvedValue([]);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/kulon/matakuliah/9');
+    const w = mount(KulonCourseDetailView, { global: { plugins: [router] } });
+    await flushPromises();
+    if (!w.text().includes('PDF Materi')) {
+      await w.find('[data-test="section-toggle-1"]').trigger('click');
+      await flushPromises();
+    }
+    expect(w.text()).toContain('PDF');
+    expect(w.text()).not.toContain('OTHER');
+  });
 });

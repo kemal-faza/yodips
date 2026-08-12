@@ -885,6 +885,13 @@ export class KulonService {
       'core_courseformat_get_state',
       { courseid: courseId },
     )) as { course?: any; section?: any[]; cm?: any[] };
+    // A 200 that doesn't shape as course-format state (e.g. an HTML error page, a
+    // malformed body, or a method that returns an empty object) must NOT be treated
+    // as a valid empty course — throw so getCourseContent falls back to the HTML
+    // scrape instead of silently returning no content.
+    if (!Array.isArray(raw?.section)) {
+      throw new Error('core_courseformat_get_state returned no section array');
+    }
     return this.mapCourseStateJson(raw, courseId);
   }
 
@@ -894,7 +901,7 @@ export class KulonService {
       // NOT the Moodle record id (s.id like "114151"). s.number is a number already;
       // Number() guards against string forms.
       const id = Number(s.number ?? s.id);
-      const { label, dateRange } = deriveSectionLabel(id === 0 ? 0 : id, s.title ?? '');
+      const { label, dateRange } = deriveSectionLabel(id, s.title ?? '');
       return { id, label, dateRange, items: [] as KulonContentItem[] };
     });
     const byId = new Map<number, KulonSection>();

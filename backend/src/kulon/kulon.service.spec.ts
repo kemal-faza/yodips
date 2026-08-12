@@ -224,6 +224,34 @@ describe('getCourseContent (HTML fixture)', () => {
     const gen = content.sections.find((s) => s.id === 0);
     expect(gen?.label).toBe('General');
   });
+
+  it('falls back to HTML when the JSON endpoint returns 200 but no section array (malformed state)', async () => {
+    const svc = new KulonService();
+    const html = fs.readFileSync(
+      path.join(__dirname, '../../test/fixtures/kulon/course-content-html.html'),
+      'utf8',
+    );
+    // First call = service.php (JSON path) returns a well-formed but unusable body
+    // (no `section` array) -> getCourseState throws -> fall back to HTML.
+    // Second call = /course/view.php HTML path.
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/lib/ajax/service.php?sesskey=sk',
+        json: async () => [{ error: false, data: { course: { id: '16294' } } }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
+        text: async () => html,
+      });
+    const content = await svc.getCourseContent('cookie', 'sk', 16294);
+    expect(content.courseId).toBe(16294);
+    const gen = content.sections.find((s) => s.id === 0);
+    expect(gen?.label).toBe('General');
+  });
 });
 
 describe('KulonService', () => {
@@ -906,10 +934,13 @@ describe('getCourseState', () => {
     const assignItem = s12?.items.find((i) => i.kind === 'assign');
     expect(assignItem?.name).toBe('Tugas BnB');
     expect(assignItem?.cmid).toBe(128341);
-    // uservisible:false resource cm (126796) is excluded; cmid 105222 quiz kept.
+    // Stealth + uservisible:false resource cm (128338) is excluded by the inclusion
+    // rule (uservisible:false, module=resource). 126796 is also absent, but that is
+    // because its sectionnumber 11 has no matching section in the fixture (dropped by
+    // the owner lookup) — the uservisible rule is genuinely exercised by 128338.
     const allCmid = content.sections.flatMap((s) => s.items.map((i) => i.cmid));
     expect(allCmid).not.toContain(126796);
-    expect(allCmid).not.toContain(128338); // stealth + uservisible:false resource
+    expect(allCmid).not.toContain(128338);
     expect(allCmid).toContain(105222); // quiz, kept via module exception
   });
 });
