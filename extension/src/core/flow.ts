@@ -16,6 +16,10 @@ export interface FlowState {
    *  evidence of a completed login. The poll safety net forces settle as a
    *  bounded fallback for the SSO phase. */
   settledAt: number;
+  /** True when a real session-cookie change was accepted since the last settle.
+   *  The TAB_LOADED fast-path only advances when this is set — the mere presence
+   *  of cookies (which fleeting landing-page cookies also satisfy) is not enough. */
+  recentSessionChange: boolean;
 }
 
 export type FlowEvent =
@@ -53,7 +57,7 @@ export type FlowEffect =
   | { kind: 'focusAppTab' };
 
 export function initialState(mode: FlowMode = 'auto'): FlowState {
-  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, settledAt: 0 };
+  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, settledAt: 0, recentSessionChange: false };
 }
 
 export function attachTab(state: FlowState, tabId: number): FlowState {
@@ -72,14 +76,18 @@ export function attachTab(state: FlowState, tabId: number): FlowState {
  * Any other state (live flow, terminal with a still-relevant tab) is kept.
  */
 export function normalizeState(state: FlowState, now: number): FlowState {
+  // Migrate a persisted state written before `settledAt` existed: default it to 0
+  // (not yet settled) so the load-gate suppresses transient cookies correctly.
+  const settled = typeof state.settledAt === 'number' && state.settledAt >= 0 ? state.settledAt : 0;
+  const normalized = settled === state.settledAt ? state : { ...state, settledAt: settled };
   if (state.core === 'done' || state.core === 'error') {
     if (state.tabId == null) return initialState(state.mode);
-    return state;
+    return normalized;
   }
   if ((state.core === 'authing' || state.core === 'handoff') && now > state.deadline) {
     return initialState(state.mode);
   }
-  return state;
+  return normalized;
 }
 
 export function redact(state: FlowState): { core: string; phase: string | null; tabId: number | null } {
@@ -127,7 +135,7 @@ function advanceAuth(state: FlowState, deps: FlowDeps): { state: FlowState; effe
   if (svc === 'sso') {
     if (!flags.hasSso) return { state, effects: [] };
     return {
-      state: { ...state, service: 'kulon', deadline: deadline(deps), settledAt: 0 },
+      state: { ...state, service: 'kulon', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
       effects: [
         { kind: 'navigateTab', url: deps.loginUrl('kulon') },
         { kind: 'scheduleTimers', deadline: deadline(deps) },
@@ -138,7 +146,7 @@ function advanceAuth(state: FlowState, deps: FlowDeps): { state: FlowState; effe
     if (!flags.hasKulon) return { state, effects: [] };
     if (!flags.hasSiap) {
       return {
-        state: { ...state, service: 'siap', deadline: deadline(deps), settledAt: 0 },
+        state: { ...state, service: 'siap', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
         effects: [
           { kind: 'navigateTab', url: deps.loginUrl('siap') },
           { kind: 'scheduleTimers', deadline: deadline(deps) },
@@ -172,7 +180,7 @@ export function advance(
     const base: FlowState = { ...initialState(event.mode), appTabId: state.appTabId ?? null };
     if (!flags.hasKulon) {
       return {
-        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), settledAt: 0 },
+        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
         effects: [
           ...clearFor('sso'),
           { kind: 'openTab', url: deps.loginUrl('sso') },
@@ -201,8 +209,8 @@ export function advance(
       const settled = { ...state, settledAt: deps.now() };
       if (state.mode === 'auto') {
         const svc = state.service;
-        if ((svc === 'kulon' && flags.hasKulon) || (svc === 'siap' && flags.hasSiap)) {
-          return advanceAuth(settled, deps);
+        if (state.recentSessionChange && ((svc === 'kulon' && flags.hasKulon) || (svc === 'siap' && flags.hasSiap))) {
+          return advanceAuth({ ...settled, recentSessionChange: false }, deps);
         }
       }
       return { state: settled, effects: [] };
@@ -234,7 +242,7 @@ export function advance(
     if (state.mode === 'auto' && !sessionCookieChanged(event, base.service)) {
       return { state: base, effects: [] };
     }
-    return advanceAuth(base, deps);
+    return advanceAuth({ ...base, recentSessionChange: true }, deps);
   }
 
   if (state.core === 'handoff') {
@@ -251,7 +259,7 @@ export function advance(
         };
       case 'HANDOFF_NEEDS_SERVICE':
         return {
-          state: { ...state, core: 'authing', service: event.service, deadline: deadline(deps), settledAt: 0 },
+          state: { ...state, core: 'authing', service: event.service, deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
           effects: [
             ...clearFor(event.service),
             { kind: 'navigateTab', url: deps.loginUrl(event.service) },
@@ -278,6 +286,7 @@ export function advance(
               reloginCount: state.reloginCount + 1,
               deadline: deadline(deps),
               settledAt: 0,
+              recentSessionChange: false,
             },
             effects: [
               ...clearFor(target),

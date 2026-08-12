@@ -99,20 +99,31 @@ describe('COOKIE_SET cascade (mode auto)', () => {
     const r = advance(auth('siap'), COOKIE_SET(['cookiesession1']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
     expect(r.state.core).toBe('authing');
   });
+  it('a navigation hop resets settledAt to 0 (re-arms transient suppression)', () => {
+    const settledSso = { ...auth('sso'), settledAt: 1_000_000 - 5000, recentSessionChange: true } as FlowState;
+    const r = advance(settledSso, COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.service).toBe('kulon');
+    expect(r.state.settledAt).toBe(0);
+    expect(r.state.recentSessionChange).toBe(false);
+  });
   describe('TAB_LOADED (load-gated fast path)', () => {
     it('TAB_LOADED advances kulon→handoff when hasKulon && hasSiap', () => {
-      const r = advance(auth('kulon'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+      const r = advance({ ...auth('kulon'), recentSessionChange: true }, { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
       expect(r.state.core).toBe('handoff');
+      expect(r.state.recentSessionChange).toBe(false);
       expect(r.effects).toContainEqual({ kind: 'postHandoff' });
     });
     it('TAB_LOADED advances kulon→siap when hasKulon && !hasSiap', () => {
-      const r = advance(auth('kulon'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
+      const r = advance({ ...auth('kulon'), recentSessionChange: true }, { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
       expect(r.state.service).toBe('siap');
+      expect(r.state.settledAt).toBe(0);
+      expect(r.state.recentSessionChange).toBe(false);
       expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'SIAP_URL' });
     });
     it('TAB_LOADED advances siap→handoff when hasSiap', () => {
-      const r = advance(auth('siap'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+      const r = advance({ ...auth('siap'), recentSessionChange: true }, { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
       expect(r.state.core).toBe('handoff');
+      expect(r.state.recentSessionChange).toBe(false);
     });
     it('TAB_LOADED settles but does NOT advance when the target cookie is absent', () => {
       const r = advance(auth('kulon'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
@@ -245,6 +256,12 @@ describe('normalizeState (zombie-flow recovery)', () => {
   it('keeps an ACTIVE authing flow whose deadline is still in the future', () => {
     const live = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000 } as FlowState;
     expect(normalizeState(live, NOW).core).toBe('authing');
+  });
+  it('defaults settledAt to 0 for a persisted state written before settledAt existed', () => {
+    const legacy = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000 } as unknown as FlowState;
+    delete (legacy as Record<string, unknown>).settledAt; // simulate old persisted shape
+    const r = normalizeState(legacy, NOW);
+    expect(r.settledAt).toBe(0);
   });
 });
 
