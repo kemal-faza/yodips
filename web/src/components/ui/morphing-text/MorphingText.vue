@@ -6,19 +6,41 @@ interface Props {
   texts: string[];
   morphTime?: number;
   coolDownTime?: number;
+  randomize?: boolean;
   class?: string;
 }
 const props = withDefaults(defineProps<Props>(), {
   morphTime: 1.5,
   coolDownTime: 0.5,
+  randomize: true,
 });
 
 const textIndex = ref(0);
+const nextIndex = ref(1);
 const morph = ref(0);
 const coolDown = ref(0);
 const time = ref(Date.now());
+const containerRef = ref<HTMLElement | null>(null);
+const sizerRef = ref<HTMLElement | null>(null);
 const text1Ref = ref<HTMLElement | null>(null);
 const text2Ref = ref<HTMLElement | null>(null);
+
+function getNextRandomIndex(current: number, length: number): number {
+  if (length <= 1) return 0;
+  let next = current;
+  while (next === current) {
+    next = Math.floor(Math.random() * length);
+  }
+  return next;
+}
+
+function setNextIndex() {
+  if (props.randomize) {
+    nextIndex.value = getNextRandomIndex(textIndex.value, props.texts.length);
+  } else {
+    nextIndex.value = (textIndex.value + 1) % props.texts.length;
+  }
+}
 
 function setStyles(fraction: number) {
   if (!text1Ref.value || !text2Ref.value) return;
@@ -27,8 +49,21 @@ function setStyles(fraction: number) {
   const invertedFraction = 1 - fraction;
   text1Ref.value.style.filter = `blur(${Math.min(8 / Math.max(invertedFraction, 1e-3) - 8, 100)}px)`;
   text1Ref.value.style.opacity = `${invertedFraction ** 0.4 * 100}%`;
-  text1Ref.value.textContent = props.texts[textIndex.value % props.texts.length] ?? '';
-  text2Ref.value.textContent = props.texts[(textIndex.value + 1) % props.texts.length] ?? '';
+
+  const word1 = props.texts[textIndex.value % props.texts.length] ?? '';
+  const word2 = props.texts[nextIndex.value % props.texts.length] ?? '';
+  text1Ref.value.textContent = word1;
+  text2Ref.value.textContent = word2;
+
+  if (containerRef.value) {
+    const w1 = text1Ref.value.offsetWidth || text1Ref.value.scrollWidth;
+    const w2 = text2Ref.value.offsetWidth || text2Ref.value.scrollWidth;
+    if (w1 > 0 || w2 > 0) {
+      const ease = 1 - Math.pow(1 - fraction, 3);
+      const currentWidth = w1 + (w2 - w1) * ease;
+      containerRef.value.style.width = `${currentWidth}px`;
+    }
+  }
 }
 
 function doMorph() {
@@ -40,18 +75,27 @@ function doMorph() {
     fraction = 1;
   }
   setStyles(fraction);
-  if (fraction === 1) textIndex.value++;
+  if (fraction === 1) {
+    textIndex.value = nextIndex.value;
+    setNextIndex();
+  }
 }
 
 function doCoolDown() {
   morph.value = 0;
+  const currentWord = props.texts[textIndex.value % props.texts.length] ?? '';
+  if (sizerRef.value) {
+    sizerRef.value.textContent = currentWord;
+  }
+  if (containerRef.value) {
+    containerRef.value.style.width = '';
+  }
   if (text1Ref.value && text2Ref.value) {
     text2Ref.value.style.filter = 'none';
     text2Ref.value.style.opacity = '100%';
+    text2Ref.value.textContent = currentWord;
     text1Ref.value.style.filter = 'none';
     text1Ref.value.style.opacity = '0%';
-    // The invisible span must not hold width: blank it so the inline-grid
-    // settles to the current visible word and the following text reflows.
     text1Ref.value.textContent = '';
   }
 }
@@ -69,6 +113,8 @@ function animate() {
 
 onMounted(() => {
   time.value = Date.now();
+  setNextIndex();
+  doCoolDown();
   animate();
 });
 onUnmounted(() => cancelAnimationFrame(rafId));
@@ -76,14 +122,43 @@ onUnmounted(() => cancelAnimationFrame(rafId));
 
 <template>
   <div
-    :class="cn('relative inline-grid', props.class)"
+    ref="containerRef"
+    :class="cn('relative inline-block align-baseline', props.class)"
   >
-    <!-- Both spans occupy the SAME grid cell ([grid-area:1/1]), so they overlap
-         and morph into each other while the inline-grid tracks the WIDEST of the
-         two words every frame. The following sibling text (e.g. ", {name}!")
-         flows after the grid and reflows in sync with the morphing word — no
-         lag, no collapse. No fixed box/font-size: inherits the parent h1 size. -->
-    <span ref="text1Ref" class="[grid-area:1/1] inline-block" aria-hidden="true" />
-    <span ref="text2Ref" class="[grid-area:1/1] inline-block" aria-hidden="true" />
+    <!-- Hidden SVG filter for the gooey threshold effect -->
+    <svg class="absolute h-0 w-0 pointer-events-none" aria-hidden="true">
+      <defs>
+        <filter id="threshold">
+          <feColorMatrix
+            type="matrix"
+            values="1 0 0 0 0
+                    0 1 0 0 0
+                    0 0 1 0 0
+                    0 0 0 255 -140"
+          />
+        </filter>
+      </defs>
+    </svg>
+
+    <!-- In-flow invisible span drives baseline height & static/cooldown width -->
+    <span
+      ref="sizerRef"
+      class="invisible inline-block whitespace-nowrap"
+      aria-hidden="true"
+    />
+
+    <!-- Overlay container with SVG gooey threshold filter applied -->
+    <span class="absolute left-0 top-0 whitespace-nowrap inline-block [filter:url(#threshold)] pointer-events-none">
+      <span
+        ref="text1Ref"
+        class="absolute left-0 top-0 whitespace-nowrap inline-block"
+        aria-hidden="true"
+      />
+      <span
+        ref="text2Ref"
+        class="absolute left-0 top-0 whitespace-nowrap inline-block"
+        aria-hidden="true"
+      />
+    </span>
   </div>
 </template>
