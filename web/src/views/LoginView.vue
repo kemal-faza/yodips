@@ -3,6 +3,7 @@ import { getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 import { Button } from '@/components/ui/button';
+import InteractiveHoverButton from '@/components/ui/button/InteractiveHoverButton.vue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 
@@ -192,24 +193,20 @@ async function handleExtensionDone() {
         >
           Memeriksa extension…
         </Button>
-        <Button
+        <InteractiveHoverButton
           v-else-if="!extInstalled"
-          size="lg"
           class="mt-6 h-11 w-full"
           :disabled="store.checking"
+          :text="store.checking ? 'Memeriksa session…' : 'Login via SSO'"
           @click="handleLogin"
-        >
-          {{ store.checking ? 'Memeriksa session…' : 'Login via SSO' }}
-        </Button>
-        <Button
+        />
+        <InteractiveHoverButton
           v-if="extInstalled && !extWaiting"
-          size="lg"
           class="mt-6 h-11 w-full"
           :disabled="extBusy"
+          :text="extBusy ? 'Menghubungkan…' : 'Login via Extension'"
           @click="handleExtensionLogin"
-        >
-          {{ extBusy ? 'Menghubungkan…' : 'Login via Extension' }}
-        </Button>
+        />
         <div v-if="extWaiting" class="mt-6 flex flex-col gap-3">
           <Alert v-if="extMode === 'auto'" class="border-warn/40 bg-warn/10 p-3">
             <AlertDescription>
