@@ -31,8 +31,8 @@ const chartTab = ref<'ipTrend' | 'gradeDist'>('ipTrend');
             </p>
           </div>
           <div class="flex gap-1 text-xs">
-            <Button variant="ghost" size="sm" :class="chartTab === 'ipTrend' ? 'bg-primary/10 font-semibold text-primary' : ''" data-test="tab-ip-trend" @click="chartTab = 'ipTrend'">Tren IP</Button>
-            <Button variant="ghost" size="sm" :class="chartTab === 'gradeDist' ? 'bg-primary/10 font-semibold text-primary' : ''" data-test="tab-grade-dist" @click="chartTab = 'gradeDist'">Distribusi Nilai</Button>
+            <Button variant="ghost" size="sm" :class="chartTab === 'ipTrend' ? 'bg-primary/10 font-semibold text-foreground' : ''" data-test="tab-ip-trend" @click="chartTab = 'ipTrend'">Tren IP</Button>
+            <Button variant="ghost" size="sm" :class="chartTab === 'gradeDist' ? 'bg-primary/10 font-semibold text-foreground' : ''" data-test="tab-grade-dist" @click="chartTab = 'gradeDist'">Distribusi Nilai</Button>
           </div>
         </div>
         <ChartIpTrend v-if="chartTab === 'ipTrend'" :data="ipTrendRows" :ip-max="ipMax" />
@@ -47,7 +47,7 @@ const chartTab = ref<'ipTrend' | 'gradeDist'>('ipTrend');
             <h2 class="text-base font-bold text-foreground">Akumulasi SKS Kumulatif</h2>
             <p class="mt-0.5 text-xs text-muted-foreground">Pertumbuhan SKS menuju target kelulusan 144 SKS</p>
           </div>
-          <span class="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">Target: 144 SKS</span>
+          <span class="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-bold text-muted-foreground">Target: 144 SKS</span>
         </div>
         <ChartSksCumulative :data="sksRows" />
       </CardContent>
