@@ -31,3 +31,14 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = () => false;
   Element.prototype.releasePointerCapture = () => {};
 }
+
+// jsdom does not expose requestAnimationFrame/cancelAnimationFrame. Copying
+// the pattern above, define a cancellable setTimeout-based frame so components
+// with rAF loops (e.g. MorphingText) run without throwing ReferenceError.
+if (!('requestAnimationFrame' in globalThis)) {
+  (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) =>
+    setTimeout(() => cb(Date.now()), 16) as unknown as number;
+}
+if (!('cancelAnimationFrame' in globalThis)) {
+  (globalThis as any).cancelAnimationFrame = (id: number) => clearTimeout(id);
+}
