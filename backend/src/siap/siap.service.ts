@@ -519,26 +519,51 @@ export class SiapService {
   }
 
   /**
-   * Lecturer per course, scraped from the SIAP IRS page (`/irs/mhs/irs`).
-   * The IRS table (per approved semester) has 8 columns:
-   *   NO, KODE, MATA KULIAH, KELAS, SKS, RUANG, STATUS, NAMA DOSEN
-   * We read KODE (col 1) + NAMA DOSEN (col 7). Returns [] when the IRS is
-   * empty/not yet approved, or when the page shape differs.
+   * Lecturer per course, scraped from the SIAP IRS semester tables.
+   * The `/irs/mhs/irs` page is AJAX-driven: each semester's table loads only
+   * when its collapser is expanded via `POST /irs/mhs/irs/get_irs` with
+   * `ta`/`smt_ambil`/`smt` params (verified live 2026-08-12). The response is an
+   * 8-column table: NO, KODE, MATA KULIAH, KELAS, SKS, RUANG, STATUS, NAMA DOSEN
+   * — we read KODE (col 1) + NAMA DOSEN (col 7).
+   *
+   * We iterate every semester (from the profile's angkatan + semester label, the
+   * same count getKhs uses) so that approved past semesters contribute lecturers
+   * too. Unapproved semesters return a "belum disetujui" placeholder which parses
+   * to nothing. Results are deduped by kode (a course code repeats across
+   * semesters; the first approved occurrence wins).
    */
   async getLecturers(siapCookie: string): Promise<{ kode: string; dosen: string }[]> {
-    const html = await this.siapFetch(`${this.baseUrl}/irs/mhs/irs`, {
-      headers: { Cookie: siapCookie },
-      redirect: 'follow',
-    });
-    if (this.isIrsEmpty(html)) return [];
-    return this.parseIrsTable(html);
-  }
+    const profile = await this.getProfile(siapCookie);
+    const count = this.currentSemesterCount(profile.angkatan, profile.semesterBerjalan);
 
-  private isIrsEmpty(html: string): boolean {
-    // The approved-semester table carries a "SUDAH DISETUJUI" marker; an empty/
-    // unapproved IRS state instead renders a "belum disetujui"/"tidak ada data"
-    // placeholder. Treat those as empty.
-    return /belum disetujui|tidak ada (?:data|matakuliah)|mata kuliah kosong/i.test(html);
+    const entries = new Map<string, string>();
+    const results = await Promise.allSettled(
+      Array.from({ length: count }, (_, i) => {
+        const smt = i + 1;
+        const ta = Number(profile.angkatan) + Math.floor((smt - 1) / 2);
+        const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+        const body = `ta=${ta}&smt_ambil=${smt}&smt=${smtWithinYear}`;
+        return this.siapFetch(`${this.baseUrl}/irs/mhs/irs/get_irs`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Cookie: siapCookie,
+          },
+          body,
+        }).then((html) => this.parseIrsTable(html));
+      }),
+    );
+
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        for (const { kode, dosen } of r.value) {
+          if (!entries.has(kode)) entries.set(kode, dosen);
+        }
+      }
+      // Rejected semesters (stale/upstream) are skipped so one bad semester does
+      // not wipe out every lecturer.
+    }
+    return Array.from(entries, ([kode, dosen]) => ({ kode, dosen }));
   }
 
   /** Parse the 8-column IRS table: KODE = col 1, NAMA DOSEN = col 7. */
@@ -548,11 +573,22 @@ export class SiapService {
     let m: RegExpExecArray | null;
     while ((m = re.exec(html)) !== null) {
       if (!/<td/i.test(m[1])) continue;
-      const cells = this.rowCells(m[1]);
+      // Keep the raw <td> contents (not rowCells) so <br>-separated dosen names
+      // survive — they become pipe (|) separated for a cleaner card line.
+      const tds: string[] = [];
+      const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+      let td: RegExpExecArray | null;
+      while ((td = tdRe.exec(m[1])) !== null) tds.push(td[1]);
       // Column 1 = KODE (e.g. MIK1624105); column 7 = NAMA DOSEN (may be empty,
       // multiple names, or whitespace). Only keep rows with a real kode + dosen.
-      const kode = (cells[1] ?? '').trim();
-      const dosen = (cells[7] ?? '').trim();
+      const kode = (tds[1] ?? '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      const dosen = (tds[7] ?? '')
+        .replace(/<br\s*\/?>/gi, '|') // collapse <br> into a pipe separator
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/\s*\|\s*/g, ' | ') // normalize pipe spacing
+        .replace(/^\s*\|\s*|\s*\|\s*$/g, '') // drop leading/trailing pipe
+        .trim();
       if (/^[A-Z]{2,3}\d{5,}$/.test(kode) && dosen) {
         out.push({ kode, dosen });
       }

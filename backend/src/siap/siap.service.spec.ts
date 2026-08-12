@@ -205,49 +205,70 @@ describe('SiapService', () => {
   });
 
   describe('getLecturers', () => {
-    const IRS_URL = 'https://siap.undip.ac.id/irs/mhs/irs';
+    const GET_IRS = '/irs/mhs/irs/get_irs';
 
-    it('returns [] when the IRS page is empty/not approved', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: IRS_URL,
-        text: async () => '<html>belum disetujui</html>',
-      });
+    it('returns [] when every semester IRS is empty/not approved', async () => {
+      mockFetchRouting([
+        { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
+        { match: GET_IRS, body: '<html>belum disetujui</html>' },
+      ]);
       expect(await svc.getLecturers('sia_app_session=K')).toEqual([]);
     });
 
-    it('parses kode + dosen from the 8-column IRS table', async () => {
-      // Real IRS table columns: NO, KODE, MATA KULIAH, KELAS, SKS, RUANG,
-      // STATUS, NAMA DOSEN. KODE = col 1, NAMA DOSEN = col 7.
-      const html =
-        '<table>' +
-        '<tr><td>1</td><td>MIK1624105</td><td>Aljabar Linier</td><td>D</td><td>3</td><td>A302</td><td>BARU</td><td>Dr. Helmie Arif Wibawa, S.Si., M.Cs.\nDr. Aris Sugiharto</td></tr>' +
-        '<tr><td>2</td><td>MIK1624503</td><td>Sistem Informasi</td><td>A</td><td>3</td><td>A301</td><td>BARU</td><td>Retno Wulandari</td></tr>' +
-        '</table>';
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: IRS_URL,
-        text: async () => html,
-      });
-      expect(await svc.getLecturers('sia_app_session=K')).toEqual([
-        { kode: 'MIK1624105', dosen: 'Dr. Helmie Arif Wibawa, S.Si., M.Cs. Dr. Aris Sugiharto' },
-        { kode: 'MIK1624503', dosen: 'Retno Wulandari' },
+    it('POSTs get_irs per semester and parses kode + dosen from the 8-column table (deduped)', async () => {
+      mockFetchRouting([
+        { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
+        { match: GET_IRS, body: fixture('irs_get.html') },
       ]);
+      const result = await svc.getLecturers('sia_app_session=K');
+
+      // angkatan 2024 + "2026/2027 Ganjil" => 5 semesters; the fixture table is
+      // returned for each, so results must be deduped by kode.
+      const kodes = result.map((r) => r.kode);
+      expect(new Set(kodes).size).toBe(kodes.length);
+
+      const byCode = new Map(result.map((r) => [r.kode, r.dosen]));
+      // <br>-separated names become pipe (|)-separated for a cleaner card line.
+      expect(byCode.get('MIK1624105')).toBe(
+        'Dr. Helmie Arif Wibawa, S.Si., M.Cs. | Dr. Aris Sugiharto, S.Si., M.Kom. | Prajanto Wahyu Adi, M.Kom.',
+      );
+      expect(byCode.get('UUW1624002')).toBe('Dr. Drs. Slamet Subekti, M.Hum.');
+      expect(byCode.get('MIK1624104')).toBe('Prof. Dr. Dra. Sunarsih, M.Si. | Etna Vianita, S.Mat., M.Mat.');
     });
 
-    it('skips rows with a kode but empty NAMA DOSEN (col 7)', async () => {
-      const html =
-        '<table>' +
-        '<tr><td>1</td><td>MIK1624105</td><td>Aljabar Linier</td><td>D</td><td>3</td><td>A302</td><td>BARU</td><td>Dr. X</td></tr>' +
-        '<tr><td>2</td><td>MIK1624111</td><td>No Dosen</td><td>A</td><td>2</td><td>B01</td><td>BARU</td><td></td></tr>' +
-        '</table>';
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: IRS_URL,
-        text: async () => html,
+    it('POSTs get_irs with the correct per-semester ta/smt_ambil/smt params', async () => {
+      const seen: string[] = [];
+      (global.fetch as jest.Mock).mockImplementation(async (input: any, init?: any) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.includes('/pages/mhs/dashboard')) {
+          return {
+            ok: true,
+            url,
+            headers: { get: () => 'application/json' },
+            text: async () => fixture('profile.html'),
+            json: async () => JSON.parse(fixture('profile.html')),
+          };
+        }
+        if (url.includes(GET_IRS)) {
+          seen.push(init?.body ?? '');
+          return {
+            ok: true,
+            url,
+            headers: { get: () => 'application/json' },
+            text: async () => fixture('irs_get.html'),
+            json: async () => JSON.parse(fixture('irs_get.html')),
+          };
+        }
+        throw new Error(`unmocked fetch: ${url}`);
       });
-      expect(await svc.getLecturers('sia_app_session=K')).toEqual([
-        { kode: 'MIK1624105', dosen: 'Dr. X' },
+      await svc.getLecturers('sia_app_session=K');
+      // 5 semesters for angkatan 2024: smt 1..5, within-year smt toggles 1/2.
+      expect(seen).toEqual([
+        'ta=2024&smt_ambil=1&smt=1',
+        'ta=2024&smt_ambil=2&smt=2',
+        'ta=2025&smt_ambil=3&smt=1',
+        'ta=2025&smt_ambil=4&smt=2',
+        'ta=2026&smt_ambil=5&smt=1',
       ]);
     });
   });
