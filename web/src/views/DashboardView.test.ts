@@ -22,6 +22,7 @@ const stubs = {
   ChartIpTrend: true,
   ChartGradeDistribution: true,
   ChartSksCumulative: true,
+  MorphingText: true,
 };
 
 function healthyApi() {
@@ -52,7 +53,8 @@ describe('DashboardView (academic dashboard)', () => {
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();
-    expect(w.text()).toContain('Halo, Anindita');
+    expect(w.text()).toContain('Anindita Rahmawati');
+    expect(w.text()).toContain('!');
     expect(w.text()).toContain('3.71');       // IPK
     expect(w.text()).toContain('Tugas dengan Deadline Terdekat');
     expect(w.text()).not.toContain('Layanan');
@@ -64,7 +66,7 @@ describe('DashboardView (academic dashboard)', () => {
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();
     expect(w.text()).toContain('SIAP down');
-    expect(w.text()).toContain('Halo, Pengguna'); // header fallback still renders
+    expect(w.text()).toContain('Pengguna'); // header fallback still renders
   });
 
   it('renders chart paths without NaN coordinates (numeric-x regression guard)', async () => {
@@ -133,5 +135,16 @@ describe('DashboardView (academic dashboard)', () => {
     const section = w.find('[data-test="deadline-section"]');
     expect(section.text()).toContain('Tidak ada tugas yang perlu dikerjakan.');
     expect(section.findAll('.assignment-card').length).toBe(0);
+  });
+
+  it('clips horizontal overflow and renders the full name in the greeting', async () => {
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
+    await flushPromises();
+    const root = w.find('div.space-y-8');
+    expect(root.classes()).toContain('overflow-x-clip');
+    const greeting = w.find('[data-test="greeting"]');
+    expect(greeting.exists()).toBe(true);
+    expect(greeting.text()).toContain('Anindita Rahmawati');
   });
 });

@@ -42,9 +42,9 @@ function go(view: 'kulon') {
 </script>
 
 <template>
-  <div class="space-y-8">
+  <div class="space-y-8 overflow-x-clip">
     <DashboardHeader
-      :name="d.siap.value.profile?.nama?.split(' ')[0] ?? 'Pengguna'"
+      :name="d.siap.value.profile?.nama ?? 'Pengguna'"
       :prodi="d.siap.value.profile?.prodi ?? ''"
       :nim="d.siap.value.profile?.nim ?? ''"
       :angkatan="d.siap.value.profile?.angkatan ?? ''"
