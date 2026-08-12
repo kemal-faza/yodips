@@ -28,7 +28,7 @@ function pct(v: number | null, max: number): string {
     <div class="space-y-2.5">
       <div class="flex items-center justify-between">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Kumulatif (IPK)</span>
-        <Award :size="16" class="text-primary" />
+        <Award :size="16" class="text-muted-foreground" />
       </div>
       <div class="flex items-baseline gap-2">
         <span class="text-3xl font-extrabold tracking-tight text-foreground">{{ ipk?.toFixed(2) ?? '—' }}</span>
@@ -42,7 +42,7 @@ function pct(v: number | null, max: number): string {
     <div class="space-y-2.5">
       <div class="flex items-center justify-between">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">SKS Kumulatif</span>
-        <Layers :size="16" class="text-primary" />
+        <Layers :size="16" class="text-muted-foreground" />
       </div>
       <div class="flex items-baseline gap-2">
         <span class="text-3xl font-extrabold tracking-tight text-foreground">{{ sksKumulatif ?? '—' }}</span>
@@ -56,7 +56,7 @@ function pct(v: number | null, max: number): string {
     <div class="space-y-2.5">
       <div class="flex items-center justify-between">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">SKS Semester Ini</span>
-        <BookMarked :size="16" class="text-primary" />
+        <BookMarked :size="16" class="text-muted-foreground" />
       </div>
       <div class="flex items-baseline gap-2">
         <span class="text-3xl font-extrabold tracking-tight text-foreground">{{ sksSemester ?? '—' }}</span>
@@ -68,7 +68,7 @@ function pct(v: number | null, max: number): string {
     <div class="space-y-2.5">
       <div class="flex items-center justify-between">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Statistik Tugas</span>
-        <ClipboardList :size="16" class="text-primary" />
+        <ClipboardList :size="16" class="text-muted-foreground" />
       </div>
       <div class="flex items-baseline gap-2">
         <span class="text-3xl font-extrabold tracking-tight text-foreground">{{ hasKulon ? need : '—' }}</span>

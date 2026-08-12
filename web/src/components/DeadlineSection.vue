@@ -35,7 +35,7 @@ const topFour = computed(() =>
         <h2 class="text-base font-bold text-foreground">Tugas dengan Deadline Terdekat</h2>
         <p class="mt-0.5 text-xs text-muted-foreground">Tugas 'Perlu Dikerjakan' diurutkan berdasarkan tenggat tercepat</p>
       </div>
-      <Button variant="ghost" size="sm" class="text-xs font-bold uppercase tracking-wider text-primary" data-test="view-all-tasks" @click="emit('view-all')">
+      <Button variant="ghost" size="sm" class="text-xs font-bold uppercase tracking-wider text-foreground" data-test="view-all-tasks" @click="emit('view-all')">
         Semua Tugas <ArrowRight :size="14" class="ml-1" />
       </Button>
     </div>

@@ -88,7 +88,7 @@ const pageTitle = computed(() => {
 
           <Avatar
             size="sm"
-            class="size-8 bg-primary/10 text-primary border border-border"
+            class="size-8 bg-primary/10 text-muted-foreground border border-border"
             data-test="user-avatar"
           >
             <AvatarImage v-if="auth.fotoUrl" :src="auth.fotoUrl" alt="Foto profil" />
