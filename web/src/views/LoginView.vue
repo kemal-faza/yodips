@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import InteractiveHoverButton from '@/components/ui/button/InteractiveHoverButton.vue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import AuroraBackground from '@/components/ui/aurora-background/AuroraBackground.vue';
+import MultiStepLoader from '@/components/ui/multi-step-loader/MultiStepLoader.vue';
 
 const store = useAuthStore();
 const inst = getCurrentInstance()!;
@@ -18,6 +20,8 @@ const extBusy = ref(false); // initial handoff request in flight
 const extWaiting = ref(false); // extension flow active (login tab open / semi confirm)
 const extMode = ref<'auto' | 'semi'>('auto');
 const extMsg = ref<string | null>(null);
+const extPhase = ref<string | null | undefined>(undefined);
+const phaseToStep: Record<string, number> = { sso: 0, kulon: 1, siap: 2 };
 let stopListening: (() => void) | null = null;
 let stopFocusListeners: (() => void) | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -40,6 +44,7 @@ function stopPoll() {
 async function pollExtensionResult() {
   const payload = await store.readExtensionResult();
   if (!payload) return; // extension not available — keep waiting
+  extPhase.value = payload.phase ?? null;
   if (payload.status === 'ok' && payload.accessToken) {
     stopPoll();
     store.finishHandoff(payload.accessToken);
@@ -148,7 +153,7 @@ async function handleExtensionDone() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-primary px-4">
+  <AuroraBackground class="flex min-h-screen items-center justify-center px-4">
     <Card class="animate-fade-in-up w-full max-w-md border-border/20 shadow-2xl">
       <CardHeader class="flex flex-col items-center gap-3 px-6 pt-8 text-center">
         <img
@@ -208,22 +213,22 @@ async function handleExtensionDone() {
           @click="handleExtensionLogin"
         />
         <div v-if="extWaiting" class="mt-6 flex flex-col gap-3">
-          <Alert v-if="extMode === 'auto'" class="border-warn/40 bg-warn/10 p-3">
-            <AlertDescription>
-              Menunggu login di tab yang baru terbuka. Tab dinavigasi otomatis melalui SSO → Kulon → SIAP
-              dan kamu akan dialihkan kembali ke aplikasi tanpa perlu klik ulang (tab ditutup setelah semua
-              sesi terverifikasi).
-            </AlertDescription>
-          </Alert>
-          <Alert v-else class="border-warn/40 bg-warn/10 p-3">
-            <AlertDescription>
-              Selesaikan login layanan di tab yang terbuka, lalu klik tombol di bawah untuk melanjutkan.
-            </AlertDescription>
-          </Alert>
-          <Button v-if="extMode === 'semi'" size="lg" class="w-full" @click="handleExtensionDone">
-            Selesai login
-          </Button>
-          <p v-else class="text-center text-xs text-muted-foreground">Menunggu… tab akan ditutup otomatis.</p>
+          <MultiStepLoader
+            :loading="extWaiting"
+            :current="phaseToStep[extPhase ?? ''] ?? 0"
+            :steps="[
+              { text: 'SSO', afterText: 'Autentikasi selesai' },
+              { text: 'Kulon', afterText: 'Akses Kulon selesai' },
+              { text: 'SIAP', afterText: 'Akses SIAP selesai' },
+            ]"
+            prevent-close
+          >
+            <div v-if="extMode === 'semi'" class="flex flex-col items-center gap-2">
+              <p class="text-center text-xs text-muted-foreground">Selesaikan login layanan di tab yang terbuka, lalu klik tombol untuk melanjutkan.</p>
+              <Button size="lg" class="w-full" @click="handleExtensionDone">Selesai login</Button>
+            </div>
+            <p v-else class="text-center text-xs text-muted-foreground">Menunggu… tab akan ditutup otomatis.</p>
+          </MultiStepLoader>
         </div>
         <Alert v-if="!extInstalled && store.extensionError" class="mt-4 border-warn/40 bg-warn/10 p-3">
           <AlertDescription class="text-foreground">
@@ -247,5 +252,5 @@ async function handleExtensionDone() {
       </Alert>
       </CardContent>
     </Card>
-  </div>
+  </AuroraBackground>
 </template>

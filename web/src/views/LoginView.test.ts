@@ -167,7 +167,7 @@ describe('LoginView', () => {
     await flushPromises();
     await w.findAll('button').find((b) => b.text().includes('Login via Extension'))!.trigger('click');
     await flushPromises();
-    expect(w.text()).toContain('Menunggu login di tab');
+    expect(w.text()).toContain('tab akan ditutup otomatis');
   });
 
   it('polls the extension result while waiting and finishes handoff when it returns ok', async () => {
@@ -241,7 +241,7 @@ describe('LoginView', () => {
     await flushPromises();
     await w.findAll('button').find((b) => b.text().includes('Login via Extension'))!.trigger('click');
     await flushPromises();
-    expect(w.text()).toContain('Menunggu login di tab yang baru terbuka');
+    expect(w.text()).toContain('tab akan ditutup otomatis');
   });
 
   it('finishes handoff when the extension posts an ok result to the window', async () => {
@@ -273,5 +273,27 @@ describe('LoginView', () => {
     handler({ status: 'error', message: 'Login belum selesai' });
     await flushPromises();
     expect(w.text()).toContain('Login belum selesai');
+  });
+
+  it('maps the extension phase to the loader active step', async () => {
+    vi.useFakeTimers();
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue('started'),
+      readExtensionResult: vi.fn().mockResolvedValue({ status: 'active', phase: 'kulon' }),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
+    });
+    await flushPromises();
+    await w.findAll('button').find((b) => b.text().includes('Login via Extension'))!.trigger('click');
+    await flushPromises();
+    // Let the poll run once so extPhase is set from the payload → step 1 (Kulon) active.
+    await vi.advanceTimersByTimeAsync(4000);
+    // step 0 (SSO) done → check icon; step 1 (Kulon) active → spinner
+    const svgs = w.findAll('svg');
+    expect(svgs[0].classes().join(' ')).toContain('lucide-circle-check');
+    expect(svgs[1].classes().join(' ')).toContain('lucide-loader-circle');
+    vi.useRealTimers();
   });
 });
