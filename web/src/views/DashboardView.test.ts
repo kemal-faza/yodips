@@ -111,4 +111,28 @@ describe('DashboardView (academic dashboard)', () => {
     expect(w.text()).toContain('3.78');
     expect(w.text()).not.toContain('1.00');
   });
+
+  it('shows only "Perlu Dikerjakan" tasks with the new label', async () => {
+    mockApi.getCourses.mockResolvedValue([
+      { id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' },
+      { id: 2, fullname: 'Aplikasi Web', shortname: 'LBWEB001', idnumber: '', semester: 'Ganjil 2024/2025', timelineStatus: 'past' },
+    ]);
+    const base = { id: 0, name: '', module: 'assign', eventType: '', duedate: 0, overdue: false, course: '', courseId: 0, submissionStatus: 'not_submitted' as const };
+    mockApi.getAllAssignments.mockResolvedValue([
+      { ...base, id: 1, name: 'Aktif Belum', duedate: 1000, course: 'Kecerdasan Buatan', courseId: 1 },
+      { ...base, id: 2, name: 'Sudah Dikerjakan', duedate: 200, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'submitted' },
+      { ...base, id: 3, name: 'Terlambat', duedate: 300, overdue: true, course: 'Kecerdasan Buatan', courseId: 1 },
+      { ...base, id: 4, name: 'Kursus Nonaktif', duedate: 400, course: 'Aplikasi Web', courseId: 2 },
+    ]);
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
+    await flushPromises();
+    expect(w.find('[data-test="deadline-section"]').text()).toContain('Tugas dengan Deadline Terdekat');
+    const section = w.find('[data-test="deadline-section"]').find('.assignment-card');
+    expect(section.exists()).toBe(true);
+    expect(section.text()).toContain('Aktif Belum');
+    expect(section.text()).not.toContain('Sudah Dikerjakan');
+    expect(section.text()).not.toContain('Terlambat');
+    expect(section.text()).not.toContain('Kursus Nonaktif');
+  });
 });

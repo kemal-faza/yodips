@@ -99,6 +99,7 @@ function go(view: 'siap' | 'kulon') {
 
     <DeadlineSection
       :assignments="d.kulon.value.assignments"
+      :courses="d.kulon.value.courses"
       :loading="d.kulonLoading.value"
       :has-kulon="!d.kulonError.value && d.kulon.value.assignments.length > 0"
       @open="go('kulon')"
