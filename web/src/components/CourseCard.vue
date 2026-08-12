@@ -29,27 +29,27 @@ const status = computed(() =>
         <span class="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{{ course.shortname }}</span>
         <StatusBadge :label="status.label" :tone="status.tone" />
       </div>
-      <p class="mt-3 truncate font-medium text-sm text-foreground">{{ course.fullname }}</p>
+      <p class="mt-2 truncate font-medium text-sm text-foreground">{{ course.fullname }}</p>
       <p v-if="course.semester" class="mt-1 truncate text-xs text-muted-foreground">{{ course.semester }}</p>
       <p
         v-if="course.lecturer"
         data-test="course-lecturer"
         class="mt-1 truncate text-xs text-muted-foreground"
       >{{ course.lecturer }}</p>
-
-      <div v-if="course.progress != null" data-test="course-progress" class="mt-4 space-y-1.5">
-        <div class="flex items-center justify-between">
-          <span class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Progres</span>
-          <span class="text-xs font-semibold text-foreground">{{ course.progress }}%</span>
-        </div>
-        <div class="h-1.5 w-full overflow-hidden bg-muted">
-          <div class="h-full bg-primary transition-all" :style="{ width: course.progress + '%' }" />
-        </div>
+      <div class="mt-2 flex items-center gap-2">
+        <template v-if="course.progress != null">
+          <div class="flex-1 min-w-0">
+            <div class="h-1.5 w-full overflow-hidden bg-muted rounded-full">
+              <div class="h-full bg-primary transition-all rounded-full" :style="{ width: course.progress + '%' }" />
+            </div>
+          </div>
+          <span data-test="course-progress" class="text-xs font-semibold text-foreground whitespace-nowrap">{{ course.progress }}%</span>
+        </template>
+        <span class="ml-auto inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-foreground transition-transform duration-150 group-hover:translate-x-0.5">
+          Buka
+          <ChevronRight class="size-4" aria-hidden="true" />
+        </span>
       </div>
-      <span class="mt-4 inline-flex items-center gap-1 self-end text-xs font-bold uppercase tracking-wider text-foreground transition-transform duration-150 group-hover:translate-x-0.5">
-        Buka
-        <ChevronRight class="size-4" aria-hidden="true" />
-      </span>
     </CardContent>
   </Card>
 </template>
