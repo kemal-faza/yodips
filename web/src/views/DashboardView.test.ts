@@ -61,27 +61,8 @@ describe('DashboardView (academic dashboard)', () => {
     await flushPromises();
     expect(w.text()).toContain('Halo, Anindita');
     expect(w.text()).toContain('3.71');       // IPK
-    expect(w.text()).toContain('Layanan');    // ServiceGrid below
-  });
-
-  it('renders service navigation to /siap', async () => {
-    const router = buildRouter(createMemoryHistory());
-    const { awaitPush } = watchPush(router);
-    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
-    await flushPromises();
-    await w.find('[data-test="service-siap"]').trigger('click');
-    await awaitPush();
-    expect(router.currentRoute.value.path).toBe('/siap');
-  });
-
-  it('renders service navigation to /kulon/dashboard', async () => {
-    const router = buildRouter(createMemoryHistory());
-    const { awaitPush } = watchPush(router);
-    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
-    await flushPromises();
-    await w.find('[data-test="service-kulon"]').trigger('click');
-    await awaitPush();
-    expect(router.currentRoute.value.path).toBe('/kulon/dashboard');
+    expect(w.text()).toContain('Tugas dengan Deadline Terdekat');
+    expect(w.text()).not.toContain('Layanan');
   });
 
   it('shows a SIAP error banner while keeping Kulon visible', async () => {
@@ -119,10 +100,14 @@ describe('DashboardView (academic dashboard)', () => {
     ]);
     const base = { id: 0, name: '', module: 'assign', eventType: '', duedate: 0, overdue: false, course: '', courseId: 0, submissionStatus: 'not_submitted' as const };
     mockApi.getAllAssignments.mockResolvedValue([
-      { ...base, id: 1, name: 'Aktif Belum', duedate: 1000, course: 'Kecerdasan Buatan', courseId: 1 },
+      { ...base, id: 1, name: 'Aktif Belum', duedate: 100, course: 'Kecerdasan Buatan', courseId: 1 },
       { ...base, id: 2, name: 'Sudah Dikerjakan', duedate: 200, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'submitted' },
       { ...base, id: 3, name: 'Terlambat', duedate: 300, overdue: true, course: 'Kecerdasan Buatan', courseId: 1 },
       { ...base, id: 4, name: 'Kursus Nonaktif', duedate: 400, course: 'Aplikasi Web', courseId: 2 },
+      { ...base, id: 5, name: 'Lima', duedate: 400, course: 'Kecerdasan Buatan', courseId: 1 },
+      { ...base, id: 6, name: 'Enam', duedate: 500, course: 'Kecerdasan Buatan', courseId: 1 },
+      { ...base, id: 7, name: 'Tujuh', duedate: 200, course: 'Kecerdasan Buatan', courseId: 1 },
+      { ...base, id: 8, name: 'Delapan', duedate: 300, course: 'Kecerdasan Buatan', courseId: 1 },
     ]);
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
@@ -134,5 +119,10 @@ describe('DashboardView (academic dashboard)', () => {
     expect(section.text()).not.toContain('Sudah Dikerjakan');
     expect(section.text()).not.toContain('Terlambat');
     expect(section.text()).not.toContain('Kursus Nonaktif');
+    const cards = w.find('[data-test="deadline-section"]').findAll('.assignment-card');
+    expect(cards.length).toBe(4);
+    expect(cards.at(0)?.text()).toContain('Aktif Belum'); // nearest deadline (duedate 100)
+    expect(cards.at(3)?.text()).toContain('Lima');        // 4th nearest (duedate 400)
+    expect(w.find('[data-test="deadline-section"]').text()).not.toContain('Enam'); // 5th nearest → excluded
   });
 });

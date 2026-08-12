@@ -17,7 +17,6 @@ import DashboardStats from '../components/DashboardStats.vue';
 import AcademicCharts from '../components/AcademicCharts.vue';
 import ScheduleSection from '../components/ScheduleSection.vue';
 import DeadlineSection from '../components/DeadlineSection.vue';
-import ServiceGrid from '../components/ServiceGrid.vue';
 
 const router = useRouter();
 const d = useDashboard();
@@ -105,7 +104,5 @@ function go(view: 'siap' | 'kulon') {
       @open="go('kulon')"
       @view-all="go('kulon')"
     />
-
-    <ServiceGrid @navigate="go" />
   </div>
 </template>
