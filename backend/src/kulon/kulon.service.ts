@@ -363,7 +363,7 @@ export class KulonService {
     for (const c of [...hidden, ...visible]) {
       if (!byId.has(c.id)) byId.set(c.id, c);
     }
-    const merged = Array.from(byId.values()).map((c) => ({
+    const merged: KulonCourse[] = Array.from(byId.values()).map((c) => ({
       ...c,
       timelineStatus: inprogressIds.has(c.id) ? 'inprogress' : 'past',
     }));
