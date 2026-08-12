@@ -34,7 +34,7 @@ const itemIcon = computed(() =>
     @keydown.enter="emit('open')"
   >
     <CardContent class="flex items-center gap-5 px-5 py-2.5">
-      <component :is="itemIcon" class="size-6 shrink-0 text-primary" aria-hidden="true" />
+      <component :is="itemIcon" class="size-6 shrink-0 text-muted-foreground" aria-hidden="true" />
       <div class="min-w-0 flex-1">
         <p class="truncate font-medium text-sm text-foreground">{{ assignment.name }}</p>
         <p class="mt-1.5 truncate text-xs text-muted-foreground">{{ assignment.course }}</p>

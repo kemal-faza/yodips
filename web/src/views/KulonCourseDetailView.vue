@@ -289,7 +289,7 @@ async function reloadAfter() {
             <h2 class="text-sm font-semibold text-foreground truncate">{{ s.label }}</h2>
             <span
               v-if="isCurrentWeekSection(s.dateRange)"
-              class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary dark:bg-primary/20"
+              class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-muted-foreground dark:bg-primary/20"
             >
               Minggu Ini
             </span>
@@ -315,7 +315,7 @@ async function reloadAfter() {
                 :data-test="`item-${item.kind}-${item.cmid}`"
                 @click="openItem(item)"
               >
-                <component :is="itemIcon(item.kind)" class="size-4 shrink-0 text-primary" aria-hidden="true" />
+                <component :is="itemIcon(item.kind)" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span class="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{{ item.name }}</span>
                 <span v-if="itemBadge(item)" class="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">
                   {{ itemBadge(item) }}
