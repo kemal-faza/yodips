@@ -45,4 +45,21 @@ describe('CourseCard', () => {
     await w.trigger('keydown.enter');
     expect(w.emitted('open')).toHaveLength(2);
   });
+  it('renders lecturer line only when present', () => {
+    const w = mount(CourseCard, { props: { course: base({ lecturer: 'Dr. Retno' }) } });
+    expect(w.text()).toContain('Dr. Retno');
+  });
+  it('hides lecturer line when absent', () => {
+    const w = mount(CourseCard, { props: { course: base({}) } });
+    expect(w.find('[data-test="course-lecturer"]').exists()).toBe(false);
+  });
+  it('renders progress bar and % when progress present', () => {
+    const w = mount(CourseCard, { props: { course: base({ progress: 50 }) } });
+    expect(w.text()).toContain('50%');
+    expect(w.find('[data-test="course-progress"]').exists()).toBe(true);
+  });
+  it('hides progress bar when progress absent', () => {
+    const w = mount(CourseCard, { props: { course: base({}) } });
+    expect(w.find('[data-test="course-progress"]').exists()).toBe(false);
+  });
 });
