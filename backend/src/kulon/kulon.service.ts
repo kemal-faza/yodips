@@ -9,6 +9,22 @@ export function parseSemester(fullname: string, idnumber = ''): string | null {
   return `${m[1]} ${term}`;
 }
 
+const COURSE_CODE_RE = /\[([A-Z]{2,3}\d{5,})\]/;
+
+/**
+ * Extract the clean course code (e.g. MIK1624105) from Kulon's verbose
+ * bracketed shortname, e.g. `[SIAP] [55201] [K2024] [Reguler] [MIK1624105] S1 ...`.
+ * Prefers the raw shortname; falls back to the raw fullname; if neither holds a
+ * bracketed code token, returns the original shortname untouched (backward
+ * compatible with plain shortnames like `CA`).
+ */
+export function extractCourseCode(shortname: string, fullname: string): string {
+  const fromShort = shortname.match(COURSE_CODE_RE)?.[1];
+  if (fromShort) return fromShort;
+  const fromFull = fullname.match(COURSE_CODE_RE)?.[1];
+  return fromFull ?? shortname;
+}
+
 export interface KulonCourse {
   id: number;
   fullname: string;
@@ -325,7 +341,7 @@ export class KulonService {
       // the real course name. parseSemester still reads the UN-stripped fullname
       // because the semester marker sits inside the name, not in the prefix.
       fullname: c.fullname.replace(/^\[SIAP\]\s*/i, '').trim(),
-      shortname: c.shortname,
+      shortname: extractCourseCode(c.shortname ?? '', c.fullname ?? ''),
       idnumber: c.idnumber ?? '',
       semester: parseSemester(c.fullname ?? '', c.idnumber ?? ''),
     }));

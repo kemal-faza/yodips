@@ -6,6 +6,7 @@ import {
   parseSemester,
   extractFileType,
   deriveSectionLabel,
+  extractCourseCode,
 } from './kulon.service';
 
 describe('parseSemester', () => {
@@ -52,6 +53,26 @@ describe('deriveSectionLabel', () => {
   });
   it('strips surrounding whitespace', () => {
     expect(deriveSectionLabel(3, '  Bab 4  ')).toEqual({ label: 'Bab 4' });
+  });
+});
+
+describe('extractCourseCode', () => {
+  const RAW = '[SIAP] [55201] [K2024] [Reguler] [MIK1624105] S1 2024/2025 Ganjil Aljabar Linier D';
+
+  it('extracts bracketed MIK-style code from shortname', () => {
+    expect(extractCourseCode(RAW, 'S1 2024/2025 Ganjil Aljabar Linier D')).toBe('MIK1624105');
+  });
+  it('falls back to fullname when shortname has no bracketed code', () => {
+    expect(extractCourseCode('CA', 'S1 [MIK1624503] Sistem Informasi')).toBe('MIK1624503');
+  });
+  it('ignores non-code bracket tokens and passes original shortname through', () => {
+    // [SIAP]/[Reguler] letters-only, [55201] digits-only, [K2024] 1-letter+4-digits
+    // -> no [A-Z]{2,3}\d{5,} token, so the helper returns the original shortname untouched.
+    expect(extractCourseCode('[SIAP] [55201] [K2024] [Reguler] X', '')).toBe('[SIAP] [55201] [K2024] [Reguler] X');
+  });
+  it('returns original shortname when neither shortname nor fullname has a code', () => {
+    expect(extractCourseCode('CA', 'Course A')).toBe('CA');
+    expect(extractCourseCode('K', 'Kripto')).toBe('K');
   });
 });
 
