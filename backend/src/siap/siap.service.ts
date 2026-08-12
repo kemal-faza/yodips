@@ -366,6 +366,17 @@ export class SiapService {
     return Number.isFinite(v) ? v : undefined;
   }
 
+  /** SIAP prints the official cumulative IPK in every get_khs footer:
+   * `IP. Kumulatif … : <value>` (e.g. 3,65 = 292/80). Prefer this over manual emulation. */
+  private parseKumulatifIpk(html: string): number | undefined {
+    const m = html.match(
+      /IP\.\s*Kumulatif[\s\S]*?<\/th>\s*<th\s+class="align-top">:\s*<\/th>\s*<th[^>]*>\s*([0-9]+(?:[.,][0-9]+)?)\s*<\/th>/i,
+    );
+    if (!m) return undefined;
+    const v = Number(m[1].replace(',', '.'));
+    return Number.isFinite(v) ? v : undefined;
+  }
+
   private parseKhsNilai(html: string): SiapKhsSemester['nilai'] {
     // An empty semester is rendered as a "-kosong-" placeholder row.
     if (/kosong/i.test(html)) return [];
@@ -450,6 +461,7 @@ export class SiapService {
     const semesters: SiapKhsSemester[] = [];
     let totalWeighted = 0;
     let totalSks = 0;
+    let lastKhsHtml = '';
 
     for (let smt = 1; smt <= count; smt++) {
       const ta = Number(profile.angkatan) + Math.floor((smt - 1) / 2);
@@ -473,6 +485,7 @@ export class SiapService {
 
       const nilai = this.parseKhsNilai(khsHtml);
       const semesterSks = await this.fetchTotalSks(siapCookie, body, khsHtml);
+      lastKhsHtml = khsHtml;
 
       // Compute the raw (unrounded) per-semester IP for aggregation, and a
       // rounded copy for display. Rounding the per-semester IP before summing
@@ -500,7 +513,8 @@ export class SiapService {
       }
     }
 
-    const ipk = totalSks > 0 ? this.round(totalWeighted / totalSks) : 0;
+    const officialIpk = lastKhsHtml ? this.parseKumulatifIpk(lastKhsHtml) : undefined;
+    const ipk = officialIpk ?? (totalSks > 0 ? this.round(totalWeighted / totalSks) : 0);
     return { ipk, semesters };
   }
 }

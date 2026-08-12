@@ -223,8 +223,8 @@ describe('SiapService', () => {
       expect(khs.semesters[0].nilai[0].nilaiHuruf).toBe('A');
       expect(khs.semesters[0].nilai[0].sks).toBe(3);
       expect(khs.semesters[0].nilai[0].bobot).toBe(4);
-      // All fixture semesters are identical => weighted IPK equals the semester IP.
-      expect(khs.ipk).toBe(3.95);
+      // footer now supplies SIAP's official cumulative IPK (3.65), not the per-fixture aggregation.
+      expect(khs.ipk).toBe(3.65);
     });
 
     it('computes IPK from RAW per-semester sums, not pre-rounded semester IPs (B11)', async () => {
@@ -342,6 +342,55 @@ describe('SiapService', () => {
       // The ungraded semester's per-semester totalSks is still reported.
       expect(khs.semesters[4].totalSks).toBe(3);
       expect(khs.semesters[4].ip).toBe(0);
+    });
+
+    it('reads the official cumulative IPK from the KHS footer (IP. Kumulatif)', async () => {
+      // The real get_khs HTML prints the cumulative IPK in a summary row:
+      //   IP. Kumulatif ... : 3,65  (SIAP's own 292/80, not a manual recompute).
+      const footerHtml =
+        '<table><tbody>' +
+        '<tr><th class="align-top">IP. Semester<br><span class="grey font-small-3">79 / 20</span></th>' +
+        '<th class="align-top">:</th><th class="align-top">3,95</th></tr>' +
+        '<tr><th class="align-top">IP. Kumulatif<br><span class="grey font-small-3">292 / 80</span></th>' +
+        '<th class="align-top">:</th><th class="align-top">3,65</th></tr>' +
+        '</tbody></table>';
+      const profileHtml =
+        '<html><div id="tabmhs_profile">' +
+        '<b>NIM</b>:</div><div class="col-sm-9">24060121130000</div>' +
+        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
+        '<p class="text-muted">2026/2027 Ganjil</p>' +
+        '</div></html>';
+      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.includes('/pages/mhs/dashboard')) return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, status: 200 };
+        if (url.includes('/get_khs')) return { ok: true, url, headers: { get: () => null }, text: async () => footerHtml, status: 200 };
+        if (url.includes('/get_total_sks')) return { ok: true, url, headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) }, text: async () => JSON.stringify({ total_sks: 20 }), json: async () => ({ total_sks: 20 }), status: 200 };
+        throw new Error('unmocked: ' + url);
+      });
+
+      const khs = await svc.getKhs('sia_app_session=K');
+      expect(khs.ipk).toBe(3.65); // official value from the footer, comma→dot
+    });
+
+    it('falls back to manual IPK aggregation when the footer IP. Kumulatif is absent', async () => {
+      // No IP. Kumulatif block — must fall back to the server-side aggregate over
+      // graded semesters (so a SIAP layout change never empties the IPK card).
+      const row = (bobot: number) =>
+        '<tr><td>1</td><td>K</td><td>MK</td><td>TIU</td><td>TI</td><td>3</td><td>A</td><td>' + bobot + '</td></tr>';
+      const gradedHtml = '<table>' + row(4) + '</table>'; // no footer summary table
+      const profileHtml =
+        '<html><div id="tabmhs_profile"><b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
+        '<p class="text-muted">2024/2025 Genap</p></div></html>';
+      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.includes('/pages/mhs/dashboard')) return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, status: 200 };
+        if (url.includes('/get_khs')) return { ok: true, url, headers: { get: () => null }, text: async () => gradedHtml, status: 200 };
+        if (url.includes('/get_total_sks')) return { ok: true, url, headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) }, text: async () => JSON.stringify({ total_sks: 3 }), json: async () => ({ total_sks: 3 }), status: 200 };
+        throw new Error('unmocked: ' + url);
+      });
+
+      const khs = await svc.getKhs('sia_app_session=K');
+      expect(khs.ipk).toBe(4.0); // manual fallback: rawIp=4.0 over the (2) graded semesters
     });
   });
 });
