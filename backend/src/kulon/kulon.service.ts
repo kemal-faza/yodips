@@ -103,6 +103,10 @@ export interface KulonCourseContent {
 
 const DATE_RANGE_RE = /^\d{1,2}\s+[A-Za-z]+\s*-\s*\d{1,2}\s+[A-Za-z]+$/;
 
+// Matches the END date of a Kulon date-range string, e.g. "15 February" from
+// "9 February - 15 February".
+const RANGE_END_RE = /^\d{1,2}\s+[A-Za-z]+\s*-\s*(\d{1,2})\s+([A-Za-z]+)$/;
+
 // Moodle file-group codes (theme icon path `f/<type>`) -> our FileType.
 const MOODLE_FILE_GROUP: Record<string, KulonFileType> = {
   pdf: 'pdf',
@@ -152,6 +156,47 @@ export function deriveSectionLabel(
   if (ordinal === 0) return { label: t || 'General' };
   if (DATE_RANGE_RE.test(t)) return { label: `Pertemuan ${ordinal}`, dateRange: t };
   return { label: t };
+}
+
+const MONTH_INDEX: Record<string, number> = {
+  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+};
+
+/**
+ * Progress percentage = share of DATED course sections whose end date has already
+ * passed. Only sections carrying a parseable `dateRange` count toward both the
+ * numerator and denominator (General/titled-only sections are ignored). Year is
+ * inferred from `now`: a section counts as ended if its end date is in the past in
+ * either the current or the next calendar year (coverts a semester that started last
+ * year and ended this winter). Returns undefined when there is nothing to measure.
+ */
+export function parseSectionProgress(
+  sections: KulonSection[],
+  now: Date = new Date(),
+): number | undefined {
+  const ended = sections.filter(
+    (s): s is KulonSection & { dateRange: string } => !!s.dateRange,
+  );
+  if (ended.length === 0) return undefined;
+
+  let past = 0;
+  let parseable = 0;
+  for (const s of ended) {
+    const m = s.dateRange.match(RANGE_END_RE);
+    if (!m) continue;
+    const month = MONTH_INDEX[m[2].toLowerCase()];
+    if (month === undefined) continue;
+    parseable += 1;
+    const day = Number(m[1]);
+    const endOfDay = (year: number) => new Date(year, month, day, 23, 59, 59, 999);
+    const isEnded =
+      endOfDay(now.getFullYear()).getTime() < now.getTime() ||
+      endOfDay(now.getFullYear() + 1).getTime() < now.getTime();
+    if (isEnded) past += 1;
+  }
+  if (parseable === 0) return undefined;
+  return Math.round((past / parseable) * 100);
 }
 
 @Injectable()

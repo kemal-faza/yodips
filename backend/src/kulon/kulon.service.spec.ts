@@ -7,6 +7,7 @@ import {
   extractFileType,
   deriveSectionLabel,
   extractCourseCode,
+  parseSectionProgress,
 } from './kulon.service';
 
 describe('parseSemester', () => {
@@ -73,6 +74,33 @@ describe('extractCourseCode', () => {
   it('returns original shortname when neither shortname nor fullname has a code', () => {
     expect(extractCourseCode('CA', 'Course A')).toBe('CA');
     expect(extractCourseCode('K', 'Kripto')).toBe('K');
+  });
+});
+
+describe('parseSectionProgress', () => {
+  const section = (label: string, dateRange?: string) => ({ id: 1, label, dateRange, items: [] });
+  const now = new Date(2026, 1, 20); // 20 Feb 2026
+
+  it('returns undefined when no dated sections', () => {
+    expect(parseSectionProgress([section('General'), section('Bab 1')], now)).toBeUndefined();
+  });
+  it('counts a dated section as ended when its end date has passed', () => {
+    expect(parseSectionProgress([section('P1', '1 February - 8 February')], now)).toBe(100);
+  });
+  it('does not count a dated section that has not ended yet', () => {
+    expect(parseSectionProgress([section('P1', '15 March - 22 March')], now)).toBe(0);
+  });
+  it('computes a partial ratio (1 of 2 ended = 50)', () => {
+    expect(parseSectionProgress([
+      section('P1', '1 February - 5 February'),
+      section('P2', '1 March - 5 March'),
+    ], now)).toBe(50);
+  });
+  it('ignores sections with unparseable dateRange and uses only parseable ones', () => {
+    expect(parseSectionProgress([
+      section('P1', '1 February - 5 February'),
+      section('P2', 'weird'),
+    ], now)).toBe(100);
   });
 });
 
