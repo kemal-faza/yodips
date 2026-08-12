@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { ChartConfig } from '@/components/ui/chart';
 import { ChartContainer, ChartCrosshair, ChartTooltip, ChartTooltipContent, componentToString } from '@/components/ui/chart';
 import { VisXYContainer, VisArea, VisAxis, VisPlotline, VisScatter } from '@unovis/vue';
-import { semesterXTicks } from '../utils/dashboard';
+import { semesterXTicks, semesterXLabel } from '../utils/dashboard';
 import type { CumulativeSksRow } from '../utils/dashboard';
 
 const props = defineProps<{ data: CumulativeSksRow[] }>();
@@ -11,11 +12,11 @@ const config = { sksSemester:  { label: 'SKS Semester', color: 'var(--primary)' 
 const target = 144;
 
 const xIndex = (d: CumulativeSksRow, i: number) => i;
-// Explicit integer tick values keep the x-axis on whole semester numbers; the label
-// is the semester's own name (e.g. "2024/2025 Ganjil"). With integer ticks,
-// props.data[i] is always a real row, so no fractional-index `undefined`.
-const xTicks = semesterXTicks(props.data.length);
-const xLabel = (i: number) => props.data[i]?.semester ?? '';
+// Explicit integer tick values keep the x-axis on whole semester numbers (1, 2, 3, …),
+// matching the IP trend chart. Computed (not a plain const) so it recomputes when
+// props.data arrives async — otherwise the axis would render with no ticks on mount.
+const xTicks = computed(() => semesterXTicks(props.data.length));
+const xLabel = semesterXLabel;
 
 // Tooltip label uses the ordinal number, consistent with the IP chart.
 // Param must be `number | Date` — see Task 1's labelFormatter note.

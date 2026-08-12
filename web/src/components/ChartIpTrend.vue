@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { ChartConfig } from '@/components/ui/chart';
 import { ChartContainer, ChartCrosshair, ChartTooltip, ChartTooltipContent, componentToString } from '@/components/ui/chart';
 import { VisXYContainer, VisLine, VisAxis, VisPlotline, VisScatter } from '@unovis/vue';
@@ -14,7 +15,9 @@ const config = { ip: { label: 'IP Semester', color: 'var(--primary)' } } satisfi
 const xIndex = (d: IpTrendRow, i: number) => i;
 // Explicit integer tick values prevent Unovis placing fractional ticks (0.5, 1.5)
 // that would otherwise render decimal labels like "2.5" via tick-format alone.
-const xTicks = semesterXTicks(props.data.length);
+// Computed (not a plain const) so it recomputes when props.data arrives async —
+// otherwise the axis would render with no ticks on first mount.
+const xTicks = computed(() => semesterXTicks(props.data.length));
 const xLabel = semesterXLabel;
 
 // Tooltip label: the crosshair passes the numeric x (the datum index) as `x`.
