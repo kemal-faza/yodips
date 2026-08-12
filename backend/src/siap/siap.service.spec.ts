@@ -273,6 +273,50 @@ describe('SiapService', () => {
     });
   });
 
+  describe('getNotifications', () => {
+    it('normalizes the list payload', async () => {
+      mockFetchRouting([
+        { match: '/pages/mhs/dashboard/ajax/notifications', body: fixture('notifications.json') },
+      ]);
+      const res = await svc.getNotifications('cookie');
+      expect(Array.isArray(res.items)).toBe(true);
+      expect(res.count).toBeGreaterThanOrEqual(0);
+    });
+
+    it('throws 401 on a stale session', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/login',
+        headers: { get: () => 'text/html' },
+        text: async () => '<html>login page</html>',
+        json: async () => { throw new Error('no json'); },
+      });
+      await expect(svc.getNotifications('cookie')).rejects.toMatchObject({ status: 401 });
+    });
+  });
+
+  describe('markNotification', () => {
+    it('POSTs the id to the unread endpoint', async () => {
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      fetchMock.mockResolvedValue({
+        ok: true, url: 'https://siap.undip.ac.id/pages/mhs/dashboard/ajax/unread',
+        headers: { get: () => 'application/json' },
+        text: async () => '{"status":"ok","message":"ok"}',
+        json: async () => ({ status: 'ok', message: 'ok' }),
+      });
+      const res = await svc.markNotification('cookie', '76927');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/ajax/unread'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('76927'),
+        }),
+      );
+      expect(res.message).toBe('ok');
+    });
+  });
+
   describe('getKhs', () => {
     it('parses IPK and per-semester nilai from the khs fixtures', async () => {
       mockFetchRouting([

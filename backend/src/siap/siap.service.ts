@@ -58,6 +58,20 @@ export interface SiapKhs {
   semesters: SiapKhsSemester[];
 }
 
+export interface SiapNotification {
+  id: string;
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+  type: 'warning' | 'urgent' | 'success' | 'info';
+}
+
+export interface SiapNotifications {
+  count: number;
+  items: SiapNotification[];
+}
+
 @Injectable()
 export class SiapService {
   private readonly logger = new Logger(SiapService.name);
@@ -564,6 +578,50 @@ export class SiapService {
       // not wipe out every lecturer.
     }
     return Array.from(entries, ([kode, dosen]) => ({ kode, dosen }));
+  }
+
+  /**
+   * Proxy SIAP's own notification list. The payload shape is pinned by the live
+   * spike (Task 1 Step 1). Normalize the upstream response into SiapNotifications.
+   *
+   * NOTE (spike unavailable): the live spike could not be captured this run —
+   * restarting the backend would wipe the in-memory SIAP session and it cannot
+   * be re-captured (no running Chrome/CDP). The upstream endpoint is
+   * `GET .../pages/mhs/dashboard/ajax/notifications` returning
+   * `{"status":"ok","data":{"_timestamp":"...","count":"0"}}` (count as a
+   * STRING). Normalize defensively: `items` from `data.items` if present, else
+   * `[]`; `count` from `data.count`. If a future spike reveals a different list
+   * shape, adjust this mapping + the fixture + tests to match the REAL payload.
+   */
+  async getNotifications(siapCookie: string): Promise<SiapNotifications> {
+    const data = await this.siapFetchJson<{ status?: string; data?: any }>(
+      `${this.baseUrl}/pages/mhs/dashboard/ajax/notifications`,
+      { headers: { Cookie: siapCookie }, redirect: 'follow' },
+    );
+    const raw = data?.data ?? {};
+    const items: SiapNotification[] = Array.isArray(raw.items) ? raw.items : [];
+    return { count: Number(raw.count) || items.length, items };
+  }
+
+  /**
+   * Proxy SIAP's mark-unread action. NOTE: the upstream endpoint is literally
+   * `/ajax/unread`; the spike must confirm whether it marks read or unread, and
+   * the route name/action must match that semantics (see spec §1).
+   */
+  async markNotification(siapCookie: string, id: string): Promise<{ message: string }> {
+    const data = await this.siapFetchJson<{ status?: string; message?: string }>(
+      `${this.baseUrl}/pages/mhs/dashboard/ajax/unread`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: siapCookie,
+        },
+        body: `id=${encodeURIComponent(id)}`,
+        redirect: 'follow',
+      },
+    );
+    return { message: data?.message ?? 'ok' };
   }
 
   /** Parse the 8-column IRS table: KODE = col 1, NAMA DOSEN = col 7. */

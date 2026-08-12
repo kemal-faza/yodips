@@ -1,4 +1,13 @@
-import { Controller, Get, HttpException, HttpStatus, Req, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpException,
+  HttpStatus,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { SiapService } from './siap.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
@@ -33,6 +42,18 @@ export class SiapController {
   async getLecturers(@Req() req: any) {
     const cookie = await this.requireSiapCookie(req);
     return this.siapService.getLecturers(cookie);
+  }
+
+  @Get('notifications')
+  async getNotifications(@Req() req: any) {
+    const cookie = await this.requireSiapCookie(req);
+    return this.siapService.getNotifications(cookie);
+  }
+
+  @Post('notifications/:id/unread')
+  async markNotification(@Param('id') id: string, @Req() req: any) {
+    const cookie = await this.requireSiapCookie(req);
+    return this.siapService.markNotification(cookie, id);
   }
 
   private async requireSiapCookie(req: any): Promise<string> {
