@@ -50,6 +50,9 @@ function doCoolDown() {
     text2Ref.value.style.opacity = '100%';
     text1Ref.value.style.filter = 'none';
     text1Ref.value.style.opacity = '0%';
+    // The invisible span must not hold width: blank it so the inline-grid
+    // settles to the current visible word and the following text reflows.
+    text1Ref.value.textContent = '';
   }
 }
 
@@ -73,12 +76,14 @@ onUnmounted(() => cancelAnimationFrame(rafId));
 
 <template>
   <div
-    :class="cn('relative inline-block', props.class)"
+    :class="cn('relative inline-grid', props.class)"
   >
-    <!-- Base span carries the current visible text inline (keeps the wrapper
-         at the parent line's width). The overlay span sits above it and
-         morphs between the next text, inheriting the parent h1 font size. -->
-    <span ref="text1Ref" class="inline-block" aria-hidden="true" />
-    <span ref="text2Ref" class="absolute left-0 top-0 inline-block" aria-hidden="true" />
+    <!-- Both spans occupy the SAME grid cell ([grid-area:1/1]), so they overlap
+         and morph into each other while the inline-grid tracks the WIDEST of the
+         two words every frame. The following sibling text (e.g. ", {name}!")
+         flows after the grid and reflows in sync with the morphing word — no
+         lag, no collapse. No fixed box/font-size: inherits the parent h1 size. -->
+    <span ref="text1Ref" class="[grid-area:1/1] inline-block" aria-hidden="true" />
+    <span ref="text2Ref" class="[grid-area:1/1] inline-block" aria-hidden="true" />
   </div>
 </template>
