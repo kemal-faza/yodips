@@ -8,7 +8,7 @@ import { SessionStore } from '../session/session-store';
 
 describe('SiapController', () => {
   let controller: SiapController;
-  const mockSiap = { checkSessionValid: jest.fn(), getProfile: jest.fn() };
+  const mockSiap = { checkSessionValid: jest.fn(), getProfile: jest.fn(), getLecturers: jest.fn() };
   const mockStore = { get: jest.fn() };
 
   beforeEach(async () => {
@@ -35,5 +35,20 @@ describe('SiapController', () => {
     mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
     mockSiap.getProfile.mockResolvedValue({ nama: 'Budi' });
     await expect(controller.getProfile({ user: { sub: 'n' } })).resolves.toEqual({ nama: 'Budi' });
+  });
+
+  it('throws 401 when no siapCookie for lecturers', async () => {
+    mockStore.get.mockResolvedValue({ siapCookie: '' });
+    await expect(
+      controller.getLecturers({ user: { sub: 'n' } }),
+    ).rejects.toBeInstanceOf(HttpException);
+  });
+
+  it('returns lecturer list when siapCookie present', async () => {
+    mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
+    mockSiap.getLecturers.mockResolvedValue([{ kode: 'MIK1624105', dosen: 'Dr. X' }]);
+    await expect(
+      controller.getLecturers({ user: { sub: 'n' } }),
+    ).resolves.toEqual([{ kode: 'MIK1624105', dosen: 'Dr. X' }]);
   });
 });

@@ -517,4 +517,53 @@ export class SiapService {
     const ipk = officialIpk ?? (totalSks > 0 ? this.round(totalWeighted / totalSks) : 0);
     return { ipk, semesters };
   }
+
+  /**
+   * Lecturer per course, scraped from the SIAP IRS page (`/irs/mhs/irs`).
+   * Each enrolled matkul is rendered as a collapser panel; its header carries the
+   * course kode and its body carries the lecturer ("dosen"). Layout is verified live
+   * on first run (semester must be approved to list courses). Returns [] when the IRS
+   * is empty/not yet approved, or when the page shape differs.
+   */
+  async getLecturers(siapCookie: string): Promise<{ kode: string; dosen: string }[]> {
+    const html = await this.siapFetch(`${this.baseUrl}/irs/mhs/irs`, {
+      headers: { Cookie: siapCookie },
+      redirect: 'follow',
+    });
+    if (this.isIrsEmpty(html)) return [];
+    return this.parseIrsCollapsers(html);
+  }
+
+  private isIrsEmpty(html: string): boolean {
+    // e.g. a "belum disetujui"/empty-state marker; extend as layout is verified.
+    return /belum disetujui|tidak ada|kosong/i.test(html);
+  }
+
+  private parseIrsCollapsers(html: string): { kode: string; dosen: string }[] {
+    const out: { kode: string; dosen: string }[] = [];
+    const panelRe = /data-course-id="(\d+)"([\s\S]*?)(?=data-course-id=|<div id="tab)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = panelRe.exec(html)) !== null) {
+      const body = m[2];
+      const kode = body.match(/[A-Z]{2,3}\d{5,}/)?.[0];
+      const dosen = body.match(/(?:dosen|pengampu)\s*:\s*([^<\n]+)/i)?.[1]?.trim();
+      if (kode && dosen) out.push({ kode, dosen });
+    }
+    // Fallback: if the collapser regex matched nothing (unconfirmed layout), try a
+    // table-based parse so a semester with lectures still surfaces.
+    if (out.length === 0) {
+      for (const row of this.dataRows(html)) {
+        const cells = this.rowCells(row);
+        const kode = cells.find((c) => /^[A-Z]{2,3}\d{5,}$/.test(c));
+        // A lecturer name starts with a capital, is NOT the kode, and is a
+        // multi-word human name (contains a space) — so the kode cell itself is
+        // never mistaken for the dosen.
+        const dosen = cells.find(
+          (c) => !!c && !/^[A-Z]{2,3}\d{5,}$/.test(c) && /^[A-Z]/.test(c) && c.includes(' '),
+        );
+        if (kode && dosen) out.push({ kode, dosen });
+      }
+    }
+    return out;
+  }
 }

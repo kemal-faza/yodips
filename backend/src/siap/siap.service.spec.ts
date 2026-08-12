@@ -204,6 +204,55 @@ describe('SiapService', () => {
     });
   });
 
+  describe('getLecturers', () => {
+    const IRS_URL = 'https://siap.undip.ac.id/irs/mhs/irs';
+
+    it('returns [] when the IRS page is empty/not approved', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: IRS_URL,
+        text: async () => '<html>belum disetujui</html>',
+      });
+      expect(await svc.getLecturers('sia_app_session=K')).toEqual([]);
+    });
+
+    it('parses kode + dosen from IRS collapser panels', async () => {
+      const html =
+        '<div id="accordion">' +
+        '<div data-course-id="123" data-course-name="MIK1624105">' +
+        '<span>MIK1624105</span><span>dosen : Dr. X</span>' +
+        '</div>' +
+        '<div data-course-id="456" data-course-name="MIK1624503">' +
+        '<span>MIK1624503</span><span>pengampu : Retno</span>' +
+        '</div>' +
+        '<div id="tabIRS">bye</div></div>';
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: IRS_URL,
+        text: async () => html,
+      });
+      expect(await svc.getLecturers('sia_app_session=K')).toEqual([
+        { kode: 'MIK1624105', dosen: 'Dr. X' },
+        { kode: 'MIK1624503', dosen: 'Retno' },
+      ]);
+    });
+
+    it('falls back to a table parse when no collapser panels match', async () => {
+      const html =
+        '<table><tr><td>1</td><td>MIK1624105</td><td>Retno Wulandari</td></tr>' +
+        '<tr><td>2</td><td>MIK1624503</td><td>Dr. Zulkanain</td></tr></table>';
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: IRS_URL,
+        text: async () => html,
+      });
+      expect(await svc.getLecturers('sia_app_session=K')).toEqual([
+        { kode: 'MIK1624105', dosen: 'Retno Wulandari' },
+        { kode: 'MIK1624503', dosen: 'Dr. Zulkanain' },
+      ]);
+    });
+  });
+
   describe('getKhs', () => {
     it('parses IPK and per-semester nilai from the khs fixtures', async () => {
       mockFetchRouting([

@@ -29,6 +29,12 @@ export class SiapController {
     return this.siapService.getKhs(cookie);
   }
 
+  @Get('lecturers')
+  async getLecturers(@Req() req: any) {
+    const cookie = await this.requireSiapCookie(req);
+    return this.siapService.getLecturers(cookie);
+  }
+
   private async requireSiapCookie(req: any): Promise<string> {
     const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.siapCookie) {
