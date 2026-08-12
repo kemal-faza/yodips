@@ -14,6 +14,12 @@ export interface FlowState {
    *  navigated, and its landing page fires transient cookies (F5 `cookiesession1`,
    *  CSRF, pre-auth MoodleSession) that are NOT evidence of a completed login. */
   cooldownUntil: number;
+  /** Timestamp (ms) when the login tab finished loading (TAB_LOADED), or 0 if
+   *  not yet settled. While 0, real COOKIE_SET events are ignored — the landing
+   *  page's transient cookies (F5 `cookiesession1`, CSRF, guest sessions) are not
+   *  evidence of a completed login. The poll safety net forces settle as a
+   *  bounded fallback for the SSO phase. */
+  settledAt: number;
 }
 
 export type FlowEvent =
@@ -49,7 +55,7 @@ export type FlowEffect =
   | { kind: 'focusAppTab' };
 
 export function initialState(mode: FlowMode = 'auto'): FlowState {
-  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, cooldownUntil: 0 };
+  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, cooldownUntil: 0, settledAt: 0 };
 }
 
 export function attachTab(state: FlowState, tabId: number): FlowState {
@@ -115,6 +121,39 @@ function sessionCookieChanged(event: Extract<FlowEvent, { type: 'COOKIE_SET' }>,
   return true;
 }
 
+/** Shared advance logic for the current authing phase, called once the gate
+ *  (cookie event accepted, page settled, or USER_DONE) has passed. */
+function advanceAuth(state: FlowState, deps: FlowDeps): { state: FlowState; effects: FlowEffect[] } {
+  const { flags } = deps;
+  const svc = state.service;
+  if (svc === 'sso') {
+    if (!flags.hasSso) return { state, effects: [] };
+    return {
+      state: { ...state, service: 'kulon', deadline: deadline(deps), settledAt: 0 },
+      effects: [
+        { kind: 'navigateTab', url: deps.loginUrl('kulon') },
+        { kind: 'scheduleTimers', deadline: deadline(deps) },
+      ],
+    };
+  }
+  if (svc === 'kulon') {
+    if (!flags.hasKulon) return { state, effects: [] };
+    if (!flags.hasSiap) {
+      return {
+        state: { ...state, service: 'siap', deadline: deadline(deps), settledAt: 0 },
+        effects: [
+          { kind: 'navigateTab', url: deps.loginUrl('siap') },
+          { kind: 'scheduleTimers', deadline: deadline(deps) },
+        ],
+      };
+    }
+    return { state: { ...state, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
+  }
+  // svc === 'siap'
+  if (!flags.hasSiap) return { state, effects: [] };
+  return { state: { ...state, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
+}
+
 export function advance(
   state: FlowState,
   event: FlowEvent,
@@ -157,7 +196,20 @@ export function advance(
     };
   }
 
-  if (state.core === 'authing' && (event.type === 'COOKIE_SET' || event.type === 'USER_DONE')) {
+  if (state.core === 'authing' && (event.type === 'COOKIE_SET' || event.type === 'USER_DONE' || event.type === 'TAB_LOADED')) {
+    // Tab finished loading. Mark settled; in auto mode, fast-path advance when
+    // the target session cookie is already present (redirect ASAP after load).
+    if (event.type === 'TAB_LOADED') {
+      const settled = { ...state, settledAt: deps.now() };
+      if (state.mode === 'auto') {
+        const svc = state.service;
+        if ((svc === 'kulon' && flags.hasKulon) || (svc === 'siap' && flags.hasSiap)) {
+          return advanceAuth(settled, deps);
+        }
+      }
+      return { state: settled, effects: [] };
+    }
+
     const triggered = state.mode === 'semi' ? event.type === 'USER_DONE' : event.type === 'COOKIE_SET';
     if (!triggered) return { state, effects: [] };
 

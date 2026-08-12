@@ -99,6 +99,42 @@ describe('COOKIE_SET cascade (mode auto)', () => {
     const r = advance(auth('sso'), COOKIE_SET(undefined), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
     expect(r.state.service).toBe('kulon');
   });
+
+  describe('TAB_LOADED (load-gated fast path)', () => {
+    it('TAB_LOADED advances kulon→handoff when hasKulon && hasSiap', () => {
+      const r = advance(auth('kulon'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+      expect(r.state.core).toBe('handoff');
+      expect(r.effects).toContainEqual({ kind: 'postHandoff' });
+    });
+    it('TAB_LOADED advances kulon→siap when hasKulon && !hasSiap', () => {
+      const r = advance(auth('kulon'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
+      expect(r.state.service).toBe('siap');
+      expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'SIAP_URL' });
+    });
+    it('TAB_LOADED advances siap→handoff when hasSiap', () => {
+      const r = advance(auth('siap'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+      expect(r.state.core).toBe('handoff');
+    });
+    it('TAB_LOADED settles but does NOT advance when the target cookie is absent', () => {
+      const r = advance(auth('kulon'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+      expect(r.state.settledAt).toBe(D.now());
+      expect(r.state.service).toBe('kulon');
+      expect(r.effects).toEqual([]);
+    });
+    it('TAB_LOADED settles but does NOT fast-path advance in semi mode', () => {
+      const r = advance(auth('kulon', 'semi'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+      expect(r.state.settledAt).toBe(D.now());
+      expect(r.state.core).toBe('authing');
+      expect(r.state.service).toBe('kulon');
+      expect(r.effects).toEqual([]);
+    });
+    it('TAB_LOADED on sso only settles (no fast path — needs human login)', () => {
+      const r = advance(auth('sso'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+      expect(r.state.settledAt).toBe(D.now());
+      expect(r.state.service).toBe('sso');
+      expect(r.effects).toEqual([]);
+    });
+  });
 });
 
 describe('mode semi ignores COOKIE_SET, waits USER_DONE', () => {
