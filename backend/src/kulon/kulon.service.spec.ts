@@ -197,6 +197,33 @@ describe('getCourseContent (HTML fixture)', () => {
     const s1 = content.sections.find((s) => s.id === 1);
     expect(s1?.items).toEqual([]);
   });
+
+  it('falls back to HTML when the JSON endpoint is unavailable (no json() on response)', async () => {
+    const svc = new KulonService();
+    const html = fs.readFileSync(
+      path.join(__dirname, '../../test/fixtures/kulon/course-content-html.html'),
+      'utf8',
+    );
+    // First call = service.php (JSON path) returns a response WITHOUT json() -> TypeError.
+    // Second call = /course/view.php HTML path.
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/lib/ajax/service.php?sesskey=sk',
+        text: async () => '',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
+        text: async () => html,
+      });
+    const content = await svc.getCourseContent('cookie', 'sk', 16294);
+    expect(content.courseId).toBe(16294);
+    const gen = content.sections.find((s) => s.id === 0);
+    expect(gen?.label).toBe('General');
+  });
 });
 
 describe('KulonService', () => {
@@ -292,7 +319,10 @@ describe('KulonService', () => {
         ok: true,
         json: async () => [{ error: false, data: { courses: [] } }],
       })
-      // post-timeline content scrape (course id 1)
+      // post-timeline content scrape (course id 1): getCourseContent is now
+      // JSON-first, so the first content fetch is the service.php JSON attempt
+      // (no json() -> TypeError -> HTML fallback), the second is the /course/view.php scrape.
+      .mockResolvedValueOnce({ ok: true, text: async () => '' })
       .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' });
     const courses = await svc.getCourses('session-cookie', 'sesskey');
     expect(courses[0].semester).toBe('2025/2026 Genap');
@@ -324,7 +354,13 @@ describe('KulonService', () => {
         json: async () => [{ error: false, data: { courses: [] } }],
       })
       // post-timeline content scrape: both dated sections end in a future month
-      // relative to any run date -> progress 0.
+      // relative to any run date -> progress 0. getCourseContent is JSON-first,
+      // so first content fetch = service.php JSON attempt (no json() -> TypeError
+      // -> HTML fallback), second = /course/view.php scrape.
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => '',
+      })
       .mockResolvedValueOnce({
         ok: true,
         text: async () =>

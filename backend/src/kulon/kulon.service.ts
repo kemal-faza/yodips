@@ -921,7 +921,13 @@ export class KulonService {
     sesskey: string,
     courseId: number,
   ): Promise<KulonCourseContent> {
-    // AJAX core_course_get_contents disabled di Kulon (spike) -> HTML scrape.
-    return this.contentFromHTML(cookie, courseId);
+    // JSON-first via core_courseformat_get_state; fall back to the HTML scrape on
+    // ANY error (method disabled, session quirks, even a missing res.json() on a
+    // stubbed response) so a JSON regression never breaks course content.
+    try {
+      return await this.getCourseState(cookie, sesskey, courseId);
+    } catch {
+      return this.contentFromHTML(cookie, courseId);
+    }
   }
 }
