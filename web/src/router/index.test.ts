@@ -65,4 +65,12 @@ describe('router guard', () => {
     expect(router.currentRoute.value.path).toBe('/');
     expect(router.currentRoute.value.name).toBe('dashboard');
   });
+
+  it('resolves the profile route', async () => {
+    const store = { isAuthenticated: true, fetchMe: vi.fn().mockResolvedValue('ok') };
+    (useAuthStore as any).mockReturnValue(store);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/profile');
+    expect(router.currentRoute.value.name).toBe('profile');
+  });
 });

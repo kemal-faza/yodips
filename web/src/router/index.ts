@@ -13,7 +13,7 @@ export function buildRouter(history: RouterHistory): Router {
         component: () => import('../layouts/AppLayout.vue'),
         children: [
           { path: '', name: 'dashboard', component: () => import('../views/DashboardView.vue') },
-          { path: 'siap', name: 'siap', component: () => import('../views/SiapView.vue') },
+          { path: 'profile', name: 'profile', component: () => import('../views/ProfileView.vue') },
           { path: 'kulon', redirect: { name: 'kulon-dashboard' } },
           { path: 'kulon/dashboard', name: 'kulon-dashboard', component: () => import('../views/KulonDashboardView.vue') },
           { path: 'kulon/matakuliah', name: 'kulon-courses', component: () => import('../views/KulonCoursesView.vue') },

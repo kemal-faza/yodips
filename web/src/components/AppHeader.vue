@@ -16,8 +16,8 @@ const router = useRouter();
 // Avatar initial from the logged-in identity (NIM in store.user.sub), else 'U'.
 const initial = computed(() => store.user?.sub?.[0]?.toUpperCase() ?? 'U');
 
-function goToSiap() {
-  router.push('/siap');
+function goToProfile() {
+  router.push('/profile');
 }
 </script>
 
@@ -66,9 +66,9 @@ function goToSiap() {
         <button
           type="button"
           class="rounded-full transition-opacity hover:opacity-90 cursor-pointer"
-          aria-label="Buka halaman SIAP"
+          aria-label="Buka halaman profil"
           data-test="avatar-siap"
-          @click="goToSiap"
+          @click="goToProfile"
         >
           <Avatar size="default" class="bg-primary-foreground/20 text-primary-foreground">
             <AvatarImage v-if="store.fotoUrl" :src="store.fotoUrl" alt="Foto" />

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import AppSidebar from '../components/AppSidebar.vue';
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Bell, Menu, Moon, Sun } from '@lucide/vue';
 
 const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
 const theme = useThemeStore();
 
@@ -17,11 +18,11 @@ const mobileSidebarOpen = ref(false);
 const initial = computed(() => auth.user?.sub?.[0]?.toUpperCase() ?? 'U');
 
 const PAGE_TITLES: Record<string, string> = {
-  dashboard: 'Beranda',
+  dashboard: 'Dashboard',
   'kulon-dashboard': 'Tugas Kulon',
   'kulon-courses': 'Mata Kuliah Kulon',
   'kulon-course-detail': 'Detail Mata Kuliah',
-  siap: 'Akademik SIAP',
+  profile: 'Profil',
 };
 
 const pageTitle = computed(() => {
@@ -86,16 +87,24 @@ const pageTitle = computed(() => {
             <Bell class="size-4" aria-hidden="true" />
           </Button>
 
-          <Avatar
-            size="sm"
-            class="size-8 bg-primary/10 text-muted-foreground border border-border"
-            data-test="user-avatar"
+          <button
+            type="button"
+            class="rounded-full transition-opacity hover:opacity-90 cursor-pointer"
+            aria-label="Buka halaman profil"
+            data-test="avatar-profile"
+            @click="router.push('/profile')"
           >
-            <AvatarImage v-if="auth.fotoUrl" :src="auth.fotoUrl" alt="Foto profil" />
-            <AvatarFallback class="bg-transparent font-bold text-xs">
-              {{ initial }}
-            </AvatarFallback>
-          </Avatar>
+            <Avatar
+              size="sm"
+              class="size-8 bg-primary/10 text-muted-foreground border border-border"
+              data-test="user-avatar"
+            >
+              <AvatarImage v-if="auth.fotoUrl" :src="auth.fotoUrl" alt="Foto profil" />
+              <AvatarFallback class="bg-transparent font-bold text-xs">
+                {{ initial }}
+              </AvatarFallback>
+            </Avatar>
+          </button>
         </div>
       </header>
 

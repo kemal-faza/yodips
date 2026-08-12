@@ -19,15 +19,14 @@ describe('AppSidebar', () => {
     });
   });
 
-  it('renders all four navigation links', async () => {
+  it('renders all navigation links', async () => {
     const router = buildRouter(createMemoryHistory());
     await router.push('/');
     await flushPromises();
     const w = mount(AppSidebar, { global: { plugins: [router] } });
-    expect(w.text()).toContain('Beranda');
+    expect(w.text()).toContain('Dashboard');
     expect(w.text()).toContain('Tugas');
     expect(w.text()).toContain('Mata Kuliah');
-    expect(w.text()).toContain('Akademik');
   });
 
   it('navigates when a nav item is clicked', async () => {

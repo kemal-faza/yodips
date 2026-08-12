@@ -57,7 +57,7 @@ describe('App integration', () => {
     expect(router.currentRoute.value.name).toBe('dashboard');
   });
 
-  it('navigates to /siap after login and resolves the SIAP route', async () => {
+  it('navigates to /profile after login and resolves the profile route', async () => {
     (api.capture as any).mockResolvedValue({
       accessToken: 'tok', capturedAt: 0, hasSso: true, hasMicrosoft: true, hasKulon: true,
     });
@@ -71,10 +71,9 @@ describe('App integration', () => {
     const store = useAuthStore();
     await store.login();
 
-    await router.push('/siap');
+    await router.push('/profile');
     await flushPromises();
-    expect(router.currentRoute.value.name).toBe('siap');
-    expect(router.currentRoute.value.path).toBe('/siap');
-    expect(w.text()).toContain('SIAP');
+    expect(router.currentRoute.value.name).toBe('profile');
+    expect(router.currentRoute.value.path).toBe('/profile');
   });
 });

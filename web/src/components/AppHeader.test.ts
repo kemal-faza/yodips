@@ -62,10 +62,10 @@ describe('AppHeader', () => {
     expect(w.find('[data-test="avatar-siap"]').text()).toContain('U');
   });
 
-  it('navigates to /siap when the avatar is clicked', async () => {
+  it('navigates to /profile when the avatar is clicked', async () => {
     mockStores({ isAuthenticated: true, logout: vi.fn(), user: null });
     const w = mount(AppHeader);
     await w.find('[data-test="avatar-siap"]').trigger('click');
-    expect(mockPush).toHaveBeenCalledWith('/siap');
+    expect(mockPush).toHaveBeenCalledWith('/profile');
   });
 });

@@ -36,8 +36,8 @@ const sksRows = computed(() => cumulativeSks(d.siap.value.khs));
 const ipMax = computed(() => Math.max(3, ...ipRows.value.map((r) => r.ip)));
 const scheduleItems = computed(() => [...parseJadwal(d.siap.value.jadwal), ...parseSchedule(d.siap.value.irs)]);
 
-function go(view: 'siap' | 'kulon') {
-  router.push(view === 'siap' ? '/siap' : '/kulon/dashboard');
+function go(view: 'kulon') {
+  router.push('/kulon/dashboard');
 }
 </script>
 

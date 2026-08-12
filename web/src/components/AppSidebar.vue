@@ -3,10 +3,9 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { Button } from '@/components/ui/button';
 import {
-  Home,
+  LayoutDashboard,
   BookOpen,
   ClipboardList,
-  GraduationCap,
   LogOut,
   X,
 } from '@lucide/vue';
@@ -24,10 +23,9 @@ const router = useRouter();
 const auth = useAuthStore();
 
 const navItems = [
-  { label: 'Beranda', icon: Home, path: '/' },
+  { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
   { label: 'Tugas', icon: ClipboardList, path: '/kulon/dashboard' },
   { label: 'Mata Kuliah', icon: BookOpen, path: '/kulon/matakuliah' },
-  { label: 'Akademik', icon: GraduationCap, path: '/siap' },
 ];
 
 function isActive(path: string): boolean {
