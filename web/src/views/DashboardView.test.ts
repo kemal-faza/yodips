@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
-import { createMemoryHistory, type Router } from 'vue-router';
+import { createMemoryHistory } from 'vue-router';
 import { buildRouter } from '../router';
 import DashboardView from './DashboardView.vue';
 import * as api from '../api/client';
@@ -37,13 +37,6 @@ function mockStore() {
   const store = { isAuthenticated: true, logout: vi.fn(), user: null, checking: false, login: vi.fn().mockResolvedValue(undefined), hasSiap: true, fetchMe: vi.fn().mockResolvedValue('ok') };
   (useAuthStore as any).mockReturnValue(store);
   return store;
-}
-
-function watchPush(router: Router): { awaitPush: () => Promise<void> } {
-  let pending: Promise<unknown> | null = null;
-  const orig = router.push.bind(router);
-  router.push = ((...args: unknown[]) => { pending = orig(...(args as Parameters<Router['push']>)); return pending; }) as Router['push'];
-  return { awaitPush: async () => { if (pending) await pending; await flushPromises(); } };
 }
 
 describe('DashboardView (academic dashboard)', () => {
@@ -124,5 +117,21 @@ describe('DashboardView (academic dashboard)', () => {
     expect(cards.at(0)?.text()).toContain('Aktif Belum'); // nearest deadline (duedate 100)
     expect(cards.at(3)?.text()).toContain('Lima');        // 4th nearest (duedate 400)
     expect(w.find('[data-test="deadline-section"]').text()).not.toContain('Enam'); // 5th nearest → excluded
+  });
+
+  it('renders the empty state when no assignment matches the "need" predicate', async () => {
+    mockApi.getCourses.mockResolvedValue([
+      { id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' },
+    ]);
+    const base = { id: 0, name: '', module: 'assign', eventType: '', duedate: 0, overdue: false, course: '', courseId: 0, submissionStatus: 'not_submitted' as const };
+    mockApi.getAllAssignments.mockResolvedValue([
+      { ...base, id: 1, name: 'Sudah Dikerjakan', duedate: 100, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'submitted' },
+    ]);
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
+    await flushPromises();
+    const section = w.find('[data-test="deadline-section"]');
+    expect(section.text()).toContain('Tidak ada tugas yang perlu dikerjakan.');
+    expect(section.findAll('.assignment-card').length).toBe(0);
   });
 });
