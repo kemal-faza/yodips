@@ -867,6 +867,55 @@ export class KulonService {
     return { courseId, sections };
   }
 
+  /**
+   * Fetch the Moodle course-format state as JSON (core_courseformat_get_state) and
+   * map it into KulonCourseContent. This is the JSON alternative to the more fragile
+   * HTML scrape contentFromHTML. `kind` derives from `cm.module` (lowercase), NOT
+   * `cm.modname` (capitalized). JSON ids are strings -> Number() coerced for numeric
+   * fields. A cm is included iff `uservisible !== false` OR `module` is assign/quiz.
+   */
+  private async getCourseState(
+    cookie: string,
+    sesskey: string,
+    courseId: number,
+  ): Promise<KulonCourseContent> {
+    const raw = (await this.ajax(
+      cookie,
+      sesskey,
+      'core_courseformat_get_state',
+      { courseid: courseId },
+    )) as { course?: any; section?: any[]; cm?: any[] };
+    return this.mapCourseStateJson(raw, courseId);
+  }
+
+  private mapCourseStateJson(raw: any, courseId: number): KulonCourseContent {
+    const sections = (raw?.section ?? []).map((s: any) => {
+      // Section id = ORDINAL (s.number), matching the HTML path's 0,1,2,... ids —
+      // NOT the Moodle record id (s.id like "114151"). s.number is a number already;
+      // Number() guards against string forms.
+      const id = Number(s.number ?? s.id);
+      const { label, dateRange } = deriveSectionLabel(id === 0 ? 0 : id, s.title ?? '');
+      return { id, label, dateRange, items: [] as KulonContentItem[] };
+    });
+    const byId = new Map<number, KulonSection>();
+    for (const sec of sections) byId.set(sec.id, sec);
+
+    for (const cm of raw?.cm ?? []) {
+      if (cm.uservisible === false && cm.module !== 'assign' && cm.module !== 'quiz') continue;
+      // Bucket by cm.sectionnumber (ordinal), matching the section id above.
+      const owner = byId.get(Number(cm.sectionnumber ?? cm.sectionid));
+      if (!owner) continue;
+      const kind = this.moduleKind(cm.module);
+      const base = { name: cm.name ?? '', url: cm.url ?? '', cmid: Number(cm.id) };
+      if (kind === 'file') {
+        owner.items.push({ ...base, kind, fileType: extractFileType(cm.url ?? '') });
+      } else {
+        owner.items.push({ ...base, kind, duedate: undefined });
+      }
+    }
+    return { courseId, sections };
+  }
+
   async getCourseContent(
     cookie: string,
     sesskey: string,
