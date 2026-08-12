@@ -18,7 +18,7 @@ const chartTab = ref<'ipTrend' | 'gradeDist'>('ipTrend');
 </script>
 
 <template>
-  <section class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+  <section class="grid grid-cols-1 gap-6 2xl:grid-cols-2">
     <Card>
       <CardContent class="p-5">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
