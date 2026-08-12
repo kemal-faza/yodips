@@ -5,6 +5,7 @@ import { KulonController } from './kulon.controller';
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
+import { SiapService } from '../siap/siap.service';
 
 describe('KulonController', () => {
   let controller: KulonController;
@@ -15,6 +16,7 @@ describe('KulonController', () => {
     getCourseContent: jest.fn(),
     parseSesskey: jest.fn(),
   };
+  const mockSiap = { getLecturers: jest.fn() };
   const sessionStore = { get: jest.fn() };
   const req = () => ({ user: { sub: '24060121130000' } });
 
@@ -29,6 +31,7 @@ describe('KulonController', () => {
       providers: [
         { provide: KulonService, useValue: service },
         { provide: SessionStore, useValue: sessionStore },
+        { provide: SiapService, useValue: mockSiap },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -46,6 +49,17 @@ describe('KulonController', () => {
     const res = await controller.getCourses(req() as any);
     expect(res[0].fullname).toBe('A');
     expect(service.getCourses).toHaveBeenCalledWith('MoodleSession=K', 'sesskey123');
+  });
+
+  it('merges SIAP lecturer onto courses by MIK code when siapCookie present', async () => {
+    sessionStore.get.mockResolvedValue({ kulonCookie: 'k', siapCookie: 's' });
+    service.parseSesskey.mockReturnValue('sesskey123');
+    (service.getCourses as jest.Mock).mockResolvedValue([
+      { id: 1, fullname: 'A', shortname: 'MIK1624105', timelineStatus: 'inprogress' },
+    ]);
+    (mockSiap.getLecturers as jest.Mock).mockResolvedValue([{ kode: 'MIK1624105', dosen: 'Dr. X' }]);
+    const res = await controller.getCourses({ user: { sub: 'u' } } as any);
+    expect(res[0].lecturer).toBe('Dr. X');
   });
 
   it('throws when no kulon session stored', async () => {

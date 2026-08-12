@@ -2,6 +2,7 @@ import { Controller, Get, HttpException, HttpStatus, Param, Query, Req, UseGuard
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
+import { SiapService } from '../siap/siap.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('api/kulon')
@@ -9,6 +10,7 @@ export class KulonController {
   constructor(
     private readonly kulonService: KulonService,
     private readonly sessionStore: SessionStore,
+    private readonly siapService: SiapService,
   ) {}
 
   @Get('courses')
@@ -21,7 +23,23 @@ export class KulonController {
       );
     }
     const sesskey = await this.getSesskey(session.kulonCookie);
-    return this.kulonService.getCourses(session.kulonCookie, sesskey);
+    const courses = await this.kulonService.getCourses(session.kulonCookie, sesskey);
+
+    // Best-effort lecturer merge by MIK code. Missing SIAP cookie / empty IRS
+    // -> lecturer simply omitted.
+    let lecturerByCode = new Map<string, string>();
+    if (session.siapCookie) {
+      try {
+        for (const l of await this.siapService.getLecturers(session.siapCookie)) {
+          lecturerByCode.set(l.kode, l.dosen);
+        }
+      } catch {
+        lecturerByCode = new Map<string, string>();
+      }
+    }
+    return courses.map((c) =>
+      lecturerByCode.has(c.shortname) ? { ...c, lecturer: lecturerByCode.get(c.shortname) } : c,
+    );
   }
 
   @Get('assignments/all')
