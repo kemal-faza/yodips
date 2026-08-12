@@ -263,6 +263,14 @@ describe('normalizeState (zombie-flow recovery)', () => {
     const r = normalizeState(legacy, NOW);
     expect(r.settledAt).toBe(0);
   });
+  it('defaults recentSessionChange to false and preserves same reference for a live state', () => {
+    const legacy = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000 } as unknown as FlowState;
+    delete (legacy as Record<string, unknown>).settledAt; // simulate old persisted shape
+    expect(normalizeState(legacy, NOW).recentSessionChange).toBe(false);
+    // A live state with settledAt: 0 and recentSessionChange: false is returned as the same reference.
+    const live = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000, settledAt: 0, recentSessionChange: false } as FlowState;
+    expect(normalizeState(live, NOW)).toBe(live);
+  });
 });
 
 describe('load-gated COOKIE_SET + SSO guard', () => {

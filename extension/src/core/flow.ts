@@ -76,10 +76,15 @@ export function attachTab(state: FlowState, tabId: number): FlowState {
  * Any other state (live flow, terminal with a still-relevant tab) is kept.
  */
 export function normalizeState(state: FlowState, now: number): FlowState {
-  // Migrate a persisted state written before `settledAt` existed: default it to 0
-  // (not yet settled) so the load-gate suppresses transient cookies correctly.
+  // Migrate a persisted state written before `settledAt`/`recentSessionChange`
+  // existed: default `settledAt` to 0 (not yet settled) and the change flag to
+  // false, so the load-gate suppresses transient cookies correctly.
   const settled = typeof state.settledAt === 'number' && state.settledAt >= 0 ? state.settledAt : 0;
-  const normalized = settled === state.settledAt ? state : { ...state, settledAt: settled };
+  const changed = state.recentSessionChange === true;
+  const normalized =
+    settled === state.settledAt && changed === state.recentSessionChange
+      ? state
+      : { ...state, settledAt: settled, recentSessionChange: changed };
   if (state.core === 'done' || state.core === 'error') {
     if (state.tabId == null) return initialState(state.mode);
     return normalized;
