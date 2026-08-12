@@ -24,8 +24,8 @@ const gridItems = computed(() => props.items.filter((i) => i.day && i.timeStart 
           <p class="mt-0.5 text-xs text-muted-foreground">Jadwal perkuliahan mingguan dari SIAP Undip</p>
         </div>
         <div class="flex gap-1 text-xs">
-          <Button variant="outline" size="sm" :class="view === 'grid' ? 'bg-primary/10 font-semibold text-primary' : ''" data-test="schedule-view-grid" @click="view = 'grid'">Grid</Button>
-          <Button variant="outline" size="sm" :class="view === 'table' ? 'bg-primary/10 font-semibold text-primary' : ''" data-test="schedule-view-table" @click="view = 'table'">Tabel</Button>
+          <Button variant="outline" size="sm" :class="view === 'grid' ? 'bg-primary/10 font-semibold text-foreground' : ''" data-test="schedule-view-grid" @click="view = 'grid'">Grid</Button>
+          <Button variant="outline" size="sm" :class="view === 'table' ? 'bg-primary/10 font-semibold text-foreground' : ''" data-test="schedule-view-table" @click="view = 'table'">Tabel</Button>
         </div>
       </div>
 
@@ -35,7 +35,7 @@ const gridItems = computed(() => props.items.filter((i) => i.day && i.timeStart 
         </div>
         <div v-else class="grid min-w-[700px] grid-cols-6 gap-3">
           <div v-for="day in days" :key="day" class="pt-2">
-            <div class="border-b border-border/60 pb-2 text-center text-xs font-bold uppercase tracking-wider text-primary">{{ day }}</div>
+            <div class="border-b border-border/60 pb-2 text-center text-xs font-bold uppercase tracking-wider text-foreground">{{ day }}</div>
             <div class="mt-3 space-y-2.5">
               <div
                 v-for="it in gridItems.filter((i) => i.day === day)"
@@ -43,7 +43,7 @@ const gridItems = computed(() => props.items.filter((i) => i.day && i.timeStart 
                 :data-test="`grid-course-${it.code}`"
                 class="rounded-md border border-border bg-card p-3 transition-colors hover:border-primary"
               >
-                <span class="text-[10px] font-semibold uppercase tracking-wider text-primary">{{ it.code }}</span>
+                <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{{ it.code }}</span>
                 <h4 class="mt-1 text-xs font-medium text-foreground">{{ it.courseName }}</h4>
                 <div class="mt-2 text-[10px] text-muted-foreground">{{ it.timeStart }} – {{ it.timeEnd }}</div>
                 <div v-if="it.room" class="mt-1 text-[10px] text-muted-foreground/80">{{ it.room }}</div>
@@ -68,9 +68,9 @@ const gridItems = computed(() => props.items.filter((i) => i.day && i.timeStart 
           </thead>
           <tbody>
             <tr v-for="it in items" :key="it.id" class="border-b border-border last:border-0 hover:bg-muted/50">
-              <td class="px-4 py-3 text-xs font-semibold text-primary">{{ it.day ?? '—' }}</td>
+              <td class="px-4 py-3 text-xs font-semibold text-muted-foreground">{{ it.day ?? '—' }}</td>
               <td class="px-4 py-3 text-xs">{{ it.timeStart && it.timeEnd ? `${it.timeStart} – ${it.timeEnd}` : (it.jadwalRaw ?? '—') }}</td>
-              <td class="px-4 py-3 text-xs text-primary">{{ it.code }}</td>
+              <td class="px-4 py-3 text-xs text-muted-foreground">{{ it.code }}</td>
               <td class="px-4 py-3 font-medium text-foreground">{{ it.courseName }}</td>
               <td class="px-4 py-3 text-xs text-muted-foreground">{{ it.room ?? '—' }}</td>
               <td class="px-4 py-3 text-center text-xs">{{ it.sks }}</td>
