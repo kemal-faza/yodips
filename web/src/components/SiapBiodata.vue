@@ -95,7 +95,7 @@ const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
                     <span>{{ showNamaIbu ? (r.value ?? '—') : '********' }}</span>
                     <Button
                       variant="link"
-                      class="ml-2 dark:text-foreground"
+                      class="ml-2"
                       @click="showNamaIbu = !showNamaIbu"
                     >
                       {{ showNamaIbu ? 'Sembunyikan' : 'Tampilkan' }}
