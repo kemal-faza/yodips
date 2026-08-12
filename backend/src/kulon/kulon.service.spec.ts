@@ -252,7 +252,12 @@ describe('KulonService', () => {
             },
           },
         ],
-      });
+      })
+      // post-timeline content scrapes (one per course) so the progress path
+      // resolves without consuming the timeline mock queue
+      .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' })
+      .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' })
+      .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' });
 
     const courses = await svc.getCourses('session-cookie', 'sesskey');
 
@@ -286,11 +291,49 @@ describe('KulonService', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => [{ error: false, data: { courses: [] } }],
-      });
+      })
+      // post-timeline content scrape (course id 1)
+      .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' });
     const courses = await svc.getCourses('session-cookie', 'sesskey');
     expect(courses[0].semester).toBe('2025/2026 Genap');
     // not present in the 'inprogress' bucket -> past
     expect(courses[0].timelineStatus).toBe('past');
+  });
+
+  it('gets courses with a future-month progress of 0', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            error: false,
+            data: {
+              courses: [{ id: 1, fullname: 'Course A', shortname: 'CA', idnumber: '1' }],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { error: false, data: { courses: [{ id: 1, fullname: 'Course A', shortname: 'CA', idnumber: '1' }] } },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: { courses: [] } }],
+      })
+      // post-timeline content scrape: both dated sections end in a future month
+      // relative to any run date -> progress 0.
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          '<li id="section-0" data-sectionname="General"></li>' +
+          '<li id="section-1" data-sectionname="1 November - 8 November"></li>' +
+          '<li id="section-2" data-sectionname="15 November - 22 November"></li>',
+      });
+    const courses = await svc.getCourses('session-cookie', 'sesskey');
+    expect(courses.find((c) => c.id === 1)?.progress).toBe(0);
   });
 
   it('gets assignments with deadlines from calendar endpoint', async () => {

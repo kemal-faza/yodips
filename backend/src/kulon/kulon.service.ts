@@ -363,10 +363,29 @@ export class KulonService {
     for (const c of [...hidden, ...visible]) {
       if (!byId.has(c.id)) byId.set(c.id, c);
     }
-    return Array.from(byId.values()).map((c) => ({
+    const merged = Array.from(byId.values()).map((c) => ({
       ...c,
       timelineStatus: inprogressIds.has(c.id) ? 'inprogress' : 'past',
     }));
+    // Batch-parallel course-progress scrape. Each course's /course/view.php feeds
+    // parseSectionProgress. Failures per course are non-fatal (progress omitted).
+    const settled = await Promise.allSettled(
+      merged.map(async (c) => ({
+        id: c.id,
+        progress: parseSectionProgress(
+          (await this.getCourseContent(sessionCookie, sesskey, c.id)).sections,
+        ),
+      })),
+    );
+    const progressById = new Map<number, number>();
+    for (const r of settled) {
+      if (r.status === 'fulfilled' && r.value.progress != null) {
+        progressById.set(r.value.id, r.value.progress);
+      }
+    }
+    return merged.map((c) =>
+      progressById.has(c.id) ? { ...c, progress: progressById.get(c.id) } : c,
+    );
   }
 
   async fetchTimelineCourses(
