@@ -20,7 +20,7 @@ const LAST_RESULT_KEY = 'lastHandoffResult';
 const POLL_PERIOD_MIN = 0.5;
 const MAX_RELOGIN = 2;
 const PHASE_TIMEOUT_MS = 3 * 60_000;
-const NAV_COOLDOWN_MS = 3000;
+const SSO_GUARD_MS = 1500;
 // Debounce window for cookies.onChanged: a page load fires many undip cookie
 // events (session, csrf, F5 load-balancer) in a burst. Coalesce them into ONE
 // COOKIE_SET carrying the unique changed names instead of N serialized runs.
@@ -212,7 +212,7 @@ async function runFlow(initialEvent: FlowEvent): Promise<void> {
       const state = await getState();
       const cookies = await chrome.cookies.getAll({});
       const flags = evaluateCookies(cookies);
-      const deps = { flags, now: Date.now, MAX_RELOGIN, PHASE_TIMEOUT_MS, NAV_COOLDOWN_MS, loginUrl };
+      const deps = { flags, now: Date.now, MAX_RELOGIN, PHASE_TIMEOUT_MS, SSO_GUARD_MS, loginUrl };
       console.info('[Undip SSO] transition', ev.type, { ...redact(state), flags });
       const { state: next, effects } = advance(state, ev, deps);
 

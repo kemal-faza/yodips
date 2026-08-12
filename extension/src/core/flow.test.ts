@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { initialState, advance, attachTab, normalizeState, type FlowState, type FlowDeps } from './flow.js';
 
 const LOGIN = { sso: 'SSO_URL', kulon: 'KULON_URL', siap: 'SIAP_URL' };
-const D: FlowDeps = { flags: { hasSso: false, hasKulon: false, hasSiap: false }, now: () => 1_000_000, MAX_RELOGIN: 2, PHASE_TIMEOUT_MS: 1000, NAV_COOLDOWN_MS: 3000, loginUrl: (s) => LOGIN[s] };
+const D: FlowDeps = { flags: { hasSso: false, hasKulon: false, hasSiap: false }, now: () => 1_000_000, MAX_RELOGIN: 2, PHASE_TIMEOUT_MS: 1000, SSO_GUARD_MS: 1500, loginUrl: (s) => LOGIN[s] };
 
 function st(mode: 'auto' | 'semi' = 'auto'): FlowState {
   return initialState(mode);
@@ -59,7 +59,8 @@ describe('REQUEST', () => {
 
 describe('COOKIE_SET cascade (mode auto)', () => {
   it('sso → navigate kulon when the SSO session cookie actually changed', () => {
-    const r = advance(auth('sso'), COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    const settled = { ...auth('sso'), settledAt: 1_000_000 - 5000 } as FlowState; // settled long ago
+    const r = advance(settled, COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
     expect(r.state.service).toBe('kulon');
     expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'KULON_URL' });
   });
@@ -68,14 +69,15 @@ describe('COOKIE_SET cascade (mode auto)', () => {
     expect(r.state.service).toBe('sso');
     expect(r.effects).toEqual([]);
   });
-  it('sso ignores cookie events during the post-navigation cooldown', () => {
-    const s = { ...auth('sso'), cooldownUntil: 1_000_000 + 2000 } as FlowState;
+  it('sso ignores a real cookie event before the page has settled', () => {
+    const s = { ...auth('sso'), settledAt: 0 } as FlowState;
     const r = advance(s, COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
     expect(r.state.service).toBe('sso');
     expect(r.effects).toEqual([]);
   });
   it('kulon with siap → handoff', () => {
-    const r = advance(auth('kulon'), COOKIE_SET(['MoodleSession']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+    const settled = { ...auth('kulon'), settledAt: 1_000_000 - 5000 } as FlowState; // settled long ago
+    const r = advance(settled, COOKIE_SET(['MoodleSession']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
     expect(r.state.core).toBe('handoff');
   });
   it('kulon with siap ignores an LB/transient cookie change', () => {
@@ -84,22 +86,19 @@ describe('COOKIE_SET cascade (mode auto)', () => {
     expect(r.effects).toEqual([]);
   });
   it('kulon without siap → navigate siap', () => {
-    const r = advance(auth('kulon'), COOKIE_SET(['MoodleSession']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
+    const settled = { ...auth('kulon'), settledAt: 1_000_000 - 5000 } as FlowState; // settled long ago
+    const r = advance(settled, COOKIE_SET(['MoodleSession']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
     expect(r.state.service).toBe('siap');
   });
   it('siap → handoff when a SIAP session cookie changed', () => {
-    const r = advance(auth('siap'), COOKIE_SET(['sia_app_session']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+    const settled = { ...auth('siap'), settledAt: 1_000_000 - 5000 } as FlowState; // settled long ago
+    const r = advance(settled, COOKIE_SET(['sia_app_session']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
     expect(r.state.core).toBe('handoff');
   });
   it('siap ignores a non-session cookie change', () => {
     const r = advance(auth('siap'), COOKIE_SET(['cookiesession1']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
     expect(r.state.core).toBe('authing');
   });
-  it('COOKIE_SET without a payload (poll safety net) still advances on flags', () => {
-    const r = advance(auth('sso'), COOKIE_SET(undefined), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
-    expect(r.state.service).toBe('kulon');
-  });
-
   describe('TAB_LOADED (load-gated fast path)', () => {
     it('TAB_LOADED advances kulon→handoff when hasKulon && hasSiap', () => {
       const r = advance(auth('kulon'), { type: 'TAB_LOADED' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
@@ -246,5 +245,39 @@ describe('normalizeState (zombie-flow recovery)', () => {
   it('keeps an ACTIVE authing flow whose deadline is still in the future', () => {
     const live = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000 } as FlowState;
     expect(normalizeState(live, NOW).core).toBe('authing');
+  });
+});
+
+describe('load-gated COOKIE_SET + SSO guard', () => {
+  it('real COOKIE_SET is ignored before the page settles (kulon)', () => {
+    const r = advance(auth('kulon'), COOKIE_SET(['MoodleSession']), { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+    expect(r.state.core).toBe('authing');
+    expect(r.effects).toEqual([]);
+  });
+  it('real COOKIE_SET is accepted after the page settles (sso → kulon)', () => {
+    const settled = { ...auth('sso'), settledAt: 1_000_000 - 5000 } as FlowState; // settled long ago
+    const r = advance(settled, COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.service).toBe('kulon');
+    expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'KULON_URL' });
+  });
+  it('sso skips a guest ci_session_sso within the post-settle guard', () => {
+    const s = { ...auth('sso'), settledAt: 1_000_000 - 500 } as FlowState; // settled 500ms ago (< SSO_GUARD_MS)
+    const r = advance(s, COOKIE_SET(['ci_session_sso']), { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.service).toBe('sso');
+    expect(r.effects).toEqual([]);
+  });
+  it('true poll forces settle on sso (bounded fallback) but does NOT advance', () => {
+    const r = advance(auth('sso'), { type: 'COOKIE_SET', changed: undefined }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.settledAt).toBe(1_000_000);
+    expect(r.state.service).toBe('sso');
+    expect(r.effects).toEqual([]);
+  });
+  it('true poll advances kulon when hasKulon even if not settled', () => {
+    const r = advance(auth('kulon'), { type: 'COOKIE_SET', changed: undefined }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } });
+    expect(r.state.core).toBe('handoff');
+  });
+  it('USER_DONE (semi) advances even when not settled', () => {
+    const r = advance(auth('sso', 'semi'), { type: 'USER_DONE' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.service).toBe('kulon');
   });
 });

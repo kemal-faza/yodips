@@ -10,10 +10,6 @@ export interface FlowState {
   deadline: number;
   reloginCount: number;
   mode: FlowMode;
-  /** Until this timestamp (ms), COOKIE_SET is ignored: the login tab was just
-   *  navigated, and its landing page fires transient cookies (F5 `cookiesession1`,
-   *  CSRF, pre-auth MoodleSession) that are NOT evidence of a completed login. */
-  cooldownUntil: number;
   /** Timestamp (ms) when the login tab finished loading (TAB_LOADED), or 0 if
    *  not yet settled. While 0, real COOKIE_SET events are ignored — the landing
    *  page's transient cookies (F5 `cookiesession1`, CSRF, guest sessions) are not
@@ -39,7 +35,9 @@ export interface FlowDeps {
   now: () => number;
   MAX_RELOGIN: number;
   PHASE_TIMEOUT_MS: number;
-  NAV_COOLDOWN_MS: number;
+  /** Post-load guard for the SSO page: skip the guest `ci_session_sso` dropped
+   *  right after settle (~1.5s). Automatic hops (Kulon/SIAP) have no guard. */
+  SSO_GUARD_MS: number;
   loginUrl: (s: Service) => string;
 }
 
@@ -55,7 +53,7 @@ export type FlowEffect =
   | { kind: 'focusAppTab' };
 
 export function initialState(mode: FlowMode = 'auto'): FlowState {
-  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, cooldownUntil: 0, settledAt: 0 };
+  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, settledAt: 0 };
 }
 
 export function attachTab(state: FlowState, tabId: number): FlowState {
@@ -174,7 +172,7 @@ export function advance(
     const base: FlowState = { ...initialState(event.mode), appTabId: state.appTabId ?? null };
     if (!flags.hasKulon) {
       return {
-        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS },
+        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), settledAt: 0 },
         effects: [
           ...clearFor('sso'),
           { kind: 'openTab', url: deps.loginUrl('sso') },
@@ -213,45 +211,30 @@ export function advance(
     const triggered = state.mode === 'semi' ? event.type === 'USER_DONE' : event.type === 'COOKIE_SET';
     if (!triggered) return { state, effects: [] };
 
-    // Post-navigation cooldown: the login tab's landing page fires transient
-    // cookies immediately on load (F5 cookiesession1, CSRF, guest sessions).
-    // Ignore ALL cookie events until the page settles, so the user actually
-    // gets time to log in before the cascade starts judging cookies again.
-    if (event.type === 'COOKIE_SET' && deps.now() < state.cooldownUntil) return { state, effects: [] };
+    // USER_DONE (human) is NEVER gated by the page-load state.
+    if (event.type === 'USER_DONE') {
+      return advanceAuth(state, deps);
+    }
 
+    // COOKIE_SET: page-load gate. Real cookie events are only judged once the
+    // page has settled; the poll (changed:undefined) forces settle as a bounded
+    // fallback so a missed TAB_LOADED can't hang the flow.
+    const isPoll = !event.changed || event.changed.length === 0;
+    let base = state;
+    if (state.settledAt === 0) {
+      if (isPoll) base = { ...state, settledAt: deps.now() };
+      else return { state, effects: [] };
+    }
+    // SSO guard: skip the guest `ci_session_sso` dropped right after settle.
+    if (base.service === 'sso' && deps.now() < base.settledAt + deps.SSO_GUARD_MS) {
+      return { state: base, effects: [] };
+    }
     // Auto mode: only a change of the CURRENT phase's real session cookie is
     // allowed to advance — csrf/guest/LB cookie events must not.
-    if (state.mode === 'auto' && event.type === 'COOKIE_SET' && !sessionCookieChanged(event, state.service)) {
-      return { state, effects: [] };
+    if (state.mode === 'auto' && !sessionCookieChanged(event, base.service)) {
+      return { state: base, effects: [] };
     }
-
-    const svc = state.service;
-    if (svc === 'sso') {
-      if (!flags.hasSso) return { state, effects: [] };
-      return {
-        state: { ...state, service: 'kulon', deadline: deadline(deps), cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS },
-        effects: [
-          { kind: 'navigateTab', url: deps.loginUrl('kulon') },
-          { kind: 'scheduleTimers', deadline: deadline(deps) },
-        ],
-      };
-    }
-    if (svc === 'kulon') {
-      if (!flags.hasKulon) return { state, effects: [] };
-      if (!flags.hasSiap) {
-        return {
-          state: { ...state, service: 'siap', deadline: deadline(deps), cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS },
-          effects: [
-            { kind: 'navigateTab', url: deps.loginUrl('siap') },
-            { kind: 'scheduleTimers', deadline: deadline(deps) },
-          ],
-        };
-      }
-      return { state: { ...state, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
-    }
-    // svc === 'siap'
-    if (!flags.hasSiap) return { state, effects: [] };
-    return { state: { ...state, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
+    return advanceAuth(base, deps);
   }
 
   if (state.core === 'handoff') {
@@ -268,7 +251,7 @@ export function advance(
         };
       case 'HANDOFF_NEEDS_SERVICE':
         return {
-          state: { ...state, core: 'authing', service: event.service, deadline: deadline(deps), cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS },
+          state: { ...state, core: 'authing', service: event.service, deadline: deadline(deps), settledAt: 0 },
           effects: [
             ...clearFor(event.service),
             { kind: 'navigateTab', url: deps.loginUrl(event.service) },
@@ -294,7 +277,7 @@ export function advance(
               service: target,
               reloginCount: state.reloginCount + 1,
               deadline: deadline(deps),
-              cooldownUntil: deps.now() + deps.NAV_COOLDOWN_MS,
+              settledAt: 0,
             },
             effects: [
               ...clearFor(target),
