@@ -113,3 +113,26 @@ onUnmounted(() => {
   if (active.value) document.body.style.cursor = 'default';
 });
 </script>
+<template>
+  <Motion
+    v-if="active"
+    aria-hidden="true"
+    :style="{
+      position: 'fixed',
+      left: cursorX ?? 0,
+      top: cursorY ?? 0,
+      translateX: '-50%',
+      translateY: '-50%',
+      rotate: rotation ?? 0,
+      scale: scale ?? 1,
+      zIndex: 100,
+      pointerEvents: 'none',
+      willChange: 'transform',
+    }"
+    :initial="{ scale: 0 }"
+    :animate="{ scale: 1 }"
+    :transition="{ type: 'spring', stiffness: 400, damping: 30 }"
+  >
+    <component :is="props.cursor" />
+  </Motion>
+</template>
