@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils';
 
 interface Step {
   text: string;
-  afterText?: string;
 }
 interface Props {
   steps: Step[];
@@ -65,12 +64,6 @@ const emit = defineEmits<{ close: [] }>();
             :class="cn('text-lg text-black dark:text-white', index > current && 'opacity-50')"
           >
             {{ step.text }}
-            <span
-              v-if="step.afterText && index < current"
-              class="text-sm font-medium text-primary"
-            >
-              {{ step.afterText }}
-            </span>
           </span>
         </div>
 

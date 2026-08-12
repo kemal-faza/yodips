@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils';
 import MultiStepLoader from './MultiStepLoader.vue';
 
 const steps = [
-  { text: 'SSO', afterText: 'Autentikasi selesai' },
+  { text: 'SSO' },
   { text: 'Kulon' },
   { text: 'SIAP' },
 ];
@@ -29,11 +29,6 @@ describe('MultiStepLoader', () => {
     expect(svgs[0].classes().join(' ')).toContain('lucide-circle-check');
     expect(svgs[1].classes().join(' ')).toContain('lucide-loader-circle');
     expect(svgs[2].classes().join(' ')).toContain('lucide-circle');
-  });
-
-  it('shows afterText on completed steps only', () => {
-    const w = mount(MultiStepLoader, { props: { steps, current: 1, loading: true } });
-    expect(w.text()).toContain('Autentikasi selesai');
   });
 
   it('hides the close button when preventClose is true (default)', () => {

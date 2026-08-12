@@ -217,9 +217,9 @@ async function handleExtensionDone() {
             :loading="extWaiting"
             :current="phaseToStep[extPhase ?? ''] ?? 0"
             :steps="[
-              { text: 'SSO', afterText: 'Autentikasi selesai' },
-              { text: 'Kulon', afterText: 'Akses Kulon selesai' },
-              { text: 'SIAP', afterText: 'Akses SIAP selesai' },
+              { text: 'SSO' },
+              { text: 'Kulon' },
+              { text: 'SIAP' },
             ]"
             prevent-close
           >
