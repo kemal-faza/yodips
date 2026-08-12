@@ -2,6 +2,7 @@
 import type { ChartConfig } from '@/components/ui/chart';
 import { ChartContainer, ChartCrosshair, ChartTooltip, ChartTooltipContent, componentToString } from '@/components/ui/chart';
 import { VisXYContainer, VisArea, VisAxis, VisPlotline, VisScatter } from '@unovis/vue';
+import { semesterXTicks } from '../utils/dashboard';
 import type { CumulativeSksRow } from '../utils/dashboard';
 
 const props = defineProps<{ data: CumulativeSksRow[] }>();
@@ -10,6 +11,10 @@ const config = { sksSemester:  { label: 'SKS Semester', color: 'var(--primary)' 
 const target = 144;
 
 const xIndex = (d: CumulativeSksRow, i: number) => i;
+// Explicit integer tick values keep the x-axis on whole semester numbers; the label
+// is the semester's own name (e.g. "2024/2025 Ganjil"). With integer ticks,
+// props.data[i] is always a real row, so no fractional-index `undefined`.
+const xTicks = semesterXTicks(props.data.length);
 const xLabel = (i: number) => props.data[i]?.semester ?? '';
 
 // Tooltip label uses the ordinal number, consistent with the IP chart.
@@ -26,7 +31,7 @@ const labelFormatter = (d: number | Date) => `Semester ${(typeof d === 'number' 
       <VisArea :x="xIndex" :y="(d: CumulativeSksRow) => d.sksKumulatif" color="var(--primary)" :opacity="0.15" />
       <VisScatter :x="xIndex" :y="(d: CumulativeSksRow) => d.sksKumulatif" :size="8" color="var(--primary)" />
       <VisPlotline :value="target" axis="y" color="var(--danger)" label-color="var(--danger)" :line-style="[4, 4]" label-text="Target Lulus 144 SKS" label-position="top" />
-      <VisAxis type="x" :grid-line="false" :tick-format="xLabel" />
+      <VisAxis type="x" :grid-line="false" :tick-values="xTicks" :tick-format="xLabel" />
       <VisAxis type="y" :grid-line="true" :tick-line="false" :domain-line="false" />
       <ChartCrosshair
         color="var(--primary)"

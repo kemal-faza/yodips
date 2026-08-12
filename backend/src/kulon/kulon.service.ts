@@ -168,17 +168,24 @@ const MONTH_INDEX: Record<string, number> = {
  * passed. Only sections carrying a parseable `dateRange` count toward both the
  * numerator and denominator (General/titled-only sections are ignored). Year is
  * inferred from `now`: a section counts as ended if its end date is in the past in
- * either the current or the next calendar year (coverts a semester that started last
+ * either the current or the next calendar year (covers a semester that started last
  * year and ended this winter). Returns undefined when there is nothing to measure.
+ *
+ * For a PAST (completed) course, every dated section has already ended regardless of
+ * month — the year-inference above only holds for the current semester, where a
+ * section whose end-month is still ahead of `now` is legitimately "not ended yet".
+ * Pass `{ isPast: true }` so a completed course reports 100%.
  */
 export function parseSectionProgress(
   sections: KulonSection[],
   now: Date = new Date(),
+  opts: { isPast?: boolean } = {},
 ): number | undefined {
   const ended = sections.filter(
     (s): s is KulonSection & { dateRange: string } => !!s.dateRange,
   );
   if (ended.length === 0) return undefined;
+  if (opts.isPast) return 100;
 
   let past = 0;
   let parseable = 0;
@@ -374,6 +381,8 @@ export class KulonService {
         id: c.id,
         progress: parseSectionProgress(
           (await this.getCourseContent(sessionCookie, sesskey, c.id)).sections,
+          undefined,
+          { isPast: c.timelineStatus === 'past' },
         ),
       })),
     );

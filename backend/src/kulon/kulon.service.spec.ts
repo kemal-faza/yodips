@@ -102,6 +102,23 @@ describe('parseSectionProgress', () => {
       section('P2', 'weird'),
     ], now)).toBe(100);
   });
+  it('returns 100 for a PAST course even when its end-date month is ahead of now (year inference fails for past semesters)', () => {
+    // A past-semester course (ended Dec 2024) whose section end month is "December":
+    // with now = 20 Feb 2026, the old year-inference checked Dec 2026 & Dec 2027 (both
+    // future) and misclassified it as not-ended -> 0%. A past course must be 100%.
+    expect(parseSectionProgress(
+      [section('P1', '1 December - 15 December')],
+      now,
+      { isPast: true },
+    )).toBe(100);
+  });
+  it('keeps inprogress logic when isPast is false (a not-yet-ended section stays 0)', () => {
+    expect(parseSectionProgress(
+      [section('P1', '15 March - 22 March')],
+      now,
+      { isPast: false },
+    )).toBe(0);
+  });
 });
 
 

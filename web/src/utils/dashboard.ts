@@ -155,3 +155,19 @@ export function parseJadwal(rows: SiapJadwal[]): ScheduleItem[] {
     };
   });
 }
+
+/**
+ * Integer X-axis tick values for the semester charts (IP trend, SKS cumulative).
+ * Unovis places ticks on a numeric x-scale at whatever positions D3 picks — which can
+ * be fractional (0.5, 1.5) — so `tick-format` alone can't prevent decimal labels like
+ * "2.5". Passing explicit integer tick values forces the axis to label whole semester
+ * numbers only. `count` = number of data rows; returns `[0, 1, …, count-1]`.
+ */
+export function semesterXTicks(count: number): number[] {
+  return count > 0 ? Array.from({ length: count }, (_, i) => i) : [];
+}
+
+/** Label for a numeric x tick: maps the 0-based index to the 1-based semester number. */
+export function semesterXLabel(i: number): string {
+  return String(i + 1);
+}

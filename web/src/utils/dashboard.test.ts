@@ -6,6 +6,8 @@ import {
   gradeDistribution,
   parseSchedule,
   parseJadwal,
+  semesterXTicks,
+  semesterXLabel,
 } from './dashboard';
 import type { SiapKhs, SiapIrs, SiapJadwal, Assignment, Course } from '../types';
 
@@ -179,5 +181,18 @@ describe('getKhs-fix regression', () => {
   it('gradeDistribution tolerates a null nilaiHuruf', () => {
     const khsNull = { ...khs, semesters: [{ ...khs.semesters[0], nilai: [{ mataKuliah: 'X', sks: 2, nilaiHuruf: null as unknown as string, bobot: 4 }] }] };
     expect(() => gradeDistribution(khsNull)).not.toThrow();
+  });
+});
+
+describe('semesterXTicks / semesterXLabel', () => {
+  it('produces integer 0-based tick values for whole-semester labels', () => {
+    expect(semesterXTicks(0)).toEqual([]);
+    expect(semesterXTicks(1)).toEqual([0]);
+    expect(semesterXTicks(4)).toEqual([0, 1, 2, 3]);
+  });
+  it('maps 0-based tick index to a 1-based integer semester label (no decimals)', () => {
+    expect(semesterXLabel(0)).toBe('1');
+    expect(semesterXLabel(1)).toBe('2');
+    expect(semesterXLabel(3)).toBe('4');
   });
 });

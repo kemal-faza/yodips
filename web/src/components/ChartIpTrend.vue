@@ -2,6 +2,7 @@
 import type { ChartConfig } from '@/components/ui/chart';
 import { ChartContainer, ChartCrosshair, ChartTooltip, ChartTooltipContent, componentToString } from '@/components/ui/chart';
 import { VisXYContainer, VisLine, VisAxis, VisPlotline, VisScatter } from '@unovis/vue';
+import { semesterXTicks, semesterXLabel } from '../utils/dashboard';
 import type { IpTrendRow } from '../utils/dashboard';
 
 const props = defineProps<{ data: IpTrendRow[]; ipMax: number }>();
@@ -11,7 +12,10 @@ const config = { ip: { label: 'IP Semester', color: 'var(--primary)' } } satisfi
 // Unovis xy charts position on a NUMERIC x scale. The filtered data is
 // contiguous from semester 1, so index+1 == the ordinal semester number.
 const xIndex = (d: IpTrendRow, i: number) => i;
-const xLabel = (i: number) => String(i + 1);
+// Explicit integer tick values prevent Unovis placing fractional ticks (0.5, 1.5)
+// that would otherwise render decimal labels like "2.5" via tick-format alone.
+const xTicks = semesterXTicks(props.data.length);
+const xLabel = semesterXLabel;
 
 // Tooltip label: the crosshair passes the numeric x (the datum index) as `x`.
 // Param must be `number | Date` — ChartTooltipContent declares
@@ -36,7 +40,7 @@ const labelFormatter = (d: number | Date) => `Semester ${(typeof d === 'number' 
         :label-text="`Max: ${props.ipMax.toFixed(2)}`"
         label-position="top"
       />
-      <VisAxis type="x" :grid-line="false" :tick-format="xLabel" />
+      <VisAxis type="x" :grid-line="false" :tick-values="xTicks" :tick-format="xLabel" />
       <VisAxis type="y" :grid-line="true" :tick-line="false" :domain-line="false" />
       <ChartCrosshair
         color="var(--primary)"
