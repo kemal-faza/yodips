@@ -33,7 +33,7 @@ const itemIcon = computed(() =>
     @click="emit('open')"
     @keydown.enter="emit('open')"
   >
-    <CardContent class="flex items-center gap-5 px-5 py-4">
+    <CardContent class="flex items-center gap-5 px-5 py-2.5">
       <component :is="itemIcon" class="size-6 shrink-0 text-primary" aria-hidden="true" />
       <div class="min-w-0 flex-1">
         <p class="truncate font-medium text-sm text-foreground">{{ assignment.name }}</p>

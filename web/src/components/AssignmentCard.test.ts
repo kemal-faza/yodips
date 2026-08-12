@@ -48,4 +48,11 @@ describe('AssignmentCard', () => {
     });
     expect(w.find('[data-test="hide-assignment"]').exists()).toBe(false);
   });
+  it('uses compact py-2.5 vertical padding on card content', () => {
+    const w = mount(AssignmentCard, {
+      props: { assignment: make(now + 1000) },
+    });
+    const content = w.find('[data-slot="card-content"]');
+    expect(content.classes()).toContain('py-2.5');
+  });
 });
