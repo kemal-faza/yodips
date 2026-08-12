@@ -24,14 +24,14 @@ const status = computed(() =>
     @click="emit('open')"
     @keydown.enter="emit('open')"
   >
-    <CardContent class="flex flex-col p-5">
+    <CardContent class="flex flex-col px-5 py-2.5">
       <div class="flex items-center justify-between gap-2">
-        <span class="text-[11px] font-semibold uppercase tracking-widest text-primary">{{ course.shortname }}</span>
+        <span class="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{{ course.shortname }}</span>
         <StatusBadge :label="status.label" :tone="status.tone" />
       </div>
       <p class="mt-3 truncate font-medium text-sm text-foreground">{{ course.fullname }}</p>
       <p v-if="course.semester" class="mt-1 truncate text-xs text-muted-foreground">{{ course.semester }}</p>
-      <span class="mt-4 inline-flex items-center gap-1 self-end text-xs font-bold uppercase tracking-wider text-primary transition-transform duration-150 group-hover:translate-x-0.5">
+      <span class="mt-4 inline-flex items-center gap-1 self-end text-xs font-bold uppercase tracking-wider text-foreground transition-transform duration-150 group-hover:translate-x-0.5">
         Buka
         <ChevronRight class="size-4" aria-hidden="true" />
       </span>
