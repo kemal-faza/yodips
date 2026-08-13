@@ -90,6 +90,10 @@ export class EnvConfig {
   SESSION_TTL_MS: number = 604800000; // 7 days
 
   @IsOptional()
+  @Min(1000)
+  CACHE_TTL_MS: number = 60000;
+
+  @IsOptional()
   @IsString()
   SESSION_ENC_KEY?: string;
 

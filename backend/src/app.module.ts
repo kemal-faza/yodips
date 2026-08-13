@@ -6,6 +6,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { validateEnv } from './config/env.validation';
 import { SSOModule } from './sso/sso.module';
+import { CacheModule } from './cache/cache.module';
 import { AuthModule } from './auth/auth.module';
 import { KulonModule } from './kulon/kulon.module';
 import { SiapModule } from './siap/siap.module';
@@ -24,6 +25,7 @@ import { SiapModule } from './siap/siap.module';
       },
     ]),
     SSOModule,
+    CacheModule,
     AuthModule,
     KulonModule,
     SiapModule,
