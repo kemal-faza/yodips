@@ -1,4 +1,5 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
+import { DataCache } from '../cache/data-cache';
 
 export interface SiapSessionCheck {
   valid: boolean;
@@ -75,6 +76,7 @@ export interface SiapNotifications {
 @Injectable()
 export class SiapService {
   private readonly logger = new Logger(SiapService.name);
+  constructor(@Optional() private readonly cache?: DataCache) {}
   private readonly baseUrl = 'https://siap.undip.ac.id';
   // Probe + authenticated-page fingerprint from docs/2026-08-04-siap-spike.md §2.
   // The dashboard page is the validity probe; `id="tabmhs_profile"` is present
@@ -296,7 +298,11 @@ export class SiapService {
    * when present on the page (the tab fixture does not include them) and left
    * undefined otherwise.
    */
-  async getProfile(siapCookie: string): Promise<SiapProfile> {
+  async getProfile(siapCookie: string, userSub?: string): Promise<SiapProfile> {
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<SiapProfile>(`${userSub}:siap:profile`);
+      if (hit) return hit;
+    }
     const html = await this.siapFetch(`${this.baseUrl}/pages/mhs/dashboard`, {
       headers: { Cookie: siapCookie },
       redirect: 'follow',
@@ -318,7 +324,7 @@ export class SiapService {
     const fotoUrl = tab.match(/<img src="([^"]+)" alt="Foto"/)?.[1] ?? undefined;
     const namaIbu = tab.match(/id="web_span_mn"[^>]*>([^<]+)</)?.[1]?.trim() ?? undefined;
 
-    return {
+    const profile: SiapProfile = {
       nama: this.pickProfileValue(tab, 'Nama Lengkap') ?? '',
       nim: this.pickProfileValue(tab, 'NIM') ?? '',
       prodi: this.pickProfileValue(tab, 'Prodi') ?? '',
@@ -340,6 +346,8 @@ export class SiapService {
       alamatAsal: this.pickProfileValueHtml(tab, 'Alamat Asal'),
       alamatSekarang: this.pickProfileValueHtml(tab, 'Alamat Sekarang'),
     };
+    if (userSub && this.cache) await this.cache.set(`${userSub}:siap:profile`, profile);
+    return profile;
   }
 
   /**
@@ -347,7 +355,11 @@ export class SiapService {
    * Each `<tr>` is NO, KODE, NAMA, SKS, kelas, status, …; the KODE/NAMA/SKS are
    * the contract fields, kelas/status are carried as optional extras.
    */
-  async getIrs(siapCookie: string): Promise<SiapIrs> {
+  async getIrs(siapCookie: string, userSub?: string): Promise<SiapIrs> {
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<SiapIrs>(`${userSub}:siap:irs`);
+      if (hit) return hit;
+    }
     const data = await this.siapFetchJson<{ total_sks?: number | string; html?: string }>(
       `${this.baseUrl}/irs/mhs/irs/ajax_irs_diambil`,
       { headers: { Cookie: siapCookie }, redirect: 'follow' },
@@ -364,12 +376,14 @@ export class SiapService {
       };
     });
 
-    return {
+    const irs: SiapIrs = {
       // The ajax_irs_diambil payload does not carry the semester label itself.
       semester: '',
       totalSks: Number(data.total_sks) || 0,
       mataKuliah,
     };
+    if (userSub && this.cache) await this.cache.set(`${userSub}:siap:irs`, irs);
+    return irs;
   }
 
   /** Parse a number from a labelled metric, tolerating comma decimal separators. */
@@ -468,7 +482,11 @@ export class SiapService {
    * IPK = Σ(ip·sks)/Σ(sks) across all semesters. Empty ("-kosong-") semesters
    * are included with an empty nilai array and ip 0.
    */
-  async getKhs(siapCookie: string): Promise<SiapKhs> {
+  async getKhs(siapCookie: string, userSub?: string): Promise<SiapKhs> {
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<SiapKhs>(`${userSub}:siap:khs`);
+      if (hit) return hit;
+    }
     const profile = await this.getProfile(siapCookie);
     const count = this.currentSemesterCount(profile.angkatan, profile.semesterBerjalan);
 
@@ -529,7 +547,9 @@ export class SiapService {
 
     const officialIpk = lastKhsHtml ? this.parseKumulatifIpk(lastKhsHtml) : undefined;
     const ipk = officialIpk ?? (totalSks > 0 ? this.round(totalWeighted / totalSks) : 0);
-    return { ipk, semesters };
+    const khs: SiapKhs = { ipk, semesters };
+    if (userSub && this.cache) await this.cache.set(`${userSub}:siap:khs`, khs);
+    return khs;
   }
 
   /**

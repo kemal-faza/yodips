@@ -84,6 +84,16 @@ describe('SiapService', () => {
   });
 
   describe('getProfile', () => {
+    it('getProfile caches and returns cached value on hit per user', async () => {
+      const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+      const svc = new SiapService();
+      (svc as any).cache = cache;
+      cache.get.mockResolvedValue({ nama: 'Budi', nim: '1', prodi: 'TI', fakultas: 'F', angkatan: '2024', status: 'aktif' });
+      const out = await svc.getProfile('cookie', 'u1');
+      expect(cache.get).toHaveBeenCalledWith('u1:siap:profile');
+      expect(out.nama).toBe('Budi');
+    });
+
     it('parses the server-rendered profile from the dashboard fixture', async () => {
       mockFetchRouting([{ match: '/pages/mhs/dashboard', body: fixture('profile.html') }]);
       const profile = await svc.getProfile('sia_app_session=K');

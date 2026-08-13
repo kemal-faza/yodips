@@ -23,19 +23,19 @@ export class SiapController {
   @Get('profile')
   async getProfile(@Req() req: any) {
     const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getProfile(cookie);
+    return this.siapService.getProfile(cookie, req.user?.sub);
   }
 
   @Get('irs')
   async getIrs(@Req() req: any) {
     const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getIrs(cookie);
+    return this.siapService.getIrs(cookie, req.user?.sub);
   }
 
   @Get('khs')
   async getKhs(@Req() req: any) {
     const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getKhs(cookie);
+    return this.siapService.getKhs(cookie, req.user?.sub);
   }
 
   @Get('lecturers')
