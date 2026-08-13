@@ -42,7 +42,7 @@ describe('MorphingText', () => {
       'Math',
       new Proxy(Math, {
         get(t, p) {
-          return p === 'random' ? () => seq[i++ % seq.length] : t[p];
+          return p === 'random' ? () => seq[i++ % seq.length] : (t as any)[p];
         },
       }),
     );
