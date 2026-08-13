@@ -9,8 +9,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "edge:dev": "node scripts/launch-edge.mjs",
+    "chrome:dev": "node scripts/launch-chrome.mjs",
     "watch:reload": "node scripts/watch-reload.mjs",
-    "dev:ext": "npm run build && npm run edge:dev && npm run watch:reload"
+    "dev:ext": "npm run build && npm run chrome:dev && npm run watch:reload"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
