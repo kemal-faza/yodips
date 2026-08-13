@@ -28,7 +28,7 @@ export type FlowEvent =
   | { type: 'TAB_LOADED' }
   | { type: 'HANDOFF_OK'; token: string }
   | { type: 'HANDOFF_NEEDS_SERVICE'; service: Service }
-  | { type: 'HANDOFF_STALE' }
+  | { type: 'HANDOFF_STALE'; service: Service }
   | { type: 'HANDOFF_ERROR'; message: string }
   | { type: 'TIMEOUT' }
   | { type: 'USER_DONE' }
@@ -285,12 +285,15 @@ export function advance(
         };
       case 'HANDOFF_STALE': {
         if (state.reloginCount < deps.MAX_RELOGIN) {
-          // The Kulon session was rejected as stale (KULON_STALE). The browser
-          // holds stale cookies (`ci_session_sso` may still present) whose
-          // PRESENCE proves nothing — so re-auth ALWAYS from the SSO login page
-          // (never a "smart" kulon hop: that hop is what looped this flow).
+          // Backend said a session is stale. `event.service` tells WHICH one
+          // (e.g. KULON_STALE → 'kulon'), so we re-auth that service (clearing
+          // its downstream chain) instead of ALWAYS resetting to SSO — a stale
+          // Kulon with a still-valid SSO no longer forces an SSO re-login that
+          // would just bounce back. Re-login target is decided by the backend's
+          // explicit code, NOT by cookie presence (the old "smart kulon hop" on
+          // cookie-presence is what looped: stale cookies still show as present).
           // Reuse the SAME login tab (navigate, not closeAllTabs+openTab).
-          const target: Service = 'sso';
+          const target: Service = event.service;
           const nav: FlowEffect =
             state.tabId != null
               ? { kind: 'navigateTab', url: deps.loginUrl(target) }

@@ -130,7 +130,7 @@ async function postHandoffDecision(state: FlowState): Promise<FlowEvent> {
   const decision = interpretHandoff(raw);
   if (decision.action === 'ok') return { type: 'HANDOFF_OK', token: decision.token };
   if (decision.action === 'needsService') return { type: 'HANDOFF_NEEDS_SERVICE', service: decision.service };
-  if (decision.action === 'stale') return { type: 'HANDOFF_STALE' };
+  if (decision.action === 'stale') return { type: 'HANDOFF_STALE', service: decision.service };
   return { type: 'HANDOFF_ERROR', message: decision.message };
 }
 

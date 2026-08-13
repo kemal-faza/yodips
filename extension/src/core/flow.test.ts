@@ -207,34 +207,55 @@ describe('handoff decisions', () => {
     expect(r.state.service).toBe('siap');
     expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'siap' });
   });
-  it('HANDOFF_STALE always re-auths sso in the SAME tab (no closeAllTabs; clear downstream + upstream)', () => {
+  it('HANDOFF_STALE service:sso re-auths sso in the SAME tab (no closeAllTabs; clear downstream + upstream)', () => {
     const s = { ...st(), core: 'handoff', tabId: 7, reloginCount: 0 } as FlowState;
-    const r = advance(s, { type: 'HANDOFF_STALE' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
+    const r = advance(s, { type: 'HANDOFF_STALE', service: 'sso' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
     expect(r.state.service).toBe('sso');
     expect(r.state.reloginCount).toBe(1);
     expect(r.effects).not.toContainEqual({ kind: 'closeAllTabs' });
     expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'SSO_URL' });
-    // Presence of ci_session_sso does NOT prove SSO still live — stale cookies
-    // were the whole problem, so the re-auth target must never assume hasSso.
-    // Even with hasSso:true the target is sso, clearing the full chain.
+    // service:sso clears the full chain (sso+kulon+siap).
     expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'sso' });
     expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'kulon' });
     expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'siap' });
   });
-  it('HANDOFF_STALE without live SSO → re-auth sso in the same tab', () => {
-    const r = advance({ ...st(), core: 'handoff', tabId: 7, reloginCount: 0 } as FlowState, { type: 'HANDOFF_STALE' }, D);
+  it('HANDOFF_STALE service:sso without live SSO → re-auth sso in the same tab', () => {
+    const r = advance({ ...st(), core: 'handoff', tabId: 7, reloginCount: 0 } as FlowState, { type: 'HANDOFF_STALE', service: 'sso' }, D);
     expect(r.state.service).toBe('sso');
     expect(r.state.reloginCount).toBe(1);
     expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'SSO_URL' });
   });
-  it('HANDOFF_STALE without any tab yet → opens a new tab', () => {
-    const r = advance({ ...st(), core: 'handoff', tabId: null, reloginCount: 0 } as FlowState, { type: 'HANDOFF_STALE' }, D);
+  it('HANDOFF_STALE service:sso without any tab yet → opens a new tab', () => {
+    const r = advance({ ...st(), core: 'handoff', tabId: null, reloginCount: 0 } as FlowState, { type: 'HANDOFF_STALE', service: 'sso' }, D);
     expect(r.effects).toContainEqual({ kind: 'openTab', url: 'SSO_URL' });
   });
   it('HANDOFF_STALE at MAX_RELOGIN → error', () => {
     const s = { ...st(), core: 'handoff', tabId: 7, reloginCount: 2 } as FlowState;
-    const r = advance(s, { type: 'HANDOFF_STALE' }, D);
+    const r = advance(s, { type: 'HANDOFF_STALE', service: 'sso' }, D);
     expect(r.state.core).toBe('error');
+  });
+  it('HANDOFF_STALE service:kulon re-auths Kulon (keeps SSO cookie), in SAME tab', () => {
+    const s = { ...st(), core: 'handoff', tabId: 7, reloginCount: 0 } as FlowState;
+    const r = advance(s, { type: 'HANDOFF_STALE', service: 'kulon' }, { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } });
+    expect(r.state.core).toBe('authing');
+    expect(r.state.service).toBe('kulon');
+    expect(r.state.reloginCount).toBe(1);
+    expect(r.effects).not.toContainEqual({ kind: 'closeAllTabs' });
+    expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'KULON_URL' });
+    // clearDownstream = kulon + siap; SSO dipertahankan (TIDAK di-clear).
+    expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'kulon' });
+    expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'siap' });
+    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'sso' });
+  });
+  it('HANDOFF_STALE service:kulon without a tab yet → opens a new Kulon tab', () => {
+    const r = advance(
+      { ...st(), core: 'handoff', tabId: null, reloginCount: 0 } as FlowState,
+      { type: 'HANDOFF_STALE', service: 'kulon' },
+      { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: false } },
+    );
+    expect(r.state.service).toBe('kulon');
+    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'KULON_URL' });
+    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'sso' });
   });
 });
 
