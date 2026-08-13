@@ -253,7 +253,13 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
           return void sendResponse(pollStatus(cached, s));
         }
         case 'logout':
+          // Full teardown so the next login starts clean: clear session cookies,
+          // reset the flow state machine (closes login tabs + clears timers), and
+          // drop any cached handoff result so a stale JWT can't resurface via the
+          // status poll after an explicit logout.
           await clearSessionCookies();
+          await chrome.storage.session.remove(LAST_RESULT_KEY).catch(() => {});
+          await runFlow({ type: 'LOGOUT' });
           return void sendResponse({ status: 'ok' });
         case 'done': {
           await runFlow({ type: 'USER_DONE' });

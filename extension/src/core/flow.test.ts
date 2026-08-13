@@ -409,3 +409,28 @@ describe('isPhaseSatisfied (recover a flow wedged in an already-satisfied phase)
     expect(isPhaseSatisfied({ core: 'authing', service: null }, { hasSso: true, hasKulon: false, hasSiap: false })).toBe(false);
   });
 });
+
+describe('LOGOUT (reset the flow so the next login starts fresh)', () => {
+  it('resets an active authing flow to idle and closes login tabs', () => {
+    const r = advance(auth('sso'), { type: 'LOGOUT' }, D);
+    expect(r.state.core).toBe('idle');
+    expect(r.state.service).toBeNull();
+    expect(r.state.tabId).toBeNull();
+    expect(r.state.tabs).toEqual([]);
+    expect(r.effects).toContainEqual({ kind: 'clearTimers' });
+    expect(r.effects).toContainEqual({ kind: 'closeAllTabs' });
+  });
+  it('resets a terminal done flow too (clears stale result state)', () => {
+    const done = { ...st(), core: 'done', service: 'siap', tabId: 9, tabs: [9] } as FlowState;
+    const r = advance(done, { type: 'LOGOUT' }, D);
+    expect(r.state.core).toBe('idle');
+    expect(r.state.service).toBeNull();
+    expect(r.effects).toContainEqual({ kind: 'closeAllTabs' });
+  });
+  it('is an idempotent no-change reset from idle', () => {
+    const r = advance(st(), { type: 'LOGOUT' }, D);
+    expect(r.state).toEqual(st());
+    // still emits cleanup effects so the adapter clears timers/results
+    expect(r.effects).toContainEqual({ kind: 'clearTimers' });
+  });
+});

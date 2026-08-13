@@ -32,7 +32,8 @@ export type FlowEvent =
   | { type: 'HANDOFF_ERROR'; message: string }
   | { type: 'TIMEOUT' }
   | { type: 'USER_DONE' }
-  | { type: 'CLOSE_ALL' };
+  | { type: 'CLOSE_ALL' }
+  | { type: 'LOGOUT' };
 
 export interface FlowDeps {
   flags: CookieFlags;
@@ -220,7 +221,7 @@ export function advance(
 ): { state: FlowState; effects: FlowEffect[] } {
   const { flags } = deps;
 
-  if (event.type === 'CLOSE_ALL') {
+  if (event.type === 'CLOSE_ALL' || event.type === 'LOGOUT') {
     return { state: initialState(state.mode), effects: [{ kind: 'clearTimers' }, { kind: 'closeAllTabs' }] };
   }
 
