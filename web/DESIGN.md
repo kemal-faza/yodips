@@ -6,8 +6,9 @@
 
 ## Identitas
 
-- **Tone:** clean, modern, rounded, membantu — BUKAN industrial/teal-flat dari
-  sesi refactor awal (sudah dikembalikan ke rounded normal).
+- **Tone:** clean, modern, rounded, membantu. Sesi refactor "industrial" (flat,
+  radius-0, Archivo/Inter/JetBrains) sudah **dibatalkan/kembali ke rounded
+  normal** — file ini adalah state benar, bukan transisi.
 - **Referensi visual mobile** (`design-reference/mobile/`): pakai untuk
   **layout & struktur layar** (header melengkung, bottom nav, bottom sheet),
   tapi palet & shape mengikuti token di file ini.
@@ -73,7 +74,8 @@ Palet distribusi nilai: A `#16a34a`, AB `#22c55e`, B `#3b82f6`, BC `#6366f1`, C 
 
 ## Tipografi
 
-- **Font:** **Geist** (400/500/600/700) — dimuat via Google Fonts `<link>` di `index.html`.
+- **Font:** **Geist** (400/500/600/700) — dimuat via `@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap')` di `web/src/assets/css/main.css` (bukan `<link>` di HTML).
+  > **Catatan mobile:** Compose butuh sumber font sendiri (download/embed TTF Geist), bukan CSS `@import`.
 - Sistem (`.dark`/light sama): `@theme inline` mendefinisikan `--font-sans`
   = system-ui stack, dan `--font-heading: var(--font-sans)` (heading = sans).
 
