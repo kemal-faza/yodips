@@ -16,6 +16,9 @@ export const useAuthStore = defineStore('auth', {
     fotoUrl: null as string | null, // SIAP profile photo (header avatar)
     extensionError: null as string | null,
     extensionMode: 'auto' as 'auto' | 'semi', // how the background drives the login flow
+    reauthing: false, // full-screen "Memulihkan sesi…" overlay is visible
+    reauthPhase: null as 'sso' | 'kulon' | 'siap' | null, // drives MultiStepLoader step
+    reauthAttempted: false, // loop guard: once per expiry event, reset on logout
   }),
   getters: {
     isAuthenticated: (state) => !!state.token,
@@ -62,7 +65,7 @@ export const useAuthStore = defineStore('auth', {
         this.hasSiap = this.user?.hasSiap ?? false;
         this.hasKulon = this.user?.hasKulon ?? false;
         if (this.user && this.user.complete === false) {
-          this.logout();
+          this.clearSessionState(); // keep browser cookies for silent re-capture
           return 'incomplete';
         }
         // Load the SIAP profile photo for the header avatar (best-effort; the
@@ -120,7 +123,75 @@ export const useAuthStore = defineStore('auth', {
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
+    /** Clear the JWT/user/foto state WITHOUT asking the extension to wipe
+     *  session cookies. Used when the server-side session is incomplete so
+     *  the still-valid browser cookies can be silently re-captured. */
+    clearSessionState() {
+      this.token = null;
+      this.user = null;
+      this.fotoUrl = null;
+      localStorage.removeItem(TOKEN_KEY);
+    },
+    /** Poll/onResult wait for an in-flight extension handoff started by
+     *  attemptReauth('started'). Resolves once a fresh JWT (recovered) or an
+     *  error (failed) arrives. Drives onPhase per read phase. */
+    async waitForReauthResult(
+      onPhase?: (phase: 'sso' | 'kulon' | 'siap') => void,
+    ): Promise<'recovered' | 'failed'> {
+      return new Promise<'recovered' | 'failed'>((resolve) => {
+        let settled = false;
+        let timer: ReturnType<typeof setInterval> | undefined;
+        const settle = (r: 'recovered' | 'failed') => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearInterval(timer);
+          this.reauthing = false;
+          resolve(r);
+        };
+        const attempt = async () => {
+          const payload: any = await this.readExtensionResult();
+          if (!payload) return; // extension unavailable — keep waiting
+          const phase = payload.phase as 'sso' | 'kulon' | 'siap' | undefined;
+          if (phase) {
+            this.reauthPhase = phase;
+            onPhase?.(phase);
+          }
+          if (payload.accessToken && payload.status !== 'error') {
+            this.finishHandoff(payload.accessToken);
+            settle('recovered');
+          } else if (payload.status === 'error') {
+            settle('failed');
+          }
+          // {status:'ok', active:true} → still in progress; poll continues.
+        };
+        timer = setInterval(attempt, 3000);
+        attempt();
+      });
+    },
+    /** Silent re-auth via the extension after a session expiry. Returns once
+     *  a fresh JWT is obtained ('recovered') or on failure/loop-guard ('failed'). */
+    async attemptReauth(
+      onPhase?: (phase: 'sso' | 'kulon' | 'siap') => void,
+    ): Promise<'recovered' | 'failed'> {
+      if (this.reauthAttempted) return 'failed'; // loop guard: once per event
+      this.reauthAttempted = true;
+      this.reauthing = true;
+      this.reauthPhase = null;
+      const resp = await this.loginViaExtension();
+      if (resp === 'ok') {
+        this.reauthing = false;
+        return 'recovered';
+      }
+      if (resp === 'started') {
+        this.reauthPhase = 'sso';
+        onPhase?.('sso');
+        return this.waitForReauthResult(onPhase);
+      }
+      this.reauthing = false;
+      return 'failed';
+    },
     logout() {
+      this.reauthAttempted = false; // a next expiry event may auto-reauth again
       this.token = null;
       this.user = null;
       this.fotoUrl = null;

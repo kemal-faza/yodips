@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// vitest 4 removed the flushPromises export; provide it locally so we can drain
+// the microtask queue after advancing fake timers. Pure microtask (no timers) so
+// it also works while vi.useFakeTimers() is active.
+function flushPromises(): Promise<void> {
+  return Promise.resolve();
+}
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from './auth';
 import * as api from '../api/client';
@@ -302,4 +309,102 @@ describe('extension login', () => {
     const store = useAuthStore();
     expect(await store.readExtensionResult()).toBeNull();
   });
+});
+
+describe('reauth (auto-recover expired session)', () => {
+  function stubChrome(status: 'ok' | 'started' | 'error' | 'throw', accessToken?: string) {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: status === 'throw' ? { message: 'no receiver' } : null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (status === 'throw') { cb(undefined); return; }
+          cb(status === 'ok' ? { status: 'ok', accessToken } : { status });
+        },
+      },
+    };
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    delete (globalThis as any).chrome;
+    vi.clearAllMocks();
+  });
+
+  it('fetchMe on incomplete clears JWT+fotoUrl but does NOT call logout (cookies kept)', async () => {
+    (api.me as any).mockResolvedValue({
+      sub: 'n', authenticated: true, hasSso: true, hasMicrosoft: false,
+      hasKulon: false, hasSiap: false, complete: false,
+    });
+    const store = useAuthStore();
+    store.token = 'jwt-x';
+    store.fotoUrl = 'https://example.com/old.jpg';
+    const spyLogout = vi.spyOn(store, 'logout');
+    const status = await store.fetchMe();
+    expect(status).toBe('incomplete');
+    expect(store.token).toBeNull();
+    expect(store.fotoUrl).toBeNull();
+    expect(spyLogout).not.toHaveBeenCalled();
+  });
+
+  it('attemptReauth returns recovered and stores token when extension fast-path ok', async () => {
+    stubChrome('ok', 'jwt-reauth');
+    const store = useAuthStore();
+    expect(await store.attemptReauth()).toBe('recovered');
+    expect(store.token).toBe('jwt-reauth');
+  });
+
+  it('attemptReauth returns failed and does not loop when extension absent', async () => {
+    const store = useAuthStore();
+    expect(await store.attemptReauth()).toBe('failed');
+    expect(await store.attemptReauth()).toBe('failed'); // loop guard
+  });
+
+  it('attemptReauth returns failed when loginViaExtension errors', async () => {
+    stubChrome('error');
+    const store = useAuthStore();
+    expect(await store.attemptReauth()).toBe('failed');
+  });
+
+  it('attemptReauth returns failed when called twice (loop guard), then resets on logout', async () => {
+    stubChrome('ok', 'jwt-a');
+    const store = useAuthStore();
+    expect(await store.attemptReauth()).toBe('recovered');
+    store.logout(); // genuine logout resets guard + clears cookies
+    store.token = null;
+    stubChrome('ok', 'jwt-b');
+    expect(await store.attemptReauth()).toBe('recovered');
+    expect(store.token).toBe('jwt-b');
+  });
+
+  it('attemptReauth on started polls readStatus until ok and reports phases', async () => {
+    vi.useFakeTimers();
+    const statusSteps = [
+      { status: 'ok', active: true, phase: 'sso' },
+      { status: 'ok', active: true, phase: 'kulon' },
+      { status: 'ok', accessToken: 'jwt-poll' },
+    ];
+    let n = 0;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          return cb(statusSteps[Math.min(n++, 2)]);
+        },
+      },
+    };
+    const store = useAuthStore();
+    const seen: string[] = [];
+    const promise = store.attemptReauth((p) => seen.push(p));
+    await vi.advanceTimersByTimeAsync(0);  // immediate attempt() -> sso
+    await vi.advanceTimersByTimeAsync(3000); // interval -> kulon
+    await vi.advanceTimersByTimeAsync(3000); // interval -> ok(token) -> resolves
+    await flushPromises();
+    expect(seen).toContain('sso');
+    expect(seen).toContain('kulon');
+    expect(await promise).toBe('recovered');
+    expect(store.token).toBe('jwt-poll');
+    vi.useRealTimers();
+  }, 10000);
 });
