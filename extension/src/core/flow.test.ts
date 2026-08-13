@@ -55,6 +55,39 @@ describe('REQUEST', () => {
     const r = advance(stale, { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: false, hasKulon: false, hasSiap: false } });
     expect(r.state.appTabId).toBe(42);
   });
+  it('skips the SSO tab and opens Kulon directly when SSO is already logged in', () => {
+    const r = advance(st(), { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+    expect(r.state.core).toBe('authing');
+    expect(r.state.service).toBe('kulon');
+    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'KULON_URL' });
+    // Must NOT clear the (still valid) SSO session cookie.
+    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'sso' });
+    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'kulon' });
+    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'siap' });
+  });
+  it('SSO skip also applies when only SIAP is missing', () => {
+    const r = advance(st(), { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: true } });
+    expect(r.state.service).toBe('kulon');
+    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'KULON_URL' });
+  });
+  it('opens the SSO login tab when SSO is NOT logged in (legacy behavior)', () => {
+    const r = advance(st(), { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: false, hasKulon: false, hasSiap: false } });
+    expect(r.state.core).toBe('authing');
+    expect(r.state.service).toBe('sso');
+    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'SSO_URL' });
+    expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'sso' });
+  });
+  it('stale-presence skip: kulon phase does NOT advance on a non-MoodleSession cookie, then TIMEOUT errors (bounded)', () => {
+    const r = advance(
+      { core: 'authing', service: 'kulon', settledAt: 1_000_000 - 5000, recentSessionChange: false } as FlowState,
+      COOKIE_SET(['cookiesession1']),
+      { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } },
+    );
+    expect(r.state.service).toBe('kulon');
+    expect(r.effects).toEqual([]);
+    const timedOut = advance(r.state as FlowState, { type: 'TIMEOUT' }, D);
+    expect(timedOut.state.core).toBe('error');
+  });
 });
 
 describe('COOKIE_SET cascade (mode auto)', () => {

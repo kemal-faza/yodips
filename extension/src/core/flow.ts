@@ -184,11 +184,23 @@ export function advance(
     // Fresh flow base preserves the SPA tab id so results can be delivered.
     const base: FlowState = { ...initialState(event.mode), appTabId: state.appTabId ?? null };
     if (!flags.hasKulon) {
+      // SSO belum login → buka tab login SSO (perilaku lama: clear sso + open SSO).
+      if (!flags.hasSso) {
+        return {
+          state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
+          effects: [
+            ...clearFor('sso'),
+            { kind: 'openTab', url: deps.loginUrl('sso') },
+            { kind: 'scheduleTimers', deadline: deadline(deps) },
+          ],
+        };
+      }
+      // SSO sudah login → langkahi SSO: langsung tab Kulon via ticket URL,
+      // TANPA clearFor('sso') (pertahankan cookie SSO valid).
       return {
-        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
+        state: { ...base, core: 'authing', service: 'kulon', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
         effects: [
-          ...clearFor('sso'),
-          { kind: 'openTab', url: deps.loginUrl('sso') },
+          { kind: 'openTab', url: deps.loginUrl('kulon') },
           { kind: 'scheduleTimers', deadline: deadline(deps) },
         ],
       };
