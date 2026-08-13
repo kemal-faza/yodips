@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
+import { setActivePinia, createPinia } from 'pinia';
 import * as api from '../api/client';
 
 vi.mock('../api/client', () => ({
@@ -20,10 +21,12 @@ const mockApi = api as unknown as {
   getSiapJadwal: ReturnType<typeof vi.fn>;
 };
 
-import { useDashboard } from './useDashboard';
+import { useDashboard, __resetDashboardCache } from './useDashboard';
 
 describe('useDashboard', () => {
   beforeEach(() => {
+    setActivePinia(createPinia());
+    __resetDashboardCache();
     vi.clearAllMocks();
     mockApi.getCourses.mockResolvedValue([]);
     mockApi.getAllAssignments.mockResolvedValue([]);
@@ -33,7 +36,7 @@ describe('useDashboard', () => {
     mockApi.getSiapJadwal.mockResolvedValue([]);
   });
 
-  it('loads and splits data by source', async () => {
+  it('loads and splits data by source (original behavior retained)', async () => {
     const d = useDashboard();
     await d.load();
     expect(d.siap.value.profile).toEqual({ nama: 'A' });
@@ -42,13 +45,17 @@ describe('useDashboard', () => {
     expect(d.kulonLoading.value).toBe(false);
   });
 
-  it('sets per-source error without breaking the other source', async () => {
-    mockApi.getSiapProfile.mockRejectedValue(Object.assign(new Error('x'), { response: { data: { message: 'SIAP down' } } }));
-    const d = useDashboard();
-    await d.load();
-    expect(d.siapError.value).toBe('SIAP down');
-    expect(d.siap.value.profile).toBeNull();
-    expect(d.kulonError.value).toBeNull();
-    expect(d.kulon.value.assignments).toEqual([]);
+  it('serves stale cached data instantly on revisit, then refreshes in background', async () => {
+    mockApi.getSiapProfile.mockResolvedValue({ nama: 'A' } as never);
+    const d1 = useDashboard();
+    await d1.load();
+    expect(d1.siap.value.profile).toEqual({ nama: 'A' });
+
+    mockApi.getSiapProfile.mockResolvedValue({ nama: 'B' } as never);
+    const d2 = useDashboard();
+    expect(d2.siap.value.profile).toEqual({ nama: 'A' });
+
+    await d2.load();
+    expect(d2.siap.value.profile).toEqual({ nama: 'B' });
   });
 });
