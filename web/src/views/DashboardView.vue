@@ -83,7 +83,8 @@ function go(view: 'kulon') {
       :need="stats.need"
       :late="stats.late"
       :done="stats.done"
-      :loading="d.siapLoading.value || d.kulonLoading.value"
+      :loading-siap="d.siapLoading.value"
+      :loading-kulon="d.kulonLoading.value"
       :has-kulon="!d.kulonError.value && d.kulon.value.assignments.length > 0"
     />
 

@@ -4,7 +4,7 @@ import DashboardStats from './DashboardStats.vue';
 
 const base = {
   ipk: 2.73, sksKumulatif: 84, sksSemester: 23, activeCourses: 8,
-  need: 0, late: 3, done: 9, loading: false, hasKulon: true,
+  need: 0, late: 3, done: 9, loadingSiap: false, loadingKulon: false, hasKulon: true,
 };
 
 describe('DashboardStats', () => {
@@ -28,7 +28,29 @@ describe('DashboardStats', () => {
     expect(w.text()).not.toContain('Terlambat');
   });
   it('shows skeleton while loading', () => {
-    const w = mount(DashboardStats, { props: { ...base, loading: true } });
+    const w = mount(DashboardStats, { props: { ...base, loadingSiap: true, loadingKulon: true } });
     expect(w.find('[data-test="stats-loading"]').exists()).toBe(true);
+  });
+
+  it('shows the stats grid skeleton while either source is loading', () => {
+    const w = mount(DashboardStats, {
+      props: {
+        ipk: null, sksKumulatif: null, sksSemester: null, activeCourses: 0,
+        need: 0, late: 0, done: 0,
+        loadingSiap: true, loadingKulon: true, hasKulon: false,
+      },
+    });
+    expect(w.find('[data-test="stats-loading"]').exists()).toBe(true);
+  });
+
+  it('renders IPK cell even when only Kulon is still loading', () => {
+    const w = mount(DashboardStats, {
+      props: {
+        ipk: 3.5, sksKumulatif: 80, sksSemester: 20, activeCourses: 3,
+        need: 2, late: 1, done: 5,
+        loadingSiap: false, loadingKulon: true, hasKulon: true,
+      },
+    });
+    expect(w.text()).toContain('3.50');
   });
 });

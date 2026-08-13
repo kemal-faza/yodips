@@ -10,7 +10,8 @@ const props = defineProps<{
   need: number;
   late: number;
   done: number;
-  loading: boolean;
+  loadingSiap: boolean;
+  loadingKulon: boolean;
   hasKulon: boolean;
 }>();
 
@@ -21,11 +22,11 @@ function pct(v: number | null, max: number): string {
 </script>
 
 <template>
-  <div v-if="loading" data-test="stats-loading" class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-    <Skeleton v-for="i in 4" :key="i" class="h-28 rounded-lg" />
-  </div>
-  <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-    <div class="space-y-2.5">
+  <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4" :data-test="loadingSiap || loadingKulon ? 'stats-loading' : undefined">
+    <div v-if="loadingSiap" class="space-y-2.5">
+      <Skeleton class="h-28 rounded-lg" />
+    </div>
+    <div v-else class="space-y-2.5">
       <div class="flex items-center justify-between">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Kumulatif (IPK)</span>
         <Award :size="16" class="text-muted-foreground" />
@@ -39,7 +40,10 @@ function pct(v: number | null, max: number): string {
       </div>
     </div>
 
-    <div class="space-y-2.5">
+    <div v-if="loadingSiap" class="space-y-2.5">
+      <Skeleton class="h-28 rounded-lg" />
+    </div>
+    <div v-else class="space-y-2.5">
       <div class="flex items-center justify-between">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">SKS Kumulatif</span>
         <Layers :size="16" class="text-muted-foreground" />
@@ -53,7 +57,10 @@ function pct(v: number | null, max: number): string {
       </div>
     </div>
 
-    <div class="space-y-2.5">
+    <div v-if="loadingSiap" class="space-y-2.5">
+      <Skeleton class="h-28 rounded-lg" />
+    </div>
+    <div v-else class="space-y-2.5">
       <div class="flex items-center justify-between">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">SKS Semester Ini</span>
         <BookMarked :size="16" class="text-muted-foreground" />
@@ -65,7 +72,10 @@ function pct(v: number | null, max: number): string {
       <span class="block text-[11px] text-muted-foreground">{{ activeCourses }} Mata Kuliah Berjalan</span>
     </div>
 
-    <div class="space-y-2.5">
+    <div v-if="loadingKulon" class="space-y-2.5">
+      <Skeleton class="h-28 rounded-lg" />
+    </div>
+    <div v-else class="space-y-2.5">
       <div class="flex items-center justify-between">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Statistik Tugas</span>
         <ClipboardList :size="16" class="text-muted-foreground" />

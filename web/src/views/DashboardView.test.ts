@@ -1,8 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { createMemoryHistory } from 'vue-router';
+import { createPinia, setActivePinia } from 'pinia';
 import { buildRouter } from '../router';
 import DashboardView from './DashboardView.vue';
+import { __resetDashboardCache } from '../composables/useDashboard';
 import * as api from '../api/client';
 import { useAuthStore } from '../stores/auth';
 
@@ -45,6 +47,8 @@ describe('DashboardView (academic dashboard)', () => {
     document.body.innerHTML = '';
     localStorage.clear();
     vi.clearAllMocks();
+    setActivePinia(createPinia());
+    __resetDashboardCache();
     mockStore();
     healthyApi();
   });
