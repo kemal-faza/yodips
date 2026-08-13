@@ -12,13 +12,53 @@ describe('MorphingText', () => {
     expect(w.text()).toContain('Halo');
   });
 
-  it('contains all texts across its two stacked spans', () => {
+  it('contains the active text plus a distinct next text across its stacked spans', () => {
+    // Deck-shuffle guarantees the next word differs from the active one, so across
+    // the sampled frames the stacked spans show the active word AND a distinct
+    // (next) word. We accumulate text() across frames because only 2 words are
+    // visible at any instant; sampling any single instant would be timing-flaky.
+    vi.useFakeTimers();
     const w = mount(MorphingText, { props: { texts: greetings } });
-    const spans = w.findAll('span');
-    const combined = spans.map((s) => s.text()).join(' ');
-    // The component stacks two spans; combined they cover the active + next text.
-    expect(combined).toContain('Halo');
-    expect(combined).toContain('Hello');
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      vi.advanceTimersByTime(16);
+      for (const span of w.findAll('span')) {
+        const t = span.text().trim();
+        if (t) seen.add(t);
+      }
+    }
+    expect(seen.has('Halo')).toBe(true); // active at mount stays until its morph completes
+    expect(seen.size).toBeGreaterThanOrEqual(2);
+    vi.useRealTimers();
+  });
+
+  it('every language appears exactly once over a full interval (deck-shuffle)', () => {
+    // A VARYING rng avoids the wrap-guard infinite-loop (a constant deck might
+    // start with `current` on refill). We accumulate text() across frames because
+    // only 2 words are visible at any instant, then assert all greetings appear.
+    let i = 0;
+    const seq = [0.1, 0.9, 0.6, 0.2, 0.8, 0.5];
+    vi.stubGlobal(
+      'Math',
+      new Proxy(Math, {
+        get(t, p) {
+          return p === 'random' ? () => seq[i++ % seq.length] : t[p];
+        },
+      }),
+    );
+    vi.useFakeTimers();
+    const w = mount(MorphingText, { props: { texts: greetings } });
+    const seen = new Set<string>();
+    for (let k = 0; k < 600; k++) {
+      vi.advanceTimersByTime(16);
+      for (const span of w.findAll('span')) {
+        const t = span.text().trim();
+        if (t) seen.add(t);
+      }
+    }
+    for (const g of greetings) expect(seen.has(g)).toBe(true);
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it('merges the class prop onto the wrapper', () => {
@@ -45,7 +85,6 @@ describe('MorphingText', () => {
   it('cycles to the next text after advancing frames', () => {
     vi.useFakeTimers();
     const w = mount(MorphingText, { props: { texts: ['Halo', 'Hello'] } });
-    // Fast-forward well past morphTime (1.5s) + cooldown via rAF frames.
     for (let i = 0; i < 300; i++) vi.advanceTimersByTime(16);
     expect(w.text()).toContain('Hello');
     vi.useRealTimers();

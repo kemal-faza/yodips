@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
 import { cn } from '@/lib/utils';
+import { createIntervalShuffler } from '@/utils/morphSequence';
 
 interface Props {
   texts: string[];
@@ -25,21 +26,13 @@ const sizerRef = ref<HTMLElement | null>(null);
 const text1Ref = ref<HTMLElement | null>(null);
 const text2Ref = ref<HTMLElement | null>(null);
 
-function getNextRandomIndex(current: number, length: number): number {
-  if (length <= 1) return 0;
-  let next = current;
-  while (next === current) {
-    next = Math.floor(Math.random() * length);
-  }
-  return next;
-}
+let nextIndexFn: ((current: number) => number) | null = null;
 
 function setNextIndex() {
-  if (props.randomize) {
-    nextIndex.value = getNextRandomIndex(textIndex.value, props.texts.length);
-  } else {
-    nextIndex.value = (textIndex.value + 1) % props.texts.length;
+  if (!nextIndexFn) {
+    nextIndexFn = createIntervalShuffler(props.texts.length, Math.random, props.randomize);
   }
+  nextIndex.value = nextIndexFn(textIndex.value);
 }
 
 function setStyles(fraction: number) {
