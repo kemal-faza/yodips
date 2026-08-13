@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { initialState, advance, attachTab, normalizeState, type FlowState, type FlowDeps } from './flow.js';
+import { initialState, advance, attachTab, normalizeState, pollStatus, type FlowState, type FlowDeps } from './flow.js';
 
 const LOGIN = { sso: 'SSO_URL', kulon: 'KULON_URL', siap: 'SIAP_URL' };
 const D: FlowDeps = { flags: { hasSso: false, hasKulon: false, hasSiap: false }, now: () => 1_000_000, MAX_RELOGIN: 2, PHASE_TIMEOUT_MS: 1000, SSO_GUARD_MS: 1500, loginUrl: (s) => LOGIN[s] };
@@ -358,5 +358,26 @@ describe('load-gated COOKIE_SET + SSO guard', () => {
   it('USER_DONE (semi) advances even when not settled', () => {
     const r = advance(auth('sso', 'semi'), { type: 'USER_DONE' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
     expect(r.state.service).toBe('kulon');
+  });
+});
+
+describe('pollStatus (SPA status poll — self-healing)', () => {
+  it('returns cached result as-is when present', () => {
+    const cached = { status: 'ok' as const, accessToken: 'jwt' };
+    expect(pollStatus(cached, { core: 'idle', service: null })).toBe(cached);
+  });
+  it('reports in-progress when no cached result but flow is active', () => {
+    const r = pollStatus(undefined, { core: 'authing', service: 'sso' });
+    expect(r).toEqual({ status: 'ok', active: true, phase: 'sso' });
+  });
+  it('returns ERROR (terminal) when no cached result and flow is inactive', () => {
+    // This is the fix: a dead/idle flow with no recoverable result must settle
+    // the SPA poll (which only settles on ok+token or error), NOT hang forever.
+    const r = pollStatus(undefined, { core: 'idle', service: null });
+    expect(r.status).toBe('error');
+  });
+  it('treats done/error state with no cached result as inactive → error', () => {
+    const r = pollStatus(undefined, { core: 'done', service: 'siap' });
+    expect(r.status).toBe('error');
   });
 });

@@ -4,7 +4,7 @@
 // read, tab open/navigate/close, storage, HTTP handoff) live ONLY here — the
 // core never touches `chrome`.
 import {
-  initialState, advance, attachTab, redact, normalizeState,
+  initialState, advance, attachTab, redact, normalizeState, pollStatus,
   type FlowState, type FlowEvent, type FlowEffect,
 } from './core/flow.js';
 import { evaluateCookies, buildHandoffBody, cookiePatternsForPhase } from './core/cookies.js';
@@ -245,12 +245,12 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         case 'status': {
           // Self-healing poll: return the last completed handoff result when
           // one exists (lets the SPA recover the JWT), otherwise report the
-          // current flow state.
-          const cached = (await chrome.storage.session.get(LAST_RESULT_KEY))[LAST_RESULT_KEY];
-          if (cached) return void sendResponse(cached);
+          // current flow state. pollStatus converts an inactive+no-result flow
+          // to a terminal error so the SPA polling loop can settle instead of
+          // hanging forever on a dead flow.
+          const cached = (await chrome.storage.session.get(LAST_RESULT_KEY))[LAST_RESULT_KEY] as OutboundStatus | undefined;
           const s = await getState();
-          const active = s.core === 'authing' || s.core === 'handoff';
-          return void sendResponse({ status: 'ok', active, phase: s.service });
+          return void sendResponse(pollStatus(cached, s));
         }
         case 'logout':
           await clearSessionCookies();

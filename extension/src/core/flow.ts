@@ -99,6 +99,28 @@ export function redact(state: FlowState): { core: string; phase: string | null; 
   return { core: state.core, phase: state.service, tabId: state.tabId };
 }
 
+export type PollStatus =
+  | OutboundStatus
+  | { status: 'ok'; active: boolean; phase: string | null };
+
+/**
+ * Decide the SPA's self-healing `status` poll response from the cached result
+ * and current flow state. A cached result (ok/error) is returned as-is so the
+ * SPA can recover or settle. Otherwise, if a flow is ACTIVE report "in
+ * progress" (keep waiting); if INACTIVE with no recoverable result, return an
+ * ERROR (terminal) — the SPA must NOT poll forever on a dead/intentionally-
+ * stopped flow (its poll only settles on ok+token or error).
+ */
+export function pollStatus(
+  cached: OutboundStatus | undefined,
+  state: Pick<FlowState, 'core' | 'service'>,
+): PollStatus {
+  if (cached) return cached;
+  const active = state.core === 'authing' || state.core === 'handoff';
+  if (active) return { status: 'ok', active: true, phase: state.service };
+  return { status: 'error', message: 'Sesi login belum selesai. Silakan klik "Login via Extension" lagi.' };
+}
+
 function deadline(deps: FlowDeps): number {
   return deps.now() + deps.PHASE_TIMEOUT_MS;
 }
