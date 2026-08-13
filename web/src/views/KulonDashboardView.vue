@@ -89,8 +89,6 @@ async function load() {
   }
 }
 
-async function reloadAfter() { await load(); }
-
 function openDetail(a: Assignment) {
   // Quizzes have no detail endpoint — open the Kulon quiz page directly.
   if (a.module === 'quiz') {
@@ -153,7 +151,7 @@ load();
     <Alert v-else-if="sessionExpired" class="mt-4 gap-2 border-gold/40 bg-gold/20 p-6 text-center">
       <AlertTitle class="font-semibold text-foreground">Session login kedaluwarsa</AlertTitle>
       <AlertDescription class="text-sm text-muted-foreground">{{ error }}</AlertDescription>
-      <Button class="mt-4 justify-self-center cursor-pointer" :disabled="auth.checking" @click="relogin(reloadAfter)">
+      <Button class="mt-4 justify-self-center cursor-pointer" :disabled="auth.checking" @click="relogin">
         {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
       </Button>
     </Alert>

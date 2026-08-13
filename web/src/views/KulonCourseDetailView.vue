@@ -216,10 +216,6 @@ async function load() {
 }
 
 load();
-
-async function reloadAfter() {
-  await load();
-}
 </script>
 
 <template>
@@ -254,7 +250,7 @@ async function reloadAfter() {
     <!-- Session Expired Alert -->
     <Alert v-else-if="sessionExpired" class="border-gold/40 bg-gold/20 p-6 text-center">
       <AlertDescription class="font-semibold text-foreground">Session login kedaluwarsa</AlertDescription>
-      <Button class="mt-3 cursor-pointer" :disabled="auth.checking" @click="relogin(reloadAfter)">
+      <Button class="mt-3 cursor-pointer" :disabled="auth.checking" @click="relogin">
         {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
       </Button>
     </Alert>
