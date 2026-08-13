@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   HttpException,
@@ -48,6 +49,24 @@ export class SiapController {
   async getNotifications(@Req() req: any) {
     const cookie = await this.requireSiapCookie(req);
     return this.siapService.getNotifications(cookie);
+  }
+
+  @Get('jadwal')
+  async getJadwal(@Req() req: any) {
+    const cookie = await this.requireSiapCookie(req);
+    return this.siapService.getJadwal(cookie);
+  }
+
+  @Post('kehadiran')
+  async markKehadiran(@Req() req: any, @Body() body: { token?: string }) {
+    const cookie = await this.requireSiapCookie(req);
+    if (!body?.token) {
+      throw new HttpException(
+        { message: 'token QR wajib diisi' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return this.siapService.markKehadiran(cookie, body.token);
   }
 
   @Post('notifications/:id/unread')

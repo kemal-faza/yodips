@@ -73,6 +73,32 @@ export interface SiapNotifications {
   items: SiapNotification[];
 }
 
+/** Flat schedule item consumed by the dashboard/mobile (mirrors web `SiapJadwal`). */
+export interface SiapJadwal {
+  kode?: string;
+  hari: string;
+  matakuliah: string;
+  ruang?: string;
+  waktu: string;
+  sks: number;
+}
+
+/** Raw entry from SIAP's `get_jadwal` feed (keyed by uuid_pertemuan). */
+interface SiapJadwalUpstream {
+  id_trx_pertemuan?: string;
+  idjadwal?: string;
+  hari?: string;
+  waktu_mulai?: string;
+  waktu_selesai?: string;
+  nama_ruang?: string;
+  kode_mk?: string;
+  nama_mk?: string;
+  jenis_perkuliahan?: string;
+  sks?: string | number;
+  tanggal_pertemuan?: string;
+  uuid_pertemuan?: string;
+}
+
 @Injectable()
 export class SiapService {
   private readonly logger = new Logger(SiapService.name);
@@ -653,6 +679,92 @@ export class SiapService {
       },
     );
     return { message: data?.message ?? 'ok' };
+  }
+
+  /**
+   * Proxy SIAP's own class-schedule feed. Discovered live 2026-08-14 (spike,
+   * see docs/superpowers/spikes/2026-08-14-siap-jadwal-kehadiran-qr.md):
+   * `POST /jadwal_mahasiswa/mhs/jadwal/get_jadwal` returns a JSON object keyed
+   * by `uuid_pertemuan`, each entry with date/time/room/code. Normalize into a
+   * flat `SiapJadwal[]` (mirrors the web type used by `parseJadwal`).
+   */
+  async getJadwal(siapCookie: string): Promise<SiapJadwal[]> {
+    const data = await this.siapFetchJson<Record<string, SiapJadwalUpstream>>(
+      `${this.baseUrl}/jadwal_mahasiswa/mhs/jadwal/get_jadwal`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: siapCookie,
+          // SIAP is CodeIgniter-based; /jadwal_mahasiswa/* AJAX routes are
+          // guarded by CI's is_ajax_request() which requires this header.
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        redirect: 'follow',
+      },
+    );
+    const out: SiapJadwal[] = [];
+    for (const k of Object.keys(data ?? {})) {
+      const e = data[k];
+      if (!e) continue;
+      const sks = Number(e.sks) || 0;
+      out.push({
+        kode: e.kode_mk || undefined,
+        hari: e.hari || '',
+        matakuliah: e.nama_mk || '',
+        ruang: e.nama_ruang || undefined,
+        waktu: `${e.waktu_mulai ?? ''} s/d ${e.waktu_selesai ?? ''}`.trim(),
+        sks,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Proxy a QR-scan presence submission to SIAP. Discovered live 2026-08-14:
+   * `POST /master_perkuliahan/mhs/absensi/process/` body `token=<QR content>`
+   * returns JSON `{status, message}`. SIAP itself enforces QR validity + expiry
+   * (dummy token → 400 "QRcode tidak valid atau sudah expired"), so we only
+   * pass the token through and surface the upstream message.
+   *
+   * Unlike siapFetchJson (which maps every !ok to a 401 stale), a genuine
+   * invalid-token 400/500 is NOT a stale session — it must be passed through.
+   * Only a login-redirect / non-JSON response is treated as stale 401.
+   */
+  async markKehadiran(siapCookie: string, token: string): Promise<{ status: string; message?: string }> {
+    const url = `${this.baseUrl}/master_perkuliahan/mhs/absensi/process/`;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: siapCookie,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: `token=${encodeURIComponent(token)}`,
+        redirect: 'follow',
+      });
+    } catch (e) {
+      this.logStale(url, null, 'fetch-threw', (e as Error)?.message);
+      throw this.stale();
+    }
+    // Genuine stale session: landed on a login page.
+    if (res.ok && /\/login(?:\/|$)/i.test(res.url ?? '')) {
+      this.logStale(url, res, 'login-redirect');
+      throw this.stale();
+    }
+    // Try to parse JSON body (both success 200 and upstream error 400/500 carry it).
+    let json: { status?: string; message?: string } | null = null;
+    try {
+      json = (await res.json()) as { status?: string; message?: string };
+    } catch {
+      // Non-JSON body: not the QR process API. Treat as stale (upstream changed).
+      this.logStale(url, res, 'non-json-process', `status=${res.status}`);
+      throw this.stale();
+    }
+    // Pass through the upstream status + message (success or invalid-token error).
+    return { status: json?.status ?? (res.ok ? 'success' : 'error'), message: json?.message };
   }
 
   /** Parse the 8-column IRS table: KODE = col 1, NAMA DOSEN = col 7. */

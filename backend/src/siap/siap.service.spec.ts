@@ -350,6 +350,112 @@ describe('SiapService', () => {
     });
   });
 
+  describe('getJadwal', () => {
+    it('maps the get_jadwal JSON feed to SiapJadwal[]', async () => {
+      mockFetchRouting([{ match: '/jadwal_mahasiswa/mhs/jadwal/get_jadwal', body: fixture('get_jadwal.json') }]);
+      const res = await svc.getJadwal('sia_app_session=K');
+      expect(Array.isArray(res)).toBe(true);
+      expect(res.length).toBeGreaterThan(0);
+      // Fixture sample (real 2026-08-17 semester-1 data): Sistem Informasi, senin, A301.
+      const first = res[0];
+      expect(first.matakuliah).toBe('Sistem Informasi');
+      expect(first.hari).toMatch(/senin|selasa/i);
+      expect(first.ruang).toBeTruthy();
+      expect(first.waktu).toContain('09:40:00');
+      expect(first.sks).toBe(3);
+      // Every entry has the required SiapJadwal fields.
+      for (const j of res) {
+        expect(j.hari).toBeTruthy();
+        expect(j.matakuliah).toBeTruthy();
+        expect(j.waktu).toBeTruthy();
+        expect(j.sks).toBeGreaterThan(0);
+      }
+    });
+
+    it('POSTs to get_jadwal with the CI guard header + session cookie', async () => {
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      fetchMock.mockResolvedValue({
+        ok: true, url: 'https://siap.undip.ac.id/jadwal_mahasiswa/mhs/jadwal/get_jadwal',
+        headers: { get: () => 'application/json' },
+        text: async () => '{}',
+        json: async () => ({}),
+      });
+      await svc.getJadwal('sia_app_session=COOKIE');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/jadwal_mahasiswa/mhs/jadwal/get_jadwal'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'X-Requested-With': 'XMLHttpRequest',
+            Cookie: 'sia_app_session=COOKIE',
+          }),
+        }),
+      );
+    });
+
+    it('throws 401 on a stale session', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/login',
+        headers: { get: () => 'text/html' },
+        text: async () => '<html>login page</html>',
+        json: async () => { throw new Error('no json'); },
+      });
+      await expect(svc.getJadwal('cookie')).rejects.toMatchObject({ status: 401 });
+    });
+  });
+
+  describe('markKehadiran', () => {
+    it('POSTs the QR token to the presence process endpoint', async () => {
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      fetchMock.mockResolvedValue({
+        ok: true, status: 200, url: 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/',
+        headers: { get: () => 'application/json' },
+        text: async () => '{"status":"success","message":"ok"}',
+        json: async () => ({ status: 'success', message: 'ok' }),
+      });
+      const res = await svc.markKehadiran('sia_app_session=COOKIE', 'qrcodetoken123');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/absensi/process/'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('qrcodetoken123'),
+          headers: expect.objectContaining({
+            'X-Requested-With': 'XMLHttpRequest',
+          }),
+        }),
+      );
+      expect(res.status).toBe('success');
+    });
+
+    it('passes through an upstream invalid-token error (400) with its message', async () => {
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      fetchMock.mockResolvedValue({
+        ok: false, status: 400, url: 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/',
+        headers: { get: () => 'application/json' },
+        text: async () => '{"status":"error","message":"Gagal: QRcode tidak valid atau sudah expired."}',
+        json: async () => ({ status: 'error', message: 'Gagal: QRcode tidak valid atau sudah expired.' }),
+      });
+      const res = await svc.markKehadiran('cookie', 'dummy');
+      expect(res.status).toBe('error');
+      expect(res.message).toContain('tidak valid');
+    });
+
+    it('throws 401 on a stale session', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/login',
+        headers: { get: () => 'text/html' },
+        text: async () => '<html>login page</html>',
+        json: async () => { throw new Error('no json'); },
+      });
+      await expect(svc.markKehadiran('cookie', 'x')).rejects.toMatchObject({ status: 401 });
+    });
+  });
+
   describe('getKhs', () => {
     it('parses IPK and per-semester nilai from the khs fixtures', async () => {
       mockFetchRouting([
