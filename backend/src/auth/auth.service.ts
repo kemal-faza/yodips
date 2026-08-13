@@ -227,9 +227,27 @@ export class AuthService {
     }
     // B5: validate the SIAP cookie BEFORE storing so a stale cookie is never
     // persisted (mirrors how an unverified Kulon cookie is stripped above).
-    const siapCheck = dto.siapCookie
-      ? await this.siap.checkSessionValid(dto.siapCookie)
-      : { valid: false, reason: 'no-cookie' as const };
+    // The SIAP probe is retried on `stale` exactly like Kulon: after the
+    // SSO→Kulon→SIAP cascade the `sia_app_session` cookie is set before the
+    // Laravel session is fully established server-side. Without this retry, a
+    // freshly-completed cascade spuriously reports hasSiap:false → the client
+    // re-opens SIAP login → cookie churn → reloginCount climbs until a retry
+    // happens to land after propagation. `no-cookie` is NOT retried.
+    let siapCheck =
+      dto.siapCookie && dto.siapCookie !== ''
+        ? await this.siap.checkSessionValid(dto.siapCookie)
+        : { valid: false, reason: 'no-cookie' as const };
+    for (
+      let attempt = 1;
+      !siapCheck.valid && siapCheck.reason === 'stale' && attempt < 3;
+      attempt++
+    ) {
+      this.logger.warn(
+        `SIAP probe stale (attempt ${attempt}/3) — retrying in ${retryMs}ms`,
+      );
+      await new Promise((r) => setTimeout(r, retryMs));
+      siapCheck = await this.siap.checkSessionValid(dto.siapCookie ?? '');
+    }
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: dto.ssoCookie ?? '',

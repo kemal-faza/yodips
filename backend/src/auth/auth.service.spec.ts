@@ -308,6 +308,24 @@ describe('AuthService.handleSessionHandoff', () => {
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(1);
   });
 
+  it('retries a transient SIAP stale probe and succeeds once the session is live', async () => {
+    // Mirrors the Kulon retry: SIAP's `sia_app_session` cookie is also set before
+    // its server-side session is fully established, so a single immediate probe
+    // would reject a perfectly fresh login (the cascade-churn root cause).
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
+    mockSiap.checkSessionValid
+      .mockResolvedValueOnce({ valid: false, reason: 'stale' }) // pre-auth/in-flight
+      .mockResolvedValueOnce({ valid: true, reason: 'ok' }); // established on retry
+    const svc = makeService();
+    const res = await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: 'sia_app_session=SIAP',
+    } as any);
+    expect(res.hasSiap).toBe(true);
+    expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(2);
+  });
+
   it('throws 401 with code KULON_NO_COOKIE when no kulon cookie is provided', async () => {
     mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'no-cookie' });
     const svc = makeService();
