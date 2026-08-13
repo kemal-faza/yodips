@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAssignments, getCourses, capture } from './client';
+import { emitReauthRequested } from '../lib/reauth';
+
+vi.mock('../lib/reauth', () => ({ emitReauthRequested: vi.fn() }));
 
 // Mock axios so the instance's get/post/request are controllable and we don't
 // hit the real backend. axios binds instance methods at construction time, so
@@ -101,17 +104,16 @@ describe('api client', () => {
     expect(localStorage.getItem('sso_token')).toBe('keep-me');
   });
 
-  it('auth 401 clears token and redirects to /login', async () => {
+  it('auth 401 clears token and requests re-auth (no hard redirect)', async () => {
     localStorage.setItem('sso_token', 'drop-me');
+    (emitReauthRequested as any).mockClear();
     await vi.resetModules();
     const { apiClient } = await import('./client');
     const onRejected = responseHandlers.onRejected!;
-    const error = {
-      response: { status: 401 },
-      config: { url: '/api/auth/me' },
-    };
+    const error = { response: { status: 401 }, config: { url: '/api/auth/me' } };
     await expect(onRejected(error)).rejects.toMatchObject(error);
     expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(emitReauthRequested).toHaveBeenCalledTimes(1);
   });
 
   it('getSiapProfile fetches /api/siap/profile', async () => {

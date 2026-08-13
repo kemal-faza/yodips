@@ -12,6 +12,7 @@ import type {
   SiapProfile,
   User,
 } from '../types';
+import { emitReauthRequested } from '../lib/reauth';
 
 const TOKEN_KEY = 'sso_token';
 
@@ -39,15 +40,15 @@ apiClient.interceptors.response.use(
       // (invalid/expired JWT) is a full logout + redirect.
       const isServiceSession = url.startsWith('/api/kulon') || url.startsWith('/api/siap');
       if (!isServiceSession) {
-        // Auth-token 401 (invalid/expired JWT): full logout + redirect.
+        // Auth-token 401 (invalid/expired JWT): clear the token and ask the app
+        // to silently re-auth via the extension (if present). We do NOT hard-
+        // redirect here — a ReauthOverlay handles recovery, and falls back to
+        // /login only if re-auth fails.
         localStorage.removeItem(TOKEN_KEY);
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
-        }
+        emitReauthRequested();
       }
       // Service 401 (Kulon/SIAP back-end session expired); JWT is still valid.
-      // We deliberately keep the token so the user can re-capture without
-      // losing their auth state.
+      // Keep the token so the user can re-capture without losing auth state.
     }
     return Promise.reject(error);
   },
