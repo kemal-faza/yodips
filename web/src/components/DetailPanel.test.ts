@@ -15,6 +15,18 @@ function mountPanel(props: { assignment: Assignment | null; open: boolean }) {
 const bodyText = () => document.body.textContent ?? '';
 const bodyEls = (sel: string) => [...document.body.querySelectorAll(sel)];
 
+function setMatchMedia(query: string, matches: boolean) {
+  (window as any).matchMedia = (q: string) => {
+    const m = query === q ? matches : false;
+    return {
+      matches: m, media: q, onchange: null,
+      addListener: () => {}, removeListener: () => {},
+      addEventListener: () => {}, removeEventListener: () => {},
+      dispatchEvent: () => false,
+    } as any;
+  };
+}
+
 async function clickTab(index: number) {
   const el = bodyEls('button[data-test="tab"]')[index];
   expect(el).toBeTruthy();
@@ -98,5 +110,24 @@ describe('DetailPanel', () => {
     expect(close).toBeTruthy();
     close.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(wrapper.emitted('close')).toBeTruthy();
+  });
+
+  it('renders a right drawer at 50vw on desktop (md+)', async () => {
+    setMatchMedia('(min-width: 768px)', true);
+    mountPanel({ assignment, open: true });
+    await flushPromises();
+    const content = bodyEls('[data-slot="sheet-content"]')[0];
+    expect(content?.getAttribute('data-side')).toBe('right');
+    expect(content?.className).toContain('data-[side=right]:md:w-[50vw]');
+    expect(content?.className).not.toMatch(/max-w-md/);
+  });
+
+  it('renders a bottom sheet ~85vh below md (tablet/phone)', async () => {
+    setMatchMedia('(min-width: 768px)', false);
+    mountPanel({ assignment, open: true });
+    await flushPromises();
+    const content = bodyEls('[data-slot="sheet-content"]')[0];
+    expect(content?.getAttribute('data-side')).toBe('bottom');
+    expect(content?.className).toContain('data-[side=bottom]:max-md:h-[85vh]');
   });
 });

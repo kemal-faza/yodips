@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useMediaQuery } from '@vueuse/core';
 import { X } from '@lucide/vue';
 import { getAssignmentDetail } from '../api/client';
 import type { Assignment, AssignmentDetail, SubmissionStatus } from '../types';
@@ -13,6 +14,8 @@ const props = defineProps<{ assignment: Assignment | null; open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 
 const activeTab = ref<'description' | 'files' | 'submission'>('description');
+const isDesktop = useMediaQuery('(min-width: 768px)');
+const side = computed(() => (isDesktop.value ? 'right' : 'bottom'));
 const detail = ref<AssignmentDetail | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -121,9 +124,9 @@ watch(
 <template>
   <Sheet :open="props.open" @update:open="(o: boolean) => { if (!o) emit('close') }">
     <SheetContent
-      side="right"
+      :side="side"
       :show-close-button="false"
-      class="w-full max-w-md gap-0 p-0"
+      class="w-full gap-0 p-0 data-[side=right]:md:w-[50vw] data-[side=right]:md:max-w-[50vw] data-[side=right]:max-md:max-w-none data-[side=bottom]:max-md:h-[85vh]"
       data-test="detail-panel"
     >
       <SheetHeader v-if="assignment" class="bg-primary p-5 text-primary-foreground">
