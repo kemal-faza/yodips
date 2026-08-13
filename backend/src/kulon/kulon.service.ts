@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { DataCache } from '../cache/data-cache';
+import { SiapService } from '../siap/siap.service';
 
 const SEMESTER_RE = /(20\d{2}\/\d{4})\s+(Ganjil|Genap|Pendek)/i;
 
@@ -33,6 +35,8 @@ export interface KulonCourse {
   semester?: string | null;
   /** Moodle's own timeline classification — source of truth for active/past. */
   timelineStatus: 'inprogress' | 'past';
+  /** Best-effort lecturer name merged from SIAP by MIK code; absent when unavailable. */
+  lecturer?: string;
 }
 
 export interface KulonAssignment {
@@ -211,6 +215,11 @@ export class KulonService {
   private readonly baseUrl = 'https://kulon2.undip.ac.id';
   private readonly logger = new Logger(KulonService.name);
 
+  constructor(
+    @Optional() private readonly cache?: DataCache,
+    @Optional() private readonly siap?: SiapService,
+  ) {}
+
   private async ajax(
     sessionCookie: string,
     sesskey: string,
@@ -352,7 +361,13 @@ export class KulonService {
   async getCourses(
     sessionCookie: string,
     sesskey: string,
+    userSub?: string,
+    siapCookie?: string,
   ): Promise<KulonCourse[]> {
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<KulonCourse[]>(`${userSub}:kulon:courses`);
+      if (hit) return hit;
+    }
     // Moodle's own timeline classification is the source of truth for
     // "active now": a course present in the 'inprogress' bucket is the
     // current semester. Kulon course names/ID numbers carry no reliable
@@ -392,9 +407,29 @@ export class KulonService {
         progressById.set(r.value.id, r.value.progress);
       }
     }
-    return merged.map((c) =>
+    const mergedWithProgress: KulonCourse[] = merged.map((c) =>
       progressById.has(c.id) ? { ...c, progress: progressById.get(c.id) } : c,
     );
+    // Best-effort lecturer merge by MIK code (shortname). Missing SIAP cookie /
+    // empty IRS -> lecturer simply omitted. Failures are non-fatal.
+    let result: KulonCourse[] = mergedWithProgress;
+    if (siapCookie && this.siap) {
+      try {
+        const byCode = new Map<string, string>();
+        for (const l of await this.siap.getLecturers(siapCookie)) {
+          byCode.set(l.kode, l.dosen);
+        }
+        result = mergedWithProgress.map((c) =>
+          byCode.has(c.shortname) ? { ...c, lecturer: byCode.get(c.shortname) } : c,
+        );
+      } catch {
+        /* best-effort: omit lecturers on failure */
+      }
+    }
+    if (userSub && this.cache) {
+      await this.cache.set(`${userSub}:kulon:courses`, result);
+    }
+    return result;
   }
 
   async fetchTimelineCourses(
@@ -464,8 +499,13 @@ export class KulonService {
   async getAllAssignments(
     sessionCookie: string,
     sesskey: string,
+    userSub?: string,
   ): Promise<KulonAssignment[]> {
-    const courses = await this.getCourses(sessionCookie, sesskey);
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<KulonAssignment[]>(`${userSub}:kulon:assignments`);
+      if (hit) return hit;
+    }
+    const courses = await this.getCourses(sessionCookie, sesskey, userSub);
     const results: KulonAssignment[][] = [];
     const CONCURRENCY = 4;
     const queue = [...courses];
@@ -482,7 +522,11 @@ export class KulonService {
         }
       });
     await Promise.all(workers);
-    return results.flat();
+    const flat = results.flat();
+    if (userSub && this.cache) {
+      await this.cache.set(`${userSub}:kulon:assignments`, flat);
+    }
+    return flat;
   }
 
   /** Fetch and parse one course's assignment index page; [] on any failure. */

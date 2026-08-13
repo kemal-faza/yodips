@@ -882,6 +882,32 @@ describe('KulonService', () => {
       expect(id).toBeNull();
     });
   });
+
+  it('getCourses caches and reuses cached output per user, including lecturer merge', async () => {
+    const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+    const svcNew = new KulonService();
+    (svcNew as any).cache = cache;
+    cache.get.mockResolvedValue([{ id: 1, fullname: 'X', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress' }]);
+    const out = await svcNew.getCourses('session-cookie', 'sesskey', 'u1');
+    expect(cache.get).toHaveBeenCalledWith('u1:kulon:courses');
+    expect(out).toHaveLength(1);
+  });
+
+  it('getCourses on cache miss scrapes, merges lecturers, and caches the merged list', async () => {
+    const cache = { get: jest.fn().mockResolvedValue(null), set: jest.fn(), del: jest.fn() };
+    const svcNew = new KulonService();
+    (svcNew as any).cache = cache;
+    (svcNew as any).siap = { getLecturers: jest.fn().mockResolvedValue([{ kode: 'MIK1624105', dosen: 'Dr. X' }]) };
+    svcNew.fetchTimelineCourses = jest.fn().mockResolvedValue([
+      { id: 1, fullname: 'Matkul', shortname: 'MIK1624105', idnumber: '', timelineStatus: 'inprogress' },
+    ]) as any;
+    svcNew.getCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
+    const out = await svcNew.getCourses('session-cookie', 'sesskey', 'u1', 'siap-cookie');
+    expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.arrayContaining([
+      expect.objectContaining({ lecturer: 'Dr. X' }),
+    ]));
+    expect((svcNew as any).siap.getLecturers).toHaveBeenCalledWith('siap-cookie');
+  });
 });
 
 describe('parseMoodleDate (B8 - WIB timezone)', () => {
