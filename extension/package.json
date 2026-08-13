@@ -7,7 +7,10 @@
     "build": "vite build && node scripts/pack-popup.mjs",
     "dev": "vite build --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "edge:dev": "node scripts/launch-edge.mjs",
+    "watch:reload": "node scripts/watch-reload.mjs",
+    "dev:ext": "npm run build && npm run edge:dev && npm run watch:reload"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
