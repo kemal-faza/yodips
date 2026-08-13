@@ -5,8 +5,15 @@ import { useAuthStore } from '../stores/auth';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 
+const pushMock = vi.fn();
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }));
+
 describe('useKulonSession', () => {
-  beforeEach(() => { setActivePinia(createPinia()); vi.clearAllMocks(); });
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    pushMock.mockReset();
+  });
   it('sets sessionExpired on 401/403', () => {
     const { sessionExpired, extract } = useKulonSession();
     const msg = extract({ response: { status: 401, data: { message: 'Session Kulon expired' } } });
@@ -18,34 +25,26 @@ describe('useKulonSession', () => {
     expect(extract(new Error('boom'))).toBe('Terjadi kesalahan tidak diketahui.');
     expect(sessionExpired.value).toBe(false);
   });
-  it('relogin prefers the extension when installed; legacy login is the fallback', async () => {
-    const loginViaExt = vi.fn().mockResolvedValue('started');
-    const login = vi.fn().mockResolvedValue(undefined);
-    (useAuthStore as any).mockReturnValue({
-      loginViaExtension: loginViaExt,
-      isExtensionInstalled: vi.fn().mockResolvedValue(true),
-      login,
-      isAuthenticated: false,
-    });
-    const { relogin } = useKulonSession();
-    const after = vi.fn().mockResolvedValue(undefined);
-    await relogin(after);
-    expect(loginViaExt).toHaveBeenCalled();
-    expect(login).not.toHaveBeenCalled();
+  it('clear resets sessionExpired and error (regression)', () => {
+    const { sessionExpired, error, extract, clear } = useKulonSession();
+    extract({ response: { status: 401, data: { message: 'x' } } });
+    error.value = 'boom';
+    clear();
+    expect(sessionExpired.value).toBe(false);
+    expect(error.value).toBeNull();
   });
-  it('relogin falls back to legacy capture when the extension is not installed', async () => {
-    const loginViaExt = vi.fn().mockResolvedValue('not-installed');
-    const login = vi.fn().mockResolvedValue(undefined);
-    (useAuthStore as any).mockReturnValue({
-      loginViaExtension: loginViaExt,
-      isExtensionInstalled: vi.fn().mockResolvedValue(false),
-      login,
-      isAuthenticated: true,
-    });
-    const { relogin } = useKulonSession();
-    const after = vi.fn().mockResolvedValue(undefined);
-    await relogin(after);
-    expect(login).toHaveBeenCalled();
-    expect(after).toHaveBeenCalled();
+  it('relogin clears session state, resets local state, and navigates to /login', async () => {
+    const clearSessionState = vi.fn();
+    (useAuthStore as any).mockReturnValue({ clearSessionState });
+    const { relogin, sessionExpired, error, extract } = useKulonSession();
+    extract({ response: { status: 401, data: { message: 'x' } } });
+    expect(sessionExpired.value).toBe(true);
+
+    await relogin();
+
+    expect(clearSessionState).toHaveBeenCalledTimes(1);
+    expect(sessionExpired.value).toBe(false);
+    expect(error.value).toBeNull();
+    expect(pushMock).toHaveBeenCalledWith({ name: 'login' });
   });
 });
