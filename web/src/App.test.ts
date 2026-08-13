@@ -5,6 +5,7 @@ import { createMemoryHistory } from 'vue-router';
 import App from './App.vue';
 import { buildRouter } from './router';
 import { useAuthStore } from './stores/auth';
+import { emitReauthRequested } from './lib/reauth';
 import * as api from './api/client';
 
 vi.mock('./api/client', () => ({
@@ -75,5 +76,32 @@ describe('App integration', () => {
     await flushPromises();
     expect(router.currentRoute.value.name).toBe('profile');
     expect(router.currentRoute.value.path).toBe('/profile');
+  });
+
+  it('shows ReauthOverlay and silently reauthes when the bus fires (mid-use auth-401)', async () => {
+    // Extension fast-path instantly returns a fresh JWT to any message.
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) =>
+          cb({ status: 'ok', accessToken: 'jwt-new' }),
+      },
+    };
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(App, { global: { plugins: [router, pinia] } });
+    await router.push('/');
+    await flushPromises();
+    const store = useAuthStore();
+    store.token = 'old-token';
+    localStorage.setItem('sso_token', 'old-token');
+
+    // Simulate the interceptor's auth-401: emit on the same module bus App subscribes to.
+    emitReauthRequested();
+    await flushPromises();
+    expect(store.token).toBe('jwt-new');
+    expect(localStorage.getItem('sso_token')).toBe('jwt-new');
+    delete (globalThis as any).chrome;
   });
 });

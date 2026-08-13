@@ -4,6 +4,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import { useAuthStore } from '../stores/auth';
 import { buildRouter } from './index';
 
+// vitest 4 does not export a `flushPromises` import; use a local helper.
+const flushPromises = async () => {
+  await new Promise((r) => setTimeout(r, 0));
+};
+
 vi.mock('../stores/auth', () => ({
   useAuthStore: vi.fn(),
 }));
@@ -15,50 +20,53 @@ describe('router guard', () => {
   });
 
   it('redirects unauthenticated user to /login', async () => {
-    const store = { isAuthenticated: false, fetchMe: vi.fn() };
+    const store = { isAuthenticated: false, fetchMe: vi.fn(), attemptReauth: vi.fn() };
     (useAuthStore as any).mockReturnValue(store);
     const router = buildRouter(createMemoryHistory());
     await router.push('/');
     expect(router.currentRoute.value.path).toBe('/login');
   });
 
-  it('bounces to /login?reason=incomplete when the server session is incomplete', async () => {
+  it('proceeds immediately (non-blocking) and reauths on incomplete', async () => {
     const store = {
       isAuthenticated: true,
-      // mirror the real fetchMe: on 'incomplete' it wipes the token (logout),
-      // which flips isAuthenticated false so the login-bounce guard lets /login through.
+      // mirror the real fetchMe: on 'incomplete' it wipes the token
+      // (clearSessionState), which flips isAuthenticated false.
       fetchMe: vi.fn(async () => {
         store.isAuthenticated = false;
         return 'incomplete';
       }),
+      attemptReauth: vi.fn().mockResolvedValue('recovered'),
       logout: vi.fn(),
     };
     (useAuthStore as any).mockReturnValue(store);
     const router = buildRouter(createMemoryHistory());
     await router.push('/');
-    expect(store.fetchMe).toHaveBeenCalledTimes(1);
+    await flushPromises();
+    expect(router.currentRoute.value.name).toBe('dashboard');
+    expect(store.attemptReauth).toHaveBeenCalled();
+  });
+
+  it('falls back to /login?reason=incomplete when reauth fails', async () => {
+    const store = {
+      isAuthenticated: true,
+      fetchMe: vi.fn(async () => {
+        store.isAuthenticated = false;
+        return 'incomplete';
+      }),
+      attemptReauth: vi.fn().mockResolvedValue('failed'),
+      logout: vi.fn(),
+    };
+    (useAuthStore as any).mockReturnValue(store);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/');
+    await flushPromises();
     expect(router.currentRoute.value.path).toBe('/login');
     expect(router.currentRoute.value.query.reason).toBe('incomplete');
   });
 
-  it('allows dashboard when fetchMe returns ok', async () => {
-    const store = { isAuthenticated: true, fetchMe: vi.fn().mockResolvedValue('ok') };
-    (useAuthStore as any).mockReturnValue(store);
-    const router = buildRouter(createMemoryHistory());
-    await router.push('/');
-    expect(router.currentRoute.value.name).toBe('dashboard');
-  });
-
-  it('does not bounce on network error (fetchMe error)', async () => {
-    const store = { isAuthenticated: true, fetchMe: vi.fn().mockResolvedValue('error') };
-    (useAuthStore as any).mockReturnValue(store);
-    const router = buildRouter(createMemoryHistory());
-    await router.push('/');
-    expect(router.currentRoute.value.name).toBe('dashboard');
-  });
-
   it('allows authenticated user to dashboard', async () => {
-    const store = { isAuthenticated: true, fetchMe: vi.fn() };
+    const store = { isAuthenticated: true, fetchMe: vi.fn(), attemptReauth: vi.fn() };
     (useAuthStore as any).mockReturnValue(store);
     const router = buildRouter(createMemoryHistory());
     await router.push('/');
@@ -67,7 +75,11 @@ describe('router guard', () => {
   });
 
   it('resolves the profile route', async () => {
-    const store = { isAuthenticated: true, fetchMe: vi.fn().mockResolvedValue('ok') };
+    const store = {
+      isAuthenticated: true,
+      fetchMe: vi.fn().mockResolvedValue('ok'),
+      attemptReauth: vi.fn(),
+    };
     (useAuthStore as any).mockReturnValue(store);
     const router = buildRouter(createMemoryHistory());
     await router.push('/profile');

@@ -1,8 +1,6 @@
 import { createRouter, createWebHistory, type RouterHistory, type Router } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 
-let booted = false;
-
 export function buildRouter(history: RouterHistory): Router {
   const router = createRouter({
     history,
@@ -31,21 +29,29 @@ export function buildRouter(history: RouterHistory): Router {
     if (to.name === 'login' && store.isAuthenticated) {
       return { name: 'dashboard' };
     }
-    // Boot gate: validate the server-side session exactly once on the first
-    // protected navigation. 'incomplete' => clear token + show login with a
-    // reason; 'invalid' (401, interceptor already redirecting) => go to login
-    // idempotently; 'error' (backend down) => let the SPA render (no loop).
-    if (to.name !== 'login' && store.isAuthenticated && !booted) {
-      booted = true;
-      const status = await store.fetchMe();
-      if (status === 'incomplete') {
-        return { name: 'login', query: { reason: 'incomplete' } };
-      }
-      if (status === 'invalid') {
-        return { name: 'login' };
-      }
-    }
     return true;
+  });
+
+  // Non-blocking session verification. Runs in afterEach (NOT the guard) so the
+  // dashboard's first paint isn't blocked on GET /me. `verified` is per-buildRouter
+  // so each app/router instance has its own flag (no cross-test leakage).
+  let verified = false;
+  router.afterEach(async (to) => {
+    if (verified) return;
+    if (to.name === 'login' || to.name === undefined) return;
+    const store = useAuthStore();
+    if (!store.isAuthenticated) return;
+    verified = true;
+    const status = await store.fetchMe();
+    if (status === 'incomplete') {
+      const result = await store.attemptReauth();
+      if (result !== 'recovered') {
+        await router.replace({ name: 'login', query: { reason: 'incomplete' } });
+      }
+    } else if (status === 'invalid') {
+      await router.replace({ name: 'login' });
+    }
+    // 'error' → backend down; do nothing (no bounce).
   });
 
   return router;
