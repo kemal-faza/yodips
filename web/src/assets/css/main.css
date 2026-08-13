@@ -174,4 +174,18 @@
     @apply bg-background text-foreground;
     @apply font-sans;
   }
+  button,
+  [role="button"],
+  a,
+  select,
+  summary,
+  label[for],
+  input[type="submit"],
+  input[type="button"] {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
 }
