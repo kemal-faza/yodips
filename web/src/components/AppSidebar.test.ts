@@ -45,6 +45,7 @@ describe('AppSidebar', () => {
     (useAuthStore as any).mockReturnValue({
       isAuthenticated: true,
       logout: logoutMock,
+      fetchMe: vi.fn().mockResolvedValue('ok'), // afterEach memanggil fetchMe saat navigasi
     });
     const router = buildRouter(createMemoryHistory());
     await router.push('/');
