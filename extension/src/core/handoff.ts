@@ -3,12 +3,12 @@ import type { HandoffRaw, Service } from './contract.js';
 export type HandoffDecision =
   | { action: 'ok'; token: string }
   | { action: 'needsService'; service: Service }
-  | { action: 'stale' }
+  | { action: 'stale'; service: Service }
   | { action: 'error'; message: string; code?: string };
 
 export function interpretHandoff(raw: HandoffRaw): HandoffDecision {
   if (!raw.ok) {
-    if (raw.code === 'KULON_STALE') return { action: 'stale' };
+    if (raw.code === 'KULON_STALE') return { action: 'stale', service: 'kulon' };
     return { action: 'error', message: raw.message ?? `Handoff gagal (${raw.status})`, code: raw.code };
   }
   if (raw.hasSso && raw.hasKulon && raw.hasSiap) {

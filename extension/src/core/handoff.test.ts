@@ -15,7 +15,7 @@ describe('interpretHandoff', () => {
       .toEqual({ action: 'needsService', service: 'siap' });
   });
   it('stale on KULON_STALE code', () => {
-    expect(interpretHandoff({ ok: false, status: 400, code: 'KULON_STALE' })).toEqual({ action: 'stale' });
+    expect(interpretHandoff({ ok: false, status: 400, code: 'KULON_STALE' })).toEqual({ action: 'stale', service: 'kulon' });
   });
   it('error otherwise', () => {
     expect(interpretHandoff({ ok: false, status: 500, message: 'boom' })).toEqual({ action: 'error', message: 'boom' });
