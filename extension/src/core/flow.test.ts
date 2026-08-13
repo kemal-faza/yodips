@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { initialState, advance, attachTab, normalizeState, pollStatus, type FlowState, type FlowDeps } from './flow.js';
+import { initialState, advance, attachTab, normalizeState, pollStatus, isPhaseSatisfied, type FlowState, type FlowDeps } from './flow.js';
 
 const LOGIN = { sso: 'SSO_URL', kulon: 'KULON_URL', siap: 'SIAP_URL' };
 const D: FlowDeps = { flags: { hasSso: false, hasKulon: false, hasSiap: false }, now: () => 1_000_000, MAX_RELOGIN: 2, PHASE_TIMEOUT_MS: 1000, SSO_GUARD_MS: 1500, loginUrl: (s) => LOGIN[s] };
@@ -379,5 +379,33 @@ describe('pollStatus (SPA status poll — self-healing)', () => {
   it('treats done/error state with no cached result as inactive → error', () => {
     const r = pollStatus(undefined, { core: 'done', service: 'siap' });
     expect(r.status).toBe('error');
+  });
+});
+
+describe('isPhaseSatisfied (recover a flow wedged in an already-satisfied phase)', () => {
+  it('is false when the flow is not authing at all', () => {
+    expect(isPhaseSatisfied({ core: 'done', service: 'sso' }, { hasSso: true, hasKulon: false, hasSiap: false })).toBe(false);
+  });
+  it('flags authing:sso with an existing SSO session cookie as recoverable', () => {
+    // Reproduces the stuck bug: the flow is in the SSO phase but the user is
+    // ALREADY logged into SSO (hasSso). It only advances on a ci_session_sso
+    // cookie CHANGE, which an established session never emits — so it stays
+    // stuck forever and the handoff handler must reset it and re-request.
+    expect(isPhaseSatisfied({ core: 'authing', service: 'sso' }, { hasSso: true, hasKulon: false, hasSiap: false })).toBe(true);
+  });
+  it('is false for authing:sso when SSO is NOT logged in (genuine login in progress)', () => {
+    expect(isPhaseSatisfied({ core: 'authing', service: 'sso' }, { hasSso: false, hasKulon: false, hasSiap: false })).toBe(false);
+  });
+  it('flags authing:kulon when a Kulon session cookie already exists', () => {
+    expect(isPhaseSatisfied({ core: 'authing', service: 'kulon' }, { hasSso: true, hasKulon: true, hasSiap: false })).toBe(true);
+  });
+  it('flags authing:siap when a SIAP session cookie already exists', () => {
+    expect(isPhaseSatisfied({ core: 'authing', service: 'siap' }, { hasSso: true, hasKulon: true, hasSiap: true })).toBe(true);
+  });
+  it('is false when the active phase has NO corresponding cookie yet', () => {
+    expect(isPhaseSatisfied({ core: 'authing', service: 'kulon' }, { hasSso: true, hasKulon: false, hasSiap: false })).toBe(false);
+  });
+  it('treats a null service as not recoverable', () => {
+    expect(isPhaseSatisfied({ core: 'authing', service: null }, { hasSso: true, hasKulon: false, hasSiap: false })).toBe(false);
   });
 });

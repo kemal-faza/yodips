@@ -4,7 +4,7 @@
 // read, tab open/navigate/close, storage, HTTP handoff) live ONLY here — the
 // core never touches `chrome`.
 import {
-  initialState, advance, attachTab, redact, normalizeState, pollStatus,
+  initialState, advance, attachTab, redact, normalizeState, pollStatus, isPhaseSatisfied,
   type FlowState, type FlowEvent, type FlowEffect,
 } from './core/flow.js';
 import { evaluateCookies, buildHandoffBody, cookiePatternsForPhase } from './core/cookies.js';
@@ -272,6 +272,16 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
           const active = state.core === 'authing' || state.core === 'handoff';
           if (active && !(await tabAlive(state.tabId))) {
             console.info('[Undip SSO] zombie flow: login tab gone — resetting', { core: state.core, tabId: state.tabId });
+            state = initialState(state.mode);
+          } else if (active && isPhaseSatisfied(state, evaluateCookies(await chrome.cookies.getAll({})))) {
+            // A running flow wedged in a phase the live cookies already satisfy
+            // (e.g. waiting on the SSO phase while already logged into SSO) can
+            // never advance on its own — it only moves on a session-cookie
+            // CHANGE, which an established session never emits. Reset so the
+            // REQUEST below re-evaluates cookies and fast-paths past the
+            // satisfied phase, instead of answering "started" forever (stuck)
+            // until the user manually closes the login tab.
+            console.info('[Undip SSO] wedged in a satisfied phase — resetting', { core: state.core, service: state.service });
             state = initialState(state.mode);
           }
           const stillActive = state.core === 'authing' || state.core === 'handoff';

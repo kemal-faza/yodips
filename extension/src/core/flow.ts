@@ -99,6 +99,32 @@ export function redact(state: FlowState): { core: string; phase: string | null; 
   return { core: state.core, phase: state.service, tabId: state.tabId };
 }
 
+/**
+ * True when a currently-running flow is wedged in a phase the live cookies
+ * already satisfy. An `authing` flow only advances on a session-cookie CHANGE
+ * (see `sessionCookieChanged`), which an already-established session never
+ * emits — so a flow stuck waiting on a satisfied phase can never get out on its
+ * own. The handoff handler resets such a flow and re-runs REQUEST to fast-path
+ * past the satisfied phase, instead of answering "started" forever and forcing
+ * the user to close the login tab manually.
+ */
+export function isPhaseSatisfied(
+  state: Pick<FlowState, 'core' | 'service'>,
+  flags: CookieFlags,
+): boolean {
+  if (state.core !== 'authing') return false;
+  switch (state.service) {
+    case 'sso':
+      return flags.hasSso;
+    case 'kulon':
+      return flags.hasKulon;
+    case 'siap':
+      return flags.hasSiap;
+    default:
+      return false;
+  }
+}
+
 export type PollStatus =
   | OutboundStatus
   | { status: 'ok'; active: boolean; phase: string | null };
