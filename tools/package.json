@@ -1,0 +1,15 @@
+{
+  "name": "sso-tools",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "probe": "ts-node tools/siap-probe.ts",
+    "test:build": "tsc -p tsconfig.json --outDir .tmp-test",
+    "test": "npm run test:build && node --test .tmp-test/siap-probe.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  }
+}
