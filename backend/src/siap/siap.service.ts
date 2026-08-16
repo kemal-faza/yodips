@@ -99,7 +99,33 @@ interface SiapJadwalUpstream {
   uuid_pertemuan?: string;
 }
 
+
+/** Satu baris catatan kehadiran per pertemuan (di-parse dari `get_absen.html`). */
+export interface SiapKehadiranRow {
+  pertemuanKe: string; // kolom "Pertemuan ke-"
+  tanggal: string; // "Senin, 17 Agustus 2026"
+  waktu: string; // "09:40 - 12:10"
+  kelas: string; // "C (17-08-2026 09:40-12:10)"
+  kehadiran: string; // status kehadiran (bisa kosong jika belum terisi)
+  waktuAbsen: string; // "-"
+  aktor: string; // pencatat absen
+}
+
+/** Satu section dalam tabel absensi (`Absensi Kuliah` / `Absensi Ujian`). */
+export interface SiapKehadiranSection {
+  label: string; // "Absensi Kuliah" | "Absensi Ujian"
+  rows: SiapKehadiranRow[];
+  message?: string; // "Belum ada data" bila tanpa baris nyata
+}
+
+/** Kehadiran satu matakuliah per pertemuan (`id` = `id_trx_pertemuan`). */
+export interface SiapKehadiran {
+  pertemuanId: string;
+  sections: SiapKehadiranSection[];
+}
+
 @Injectable()
+
 export class SiapService {
   private readonly logger = new Logger(SiapService.name);
   constructor(@Optional() private readonly cache?: DataCache) {}
@@ -718,6 +744,87 @@ export class SiapService {
       });
     }
     return out;
+  }
+
+  /**
+   * Proxy per-pertemuan attendance (kehadiran) untuk satu matakuliah.
+   * Discovered live 2026-08-14 (spike jadwal/kehadiran/QR): `POST
+   * /jadwal_mahasiswa/mhs/jadwal/get_absen` body
+   * `id=<id_trx_pertemuan>&tipe_mk=mata+kuliah` mengembalikan HTML table
+   * dikelompokkan per section (Absensi Kuliah / Absensi Ujian). `id` =
+   * `id_trx_pertemuan` dari `get_jadwal`. Di-parse ke SiapKehadiran.
+   */
+  async getKehadiran(siapCookie: string, pertemuanId: string): Promise<SiapKehadiran> {
+    const url = `${this.baseUrl}/jadwal_mahasiswa/mhs/jadwal/get_absen`;
+    const html = await this.siapFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: siapCookie,
+        // Same CI is_ajax_request() guard as getJadwal / getNotifications.
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: `id=${encodeURIComponent(pertemuanId)}&tipe_mk=${encodeURIComponent('mata kuliah')}`,
+    });
+    return { pertemuanId, sections: this.parseAbsenTable(html) };
+  }
+
+  /**
+   * Parse tabel absensi `get_absen.html`: beberapa <tbody>, tiap tbody punya
+   * baris label colspan ("Absensi Kuliah"/"Absensi Ujian") lalu baris data
+   * 7-kolom (No, Hari/Tanggal, Pertemuan ke-, Kelas, Kehadiran, Waktu Absen,
+   * aktor), atau baris colspan pesan ("Belum ada data") bila kosong.
+   */
+  private parseAbsenTable(html: string): SiapKehadiranSection[] {
+    const sections: SiapKehadiranSection[] = [];
+    const bodyRe = /<tbody[^>]*>([\s\S]*?)<\/tbody>/gi;
+    let bm: RegExpExecArray | null;
+    while ((bm = bodyRe.exec(html)) !== null) {
+      const inner = bm[1];
+      let label = '';
+      let message: string | undefined;
+      const rows: SiapKehadiranRow[] = [];
+      const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+      let rm: RegExpExecArray | null;
+      while ((rm = rowRe.exec(inner)) !== null) {
+        const tr = rm[1];
+        if (!/<td/i.test(tr)) continue;
+        // Baris dengan sel colspan = label section (pertama) atau pesan kosong (berikutnya).
+        if (/<td[^>]*\bcolspan\b/i.test(tr)) {
+          const cellText = (tr.match(/<td[^>]*>([\s\S]*?)<\/td>/i)?.[1] ?? '')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (!label) label = cellText;
+          else message = cellText;
+          continue;
+        }
+        // Baris data: 7 sel tunggal. Kolom: 0 No, 1 Hari/Tanggal, 2 Pertemuan ke-,
+        // 3 Kelas, 4 Kehadiran, 5 Waktu Absen, 6 aktor.
+        const tds: string[] = [];
+        const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+        let td: RegExpExecArray | null;
+        while ((td = tdRe.exec(tr)) !== null) tds.push(td[1]);
+        if (tds.length < 7) continue;
+        const clean = (c: string) => c.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const dtParts = tds[1].split(/<br\s*\/?>/i);
+        rows.push({
+          pertemuanKe: clean(tds[2]),
+          tanggal: clean(dtParts[0] ?? ''),
+          waktu: clean(dtParts.slice(1).join(' ')),
+          kelas: clean(tds[3]),
+          kehadiran: clean(tds[4]),
+          waktuAbsen: clean(tds[5]),
+          aktor: clean(tds[6]),
+        });
+      }
+      sections.push({
+        label: label || 'kehadiran',
+        rows,
+        ...(message !== undefined ? { message } : {}),
+      });
+    }
+    return sections;
   }
 
   /**

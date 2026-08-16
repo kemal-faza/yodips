@@ -406,6 +406,68 @@ describe('SiapService', () => {
     });
   });
 
+
+  describe('getKehadiran', () => {
+    it('parses the absen table from the real get_absen fixture (non-empty, snapshot values)', async () => {
+      mockFetchRouting([{ match: '/jadwal_mahasiswa/mhs/jadwal/get_absen', body: fixture('get_absen.html') }]);
+      const res = await svc.getKehadiran('sia_app_session=K', '3747941');
+      expect(res.pertemuanId).toBe('3747941');
+      expect(Array.isArray(res.sections)).toBe(true);
+      expect(res.sections.length).toBeGreaterThan(0);
+      // Fixture sample (real): "Absensi Kuliah" section with 14 pertemuan rows.
+      const kuliah = res.sections.find((s) => s.label === 'Absensi Kuliah');
+      expect(kuliah).toBeDefined();
+      expect(kuliah!.rows.length).toBeGreaterThan(0);
+      // Snapshot real values from the fixture.
+      const first = kuliah!.rows[0];
+      expect(first.pertemuanKe).toBe('1');
+      expect(first.tanggal).toBe('Senin, 17 Agustus 2026');
+      expect(first.waktu).toBe('09:40 - 12:10');
+      expect(first.kelas).toMatch(/^C/);
+      // "Absensi Ujian" section exists with an empty-state message.
+      const ujian = res.sections.find((s) => s.label === 'Absensi Ujian');
+      expect(ujian).toBeDefined();
+      expect(ujian!.message).toBe('Belum ada data');
+      expect(ujian!.rows).toHaveLength(0);
+    });
+
+    it('POSTs to get_absen with the CI guard header + session cookie + id/tipe_mk body', async () => {
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      fetchMock.mockResolvedValue({
+        ok: true, url: 'https://siap.undip.ac.id/jadwal_mahasiswa/mhs/jadwal/get_absen',
+        headers: { get: () => 'text/html' },
+        text: async () => fixture('get_absen.html'),
+        json: async () => { throw new Error('no json'); },
+      });
+      await svc.getKehadiran('sia_app_session=COOKIE', '3747941');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/jadwal_mahasiswa/mhs/jadwal/get_absen'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Cookie: 'sia_app_session=COOKIE',
+          }),
+          body: expect.stringContaining('id=3747941'),
+        }),
+      );
+      expect(fetchMock.mock.calls[0][1].body).toContain('tipe_mk=mata%20kuliah');
+    });
+
+    it('throws 401 on a stale session', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/login',
+        headers: { get: () => 'text/html' },
+        text: async () => '<html>login page</html>',
+        json: async () => { throw new Error('no json'); },
+      });
+      await expect(svc.getKehadiran('cookie', '1')).rejects.toMatchObject({ status: 401 });
+    });
+  });
+
   describe('markKehadiran', () => {
     it('POSTs the QR token to the presence process endpoint', async () => {
       const fetchMock = jest.fn();

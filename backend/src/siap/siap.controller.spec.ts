@@ -8,7 +8,14 @@ import { SessionStore } from '../session/session-store';
 
 describe('SiapController', () => {
   let controller: SiapController;
-  const mockSiap = { checkSessionValid: jest.fn(), getProfile: jest.fn(), getLecturers: jest.fn(), getJadwal: jest.fn(), markKehadiran: jest.fn() };
+  const mockSiap = {
+    checkSessionValid: jest.fn(),
+    getProfile: jest.fn(),
+    getLecturers: jest.fn(),
+    getJadwal: jest.fn(),
+    getKehadiran: jest.fn(),
+    markKehadiran: jest.fn(),
+  };
   const mockStore = { get: jest.fn() };
 
   beforeEach(async () => {
@@ -28,13 +35,17 @@ describe('SiapController', () => {
 
   it('throws 401 when no siapCookie', async () => {
     mockStore.get.mockResolvedValue({ siapCookie: '' });
-    await expect(controller.getProfile({ user: { sub: 'n' } })).rejects.toBeInstanceOf(HttpException);
+    await expect(
+      controller.getProfile({ user: { sub: 'n' } }),
+    ).rejects.toBeInstanceOf(HttpException);
   });
 
   it('returns profile when siapCookie present', async () => {
     mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
     mockSiap.getProfile.mockResolvedValue({ nama: 'Budi' });
-    await expect(controller.getProfile({ user: { sub: 'n' } })).resolves.toEqual({ nama: 'Budi' });
+    await expect(
+      controller.getProfile({ user: { sub: 'n' } }),
+    ).resolves.toEqual({ nama: 'Budi' });
   });
 
   it('throws 401 when no siapCookie for lecturers', async () => {
@@ -46,7 +57,9 @@ describe('SiapController', () => {
 
   it('returns lecturer list when siapCookie present', async () => {
     mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
-    mockSiap.getLecturers.mockResolvedValue([{ kode: 'MIK1624105', dosen: 'Dr. X' }]);
+    mockSiap.getLecturers.mockResolvedValue([
+      { kode: 'MIK1624105', dosen: 'Dr. X' },
+    ]);
     await expect(
       controller.getLecturers({ user: { sub: 'n' } }),
     ).resolves.toEqual([{ kode: 'MIK1624105', dosen: 'Dr. X' }]);
@@ -62,20 +75,70 @@ describe('SiapController', () => {
   it('returns jadwal when siapCookie present', async () => {
     mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
     mockSiap.getJadwal.mockResolvedValue([
-      { kode: 'MIK1624503', hari: 'senin', matakuliah: 'Sistem Informasi', ruang: 'A301', waktu: '09:40:00 s/d 12:10:00', sks: 3 },
+      {
+        kode: 'MIK1624503',
+        hari: 'senin',
+        matakuliah: 'Sistem Informasi',
+        ruang: 'A301',
+        waktu: '09:40:00 s/d 12:10:00',
+        sks: 3,
+      },
     ]);
     await expect(
       controller.getJadwal({ user: { sub: 'n' } }),
     ).resolves.toHaveLength(1);
   });
 
+  it('throws 401 when no siapCookie for kehadiran', async () => {
+    mockStore.get.mockResolvedValue({ siapCookie: '' });
+    await expect(
+      controller.getKehadiran('3747941', { user: { sub: 'n' } }),
+    ).rejects.toBeInstanceOf(HttpException);
+  });
+
+  it('returns kehadiran when siapCookie present', async () => {
+    mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
+    mockSiap.getKehadiran.mockResolvedValue({
+      pertemuanId: '3747941',
+      sections: [
+        {
+          label: 'Absensi Kuliah',
+          rows: [
+            {
+              pertemuanKe: '1',
+              tanggal: 'Senin, 17 Agustus 2026',
+              waktu: '09:40 - 12:10',
+              kelas: 'C (17-08-2026 09:40-12:10)',
+              kehadiran: '',
+              waktuAbsen: '-',
+              aktor: '',
+            },
+          ],
+        },
+      ],
+    });
+    await expect(
+      controller.getKehadiran('3747941', { user: { sub: 'n' } }),
+    ).resolves.toMatchObject({ pertemuanId: '3747941' });
+    expect(mockSiap.getKehadiran).toHaveBeenCalledWith(
+      'ci_session_x=K',
+      '3747941',
+    );
+  });
+
   it('proxies a QR token to markKehadiran when present', async () => {
     mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
-    mockSiap.markKehadiran.mockResolvedValue({ status: 'success', message: 'ok' });
+    mockSiap.markKehadiran.mockResolvedValue({
+      status: 'success',
+      message: 'ok',
+    });
     await expect(
       controller.markKehadiran({ user: { sub: 'n' } }, { token: 'qrcode123' }),
     ).resolves.toEqual({ status: 'success', message: 'ok' });
-    expect(mockSiap.markKehadiran).toHaveBeenCalledWith('ci_session_x=K', 'qrcode123');
+    expect(mockSiap.markKehadiran).toHaveBeenCalledWith(
+      'ci_session_x=K',
+      'qrcode123',
+    );
   });
 
   it('throws 400 when token QR missing', async () => {

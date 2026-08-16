@@ -57,6 +57,12 @@ export class SiapController {
     return this.siapService.getJadwal(cookie);
   }
 
+  @Get('kehadiran/:id')
+  async getKehadiran(@Param('id') id: string, @Req() req: any) {
+    const cookie = await this.requireSiapCookie(req);
+    return this.siapService.getKehadiran(cookie, id);
+  }
+
   @Post('kehadiran')
   async markKehadiran(@Req() req: any, @Body() body: { token?: string }) {
     const cookie = await this.requireSiapCookie(req);
