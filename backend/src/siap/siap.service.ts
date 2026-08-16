@@ -134,6 +134,9 @@ export interface SiapKehadiran {
   sections: SiapKehadiranSection[];
 }
 
+/** Fixed SIAP dashboard URL — the session-validity probe for checkSessionValid. */
+const SIAP_PROBE_URL = 'https://siap.undip.ac.id/pages/mhs/dashboard';
+
 @Injectable()
 export class SiapService {
   private readonly logger = new Logger(SiapService.name);
@@ -142,14 +145,13 @@ export class SiapService {
   // Probe + authenticated-page fingerprint from docs/2026-08-04-siap-spike.md §2.
   // The dashboard page is the validity probe; `id="tabmhs_profile"` is present
   // on the authenticated dashboard but absent on a login page.
-  private readonly probeUrl = 'https://siap.undip.ac.id/pages/mhs/dashboard';
   private readonly authMarker = 'tabmhs_profile';
 
   async checkSessionValid(siapCookie: string): Promise<SiapSessionCheck> {
     if (!siapCookie) return { valid: false, reason: 'no-cookie' };
     let res: Response;
     try {
-      res = await fetch(this.probeUrl, {
+      res = await fetch(SIAP_PROBE_URL, {
         headers: { Cookie: siapCookie },
         redirect: 'follow',
       });
@@ -733,22 +735,28 @@ export class SiapService {
    * mapping + the fixture + tests to match the REAL payload.
    */
   async getNotifications(siapCookie: string): Promise<SiapNotifications> {
-    const data = await this.siapFetchJson<{ status?: string; data?: any }>(
-      `${this.baseUrl}/pages/mhs/dashboard/ajax/notifications`,
-      {
-        headers: {
-          Cookie: siapCookie,
-          // SIAP is CodeIgniter-based; this /ajax/ route is guarded by CI's
-          // is_ajax_request() which requires the XMLHttpRequest header. Without
-          // it the endpoint returns "This endpoint cannot be accessed directly."
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        redirect: 'follow',
+    const data = await this.siapFetchJson<{
+      status?: string;
+      data?: {
+        _timestamp?: string;
+        count?: string | number;
+        items?: SiapNotification[];
+      };
+    }>(`${this.baseUrl}/pages/mhs/dashboard/ajax/notifications`, {
+      headers: {
+        Cookie: siapCookie,
+        // SIAP is CodeIgniter-based; this /ajax/ route is guarded by CI's
+        // is_ajax_request() which requires the XMLHttpRequest header. Without
+        // it the endpoint returns "This endpoint cannot be accessed directly."
+        'X-Requested-With': 'XMLHttpRequest',
       },
-    );
-    const raw = data?.data ?? {};
-    const items: SiapNotification[] = Array.isArray(raw.items) ? raw.items : [];
-    return { count: Number(raw.count) || items.length, items };
+      redirect: 'follow',
+    });
+    const raw = data?.data;
+    const items: SiapNotification[] = Array.isArray(raw?.items)
+      ? raw.items
+      : [];
+    return { count: Number(raw?.count) || items.length, items };
   }
 
   /**

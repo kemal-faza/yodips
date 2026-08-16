@@ -93,7 +93,7 @@ describe('validateEnv', () => {
       CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
       SESSION_BACKEND: 'redis',
       REDIS_URL: 'redis://127.0.0.1:6379',
-      SESSION_ENC_KEY: 'iam-a-32-byte-secret-key-1234567890',
+      SESSION_ENC_KEY: 'iam-a-32-byte-secret-key-1234567890', // gitleaks:allow test fixture
       SESSION_TTL_MS: '86400000',
     });
     expect(cfg.SESSION_BACKEND).toBe('redis');
