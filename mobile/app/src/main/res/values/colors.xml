@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand primary (matches web primary #01637E). -->
+    <color name="brand_primary">#01637E</color>
+    <color name="brand_primary_foreground">#FFFFFF</color>
+    <color name="launcher_background">#01637E</color>
+</resources>

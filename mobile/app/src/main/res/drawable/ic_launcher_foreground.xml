@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple white "S" graduation-cap glyph on the teal background. -->
+    <group android:scaleX="0.5" android:scaleY="0.5" android:translateX="27" android:translateY="27">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M54,24 L20,40 L54,56 L88,40 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M26,46 L26,58 C26,64 39,70 54,70 C69,70 82,64 82,58 L82,46 L70,51.5 L70,58 C70,60.5 63,63 54,63 C45,63 38,60.5 38,58 L38,51.5 Z" />
+    </group>
+</vector>

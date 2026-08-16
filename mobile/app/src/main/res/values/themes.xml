@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash/activity theme. Compose provides the Material3 theme in code;
+         this XML theme just gives the window a correct starting background. -->
+    <style name="Theme.UndipSSO" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FAFAF9</item>
+    </style>
+</resources>
