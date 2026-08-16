@@ -1,5 +1,7 @@
 package ac.undip.sso.core.network
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -18,11 +20,13 @@ object ApiClient {
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
     // Long timeouts: the handoff can involve upstream SSO/Kulon/SIAP round-trips.
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val client =
+        OkHttpClient
+            .Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
 
     /**
      * POST /api/auth/session/handoff with the captured session cookies. The
@@ -31,39 +35,46 @@ object ApiClient {
      * @param siapCookie   raw `sia_app_session=...` header value, if captured
      * @param kulonCookie  raw `MoodleSession=...` header value, if captured
      */
-    suspend fun handoff(siapCookie: String?, kulonCookie: String?): HandoffResult {
-        val body = buildString {
-            append("{")
-            append("\"capturedAt\":").append(System.currentTimeMillis() / 1000)
-            if (siapCookie != null) append(",\"siapCookie\":").append(jsonEscape(siapCookie))
-            if (kulonCookie != null) append(",\"kulonCookie\":").append(jsonEscape(kulonCookie))
-            append("}")
-        }
-        val req = Request.Builder()
-            .url("$BASE_URL/api/auth/session/handoff")
-            .post(body.toRequestBody(jsonMedia))
-            .header("Content-Type", "application/json")
-            .build()
-
-        return try {
-            client.newCall(req).execute().use { resp ->
-                val text = resp.body?.string().orEmpty()
-                if (resp.isSuccessful) {
-                    try {
-                        val parsed = SIAP_JSON.decodeFromString<HandoffResponse>(text)
-                        HandoffResult.Success(parsed.accessToken)
-                    } catch (e: Exception) {
-                        HandoffResult.Failure("Respons handoff tidak valid: ${e.message}")
-                    }
-                } else {
-                    HandoffResult.Failure("Handoff gagal (HTTP ${resp.code}): ${text.take(200)}")
-                }
+    suspend fun handoff(
+        siapCookie: String?,
+        kulonCookie: String?,
+    ): HandoffResult {
+        val body =
+            buildString {
+                append("{")
+                append("\"capturedAt\":").append(System.currentTimeMillis() / 1000)
+                if (siapCookie != null) append(",\"siapCookie\":").append(jsonEscape(siapCookie))
+                if (kulonCookie != null) append(",\"kulonCookie\":").append(jsonEscape(kulonCookie))
+                append("}")
             }
-        } catch (e: IOException) {
-            HandoffResult.Failure("Tidak dapat terhubung ke server: ${e.message}")
+        val req =
+            Request
+                .Builder()
+                .url("$BASE_URL/api/auth/session/handoff")
+                .post(body.toRequestBody(jsonMedia))
+                .header("Content-Type", "application/json")
+                .build()
+
+        return withContext(Dispatchers.IO) {
+            try {
+                client.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    if (resp.isSuccessful) {
+                        try {
+                            val parsed = SIAP_JSON.decodeFromString<HandoffResponse>(text)
+                            HandoffResult.Success(parsed.accessToken)
+                        } catch (e: Exception) {
+                            HandoffResult.Failure("Respons handoff tidak valid: ${e.message}")
+                        }
+                    } else {
+                        HandoffResult.Failure("Handoff gagal (HTTP ${resp.code}): ${text.take(200)}")
+                    }
+                }
+            } catch (e: IOException) {
+                HandoffResult.Failure("Tidak dapat terhubung ke server: ${e.message}")
+            }
         }
     }
 
-    private fun jsonEscape(s: String): String =
-        s.replace("\\", "\\\\").replace("\"", "\\\"")
+    private fun jsonEscape(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
 }
