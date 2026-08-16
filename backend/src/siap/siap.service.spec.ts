@@ -20,7 +20,8 @@ function mockFetchRouting(
   (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
     const url = typeof input === 'string' ? input : input.url;
     for (const r of routes) {
-      const hit = typeof r.match === 'string' ? url.includes(r.match) : r.match.test(url);
+      const hit =
+        typeof r.match === 'string' ? url.includes(r.match) : r.match.test(url);
       if (hit) {
         return {
           ok: true,
@@ -65,7 +66,9 @@ describe('SiapService', () => {
 
     it('returns stale when fetch fails (redirect loop)', async () => {
       (global.fetch as jest.Mock).mockRejectedValue(
-        Object.assign(new TypeError('fetch failed'), { cause: new Error('redirect count exceeded') }),
+        Object.assign(new TypeError('fetch failed'), {
+          cause: new Error('redirect count exceeded'),
+        }),
       );
       const res = await svc.checkSessionValid('ci_session_x=K');
       expect(res).toEqual({ valid: false, reason: 'stale' });
@@ -76,7 +79,8 @@ describe('SiapService', () => {
         ok: true,
         url: PROBE_URL,
         // The authenticated dashboard contains the profile-tab marker.
-        text: async () => '<html><title>Homepage Mahasiswa</title><div id="tabmhs_profile"></div></html>',
+        text: async () =>
+          '<html><title>Homepage Mahasiswa</title><div id="tabmhs_profile"></div></html>',
       });
       const res = await svc.checkSessionValid('ci_session_x=K');
       expect(res).toEqual({ valid: true, reason: 'ok' });
@@ -88,14 +92,23 @@ describe('SiapService', () => {
       const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
       const svc = new SiapService();
       (svc as any).cache = cache;
-      cache.get.mockResolvedValue({ nama: 'Budi', nim: '1', prodi: 'TI', fakultas: 'F', angkatan: '2024', status: 'aktif' });
+      cache.get.mockResolvedValue({
+        nama: 'Budi',
+        nim: '1',
+        prodi: 'TI',
+        fakultas: 'F',
+        angkatan: '2024',
+        status: 'aktif',
+      });
       const out = await svc.getProfile('cookie', 'u1');
       expect(cache.get).toHaveBeenCalledWith('u1:siap:profile');
       expect(out.nama).toBe('Budi');
     });
 
     it('parses the server-rendered profile from the dashboard fixture', async () => {
-      mockFetchRouting([{ match: '/pages/mhs/dashboard', body: fixture('profile.html') }]);
+      mockFetchRouting([
+        { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
+      ]);
       const profile = await svc.getProfile('sia_app_session=K');
       expect(profile.nama).toBe('ANONIM UJI');
       expect(profile.nim).toBe('24060121130000');
@@ -121,7 +134,9 @@ describe('SiapService', () => {
 
   describe('getIrs', () => {
     it('parses the IRS JSON rows from the ajax_irs_diambil fixture', async () => {
-      mockFetchRouting([{ match: '/irs/mhs/irs/ajax_irs_diambil', body: fixture('irs.json') }]);
+      mockFetchRouting([
+        { match: '/irs/mhs/irs/ajax_irs_diambil', body: fixture('irs.json') },
+      ]);
       const irs = await svc.getIrs('sia_app_session=K');
       expect(irs.totalSks).toBe(23);
       expect(irs.mataKuliah.length).toBe(8);
@@ -154,7 +169,9 @@ describe('SiapService', () => {
         url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
         headers: {
           get: (k: string) =>
-            k.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null,
+            k.toLowerCase() === 'content-type'
+              ? 'text/html; charset=utf-8'
+              : null,
         },
         text: async () => '<!DOCTYPE html><html><body>login</body></html>',
         json: async () => {
@@ -187,7 +204,9 @@ describe('SiapService', () => {
         url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
         headers: {
           get: (k: string) =>
-            k.toLowerCase() === 'content-type' ? 'text/plain; charset=utf-8' : null,
+            k.toLowerCase() === 'content-type'
+              ? 'text/plain; charset=utf-8'
+              : null,
         },
         json: async () => ({ total_sks: 23, html: '' }),
       });
@@ -204,7 +223,9 @@ describe('SiapService', () => {
         url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
         headers: {
           get: (k: string) =>
-            k.toLowerCase() === 'content-type' ? 'text/html; charset=UTF-8' : null,
+            k.toLowerCase() === 'content-type'
+              ? 'text/html; charset=UTF-8'
+              : null,
         },
         text: async () => '{"total_sks":23,"html":""}',
         json: async () => ({ total_sks: 23, html: '' }),
@@ -243,34 +264,38 @@ describe('SiapService', () => {
         'Dr. Helmie Arif Wibawa, S.Si., M.Cs. | Dr. Aris Sugiharto, S.Si., M.Kom. | Prajanto Wahyu Adi, M.Kom.',
       );
       expect(byCode.get('UUW1624002')).toBe('Dr. Drs. Slamet Subekti, M.Hum.');
-      expect(byCode.get('MIK1624104')).toBe('Prof. Dr. Dra. Sunarsih, M.Si. | Etna Vianita, S.Mat., M.Mat.');
+      expect(byCode.get('MIK1624104')).toBe(
+        'Prof. Dr. Dra. Sunarsih, M.Si. | Etna Vianita, S.Mat., M.Mat.',
+      );
     });
 
     it('POSTs get_irs with the correct per-semester ta/smt_ambil/smt params', async () => {
       const seen: string[] = [];
-      (global.fetch as jest.Mock).mockImplementation(async (input: any, init?: any) => {
-        const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard')) {
-          return {
-            ok: true,
-            url,
-            headers: { get: () => 'application/json' },
-            text: async () => fixture('profile.html'),
-            json: async () => JSON.parse(fixture('profile.html')),
-          };
-        }
-        if (url.includes(GET_IRS)) {
-          seen.push(init?.body ?? '');
-          return {
-            ok: true,
-            url,
-            headers: { get: () => 'application/json' },
-            text: async () => fixture('irs_get.html'),
-            json: async () => JSON.parse(fixture('irs_get.html')),
-          };
-        }
-        throw new Error(`unmocked fetch: ${url}`);
-      });
+      (global.fetch as jest.Mock).mockImplementation(
+        async (input: any, init?: any) => {
+          const url = typeof input === 'string' ? input : input.url;
+          if (url.includes('/pages/mhs/dashboard')) {
+            return {
+              ok: true,
+              url,
+              headers: { get: () => 'application/json' },
+              text: async () => fixture('profile.html'),
+              json: async () => JSON.parse(fixture('profile.html')),
+            };
+          }
+          if (url.includes(GET_IRS)) {
+            seen.push(init?.body ?? '');
+            return {
+              ok: true,
+              url,
+              headers: { get: () => 'application/json' },
+              text: async () => fixture('irs_get.html'),
+              json: async () => JSON.parse(fixture('irs_get.html')),
+            };
+          }
+          throw new Error(`unmocked fetch: ${url}`);
+        },
+      );
       await svc.getLecturers('sia_app_session=K');
       // 5 semesters for angkatan 2024: smt 1..5, within-year smt toggles 1/2.
       expect(seen).toEqual([
@@ -286,7 +311,10 @@ describe('SiapService', () => {
   describe('getNotifications', () => {
     it('normalizes the list payload', async () => {
       mockFetchRouting([
-        { match: '/pages/mhs/dashboard/ajax/notifications', body: fixture('notifications.json') },
+        {
+          match: '/pages/mhs/dashboard/ajax/notifications',
+          body: fixture('notifications.json'),
+        },
       ]);
       const res = await svc.getNotifications('cookie');
       expect(Array.isArray(res.items)).toBe(true);
@@ -297,7 +325,8 @@ describe('SiapService', () => {
       const fetchMock = jest.fn();
       (global.fetch as jest.Mock) = fetchMock;
       fetchMock.mockResolvedValue({
-        ok: true, url: 'https://siap.undip.ac.id/pages/mhs/dashboard/ajax/notifications',
+        ok: true,
+        url: 'https://siap.undip.ac.id/pages/mhs/dashboard/ajax/notifications',
         headers: { get: () => 'application/json' },
         text: async () => '{"status":"ok","data":{"count":"0"}}',
         json: async () => ({ status: 'ok', data: { count: '0' } }),
@@ -319,9 +348,13 @@ describe('SiapService', () => {
         url: 'https://siap.undip.ac.id/login',
         headers: { get: () => 'text/html' },
         text: async () => '<html>login page</html>',
-        json: async () => { throw new Error('no json'); },
+        json: async () => {
+          throw new Error('no json');
+        },
       });
-      await expect(svc.getNotifications('cookie')).rejects.toMatchObject({ status: 401 });
+      await expect(svc.getNotifications('cookie')).rejects.toMatchObject({
+        status: 401,
+      });
     });
   });
 
@@ -330,7 +363,8 @@ describe('SiapService', () => {
       const fetchMock = jest.fn();
       (global.fetch as jest.Mock) = fetchMock;
       fetchMock.mockResolvedValue({
-        ok: true, url: 'https://siap.undip.ac.id/pages/mhs/dashboard/ajax/unread',
+        ok: true,
+        url: 'https://siap.undip.ac.id/pages/mhs/dashboard/ajax/unread',
         headers: { get: () => 'application/json' },
         text: async () => '{"status":"ok","message":"ok"}',
         json: async () => ({ status: 'ok', message: 'ok' }),
@@ -352,7 +386,12 @@ describe('SiapService', () => {
 
   describe('getJadwal', () => {
     it('maps the get_jadwal JSON feed to SiapJadwal[]', async () => {
-      mockFetchRouting([{ match: '/jadwal_mahasiswa/mhs/jadwal/get_jadwal', body: fixture('get_jadwal.json') }]);
+      mockFetchRouting([
+        {
+          match: '/jadwal_mahasiswa/mhs/jadwal/get_jadwal',
+          body: fixture('get_jadwal.json'),
+        },
+      ]);
       const res = await svc.getJadwal('sia_app_session=K');
       expect(Array.isArray(res)).toBe(true);
       expect(res.length).toBeGreaterThan(0);
@@ -376,7 +415,8 @@ describe('SiapService', () => {
       const fetchMock = jest.fn();
       (global.fetch as jest.Mock) = fetchMock;
       fetchMock.mockResolvedValue({
-        ok: true, url: 'https://siap.undip.ac.id/jadwal_mahasiswa/mhs/jadwal/get_jadwal',
+        ok: true,
+        url: 'https://siap.undip.ac.id/jadwal_mahasiswa/mhs/jadwal/get_jadwal',
         headers: { get: () => 'application/json' },
         text: async () => '{}',
         json: async () => ({}),
@@ -400,16 +440,24 @@ describe('SiapService', () => {
         url: 'https://siap.undip.ac.id/login',
         headers: { get: () => 'text/html' },
         text: async () => '<html>login page</html>',
-        json: async () => { throw new Error('no json'); },
+        json: async () => {
+          throw new Error('no json');
+        },
       });
-      await expect(svc.getJadwal('cookie')).rejects.toMatchObject({ status: 401 });
+      await expect(svc.getJadwal('cookie')).rejects.toMatchObject({
+        status: 401,
+      });
     });
   });
 
-
   describe('getKehadiran', () => {
     it('parses the absen table from the real get_absen fixture (non-empty, snapshot values)', async () => {
-      mockFetchRouting([{ match: '/jadwal_mahasiswa/mhs/jadwal/get_absen', body: fixture('get_absen.html') }]);
+      mockFetchRouting([
+        {
+          match: '/jadwal_mahasiswa/mhs/jadwal/get_absen',
+          body: fixture('get_absen.html'),
+        },
+      ]);
       const res = await svc.getKehadiran('sia_app_session=K', '3747941');
       expect(res.pertemuanId).toBe('3747941');
       expect(Array.isArray(res.sections)).toBe(true);
@@ -435,10 +483,13 @@ describe('SiapService', () => {
       const fetchMock = jest.fn();
       (global.fetch as jest.Mock) = fetchMock;
       fetchMock.mockResolvedValue({
-        ok: true, url: 'https://siap.undip.ac.id/jadwal_mahasiswa/mhs/jadwal/get_absen',
+        ok: true,
+        url: 'https://siap.undip.ac.id/jadwal_mahasiswa/mhs/jadwal/get_absen',
         headers: { get: () => 'text/html' },
         text: async () => fixture('get_absen.html'),
-        json: async () => { throw new Error('no json'); },
+        json: async () => {
+          throw new Error('no json');
+        },
       });
       await svc.getKehadiran('sia_app_session=COOKIE', '3747941');
       expect(fetchMock).toHaveBeenCalledWith(
@@ -453,7 +504,9 @@ describe('SiapService', () => {
           body: expect.stringContaining('id=3747941'),
         }),
       );
-      expect(fetchMock.mock.calls[0][1].body).toContain('tipe_mk=mata%20kuliah');
+      expect(fetchMock.mock.calls[0][1].body).toContain(
+        'tipe_mk=mata%20kuliah',
+      );
     });
 
     it('throws 401 on a stale session', async () => {
@@ -462,9 +515,13 @@ describe('SiapService', () => {
         url: 'https://siap.undip.ac.id/login',
         headers: { get: () => 'text/html' },
         text: async () => '<html>login page</html>',
-        json: async () => { throw new Error('no json'); },
+        json: async () => {
+          throw new Error('no json');
+        },
       });
-      await expect(svc.getKehadiran('cookie', '1')).rejects.toMatchObject({ status: 401 });
+      await expect(svc.getKehadiran('cookie', '1')).rejects.toMatchObject({
+        status: 401,
+      });
     });
   });
 
@@ -473,12 +530,17 @@ describe('SiapService', () => {
       const fetchMock = jest.fn();
       (global.fetch as jest.Mock) = fetchMock;
       fetchMock.mockResolvedValue({
-        ok: true, status: 200, url: 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/',
+        ok: true,
+        status: 200,
+        url: 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/',
         headers: { get: () => 'application/json' },
         text: async () => '{"status":"success","message":"ok"}',
         json: async () => ({ status: 'success', message: 'ok' }),
       });
-      const res = await svc.markKehadiran('sia_app_session=COOKIE', 'qrcodetoken123');
+      const res = await svc.markKehadiran(
+        'sia_app_session=COOKIE',
+        'qrcodetoken123',
+      );
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('/absensi/process/'),
         expect.objectContaining({
@@ -496,10 +558,16 @@ describe('SiapService', () => {
       const fetchMock = jest.fn();
       (global.fetch as jest.Mock) = fetchMock;
       fetchMock.mockResolvedValue({
-        ok: false, status: 400, url: 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/',
+        ok: false,
+        status: 400,
+        url: 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/',
         headers: { get: () => 'application/json' },
-        text: async () => '{"status":"error","message":"Gagal: QRcode tidak valid atau sudah expired."}',
-        json: async () => ({ status: 'error', message: 'Gagal: QRcode tidak valid atau sudah expired.' }),
+        text: async () =>
+          '{"status":"error","message":"Gagal: QRcode tidak valid atau sudah expired."}',
+        json: async () => ({
+          status: 'error',
+          message: 'Gagal: QRcode tidak valid atau sudah expired.',
+        }),
       });
       const res = await svc.markKehadiran('cookie', 'dummy');
       expect(res.status).toBe('error');
@@ -512,9 +580,13 @@ describe('SiapService', () => {
         url: 'https://siap.undip.ac.id/login',
         headers: { get: () => 'text/html' },
         text: async () => '<html>login page</html>',
-        json: async () => { throw new Error('no json'); },
+        json: async () => {
+          throw new Error('no json');
+        },
       });
-      await expect(svc.markKehadiran('cookie', 'x')).rejects.toMatchObject({ status: 401 });
+      await expect(svc.markKehadiran('cookie', 'x')).rejects.toMatchObject({
+        status: 401,
+      });
     });
   });
 
@@ -523,7 +595,10 @@ describe('SiapService', () => {
       mockFetchRouting([
         { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
         { match: '/irs/mhs/irs/get_khs', body: fixture('khs.html') },
-        { match: '/irs/mhs/irs/get_total_sks', body: fixture('khs_total_sks.json') },
+        {
+          match: '/irs/mhs/irs/get_total_sks',
+          body: fixture('khs_total_sks.json'),
+        },
       ]);
       const khs = await svc.getKhs('sia_app_session=K');
       // angkatan 2024 + semesterBerjalan "2026/2027 Ganjil" => 5 semesters.
@@ -543,7 +618,9 @@ describe('SiapService', () => {
 
     it('computes IPK from RAW per-semester sums, not pre-rounded semester IPs (B11)', async () => {
       const row = (kode: string, sks: number, bobot: number, huruf: string) =>
-        '<tr><td>1</td><td>' + kode + '</td><td>MK</td><td>TIU</td><td>TI</td>' +
+        '<tr><td>1</td><td>' +
+        kode +
+        '</td><td>MK</td><td>TIU</td><td>TI</td>' +
         `<td>${sks}</td><td>${huruf}</td><td>${bobot}</td></tr>`;
       // Semester 1: 200×1sks bobot4 + 100×1sks bobot3 => Σ(b·sks)=1100, Σsks=300,
       //   raw IP = 1100/300 = 3.6667 (rounds to 3.67 for display).
@@ -566,12 +643,38 @@ describe('SiapService', () => {
       let khsCalls = 0;
       (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
         const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard')) return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, json: async () => ({}), status: 200 };
+        if (url.includes('/pages/mhs/dashboard'))
+          return {
+            ok: true,
+            url,
+            headers: { get: () => null },
+            text: async () => profileHtml,
+            json: async () => ({}),
+            status: 200,
+          };
         if (url.includes('/get_khs')) {
           khsCalls++;
-          return { ok: true, url, headers: { get: () => null }, text: async () => (khsCalls === 1 ? sem1 : sem2), json: async () => ({}), status: 200 };
+          return {
+            ok: true,
+            url,
+            headers: { get: () => null },
+            text: async () => (khsCalls === 1 ? sem1 : sem2),
+            json: async () => ({}),
+            status: 200,
+          };
         }
-        if (url.includes('/get_total_sks')) return { ok: true, url, headers: { get: (k: string) => k.toLowerCase() === 'content-type' ? 'application/json' : null }, text: async () => JSON.stringify({ total_sks: 300 }), json: async () => ({ total_sks: 300 }), status: 200 };
+        if (url.includes('/get_total_sks'))
+          return {
+            ok: true,
+            url,
+            headers: {
+              get: (k: string) =>
+                k.toLowerCase() === 'content-type' ? 'application/json' : null,
+            },
+            text: async () => JSON.stringify({ total_sks: 300 }),
+            json: async () => ({ total_sks: 300 }),
+            status: 200,
+          };
         throw new Error('unmocked: ' + url);
       });
 
@@ -593,18 +696,43 @@ describe('SiapService', () => {
         '<p class="text-muted">2025/2026 Ganjil</p>' +
         '</div></html>';
       const bodies: string[] = [];
-      (global.fetch as jest.Mock).mockImplementation(async (input: any, init?: any) => {
-        const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard'))
-          return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, status: 200 };
-        if (url.includes('/get_khs')) {
-          bodies.push(init?.body ?? '');
-          return { ok: true, url, headers: { get: () => null }, text: async () => fixture('khs.html'), status: 200 };
-        }
-        if (url.includes('/get_total_sks'))
-          return { ok: true, url, headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) }, text: async () => JSON.stringify({ total_sks: 20 }), status: 200 };
-        throw new Error('unmocked: ' + url);
-      });
+      (global.fetch as jest.Mock).mockImplementation(
+        async (input: any, init?: any) => {
+          const url = typeof input === 'string' ? input : input.url;
+          if (url.includes('/pages/mhs/dashboard'))
+            return {
+              ok: true,
+              url,
+              headers: { get: () => null },
+              text: async () => profileHtml,
+              status: 200,
+            };
+          if (url.includes('/get_khs')) {
+            bodies.push(init?.body ?? '');
+            return {
+              ok: true,
+              url,
+              headers: { get: () => null },
+              text: async () => fixture('khs.html'),
+              status: 200,
+            };
+          }
+          if (url.includes('/get_total_sks'))
+            return {
+              ok: true,
+              url,
+              headers: {
+                get: (k: string) =>
+                  k.toLowerCase() === 'content-type'
+                    ? 'application/json'
+                    : null,
+              },
+              text: async () => JSON.stringify({ total_sks: 20 }),
+              status: 200,
+            };
+          throw new Error('unmocked: ' + url);
+        },
+      );
 
       await svc.getKhs('sia_app_session=K');
       // smt_ambil stays cumulative; smt must be the within-year index (1 Ganjil / 2 Genap).
@@ -626,25 +754,54 @@ describe('SiapService', () => {
         '<p class="text-muted">2026/2027 Ganjil</p>' +
         '</div></html>';
       const gradedRow = (kode: string, bobot: number) =>
-        '<tr><td>1</td><td>' + kode + '</td><td>MK</td><td>TIU</td><td>TI</td>' +
+        '<tr><td>1</td><td>' +
+        kode +
+        '</td><td>MK</td><td>TIU</td><td>TI</td>' +
         `<td>3</td><td>A</td><td>${bobot}</td></tr>`;
-      const gradedHtml = '<table>' + gradedRow('G1', 4) + gradedRow('G2', 4) + '</table>';
+      const gradedHtml =
+        '<table>' + gradedRow('G1', 4) + gradedRow('G2', 4) + '</table>';
       // Ungraded semester: courses present but EMPTY nilaiHuruf (cell 6 blank) and bobot 0.
       const ungradedRow = (kode: string) =>
-        '<tr><td>1</td><td>' + kode + '</td><td>MK</td><td>TIU</td><td>TI</td>' +
+        '<tr><td>1</td><td>' +
+        kode +
+        '</td><td>MK</td><td>TIU</td><td>TI</td>' +
         '<td>3</td><td></td><td>0</td></tr>';
       const ungradedHtml = '<table>' + ungradedRow('U1') + '</table>';
       let khsCalls = 0;
       (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
         const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard')) return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, status: 200 };
+        if (url.includes('/pages/mhs/dashboard'))
+          return {
+            ok: true,
+            url,
+            headers: { get: () => null },
+            text: async () => profileHtml,
+            status: 200,
+          };
         if (url.includes('/get_khs')) {
           khsCalls++;
           // Semesters 1-4 graded (identical), semester 5 ungraded.
           const body = khsCalls <= 4 ? gradedHtml : ungradedHtml;
-          return { ok: true, url, headers: { get: () => null }, text: async () => body, status: 200 };
+          return {
+            ok: true,
+            url,
+            headers: { get: () => null },
+            text: async () => body,
+            status: 200,
+          };
         }
-        if (url.includes('/get_total_sks')) return { ok: true, url, headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) }, text: async () => JSON.stringify({ total_sks: 3 }), json: async () => ({ total_sks: 3 }), status: 200 };
+        if (url.includes('/get_total_sks'))
+          return {
+            ok: true,
+            url,
+            headers: {
+              get: (k: string) =>
+                k.toLowerCase() === 'content-type' ? 'application/json' : null,
+            },
+            text: async () => JSON.stringify({ total_sks: 3 }),
+            json: async () => ({ total_sks: 3 }),
+            status: 200,
+          };
         throw new Error('unmocked: ' + url);
       });
 
@@ -676,9 +833,34 @@ describe('SiapService', () => {
         '</div></html>';
       (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
         const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard')) return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, status: 200 };
-        if (url.includes('/get_khs')) return { ok: true, url, headers: { get: () => null }, text: async () => footerHtml, status: 200 };
-        if (url.includes('/get_total_sks')) return { ok: true, url, headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) }, text: async () => JSON.stringify({ total_sks: 20 }), json: async () => ({ total_sks: 20 }), status: 200 };
+        if (url.includes('/pages/mhs/dashboard'))
+          return {
+            ok: true,
+            url,
+            headers: { get: () => null },
+            text: async () => profileHtml,
+            status: 200,
+          };
+        if (url.includes('/get_khs'))
+          return {
+            ok: true,
+            url,
+            headers: { get: () => null },
+            text: async () => footerHtml,
+            status: 200,
+          };
+        if (url.includes('/get_total_sks'))
+          return {
+            ok: true,
+            url,
+            headers: {
+              get: (k: string) =>
+                k.toLowerCase() === 'content-type' ? 'application/json' : null,
+            },
+            text: async () => JSON.stringify({ total_sks: 20 }),
+            json: async () => ({ total_sks: 20 }),
+            status: 200,
+          };
         throw new Error('unmocked: ' + url);
       });
 
@@ -690,16 +872,43 @@ describe('SiapService', () => {
       // No IP. Kumulatif block — must fall back to the server-side aggregate over
       // graded semesters (so a SIAP layout change never empties the IPK card).
       const row = (bobot: number) =>
-        '<tr><td>1</td><td>K</td><td>MK</td><td>TIU</td><td>TI</td><td>3</td><td>A</td><td>' + bobot + '</td></tr>';
+        '<tr><td>1</td><td>K</td><td>MK</td><td>TIU</td><td>TI</td><td>3</td><td>A</td><td>' +
+        bobot +
+        '</td></tr>';
       const gradedHtml = '<table>' + row(4) + '</table>'; // no footer summary table
       const profileHtml =
         '<html><div id="tabmhs_profile"><b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
         '<p class="text-muted">2024/2025 Genap</p></div></html>';
       (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
         const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard')) return { ok: true, url, headers: { get: () => null }, text: async () => profileHtml, status: 200 };
-        if (url.includes('/get_khs')) return { ok: true, url, headers: { get: () => null }, text: async () => gradedHtml, status: 200 };
-        if (url.includes('/get_total_sks')) return { ok: true, url, headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) }, text: async () => JSON.stringify({ total_sks: 3 }), json: async () => ({ total_sks: 3 }), status: 200 };
+        if (url.includes('/pages/mhs/dashboard'))
+          return {
+            ok: true,
+            url,
+            headers: { get: () => null },
+            text: async () => profileHtml,
+            status: 200,
+          };
+        if (url.includes('/get_khs'))
+          return {
+            ok: true,
+            url,
+            headers: { get: () => null },
+            text: async () => gradedHtml,
+            status: 200,
+          };
+        if (url.includes('/get_total_sks'))
+          return {
+            ok: true,
+            url,
+            headers: {
+              get: (k: string) =>
+                k.toLowerCase() === 'content-type' ? 'application/json' : null,
+            },
+            text: async () => JSON.stringify({ total_sks: 3 }),
+            json: async () => ({ total_sks: 3 }),
+            status: 200,
+          };
         throw new Error('unmocked: ' + url);
       });
 

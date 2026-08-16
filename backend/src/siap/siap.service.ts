@@ -1,4 +1,10 @@
-import { HttpException, HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { DataCache } from '../cache/data-cache';
 
 export interface SiapSessionCheck {
@@ -51,7 +57,12 @@ export interface SiapKhsSemester {
   semester: string;
   ip: number;
   totalSks: number;
-  nilai: Array<{ mataKuliah: string; sks: number; nilaiHuruf: string; bobot?: number }>;
+  nilai: Array<{
+    mataKuliah: string;
+    sks: number;
+    nilaiHuruf: string;
+    bobot?: number;
+  }>;
 }
 
 export interface SiapKhs {
@@ -99,7 +110,6 @@ interface SiapJadwalUpstream {
   uuid_pertemuan?: string;
 }
 
-
 /** Satu baris catatan kehadiran per pertemuan (di-parse dari `get_absen.html`). */
 export interface SiapKehadiranRow {
   pertemuanKe: string; // kolom "Pertemuan ke-"
@@ -125,7 +135,6 @@ export interface SiapKehadiran {
 }
 
 @Injectable()
-
 export class SiapService {
   private readonly logger = new Logger(SiapService.name);
   constructor(@Optional() private readonly cache?: DataCache) {}
@@ -150,7 +159,8 @@ export class SiapService {
     if (!res.ok) return { valid: false, reason: 'stale' };
     if (/\/login\//i.test(res.url)) return { valid: false, reason: 'stale' };
     const html = await res.text();
-    if (!html.includes(this.authMarker)) return { valid: false, reason: 'stale' };
+    if (!html.includes(this.authMarker))
+      return { valid: false, reason: 'stale' };
     return { valid: true, reason: 'ok' };
   }
 
@@ -159,7 +169,9 @@ export class SiapService {
    * URL, or throws (e.g. redirect loop) maps to this 401 so the controller
    * surfaces a friendly "login ulang" prompt instead of a raw error.
    */
-  private stale(message = 'Session SIAP expired — silakan login ulang via SSO'): HttpException {
+  private stale(
+    message = 'Session SIAP expired — silakan login ulang via SSO',
+  ): HttpException {
     return new HttpException({ message }, HttpStatus.UNAUTHORIZED);
   }
 
@@ -196,7 +208,10 @@ export class SiapService {
    * bad parse) maps to the uniform `stale()` 401 so the SPA shows a clean
    * "silakan login ulang" prompt instead.
    */
-  private async siapFetchJson<T = unknown>(url: string, init?: RequestInit): Promise<T> {
+  private async siapFetchJson<T = unknown>(
+    url: string,
+    init?: RequestInit,
+  ): Promise<T> {
     let res: Response;
     try {
       res = await fetch(url, init);
@@ -233,10 +248,20 @@ export class SiapService {
       // A `text/html` body that is not parseable JSON is the classic stale-session
       // shape (the login page rendered in place) → uniform stale 401.
       if (/text\/html/i.test(contentType)) {
-        this.logStale(url, res, 'html-content-type', `${contentType} body=${preview}`);
+        this.logStale(
+          url,
+          res,
+          'html-content-type',
+          `${contentType} body=${preview}`,
+        );
         throw this.stale();
       }
-      this.logStale(url, res, 'malformed-json', `${contentType} body=${preview}`);
+      this.logStale(
+        url,
+        res,
+        'malformed-json',
+        `${contentType} body=${preview}`,
+      );
       throw this.stale();
     }
   }
@@ -249,10 +274,13 @@ export class SiapService {
    */
   private async readHtmlPreview(res: Response | null): Promise<string> {
     try {
-      if (!res || typeof (res as Response).clone !== 'function') return 'no-preview';
+      if (!res || typeof res.clone !== 'function') return 'no-preview';
       const body = await res.clone().text();
       return this.truncate(
-        body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+        body
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
         160,
       );
     } catch {
@@ -288,7 +316,9 @@ export class SiapService {
   private pickProfileValue(html: string, label: string): string | undefined {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const match = html.match(
-      new RegExp(`<b>${escaped}<\\/b>:<\\/div>\\s*<div class="col-sm-9">([^<]*)<\\/div>`),
+      new RegExp(
+        `<b>${escaped}<\\/b>:<\\/div>\\s*<div class="col-sm-9">([^<]*)<\\/div>`,
+      ),
     );
     return match ? match[1].trim() : undefined;
   }
@@ -299,10 +329,15 @@ export class SiapService {
    * and whitespace collapses so a multiline address becomes readable single
    * spaces.
    */
-  private pickProfileValueHtml(html: string, label: string): string | undefined {
+  private pickProfileValueHtml(
+    html: string,
+    label: string,
+  ): string | undefined {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const match = html.match(
-      new RegExp(`<b>${escaped}<\\/b>:<\\/div>\\s*<div class="col-sm-9">([\\s\\S]*?)<\\/div>`),
+      new RegExp(
+        `<b>${escaped}<\\/b>:<\\/div>\\s*<div class="col-sm-9">([\\s\\S]*?)<\\/div>`,
+      ),
     );
     if (!match) return undefined;
     return match[1]
@@ -323,7 +358,12 @@ export class SiapService {
     const re = /<td[^>]*>([\s\S]*?)<\/td>/gi;
     let m: RegExpExecArray | null;
     while ((m = re.exec(row)) !== null) {
-      cells.push(m[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim());
+      cells.push(
+        m[1]
+          .replace(/<[^>]*>/g, '')
+          .replace(/\s+/g, ' ')
+          .trim(),
+      );
     }
     return cells;
   }
@@ -362,7 +402,8 @@ export class SiapService {
     const tab = this.profileSection(html);
 
     // Status badge: <span class="badge badge-success">AKTIF</span>
-    const status = tab.match(/<span class="badge[^"]*">([^<]+)<\/span>/)?.[1]?.trim() ?? '';
+    const status =
+      tab.match(/<span class="badge[^"]*">([^<]+)<\/span>/)?.[1]?.trim() ?? '';
     // Semester label: <p class="text-muted">2026/2027 Ganjil</p>
     const semesterBerjalan =
       tab.match(/<p class="text-muted">([^<]+)<\/p>/)?.[1]?.trim() ?? undefined;
@@ -373,8 +414,10 @@ export class SiapService {
     // Biodata detail (from #tabmhs_profile). <img src="..." alt="Foto"> and the
     // nama-ibu value live behind a click-to-show anchor:
     // <span id="web_span_mn" style="display:none;">IBU UJI</span>
-    const fotoUrl = tab.match(/<img src="([^"]+)" alt="Foto"/)?.[1] ?? undefined;
-    const namaIbu = tab.match(/id="web_span_mn"[^>]*>([^<]+)</)?.[1]?.trim() ?? undefined;
+    const fotoUrl =
+      tab.match(/<img src="([^"]+)" alt="Foto"/)?.[1] ?? undefined;
+    const namaIbu =
+      tab.match(/id="web_span_mn"[^>]*>([^<]+)</)?.[1]?.trim() ?? undefined;
 
     const profile: SiapProfile = {
       nama: this.pickProfileValue(tab, 'Nama Lengkap') ?? '',
@@ -398,7 +441,8 @@ export class SiapService {
       alamatAsal: this.pickProfileValueHtml(tab, 'Alamat Asal'),
       alamatSekarang: this.pickProfileValueHtml(tab, 'Alamat Sekarang'),
     };
-    if (userSub && this.cache) await this.cache.set(`${userSub}:siap:profile`, profile);
+    if (userSub && this.cache)
+      await this.cache.set(`${userSub}:siap:profile`, profile);
     return profile;
   }
 
@@ -412,10 +456,13 @@ export class SiapService {
       const hit = await this.cache.get<SiapIrs>(`${userSub}:siap:irs`);
       if (hit) return hit;
     }
-    const data = await this.siapFetchJson<{ total_sks?: number | string; html?: string }>(
-      `${this.baseUrl}/irs/mhs/irs/ajax_irs_diambil`,
-      { headers: { Cookie: siapCookie }, redirect: 'follow' },
-    );
+    const data = await this.siapFetchJson<{
+      total_sks?: number | string;
+      html?: string;
+    }>(`${this.baseUrl}/irs/mhs/irs/ajax_irs_diambil`, {
+      headers: { Cookie: siapCookie },
+      redirect: 'follow',
+    });
 
     const mataKuliah = this.dataRows(data.html ?? '').map((row) => {
       const c = this.rowCells(row);
@@ -517,10 +564,15 @@ export class SiapService {
    * semester label (e.g. "2026/2027 Ganjil" with angkatan 2024 → 5). Fallback:
    * from the current calendar date (Aug+ = Ganjil of that year).
    */
-  private currentSemesterCount(angkatan: string, label: string | undefined): number {
+  private currentSemesterCount(
+    angkatan: string,
+    label: string | undefined,
+  ): number {
     const m = label?.match(/(\d{4})\/(\d{4})\s+(Ganjil|Genap)/i);
     if (m) {
-      const count = (Number(m[2]) - Number(angkatan)) * 2 - (m[3].toLowerCase() === 'ganjil' ? 1 : 0);
+      const count =
+        (Number(m[2]) - Number(angkatan)) * 2 -
+        (m[3].toLowerCase() === 'ganjil' ? 1 : 0);
       return Math.max(1, count);
     }
     const year = new Date().getFullYear();
@@ -540,7 +592,10 @@ export class SiapService {
       if (hit) return hit;
     }
     const profile = await this.getProfile(siapCookie);
-    const count = this.currentSemesterCount(profile.angkatan, profile.semesterBerjalan);
+    const count = this.currentSemesterCount(
+      profile.angkatan,
+      profile.semesterBerjalan,
+    );
 
     const semesters: SiapKhsSemester[] = [];
     let totalWeighted = 0;
@@ -558,14 +613,17 @@ export class SiapService {
       const smtWithinYear = smt % 2 === 1 ? 1 : 2;
       const body = `ta=${ta}&smt_ambil=${smt}&smt=${smtWithinYear}`;
 
-      const khsHtml = await this.siapFetch(`${this.baseUrl}/irs/mhs/irs/get_khs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Cookie: siapCookie,
+      const khsHtml = await this.siapFetch(
+        `${this.baseUrl}/irs/mhs/irs/get_khs`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Cookie: siapCookie,
+          },
+          body,
         },
-        body,
-      });
+      );
 
       const nilai = this.parseKhsNilai(khsHtml);
       const semesterSks = await this.fetchTotalSks(siapCookie, body, khsHtml);
@@ -576,7 +634,8 @@ export class SiapService {
       // into the IPK accumulates error (B11) — e.g. 3.6667→3.67 then ×300
       // drifts the cumulative IPK by a cent.
       const rawIp = nilai.length
-        ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) / nilai.reduce((s, n) => s + n.sks, 0)
+        ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
+          nilai.reduce((s, n) => s + n.sks, 0)
         : 0;
 
       semesters.push({
@@ -597,8 +656,11 @@ export class SiapService {
       }
     }
 
-    const officialIpk = lastKhsHtml ? this.parseKumulatifIpk(lastKhsHtml) : undefined;
-    const ipk = officialIpk ?? (totalSks > 0 ? this.round(totalWeighted / totalSks) : 0);
+    const officialIpk = lastKhsHtml
+      ? this.parseKumulatifIpk(lastKhsHtml)
+      : undefined;
+    const ipk =
+      officialIpk ?? (totalSks > 0 ? this.round(totalWeighted / totalSks) : 0);
     const khs: SiapKhs = { ipk, semesters };
     if (userSub && this.cache) await this.cache.set(`${userSub}:siap:khs`, khs);
     return khs;
@@ -618,9 +680,14 @@ export class SiapService {
    * to nothing. Results are deduped by kode (a course code repeats across
    * semesters; the first approved occurrence wins).
    */
-  async getLecturers(siapCookie: string): Promise<{ kode: string; dosen: string }[]> {
+  async getLecturers(
+    siapCookie: string,
+  ): Promise<{ kode: string; dosen: string }[]> {
     const profile = await this.getProfile(siapCookie);
-    const count = this.currentSemesterCount(profile.angkatan, profile.semesterBerjalan);
+    const count = this.currentSemesterCount(
+      profile.angkatan,
+      profile.semesterBerjalan,
+    );
 
     const entries = new Map<string, string>();
     const results = await Promise.allSettled(
@@ -689,21 +756,24 @@ export class SiapService {
    * `/ajax/unread`; the spike must confirm whether it marks read or unread, and
    * the route name/action must match that semantics (see spec §1).
    */
-  async markNotification(siapCookie: string, id: string): Promise<{ message: string }> {
-    const data = await this.siapFetchJson<{ status?: string; message?: string }>(
-      `${this.baseUrl}/pages/mhs/dashboard/ajax/unread`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Cookie: siapCookie,
-          // Same CI is_ajax_request() guard as getNotifications.
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        body: `id=${encodeURIComponent(id)}`,
-        redirect: 'follow',
+  async markNotification(
+    siapCookie: string,
+    id: string,
+  ): Promise<{ message: string }> {
+    const data = await this.siapFetchJson<{
+      status?: string;
+      message?: string;
+    }>(`${this.baseUrl}/pages/mhs/dashboard/ajax/unread`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: siapCookie,
+        // Same CI is_ajax_request() guard as getNotifications.
+        'X-Requested-With': 'XMLHttpRequest',
       },
-    );
+      body: `id=${encodeURIComponent(id)}`,
+      redirect: 'follow',
+    });
     return { message: data?.message ?? 'ok' };
   }
 
@@ -754,7 +824,10 @@ export class SiapService {
    * dikelompokkan per section (Absensi Kuliah / Absensi Ujian). `id` =
    * `id_trx_pertemuan` dari `get_jadwal`. Di-parse ke SiapKehadiran.
    */
-  async getKehadiran(siapCookie: string, pertemuanId: string): Promise<SiapKehadiran> {
+  async getKehadiran(
+    siapCookie: string,
+    pertemuanId: string,
+  ): Promise<SiapKehadiran> {
     const url = `${this.baseUrl}/jadwal_mahasiswa/mhs/jadwal/get_absen`;
     const html = await this.siapFetch(url, {
       method: 'POST',
@@ -806,7 +879,11 @@ export class SiapService {
         let td: RegExpExecArray | null;
         while ((td = tdRe.exec(tr)) !== null) tds.push(td[1]);
         if (tds.length < 7) continue;
-        const clean = (c: string) => c.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const clean = (c: string) =>
+          c
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
         const dtParts = tds[1].split(/<br\s*\/?>/i);
         rows.push({
           pertemuanKe: clean(tds[2]),
@@ -838,7 +915,10 @@ export class SiapService {
    * invalid-token 400/500 is NOT a stale session — it must be passed through.
    * Only a login-redirect / non-JSON response is treated as stale 401.
    */
-  async markKehadiran(siapCookie: string, token: string): Promise<{ status: string; message?: string }> {
+  async markKehadiran(
+    siapCookie: string,
+    token: string,
+  ): Promise<{ status: string; message?: string }> {
     const url = `${this.baseUrl}/master_perkuliahan/mhs/absensi/process/`;
     let res: Response;
     try {
@@ -871,7 +951,10 @@ export class SiapService {
       throw this.stale();
     }
     // Pass through the upstream status + message (success or invalid-token error).
-    return { status: json?.status ?? (res.ok ? 'success' : 'error'), message: json?.message };
+    return {
+      status: json?.status ?? (res.ok ? 'success' : 'error'),
+      message: json?.message,
+    };
   }
 
   /** Parse the 8-column IRS table: KODE = col 1, NAMA DOSEN = col 7. */
@@ -889,7 +972,10 @@ export class SiapService {
       while ((td = tdRe.exec(m[1])) !== null) tds.push(td[1]);
       // Column 1 = KODE (e.g. MIK1624105); column 7 = NAMA DOSEN (may be empty,
       // multiple names, or whitespace). Only keep rows with a real kode + dosen.
-      const kode = (tds[1] ?? '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      const kode = (tds[1] ?? '')
+        .replace(/<[^>]*>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
       const dosen = (tds[7] ?? '')
         .replace(/<br\s*\/?>/gi, '|') // collapse <br> into a pipe separator
         .replace(/<[^>]*>/g, ' ')

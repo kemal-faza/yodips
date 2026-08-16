@@ -22,10 +22,10 @@ export interface ProbeResponse {
 
 async function readPreview(res: Response): Promise<string> {
   const buf = new Uint8Array(await res.clone().arrayBuffer());
-  const text = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
   return text
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
     .slice(0, 600);
 }
@@ -40,28 +40,31 @@ async function readPreview(res: Response): Promise<string> {
  */
 export function listCandidateUrls(): string[] {
   return [
-    'https://siap.undip.ac.id/jadwal',
-    'https://siap.undip.ac.id/jadwal/mhs',
-    'https://siap.undip.ac.id/jadwal/kuliah',
-    'https://siap.undip.ac.id/jadwal/mhs/jadwal',
-    'https://siap.undip.ac.id/irs/mhs/jadwal',
-    'https://siap.undip.ac.id/kehadiran',
-    'https://siap.undip.ac.id/absensi',
-    'https://siap.undip.ac.id/presensi/mhs',
-    'https://siap.undip.ac.id/absensi/mhs',
+    "https://siap.undip.ac.id/jadwal",
+    "https://siap.undip.ac.id/jadwal/mhs",
+    "https://siap.undip.ac.id/jadwal/kuliah",
+    "https://siap.undip.ac.id/jadwal/mhs/jadwal",
+    "https://siap.undip.ac.id/irs/mhs/jadwal",
+    "https://siap.undip.ac.id/kehadiran",
+    "https://siap.undip.ac.id/absensi",
+    "https://siap.undip.ac.id/presensi/mhs",
+    "https://siap.undip.ac.id/absensi/mhs",
   ];
 }
 
 /** Probe satu URL, dump preview. */
-export async function probe(url: string, init: RequestInit): Promise<ProbeResponse> {
-  const cookie = process.env.SIAP_SESSION_COOKIE ?? '';
+export async function probe(
+  url: string,
+  init: RequestInit,
+): Promise<ProbeResponse> {
+  const cookie = process.env.SIAP_SESSION_COOKIE ?? "";
   let res: Response;
   try {
     res = await fetch(url, {
       ...init,
       headers: {
         Cookie: cookie,
-        'X-Requested-With': 'XMLHttpRequest',
+        "X-Requested-With": "XMLHttpRequest",
         ...(init.headers ?? {}),
       },
     });
@@ -75,14 +78,14 @@ export async function probe(url: string, init: RequestInit): Promise<ProbeRespon
       bytes: 0,
     };
   }
-  const isLoginRedirect = /\/login(?:\/|$)/i.test(res.url ?? '');
+  const isLoginRedirect = /\/login(?:\/|$)/i.test(res.url ?? "");
   return {
     url,
     status: res.status,
-    contentType: res.headers.get('content-type'),
+    contentType: res.headers.get("content-type"),
     preview: await readPreview(res),
     isLoginRedirect,
-    bytes: Number(res.headers.get('content-length') ?? 0),
+    bytes: Number(res.headers.get("content-length") ?? 0),
   };
 }
 
@@ -90,13 +93,13 @@ export async function probe(url: string, init: RequestInit): Promise<ProbeRespon
 declare const console: { log(...args: unknown[]): void };
 
 if (require.main === module) {
-  const category = process.argv[2] ?? 'jadwal';
+  const category = process.argv[2] ?? "jadwal";
   const filter = (() => {
     switch (category) {
-      case 'kehadiran':
-      case 'absensi':
+      case "kehadiran":
+      case "absensi":
         return /(kehadiran|absensi|presensi)/;
-      case 'qr':
+      case "qr":
         return /absensi/;
       default:
         return /jadwal/;
@@ -104,9 +107,9 @@ if (require.main === module) {
   })();
   (async () => {
     for (const u of listCandidateUrls().filter((u) => filter.test(u))) {
-      const r = await probe(u, { method: 'GET' });
+      const r = await probe(u, { method: "GET" });
       console.log(
-        `[${r.status}]${r.isLoginRedirect ? ' LOGIN' : ''} ${u}\n` +
+        `[${r.status}]${r.isLoginRedirect ? " LOGIN" : ""} ${u}\n` +
           `    ct=${r.contentType} bytes=${r.bytes} preview=${r.preview}\n`,
       );
     }
