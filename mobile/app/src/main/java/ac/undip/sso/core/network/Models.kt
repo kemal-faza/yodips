@@ -1,0 +1,105 @@
+package ac.undip.sso.core.network
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+/**
+ * Serializable DTOs mirroring the backend JSON contracts (camelCase).
+ * All optional fields carry defaults so a missing key never crashes parsing.
+ * `ignoreUnknownKeys` is enabled in ApiClient's Json so extra backend fields
+ * are tolerated.
+ */
+
+@Serializable
+data class SiapProfile(
+    val nama: String = "",
+    val nim: String = "",
+    val prodi: String = "",
+    val fakultas: String = "",
+    val angkatan: String = "",
+    val jalurMasuk: String? = null,
+    val semesterBerjalan: String? = null,
+    val status: String = "",
+    val sksTempuh: Double? = null,
+    val sksLulus: Double? = null,
+    val ipk: Double? = null,
+    val fotoUrl: String? = null,
+)
+
+@Serializable
+data class SiapNilai(
+    val mataKuliah: String = "",
+    val sks: Double = 0.0,
+    val nilaiHuruf: String = "",
+    val bobot: Double? = null,
+)
+
+@Serializable
+data class SiapKhsSemester(
+    val semester: String = "",
+    val ip: Double = 0.0,
+    val totalSks: Double = 0.0,
+    val nilai: List<SiapNilai> = emptyList(),
+)
+
+@Serializable
+data class SiapKhs(
+    val ipk: Double = 0.0,
+    val semesters: List<SiapKhsSemester> = emptyList(),
+)
+
+@Serializable
+data class SiapIrsMataKuliah(
+    val kode: String = "",
+    val nama: String = "",
+    val sks: Double = 0.0,
+    val kelas: String? = null,
+    val ruang: String? = null,
+    val jadwal: String? = null,
+    val dosen: String? = null,
+    @SerialName("status") val statusText: String = "",
+)
+
+@Serializable
+data class SiapIrs(
+    val semester: String = "",
+    val totalSks: Double = 0.0,
+    val mataKuliah: List<SiapIrsMataKuliah> = emptyList(),
+)
+
+@Serializable
+data class SiapJadwal(
+    val kode: String? = null,
+    val hari: String = "",
+    val matakuliah: String = "",
+    val ruang: String? = null,
+    val waktu: String = "",
+    val sks: Double = 0.0,
+)
+
+@Serializable
+data class KulonAssignment(
+    val id: Long = 0,
+    val name: String = "",
+    val module: String = "",
+    val eventType: String = "",
+    val duedate: Long = 0,
+    val overdue: Boolean = false,
+    val course: String = "",
+    val courseId: Long = 0,
+    val assignmentId: Long = 0,
+    val courseModuleId: Long = 0,
+    val submissionStatus: String? = null,
+)
+
+/** Body for `POST /api/siap/kehadiran` (QR absensi proxy). */
+@Serializable
+data class KehadiranRequest(
+    val token: String,
+)
+
+@Serializable
+data class KehadiranResponse(
+    val status: String = "",
+    val message: String? = null,
+)

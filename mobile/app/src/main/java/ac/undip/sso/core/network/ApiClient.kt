@@ -1,11 +1,14 @@
 package ac.undip.sso.core.network
 
+import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import retrofit2.Retrofit
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -16,8 +19,20 @@ import java.util.concurrent.TimeUnit
  */
 object ApiClient {
     const val BASE_URL = "http://10.0.2.2:3000"
+    private const val API_BASE = "$BASE_URL/"
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
+
+    /** Latest JWT — set by the login flow after handoff / cleared on logout. */
+    @Volatile var authToken: String? = null
+
+    // Lenient so unknown/optional upstream fields never crash data screens.
+    private val apiJson =
+        Json {
+            ignoreUnknownKeys = true
+            coerceInputValues = true
+            isLenient = true
+        }
 
     // Long timeouts: the handoff can involve upstream SSO/Kulon/SIAP round-trips.
     private val client =
@@ -77,4 +92,36 @@ object ApiClient {
     }
 
     private fun jsonEscape(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
+
+    /**
+     * Retrofit-backed client for the JWT-guarded data routes. The OkHttp
+     * interceptor injects `Authorization: Bearer <authToken>` so callers do not
+     * attach the header themselves.
+     */
+    val api: SsoApi by lazy {
+        val http =
+            client
+                .newBuilder()
+                .addInterceptor { chain ->
+                    val t = authToken
+                    val request =
+                        if (t.isNullOrBlank()) {
+                            chain.request()
+                        } else {
+                            chain
+                                .request()
+                                .newBuilder()
+                                .header("Authorization", "Bearer $t")
+                                .build()
+                        }
+                    chain.proceed(request)
+                }.build()
+        Retrofit
+            .Builder()
+            .baseUrl(API_BASE)
+            .client(http)
+            .addConverterFactory(apiJson.asConverterFactory("application/json".toMediaType()))
+            .build()
+            .create(SsoApi::class.java)
+    }
 }
