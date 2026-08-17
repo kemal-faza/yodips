@@ -54,14 +54,7 @@ object ApiClient {
         siapCookie: String?,
         kulonCookie: String?,
     ): HandoffResult {
-        val body =
-            buildString {
-                append("{")
-                append("\"capturedAt\":").append(System.currentTimeMillis() / 1000)
-                if (siapCookie != null) append(",\"siapCookie\":").append(jsonEscape(siapCookie))
-                if (kulonCookie != null) append(",\"kulonCookie\":").append(jsonEscape(kulonCookie))
-                append("}")
-            }
+        val body = handoffBody(siapCookie, kulonCookie)
         val req =
             Request
                 .Builder()
@@ -90,8 +83,6 @@ object ApiClient {
             }
         }
     }
-
-    private fun jsonEscape(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
 
     /**
      * Retrofit-backed client for the JWT-guarded data routes. The OkHttp

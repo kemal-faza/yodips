@@ -2,6 +2,7 @@ package ac.undip.sso.core.network
 
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -54,5 +55,18 @@ class ModelsTest {
         val irs = lenientJson.decodeFromString<SiapIrs>(s)
         assertEquals(21.0, irs.totalSks, 0.001)
         assertEquals("disetujui", irs.mataKuliah[0].statusText)
+    }
+
+    @Test
+    fun `handoff body quotes cookie values as valid JSON`() {
+        val one = handoffBody("abc123def", null)
+        lenientJson.parseToJsonElement(one) // must be parseable (was the regression)
+        assertTrue(one.contains("\"siapCookie\":\"abc123def\""))
+        assertFalse(one.contains("kulonCookie"))
+
+        val both = handoffBody("a\"b", "k\\v")
+        lenientJson.parseToJsonElement(both)
+        assertTrue(both.contains("\"siapCookie\":\"a\\\"b\""))
+        assertTrue(both.contains("\"kulonCookie\""))
     }
 }
