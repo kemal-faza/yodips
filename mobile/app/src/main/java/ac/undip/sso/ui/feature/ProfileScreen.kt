@@ -3,6 +3,8 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.ThemeController
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,9 +18,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -30,8 +37,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 
 private data class PInfo(
     val label: String,
@@ -47,9 +57,22 @@ private data class PGroup(
 @Composable
 fun ProfileScreen(
     repo: SsoRepository,
+    themeController: ThemeController,
     onLogout: () -> Unit,
 ) {
-    FeatureScreen("Profil") {
+    val darkTheme = themeController.dark
+    FeatureScreen(
+        "Profil",
+        headerAction = {
+            IconButton(onClick = themeController::toggle) {
+                Icon(
+                    if (darkTheme) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+                    contentDescription = if (darkTheme) "Mode terang" else "Mode gelap",
+                    tint = accentForeground(),
+                )
+            }
+        },
+    ) {
         LoadableData(load = { repo.profile() }, emptyMessage = "Profil belum tersedia") { p ->
             ProfileContent(p, onLogout)
         }
@@ -117,7 +140,7 @@ private fun ProfileContent(
                     p.nama,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = accentForeground(),
                 )
                 if (!p.semesterBerjalan.isNullOrBlank()) {
                     Text(
@@ -164,9 +187,11 @@ private fun Avatar(p: SiapProfile) {
             .take(2)
             .joinToString("") { it.first().uppercase() }
             .ifBlank { "?" }
+    val photo = p.fotoUrl?.takeIf { it.isNotBlank() }
     Box(
         Modifier
             .size(88.dp)
+            .clip(CircleShape)
             .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
@@ -176,6 +201,16 @@ private fun Avatar(p: SiapProfile) {
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
+        // Loaded photo covers the initials (initial fallback stays visible beneath
+        // if the image fails or is missing).
+        if (photo != null) {
+            AsyncImage(
+                model = photo,
+                contentDescription = "Foto profil",
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
     }
 }
 
@@ -193,7 +228,7 @@ private fun FieldGroup(
                 group.name,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
+                color = accentForeground(),
             )
             Spacer(Modifier.height(8.dp))
             group.rows.forEach { row ->
