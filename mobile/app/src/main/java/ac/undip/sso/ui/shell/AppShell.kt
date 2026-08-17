@@ -90,7 +90,7 @@ fun AppShell(
                 )
             }
             composable(Tab.Tasks.route) { TasksScreen(repo) }
-            composable(Tab.Scan.route) { ScanScreen() }
+            composable(Tab.Scan.route) { ScanScreen(repo) }
             composable(Tab.Schedule.route) { ScheduleScreen(repo) }
             composable(Tab.Profile.route) { ProfileScreen(repo, themeController, onLogout = onLogout) }
             composable("khs") { KhsScreen(repo, onBack = { navController.popBackStack() }) }
@@ -134,7 +134,7 @@ fun ShellBottomBar(
                         Box(
                             modifier =
                                 Modifier
-                                    .size(52.dp)
+                                    .size(56.dp)
                                     .background(color = Primary, shape = CircleShape)
                                     .border(4.dp, MaterialTheme.colorScheme.surface, CircleShape),
                             contentAlignment = Alignment.Center,
@@ -143,6 +143,7 @@ fun ShellBottomBar(
                                 Icons.Filled.QrCodeScanner,
                                 contentDescription = "Scan",
                                 tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(30.dp),
                             )
                         }
                     }
