@@ -35,6 +35,7 @@ fun FeatureScreen(
     title: String,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    headerAction: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -42,7 +43,7 @@ fun FeatureScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        CompactFeatureBar(title, onBack)
+        CompactFeatureBar(title, onBack, headerAction)
         Box(Modifier.weight(1f).fillMaxWidth()) { content() }
     }
 }
@@ -54,6 +55,7 @@ fun FeatureScreen(
 private fun CompactFeatureBar(
     title: String,
     onBack: (() -> Unit)?,
+    headerAction: (@Composable () -> Unit)?,
 ) {
     Box(
         Modifier
@@ -75,5 +77,8 @@ private fun CompactFeatureBar(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.align(Alignment.Center),
         )
+        if (headerAction != null) {
+            Box(Modifier.align(Alignment.CenterEnd).padding(end = 4.dp)) { headerAction() }
+        }
     }
 }

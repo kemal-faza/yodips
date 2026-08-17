@@ -2,6 +2,7 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -58,7 +59,7 @@ fun KhsScreen(
                                     sem.semester,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = accentForeground(),
                                 )
                                 Text("IP ${sem.ip}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             }

@@ -5,6 +5,7 @@ import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -62,7 +63,7 @@ private fun DashboardContent(
             if (profile.nama.isBlank()) "Selamat datang" else "Halo, ${profile.nama.split(' ').firstOrNull() ?: profile.nama}!",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
+            color = accentForeground(),
         )
         Text(
             "${profile.prodi} · ${profile.nim}",
@@ -100,7 +101,7 @@ private fun MenuRow(items: List<MenuSpec>) {
         items.forEach { spec ->
             Card(onClick = spec.onClick, modifier = Modifier.weight(1f)) {
                 Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(spec.icon, contentDescription = spec.label, tint = MaterialTheme.colorScheme.primary)
+                    Icon(spec.icon, contentDescription = spec.label, tint = accentForeground())
                     Spacer(Modifier.height(4.dp))
                     Text(spec.label, style = MaterialTheme.typography.labelMedium)
                 }
@@ -147,7 +148,7 @@ private fun UpcomingClasses(source: List<SiapJadwal>) {
                     Text(
                         if (j.hari.isBlank()) "—" else capitalizeDay(j.hari).take(3),
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = accentForeground(),
                     )
                 }
             }

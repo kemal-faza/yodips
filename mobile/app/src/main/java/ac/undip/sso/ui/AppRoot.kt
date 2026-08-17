@@ -4,6 +4,7 @@ import ac.undip.sso.core.network.ApiClient
 import ac.undip.sso.core.session.TokenStore
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
+import ac.undip.sso.ui.theme.ThemeController
 import android.webkit.CookieManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,7 +19,10 @@ import kotlinx.coroutines.launch
  * Top-level: no-token → Login (WebView handoff); token → AppShell (5-tab).
  */
 @Composable
-fun AppRoot(tokenStore: TokenStore) {
+fun AppRoot(
+    tokenStore: TokenStore,
+    themeController: ThemeController,
+) {
     var hasToken by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(false) }
     // Hoisted to the root so its coroutines are NOT cancelled when the AppShell
@@ -46,7 +50,10 @@ fun AppRoot(tokenStore: TokenStore) {
             runCatching { CookieManager.getInstance().removeAllCookies(null) }
             hasToken = false
         }
-        AppShell(onLogout = onLogout)
+        AppShell(
+            themeController = themeController,
+            onLogout = onLogout,
+        )
     } else {
         LoginScreen(
             onLoggedIn = { hasToken = true },

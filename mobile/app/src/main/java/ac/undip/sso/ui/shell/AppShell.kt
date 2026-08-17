@@ -9,6 +9,8 @@ import ac.undip.sso.ui.feature.ScanScreen
 import ac.undip.sso.ui.feature.ScheduleScreen
 import ac.undip.sso.ui.feature.TasksScreen
 import ac.undip.sso.ui.theme.Primary
+import ac.undip.sso.ui.theme.ThemeController
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -59,7 +61,10 @@ enum class Tab(
 }
 
 @Composable
-fun AppShell(onLogout: () -> Unit = {}) {
+fun AppShell(
+    themeController: ThemeController,
+    onLogout: () -> Unit = {},
+) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -87,7 +92,7 @@ fun AppShell(onLogout: () -> Unit = {}) {
             composable(Tab.Tasks.route) { TasksScreen(repo) }
             composable(Tab.Scan.route) { ScanScreen() }
             composable(Tab.Schedule.route) { ScheduleScreen(repo) }
-            composable(Tab.Profile.route) { ProfileScreen(repo, onLogout = onLogout) }
+            composable(Tab.Profile.route) { ProfileScreen(repo, themeController, onLogout = onLogout) }
             composable("khs") { KhsScreen(repo, onBack = { navController.popBackStack() }) }
             composable("irs") { IrsScreen(repo, onBack = { navController.popBackStack() }) }
         }
@@ -150,8 +155,8 @@ fun ShellBottomBar(
                     label = { Text(tab.label) },
                     colors =
                         NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            selectedIconColor = accentForeground(),
+                            selectedTextColor = accentForeground(),
                             indicatorColor = MaterialTheme.colorScheme.surfaceVariant,
                         ),
                 )

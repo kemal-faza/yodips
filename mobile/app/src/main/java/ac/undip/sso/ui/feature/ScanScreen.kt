@@ -1,5 +1,6 @@
 package ac.undip.sso.ui.feature
 
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,7 +33,7 @@ fun ScanScreen() {
             Icon(
                 Icons.Filled.QrCodeScanner,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = accentForeground(),
                 modifier = Modifier.size(320.dp),
             )
             Spacer(Modifier.height(16.dp))

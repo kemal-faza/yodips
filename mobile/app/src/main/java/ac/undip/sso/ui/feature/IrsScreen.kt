@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapIrsMataKuliah
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -118,7 +119,7 @@ private fun MkCard(mk: SiapIrsMataKuliah) {
             Text(mk.kode, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(6.dp))
             if (!mk.kelas.isNullOrBlank()) {
-                Text("Kelas ${mk.kelas}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                Text("Kelas ${mk.kelas}", style = MaterialTheme.typography.bodySmall, color = accentForeground())
             }
             if (!mk.dosen.isNullOrBlank()) {
                 Text("Dosen: ${mk.dosen}", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
