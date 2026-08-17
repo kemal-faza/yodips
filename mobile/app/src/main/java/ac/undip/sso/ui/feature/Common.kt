@@ -2,6 +2,8 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.KulonAssignment
+import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.sksKumulatif
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -89,9 +93,9 @@ internal fun SectionHeader(
 }
 
 /**
- * Cumulative IPK + SKS cards sourced from the authoritative KHS endpoint
- * (profile.ipk / profile.sksLulus are unreliable/absent). Until KHS loads it
- * renders placeholders so the row keeps its size instead of popping in.
+ * Cumulative IPK/SKS cards sourced from the authoritative KHS + current-term
+ * IRS (profile.ipk / profile.sksLulus are unreliable/absent). Until loads
+ * complete it renders placeholders so the row keeps its size (no popping).
  */
 @Composable
 internal fun AcademicStats(
@@ -99,11 +103,44 @@ internal fun AcademicStats(
     modifier: Modifier = Modifier,
 ) {
     var attempt by remember { mutableIntStateOf(0) }
-    var result by remember { mutableStateOf<ApiResult<SiapKhs>?>(null) }
-    LaunchedEffect(attempt) { result = repo.khs() }
-    val data = (result as? ApiResult.Success)?.data
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        StatCard("IPK", formatIpk(data?.ipk), Modifier.weight(1f))
-        StatCard("SKS Kumulatif", formatSks(data?.sksKumulatif), Modifier.weight(1f))
+    var khs by remember { mutableStateOf<ApiResult<SiapKhs>?>(null) }
+    var irs by remember { mutableStateOf<ApiResult<SiapIrs>?>(null) }
+    LaunchedEffect(attempt) {
+        coroutineScope {
+            launch { khs = repo.khs() }
+            launch { irs = repo.irs() }
+        }
     }
+    val k = (khs as? ApiResult.Success)?.data
+    val i = (irs as? ApiResult.Success)?.data
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        StatCard("IPK", formatIpk(k?.ipk), Modifier.weight(1f))
+        StatCard("SKS Kumulatif", formatSks(k?.sksKumulatif), Modifier.weight(1f))
+        StatCard("SKS Semester", formatSks(i?.totalSks), Modifier.weight(1f))
+    }
+}
+
+/** Web Kulon bucket for a task — single source of truth for list grouping + counts. */
+internal enum class TaskBucket { NEED, DONE, LATE }
+
+internal fun taskBucket(a: KulonAssignment): TaskBucket {
+    val done = a.submissionStatus == "submitted" || a.submissionStatus == "graded"
+    return when {
+        done -> TaskBucket.DONE
+        a.overdue -> TaskBucket.LATE
+        else -> TaskBucket.NEED
+    }
+}
+
+internal fun taskBucketLabel(b: TaskBucket): String =
+    when (b) {
+        TaskBucket.NEED -> "Perlu dikerjakan"
+        TaskBucket.DONE -> "Sudah dikerjakan"
+        TaskBucket.LATE -> "Terlambat"
+    }
+
+internal fun taskCounts(tasks: List<KulonAssignment>): Map<TaskBucket, Int> {
+    val m = mutableMapOf(TaskBucket.NEED to 0, TaskBucket.DONE to 0, TaskBucket.LATE to 0)
+    tasks.forEach { m[taskBucket(it)] = m.getValue(taskBucket(it)) + 1 }
+    return m
 }

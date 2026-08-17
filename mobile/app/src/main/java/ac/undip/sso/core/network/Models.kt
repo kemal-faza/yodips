@@ -24,6 +24,16 @@ data class SiapProfile(
     val sksLulus: Double? = null,
     val ipk: Double? = null,
     val fotoUrl: String? = null,
+    val tempatLahir: String? = null,
+    val tanggalLahir: String? = null,
+    val nik: String? = null,
+    val namaIbu: String? = null,
+    val kodeKewarganegaraan: String? = null,
+    val nomorHp: String? = null,
+    val emailSso: String? = null,
+    val emailPribadi: String? = null,
+    val alamatAsal: String? = null,
+    val alamatSekarang: String? = null,
 )
 
 @Serializable

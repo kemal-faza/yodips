@@ -19,7 +19,7 @@ class ScheduleScreenTest {
     ) = SiapJadwal(hari = hari, matakuliah = matakuliah, waktu = waktu)
 
     @Test
-    fun `duplicate rows get unique keys - no LazyColumn key collision`() {
+    fun `same-day duplicate course rows collapse to one and keys stay unique`() {
         val jadwal =
             listOf(
                 row("senin", "Sistem Informasi", "09:40:00 s/d 12:10:00"),
@@ -32,10 +32,12 @@ class ScheduleScreenTest {
         val sections = scheduleSections(jadwal)
         val allKeys = sections.values.flatten().map { it.first }
 
-        // every key globally unique (the exact property LazyColumn requires)
+        // duplicate courses within a day are collapsed (3 senin -> 1, 2 jumat -> 1)
+        assertEquals(2, allKeys.size)
+        assertEquals(listOf("Sistem Informasi"), sections["senin"]!!.map { it.second.matakuliah })
+        assertEquals(listOf("Kewirausahaan"), sections["jumat"]!!.map { it.second.matakuliah })
+        // and the keys LazyColumn sees remain globally unique (no "Key was already used")
         assertEquals(allKeys.size, allKeys.toSet().size)
-        // nothing dropped
-        assertEquals(5, allKeys.size)
     }
 
     @Test

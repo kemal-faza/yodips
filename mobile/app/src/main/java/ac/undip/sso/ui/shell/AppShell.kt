@@ -20,9 +20,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.SpaceDashboard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -50,7 +50,7 @@ enum class Tab(
     val label: String,
     val icon: ImageVector,
 ) {
-    Dashboard("dashboard", "Dashboard", Icons.Filled.Home),
+    Dashboard("dashboard", "Dashboard", Icons.Filled.SpaceDashboard),
     Tasks("tasks", "Tugas", Icons.Filled.Checklist),
     Scan("scan", "Scan", Icons.Filled.QrCodeScanner),
     Schedule("schedule", "Jadwal", Icons.Filled.DateRange),
@@ -58,7 +58,7 @@ enum class Tab(
 }
 
 @Composable
-fun AppShell() {
+fun AppShell(onLogout: () -> Unit = {}) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -83,7 +83,7 @@ fun AppShell() {
             composable(Tab.Tasks.route) { TasksScreen(repo) }
             composable(Tab.Scan.route) { ScanScreen() }
             composable(Tab.Schedule.route) { ScheduleScreen(repo) }
-            composable(Tab.Profile.route) { ProfileScreen(repo, onOpenKhs = { navController.navigate("khs") }) }
+            composable(Tab.Profile.route) { ProfileScreen(repo, onOpenKhs = { navController.navigate("khs") }, onLogout = onLogout) }
             composable("khs") { KhsScreen(repo, onBack = { navController.popBackStack() }) }
             composable("irs") { IrsScreen(repo, onBack = { navController.popBackStack() }) }
         }

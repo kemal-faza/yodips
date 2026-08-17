@@ -92,4 +92,21 @@ class ModelsTest {
     fun `sksKumulatif is zero for empty khs`() {
         assertEquals(0.0, SiapKhs().sksKumulatif, 0.001)
     }
+
+    @Test
+    fun `parses SiapProfile personal fields from real backend shape`() {
+        val s =
+            """{"nama":"ANONIM UJI","nim":"24060121130000","fakultas":"SAINS DAN MATEMATIKA","prodi":"Informatika S1","angkatan":"2024","semesterBerjalan":"2026/2027 Ganjil","status":"AKTIF","tempatLahir":"KOTA UJI","tanggalLahir":"01 Januari 2000","nik":"000000 000000 0000","namaIbu":"IBU UJI","kodeKewarganegaraan":"ID","nomorHp":"080000000000","emailSso":"anonim.sso@students.undip.ac.id","emailPribadi":"anonim.pribadi@contoh.test","alamatAsal":"Jalan Uji","alamatSekarang":"Jl. Uji"}"""
+        val p = lenientJson.decodeFromString<SiapProfile>(s)
+        assertEquals("KOTA UJI", p.tempatLahir)
+        assertEquals("01 Januari 2000", p.tanggalLahir)
+        assertEquals("000000 000000 0000", p.nik)
+        assertEquals("IBU UJI", p.namaIbu)
+        assertEquals("ID", p.kodeKewarganegaraan)
+        assertEquals("080000000000", p.nomorHp)
+        assertEquals("anonim.sso@students.undip.ac.id", p.emailSso)
+        assertEquals("anonim.pribadi@contoh.test", p.emailPribadi)
+        assertEquals("Jalan Uji", p.alamatAsal)
+        assertEquals("Jl. Uji", p.alamatSekarang)
+    }
 }

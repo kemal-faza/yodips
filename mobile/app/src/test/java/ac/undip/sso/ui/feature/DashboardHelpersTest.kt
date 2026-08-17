@@ -1,11 +1,17 @@
 package ac.undip.sso.ui.feature
 
+import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.SiapJadwal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DashboardHelpersTest {
+    private fun task(
+        overdue: Boolean = false,
+        submissionStatus: String? = null,
+    ) = KulonAssignment(overdue = overdue, submissionStatus = submissionStatus)
+
     private fun row(
         hari: String,
         matakuliah: String,
@@ -62,10 +68,42 @@ class DashboardHelpersTest {
     }
 
     @Test
+    fun `taskBucket maps submissions, overdue and pending like the web`() {
+        assertEquals(TaskBucket.DONE, taskBucket(task(submissionStatus = "submitted")))
+        assertEquals(TaskBucket.DONE, taskBucket(task(submissionStatus = "graded")))
+        assertEquals(TaskBucket.LATE, taskBucket(task(overdue = true)))
+        assertEquals(TaskBucket.NEED, taskBucket(task()))
+    }
+
+    @Test
+    fun `taskCounts buckets and sums a mixed list`() {
+        val counts =
+            taskCounts(
+                listOf(
+                    task(overdue = true),
+                    task(overdue = true),
+                    task(submissionStatus = "submitted"),
+                    task(),
+                    task(),
+                    task(),
+                ),
+            )
+        assertEquals(2, counts[TaskBucket.LATE])
+        assertEquals(1, counts[TaskBucket.DONE])
+        assertEquals(3, counts[TaskBucket.NEED])
+        assertEquals(2 + 1 + 3, counts.values.sum())
+    }
+
+    @Test
     fun `dayRank maps senin-first and pushes unknown after minggu`() {
         assertEquals(0, dayRank("senin"))
         assertEquals(5, dayRank("sabtu"))
         assertEquals(6, dayRank("minggu"))
         assertEquals(7, dayRank("unknown"))
+    }
+
+    @Test
+    fun `dayRank is case and whitespace tolerant`() {
+        assertEquals(3, dayRank("Kamis"))
     }
 }

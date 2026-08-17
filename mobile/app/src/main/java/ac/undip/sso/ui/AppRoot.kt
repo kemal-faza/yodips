@@ -4,12 +4,15 @@ import ac.undip.sso.core.network.ApiClient
 import ac.undip.sso.core.session.TokenStore
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
+import android.webkit.CookieManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 
 /**
  * Top-level: no-token → Login (WebView handoff); token → AppShell (5-tab).
@@ -18,6 +21,10 @@ import androidx.compose.runtime.setValue
 fun AppRoot(tokenStore: TokenStore) {
     var hasToken by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(false) }
+    // Hoisted to the root so its coroutines are NOT cancelled when the AppShell
+    // branch is disposed — otherwise tokenStore.clear() gets cancelled mid-write
+    // on logout and the persisted session survives a process restart.
+    val scope = rememberCoroutineScope()
 
     // Read the stored JWT once on startup and reattach it to the HTTP client
     // so Retrofit sends `Authorization: Bearer` on every data call.
@@ -31,7 +38,15 @@ fun AppRoot(tokenStore: TokenStore) {
     if (!checked) return
 
     if (hasToken) {
-        AppShell()
+        val onLogout: () -> Unit = {
+            // Clear persisted session, HTTP bearer, and any WebView session cookies
+            // so the next login starts fresh (not auto-attached to the old part).
+            ApiClient.authToken = null
+            scope.launch { tokenStore.clear() }
+            runCatching { CookieManager.getInstance().removeAllCookies(null) }
+            hasToken = false
+        }
+        AppShell(onLogout = onLogout)
     } else {
         LoginScreen(
             onLoggedIn = { hasToken = true },

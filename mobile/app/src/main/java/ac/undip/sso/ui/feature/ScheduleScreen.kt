@@ -32,7 +32,12 @@ internal fun scheduleSections(jadwal: List<SiapJadwal>): Map<String, List<Pair<S
     jadwal
         .groupBy { it.hari.lowercase() }
         .toSortedMap(compareBy { dayRank(it) })
-        .mapValues { (day, entries) -> entries.mapIndexed { index, e -> scheduleRowKey(day, index, e) to e } }
+        .mapValues { (day, entries) ->
+            entries
+                // SIAP emits one row per scheduled instance; collapse same-day duplicate courses.
+                .distinctBy { it.matakuliah.trim().lowercase() }
+                .mapIndexed { index, e -> scheduleRowKey(day, index, e) to e }
+        }
 
 private fun scheduleRowKey(
     day: String,
