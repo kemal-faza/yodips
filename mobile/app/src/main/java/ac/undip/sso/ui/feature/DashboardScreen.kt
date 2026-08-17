@@ -2,7 +2,6 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
-import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.ui.common.LoadableData
@@ -18,7 +17,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material3.Card
@@ -39,10 +37,9 @@ fun DashboardScreen(
     repo: SsoRepository,
     onOpenIrs: () -> Unit,
     onOpenKhs: () -> Unit,
-    onOpenTasks: () -> Unit,
 ) {
     LoadableData(load = { repo.profile() }, emptyMessage = "Belum ada data") { profile ->
-        DashboardContent(profile, repo, onOpenIrs, onOpenKhs, onOpenTasks)
+        DashboardContent(profile, repo, onOpenIrs, onOpenKhs)
     }
 }
 
@@ -52,7 +49,6 @@ private fun DashboardContent(
     repo: SsoRepository,
     onOpenIrs: () -> Unit,
     onOpenKhs: () -> Unit,
-    onOpenTasks: () -> Unit,
 ) {
     Column(
         Modifier
@@ -81,13 +77,8 @@ private fun DashboardContent(
                 listOf(
                     MenuSpec("IRS", Icons.Filled.ListAlt, onOpenIrs),
                     MenuSpec("KHS", Icons.Filled.Description, onOpenKhs),
-                    MenuSpec("Tugas", Icons.Filled.CalendarMonth, onOpenTasks),
                 ),
         )
-
-        LoadableData(load = { repo.assignments() }, emptyMessage = "Tidak ada tugas") { tasks ->
-            TaskSummaryCards(tasks)
-        }
 
         LoadableData(load = { repo.jadwal() }, emptyMessage = "Belum ada jadwal") { jadwal ->
             UpcomingClasses(jadwal)
@@ -127,20 +118,6 @@ internal fun upcomingLessons(
         .distinctBy { it.matakuliah.trim().lowercase() }
         .sortedWith(compareBy({ dayRank(it.hari) }, { it.waktu }))
         .take(limit)
-
-@Composable
-private fun TaskSummaryCards(tasks: List<KulonAssignment>) {
-    val counts = taskCounts(tasks)
-    Column {
-        SectionHeader("Tugas")
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard("Perlu dikerjakan", counts.getValue(TaskBucket.NEED).toString(), Modifier.weight(1f))
-            StatCard("Sudah dikerjakan", counts.getValue(TaskBucket.DONE).toString(), Modifier.weight(1f))
-            StatCard("Terlambat", counts.getValue(TaskBucket.LATE).toString(), Modifier.weight(1f))
-        }
-    }
-}
 
 @Composable
 private fun UpcomingClasses(source: List<SiapJadwal>) {

@@ -82,7 +82,6 @@ fun AppShell(onLogout: () -> Unit = {}) {
                     repo = repo,
                     onOpenIrs = { navController.navigate("irs") },
                     onOpenKhs = { navController.navigate("khs") },
-                    onOpenTasks = { navController.navigate("tasks") },
                 )
             }
             composable(Tab.Tasks.route) { TasksScreen(repo) }
