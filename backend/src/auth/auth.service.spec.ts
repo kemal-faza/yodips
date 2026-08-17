@@ -1,7 +1,9 @@
 import 'reflect-metadata';
 import { AuthService } from './auth.service';
-import { SSOTicketService } from '../sso/ticket.service';
-import { SessionStore } from '../session/session-store';
+
+// Mock-heavy spec: the session-store double and fetch helpers intentionally deal
+// in arbitrary/dynamic `any` payloads, and several async helpers have no await.
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
 
 const mockSsoTicket = {
   generateTicket: jest.fn(() => 'dGVzdA'),
@@ -17,12 +19,25 @@ const mockPlaywright = {
 };
 const mockSessionStore = {
   _map: new Map<string, any>(),
-  set(identity: string, s: any) { this._map.set(identity, s); },
-  get(identity: string) { return this._map.get(identity) ?? null; },
-  clear(identity: string) { this._map.delete(identity); },
-  all() { return [...this._map.values()]; },
+  set(identity: string, s: any) {
+    this._map.set(identity, s);
+  },
+  get(identity: string) {
+    return this._map.get(identity) ?? null;
+  },
+  clear(identity: string) {
+    this._map.delete(identity);
+  },
+  all() {
+    return [...this._map.values()];
+  },
 };
-const mockJwt = { signAsync: jest.fn(async () => 'jwt-token') };
+const mockJwt = {
+  signAsync: jest.fn(async (p: any) => {
+    void p;
+    return 'jwt-token';
+  }),
+};
 const mockConfig = {
   get: jest.fn((k: string) => {
     const map: Record<string, string> = {
@@ -37,17 +52,25 @@ const mockConfig = {
 const mockSsoAuth = { login: jest.fn() };
 const mockMicrosoftAuth = { getAuthUrl: jest.fn(), handleCallback: jest.fn() };
 const mockKulon = {
-  checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
-  getSessionIdentity: jest.fn(async () => '24060121130000'),
+  checkSessionValid: jest.fn(async () => ({
+    valid: true,
+    reason: 'ok',
+  })),
+  getSessionIdentity: jest.fn(
+    async (): Promise<string | null> => '24060121130000',
+  ),
 };
 const mockSiap = {
-  checkSessionValid: jest.fn(async () => ({ valid: true, reason: 'ok' as const })),
+  checkSessionValid: jest.fn(async () => ({
+    valid: true,
+    reason: 'ok',
+  })),
 };
 
 function makeService() {
   return new AuthService(
     mockSsoAuth as any,
-    mockSsoTicket as any,
+    mockSsoTicket,
     mockMicrosoftAuth as any,
     mockPlaywright as any,
     mockSessionStore as any,
@@ -126,7 +149,10 @@ describe('AuthService.captureSsoSession', () => {
       capturedAt: Date.now(),
     });
     // Kulon probe fails (delegated to KulonService.checkSessionValid)
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'stale',
+    });
     mockPlaywright.launchAndCaptureSession.mockResolvedValue({
       ssoCookie: 'ci_session_sso=SSO',
       microsoftCookie: '',
@@ -172,7 +198,10 @@ describe('AuthService.captureSsoSession', () => {
       siapCookie: '',
       capturedAt: Date.now(),
     });
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'stale',
+    });
 
     const svc = makeService();
     const res = await svc.captureSsoSession();
@@ -190,7 +219,10 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=K',
       capturedAt: Date.now(),
     });
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
 
     const svc = makeService();
     const res = await svc.captureSsoSession();
@@ -213,7 +245,10 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=K',
       capturedAt: Date.now(),
     });
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockPlaywright.launchAndCaptureSession.mockResolvedValue({
       ssoCookie: 'ci_session_sso=SSO',
       microsoftCookie: '',
@@ -240,7 +275,10 @@ describe('AuthService.captureSsoSession', () => {
       siapCookie: '',
       capturedAt: Date.now(),
     });
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
 
     const svc = makeService();
@@ -248,33 +286,47 @@ describe('AuthService.captureSsoSession', () => {
 
     expect(res.hasKulon).toBe(true);
     expect(mockSessionStore.get('24060121130000')).not.toBeNull();
-    expect(mockSessionStore.get('24060121130000').kulonCookie).toContain('MoodleSession=K');
+    expect(mockSessionStore.get('24060121130000').kulonCookie).toContain(
+      'MoodleSession=K',
+    );
   });
 });
 
 describe('AuthService.handleSessionHandoff', () => {
   it('verifies, derives identity, stores per-user, and returns a JWT', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
 
     const svc = makeService();
     const res = await svc.handleSessionHandoff({
       kulonCookie: 'MoodleSession=K',
       ssoCookie: 'ci_session_sso=SSO',
-    } as any);
+    });
 
     expect(res.hasKulon).toBe(true);
     expect(mockSessionStore.get('24060121130000')).not.toBeNull();
-    expect(mockSessionStore.get('24060121130000').kulonCookie).toContain('MoodleSession=K');
+    expect(mockSessionStore.get('24060121130000').kulonCookie).toContain(
+      'MoodleSession=K',
+    );
   });
 
   it('throws 401 with code KULON_STALE when the kulon cookie is stale', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'stale',
+    });
     const svc = makeService();
     await expect(
       svc.handleSessionHandoff({ kulonCookie: 'MoodleSession=STALE' } as any),
     ).rejects.toMatchObject({
-      response: { message: 'Session Kulon tidak valid — silakan login ulang', code: 'KULON_STALE', reason: 'stale' },
+      response: {
+        message: 'Session Kulon tidak valid. Silakan login ulang',
+        code: 'KULON_STALE',
+        reason: 'stale',
+      },
     });
   });
 
@@ -284,13 +336,18 @@ describe('AuthService.handleSessionHandoff', () => {
       .mockResolvedValueOnce({ valid: true, reason: 'ok' }); // established on retry
     mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
     const svc = makeService();
-    const res = await svc.handleSessionHandoff({ kulonCookie: 'MoodleSession=K' } as any);
+    const res = await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+    });
     expect(res.hasKulon).toBe(true);
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(2);
   });
 
   it('stops retrying after the attempt cap and still throws KULON_STALE', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'stale',
+    });
     const svc = makeService();
     await expect(
       svc.handleSessionHandoff({ kulonCookie: 'MoodleSession=STALE' } as any),
@@ -300,7 +357,10 @@ describe('AuthService.handleSessionHandoff', () => {
   });
 
   it('does not retry when the probe fails as no-cookie (no point waiting)', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'no-cookie' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'no-cookie',
+    });
     const svc = makeService();
     await expect(
       svc.handleSessionHandoff({ kulonCookie: '' } as any),
@@ -312,7 +372,10 @@ describe('AuthService.handleSessionHandoff', () => {
     // Mirrors the Kulon retry: SIAP's `sia_app_session` cookie is also set before
     // its server-side session is fully established, so a single immediate probe
     // would reject a perfectly fresh login (the cascade-churn root cause).
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
     mockSiap.checkSessionValid
       .mockResolvedValueOnce({ valid: false, reason: 'stale' }) // pre-auth/in-flight
@@ -321,13 +384,16 @@ describe('AuthService.handleSessionHandoff', () => {
     const res = await svc.handleSessionHandoff({
       kulonCookie: 'MoodleSession=K',
       siapCookie: 'sia_app_session=SIAP',
-    } as any);
+    });
     expect(res.hasSiap).toBe(true);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(2);
   });
 
   it('throws 401 with code KULON_NO_COOKIE when no kulon cookie is provided', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'no-cookie' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'no-cookie',
+    });
     const svc = makeService();
     await expect(
       svc.handleSessionHandoff({ kulonCookie: '' } as any),
@@ -337,18 +403,27 @@ describe('AuthService.handleSessionHandoff', () => {
   });
 
   it('throws 400 when identity cannot be derived and none is declared', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockKulon.getSessionIdentity.mockResolvedValue(null);
     const svc = makeService();
     await expect(
       svc.handleSessionHandoff({ kulonCookie: 'MoodleSession=K' } as any),
     ).rejects.toMatchObject({
-      response: { message: 'Identitas tidak dapat ditentukan', code: 'IDENTITY_UNRESOLVED' },
+      response: {
+        message: 'Identitas tidak dapat ditentukan',
+        code: 'IDENTITY_UNRESOLVED',
+      },
     });
   });
 
   it('rejects a client-supplied identity when derivation fails (B4 - no spoofing)', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockKulon.getSessionIdentity.mockResolvedValue(null); // derivation fails
     const svc = makeService();
     // Even though the client declares a target identity, we must NOT trust it.
@@ -365,29 +440,41 @@ describe('AuthService.handleSessionHandoff', () => {
   });
 
   it('reports hasSiap based on SIAP session validity', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
-    mockSiap.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    mockSiap.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'stale',
+    });
     const svc = makeService();
     const res = await svc.handleSessionHandoff({
       kulonCookie: 'MoodleSession=K',
       siapCookie: 'ci_session_x=K',
       identity: '24060121130000',
-    } as any);
+    });
     expect(res.hasSiap).toBe(false);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledWith('ci_session_x=K');
   });
 
   it('does NOT store a stale SIAP cookie (B5 - strip before store)', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
-    mockSiap.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    mockSiap.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'stale',
+    });
     const svc = makeService();
     const res = await svc.handleSessionHandoff({
       kulonCookie: 'MoodleSession=K',
       siapCookie: 'ci_session_x=STALE',
       identity: '24060121130000',
-    } as any);
+    });
     expect(res.hasSiap).toBe(false);
     const stored = mockSessionStore.get('24060121130000');
     expect(stored).not.toBeNull();
@@ -396,7 +483,10 @@ describe('AuthService.handleSessionHandoff', () => {
   });
 
   it('stores a valid SIAP cookie after validation (B5)', async () => {
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
     const svc = makeService();
@@ -404,7 +494,7 @@ describe('AuthService.handleSessionHandoff', () => {
       kulonCookie: 'MoodleSession=K',
       siapCookie: 'ci_session_x=VALID',
       identity: '24060121130000',
-    } as any);
+    });
     expect(res.hasSiap).toBe(true);
     const stored = mockSessionStore.get('24060121130000');
     expect(stored.siapCookie).toBe('ci_session_x=VALID');
@@ -428,8 +518,12 @@ describe('AuthService.handleMicrosoftCallback', () => {
     const subs = [...mockSessionStore._map.keys()];
     expect(subs[0]).not.toBe(subs[1]);
     // The JWT sub for each resolves to its own stored session.
-    expect(mockSessionStore.get(resA.accessToken.replace('jwt-', ''))).not.toBeNull();
-    expect(mockSessionStore.get(resB.accessToken.replace('jwt-', ''))).not.toBeNull();
+    expect(
+      mockSessionStore.get(resA.accessToken.replace('jwt-', '')),
+    ).not.toBeNull();
+    expect(
+      mockSessionStore.get(resB.accessToken.replace('jwt-', '')),
+    ).not.toBeNull();
   });
 });
 
@@ -487,7 +581,10 @@ describe('AuthService.me', () => {
       capturedAt: Date.now(),
     });
     // Kulon probe fails (expired upstream), SIAP probe succeeds.
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: false,
+      reason: 'stale',
+    });
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
 
     const svc = makeService();
@@ -508,7 +605,10 @@ describe('AuthService.me', () => {
       siapCookie: 'ci_session_x=K',
       capturedAt: Date.now(),
     });
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.checkSessionValid.mockResolvedValue({
+      valid: true,
+      reason: 'ok',
+    });
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
 
     const svc = makeService();
