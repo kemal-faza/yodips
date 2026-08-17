@@ -134,7 +134,7 @@ fun ShellBottomBar(
                         Box(
                             modifier =
                                 Modifier
-                                    .size(56.dp)
+                                    .size(66.dp)
                                     .background(color = Primary, shape = CircleShape)
                                     .border(4.dp, MaterialTheme.colorScheme.surface, CircleShape),
                             contentAlignment = Alignment.Center,
@@ -143,7 +143,7 @@ fun ShellBottomBar(
                                 Icons.Filled.QrCodeScanner,
                                 contentDescription = "Scan",
                                 tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(30.dp),
+                                modifier = Modifier.size(44.dp),
                             )
                         }
                     }
