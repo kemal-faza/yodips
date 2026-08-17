@@ -66,7 +66,7 @@ private val SiapJadwal.kuota get() = sks
 
 @Composable
 private fun ScheduleCard(j: SiapJadwal) {
-    Card {
+    Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(

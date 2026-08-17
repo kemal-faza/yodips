@@ -5,6 +5,7 @@ import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.ui.common.LoadableData
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -45,7 +47,7 @@ import androidx.compose.ui.unit.dp
 fun TasksScreen(repo: SsoRepository) {
     FeatureScreen("Tugas") {
         LoadableData(load = { repo.assignments() }, emptyMessage = "Tidak ada tugas saat ini.") { tasks ->
-            var filter by remember { mutableStateOf<TaskBucket?>(null) }
+            var filter by remember { mutableStateOf<TaskBucket?>(TaskBucket.NEED) }
             Column(Modifier.fillMaxSize()) {
                 Row(
                     Modifier
@@ -63,16 +65,43 @@ fun TasksScreen(repo: SsoRepository) {
                     tasks
                         .filter { filter == null || taskBucket(it) == filter }
                         .sortedBy { it.duedate }
-                LazyColumn(
-                    Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(visible, key = { it.id }) { t ->
-                        TaskCard(t, taskBucket(t))
+                if (visible.isEmpty()) {
+                    EmptyTasks(filter)
+                } else {
+                    LazyColumn(
+                        Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(visible, key = { it.id }) { t ->
+                            TaskCard(t, taskBucket(t))
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+private fun emptyTasksMessage(filter: TaskBucket?): String =
+    when (filter) {
+        null -> "Tidak ada tugas saat ini."
+        TaskBucket.NEED -> "Tidak ada tugas yang perlu dikerjakan — kamu sudah beres! 👍"
+        TaskBucket.DONE -> "Belum ada tugas yang selesai dikerjakan."
+        TaskBucket.LATE -> "Tidak ada tugas terlambat. Mantap! 🎉"
+    }
+
+@Composable
+private fun EmptyTasks(filter: TaskBucket?) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("—", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.outline)
+            Text(
+                emptyTasksMessage(filter),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 32.dp),
+            )
         }
     }
 }
@@ -83,6 +112,7 @@ private fun TaskCard(
     bucket: TaskBucket,
 ) {
     Card(
+        modifier = Modifier.fillMaxWidth(),
         colors =
             if (bucket == TaskBucket.LATE) {
                 CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
@@ -91,20 +121,20 @@ private fun TaskCard(
             },
     ) {
         Column(Modifier.padding(16.dp)) {
-            Text(
-                t.name,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = if (bucket == TaskBucket.LATE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    t.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (bucket == TaskBucket.LATE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(10.dp))
                 BucketPill(bucket)
-                Text("${t.eventType}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.height(6.dp))
-            Text("${t.course}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(t.course, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Deadline: ${epochToDate(t.duedate)}", style = MaterialTheme.typography.bodySmall)
             t.submissionStatus?.takeIf { it.isNotBlank() }?.let {
                 Text(
@@ -123,8 +153,11 @@ private fun BucketPill(bucket: TaskBucket) {
     val (container, content) =
         when (bucket) {
             TaskBucket.NEED -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+
             TaskBucket.DONE -> Color(0xFFE0F2E3) to Color(0xFF1B5E20)
-            TaskBucket.LATE -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+
+            // Solid error so the pill stays visible on the errorContainer card bg.
+            TaskBucket.LATE -> MaterialTheme.colorScheme.error to MaterialTheme.colorScheme.onError
         }
     Surface(shape = RoundedCornerShape(50), color = container) {
         Text(

@@ -37,7 +37,10 @@ fun KhsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    ) {
                         Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             Column {
                                 Text("IPK Kumulatif", style = MaterialTheme.typography.labelLarge)
@@ -53,7 +56,7 @@ fun KhsScreen(
                     }
                 }
                 items(khs.semesters, key = { it.semester }) { sem ->
-                    Card {
+                    Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(

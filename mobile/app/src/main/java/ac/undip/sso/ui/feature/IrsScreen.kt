@@ -31,7 +31,10 @@ fun IrsScreen(
         LoadableData(load = { repo.irs() }, emptyMessage = "Belum ada IRS") { irs ->
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    ) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             Column {
                                 Text(
@@ -62,7 +65,7 @@ fun IrsScreen(
                     }
                 }
                 items(irs.mataKuliah, key = { it.kode + it.nama }) { mk ->
-                    Card {
+                    Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(
