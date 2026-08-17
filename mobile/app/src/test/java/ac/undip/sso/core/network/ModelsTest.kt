@@ -69,4 +69,27 @@ class ModelsTest {
         assertTrue(both.contains("\"siapCookie\":\"a\\\"b\""))
         assertTrue(both.contains("\"kulonCookie\""))
     }
+
+    @Test
+    fun `sksKumulatif sums SKS across all semesters including current`() {
+        val khs =
+            SiapKhs(
+                ipk = 3.65,
+                semesters =
+                    listOf(
+                        SiapKhsSemester(semester = "s1", totalSks = 20.0, ip = 3.95),
+                        SiapKhsSemester(semester = "s2", totalSks = 20.0, ip = 3.6),
+                        SiapKhsSemester(semester = "s3", totalSks = 20.0, ip = 3.0),
+                        SiapKhsSemester(semester = "s4", totalSks = 24.0, ip = 3.38),
+                        SiapKhsSemester(semester = "s5", totalSks = 23.0, ip = 0.0), // on-going, no grades yet
+                    ),
+            )
+        // 20+20+20+24+23 = 107 — includes the current semester's taken SKS
+        assertEquals(107.0, khs.sksKumulatif, 0.001)
+    }
+
+    @Test
+    fun `sksKumulatif is zero for empty khs`() {
+        assertEquals(0.0, SiapKhs().sksKumulatif, 0.001)
+    }
 }

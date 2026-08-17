@@ -55,11 +55,7 @@ fun ProfileScreen(
                         if (!p.semesterBerjalan.isNullOrBlank()) InfoRow("Semester berjalan", p.semesterBerjalan!!)
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatCard("IPK", formatIpk(p.ipk), Modifier.weight(1f))
-                    StatCard("SKS Selesai", formatSks(p.sksLulus), Modifier.weight(1f))
-                    StatCard("SKS Tempuh", formatSks(p.sksTempuh), Modifier.weight(1f))
-                }
+                AcademicStats(repo)
                 TextButton(onClick = onOpenKhs) {
                     Text("Lihat KHS (nilai + IPK)", style = MaterialTheme.typography.titleSmall)
                 }

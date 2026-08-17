@@ -48,6 +48,10 @@ data class SiapKhs(
     val semesters: List<SiapKhsSemester> = emptyList(),
 )
 
+/** Σ SKS taken across every semester, including the current/on-going term (1 → sekarang). */
+val SiapKhs.sksKumulatif: Double
+    get() = semesters.sumOf { s -> s.totalSks }
+
 @Serializable
 data class SiapIrsMataKuliah(
     val kode: String = "",

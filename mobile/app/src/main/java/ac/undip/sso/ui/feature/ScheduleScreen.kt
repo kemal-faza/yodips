@@ -22,8 +22,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-private val dayOrder = listOf("senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu")
-
 /**
  * Groups jadwal by day (ordered Monday-first) assigning a globally unique, stable
  * key to every row. SIAP emits duplicate (hari, matakuliah, waktu) rows for real
@@ -33,7 +31,7 @@ private val dayOrder = listOf("senin", "selasa", "rabu", "kamis", "jumat", "sabt
 internal fun scheduleSections(jadwal: List<SiapJadwal>): Map<String, List<Pair<String, SiapJadwal>>> =
     jadwal
         .groupBy { it.hari.lowercase() }
-        .toSortedMap(compareBy { dayOrder.indexOf(it) })
+        .toSortedMap(compareBy { dayRank(it) })
         .mapValues { (day, entries) -> entries.mapIndexed { index, e -> scheduleRowKey(day, index, e) to e } }
 
 private fun scheduleRowKey(
@@ -49,7 +47,7 @@ fun ScheduleScreen(repo: SsoRepository) {
             val sections = scheduleSections(jadwal)
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 sections.forEach { (day, rows) ->
-                    item { SectionHeader(day.replaceFirstChar { it.uppercase() }) }
+                    item { SectionHeader(capitalizeDay(day)) }
                     rows.forEach { (key, e) ->
                         item(key) { ScheduleCard(e) }
                     }

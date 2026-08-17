@@ -2,6 +2,7 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.ui.common.LoadableData
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -69,10 +71,7 @@ private fun DashboardContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard("IPK", formatIpk(profile.ipk), Modifier.weight(1f))
-            StatCard("SKS Selesai", formatSks(profile.sksLulus), Modifier.weight(1f))
-        }
+        AcademicStats(repo)
 
         MenuRow(
             items =
@@ -84,7 +83,7 @@ private fun DashboardContent(
         )
 
         LoadableData(load = { repo.jadwal() }, emptyMessage = "Belum ada jadwal") { jadwal ->
-            upcomingClasses(jadwal.sortedBy { it.hari })
+            UpcomingClasses(jadwal)
         }
     }
 }
@@ -110,24 +109,43 @@ private fun MenuRow(items: List<MenuSpec>) {
     }
 }
 
+/** Upcoming-class list: one card per distinct course, ordered by weekday then time. */
+internal fun upcomingLessons(
+    source: List<SiapJadwal>,
+    limit: Int = 4,
+): List<SiapJadwal> =
+    source
+        .distinctBy { it.matakuliah.trim().lowercase() }
+        .sortedWith(compareBy({ dayRank(it.hari) }, { it.waktu }))
+        .take(limit)
+
 @Composable
-private fun upcomingClasses(sorted: List<ac.undip.sso.core.network.SiapJadwal>) {
+private fun UpcomingClasses(source: List<SiapJadwal>) {
+    val lessons = remember(source) { upcomingLessons(source) }
     Column {
         SectionHeader("Kelas Mendatang")
         Spacer(Modifier.height(8.dp))
-        sorted.take(4).forEach { j ->
+        if (lessons.isEmpty()) {
+            Text(
+                "Belum ada kelas",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+        lessons.forEach { j ->
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(j.matakuliah, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1)
                         Text(
-                            "${j.hari} · ${j.waktu}${j.ruang?.let { " · $it" }.orEmpty()}",
+                            "${capitalizeDay(j.hari)} · ${j.waktu}${j.ruang?.let { " · $it" }.orEmpty()}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     Text(
-                        if (j.hari.isEmpty()) "—" else j.hari.take(3),
+                        if (j.hari.isBlank()) "—" else capitalizeDay(j.hari).take(3),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )
