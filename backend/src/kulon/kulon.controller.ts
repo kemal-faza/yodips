@@ -1,4 +1,13 @@
-import { Controller, Get, HttpException, HttpStatus, Param, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpException,
+  HttpStatus,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
@@ -40,7 +49,11 @@ export class KulonController {
       );
     }
     const sesskey = await this.getSesskey(session.kulonCookie);
-    return this.kulonService.getAllAssignments(session.kulonCookie, sesskey, req.user?.sub);
+    return this.kulonService.getAllAssignments(
+      session.kulonCookie,
+      sesskey,
+      req.user?.sub,
+    );
   }
 
   @Get('assignments')
@@ -57,7 +70,11 @@ export class KulonController {
   }
 
   @Get('assignments/:id/detail')
-  async getAssignmentDetail(@Param('id') id: string, @Query('cmid') cmid: string, @Req() req: any) {
+  async getAssignmentDetail(
+    @Param('id') id: string,
+    @Query('cmid') cmid: string,
+    @Req() req: any,
+  ) {
     const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
@@ -67,7 +84,12 @@ export class KulonController {
     }
     const assignmentId = Number(id);
     const courseModuleId = Number(cmid);
-    if (!Number.isInteger(assignmentId) || !Number.isInteger(courseModuleId) || assignmentId <= 0 || courseModuleId <= 0) {
+    if (
+      !Number.isInteger(assignmentId) ||
+      !Number.isInteger(courseModuleId) ||
+      assignmentId <= 0 ||
+      courseModuleId <= 0
+    ) {
       throw new HttpException(
         { message: 'Detail tugas tidak ditemukan' },
         HttpStatus.NOT_FOUND,
@@ -102,14 +124,25 @@ export class KulonController {
     }
     const courseId = Number(id);
     if (!Number.isInteger(courseId) || courseId <= 0) {
-      throw new HttpException({ message: 'Mata kuliah tidak ditemukan' }, HttpStatus.NOT_FOUND);
+      throw new HttpException(
+        { message: 'Mata kuliah tidak ditemukan' },
+        HttpStatus.NOT_FOUND,
+      );
     }
     const sesskey = await this.getSesskey(session.kulonCookie);
     try {
-      return await this.kulonService.getCourseContent(session.kulonCookie, sesskey, courseId);
+      return await this.kulonService.getCourseContent(
+        session.kulonCookie,
+        sesskey,
+        courseId,
+        req.user?.sub,
+      );
     } catch (e) {
       if ((e as Error).message === 'COURSE_NOT_FOUND') {
-        throw new HttpException({ message: 'Mata kuliah tidak ditemukan' }, HttpStatus.NOT_FOUND);
+        throw new HttpException(
+          { message: 'Mata kuliah tidak ditemukan' },
+          HttpStatus.NOT_FOUND,
+        );
       }
       throw e;
     }
@@ -129,7 +162,10 @@ export class KulonController {
         redirect: 'follow',
       });
     } catch (e) {
-      if ((e as Error)?.cause && /redirect count exceeded/i.test(String((e as Error).cause))) {
+      if (
+        (e as Error)?.cause &&
+        /redirect count exceeded/i.test(String((e as Error).cause))
+      ) {
         throw new HttpException(
           { message: 'Session Kulon expired. Silakan login ulang via SSO' },
           HttpStatus.UNAUTHORIZED,

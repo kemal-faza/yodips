@@ -223,10 +223,6 @@ watch(
               </TabsContent>
 
               <TabsContent value="submission" class="space-y-3 text-sm">
-                <p>
-                  <span class="font-semibold text-foreground">Status:</span>
-                  {{ submissionLabel }}
-                </p>
                 <p v-if="submittedAt">
                   <span class="font-semibold text-foreground">Dikumpulkan:</span>
                   {{ submittedAt }}

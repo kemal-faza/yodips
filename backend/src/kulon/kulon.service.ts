@@ -79,9 +79,11 @@ export interface KulonSessionCheck {
   reason: 'ok' | 'no-cookie' | 'stale';
 }
 
-export type KulonFileType = 'pdf' | 'pptx' | 'ppt' | 'doc' | 'docx' | 'xls' | 'xlsx' | 'other';
+export type KulonFileType =
+  'pdf' | 'pptx' | 'ppt' | 'doc' | 'docx' | 'xls' | 'xlsx' | 'other';
 
-export type KulonContentItemKind = 'file' | 'assign' | 'quiz' | 'url' | 'forum' | 'page' | 'other';
+export type KulonContentItemKind =
+  'file' | 'assign' | 'quiz' | 'url' | 'forum' | 'page' | 'other';
 
 export interface KulonContentItem {
   kind: KulonContentItemKind;
@@ -141,14 +143,22 @@ export function extractFileType(input: string): KulonFileType {
   const m = input.match(/\.([A-Za-z0-9]+)(?:\?|$)/);
   const ext = (m?.[1] ?? '').toLowerCase();
   switch (ext) {
-    case 'pdf': return 'pdf';
-    case 'pptx': return 'pptx';
-    case 'ppt': return 'ppt';
-    case 'docx': return 'docx';
-    case 'doc': return 'doc';
-    case 'xlsx': return 'xlsx';
-    case 'xls': return 'xls';
-    default: return 'other';
+    case 'pdf':
+      return 'pdf';
+    case 'pptx':
+      return 'pptx';
+    case 'ppt':
+      return 'ppt';
+    case 'docx':
+      return 'docx';
+    case 'doc':
+      return 'doc';
+    case 'xlsx':
+      return 'xlsx';
+    case 'xls':
+      return 'xls';
+    default:
+      return 'other';
   }
 }
 
@@ -158,13 +168,24 @@ export function deriveSectionLabel(
 ): { label: string; dateRange?: string } {
   const t = title.trim();
   if (ordinal === 0) return { label: t || 'General' };
-  if (DATE_RANGE_RE.test(t)) return { label: `Pertemuan ${ordinal}`, dateRange: t };
+  if (DATE_RANGE_RE.test(t))
+    return { label: `Pertemuan ${ordinal}`, dateRange: t };
   return { label: t };
 }
 
 const MONTH_INDEX: Record<string, number> = {
-  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
-  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+  january: 0,
+  february: 1,
+  march: 2,
+  april: 3,
+  may: 4,
+  june: 5,
+  july: 6,
+  august: 7,
+  september: 8,
+  october: 9,
+  november: 10,
+  december: 11,
 };
 
 /**
@@ -200,7 +221,8 @@ export function parseSectionProgress(
     if (month === undefined) continue;
     parseable += 1;
     const day = Number(m[1]);
-    const endOfDay = (year: number) => new Date(year, month, day, 23, 59, 59, 999);
+    const endOfDay = (year: number) =>
+      new Date(year, month, day, 23, 59, 59, 999);
     const isEnded =
       endOfDay(now.getFullYear()).getTime() < now.getTime() ||
       endOfDay(now.getFullYear() + 1).getTime() < now.getTime();
@@ -271,7 +293,10 @@ export class KulonService {
     } catch (e) {
       // "redirect count exceeded" (redirect loop) is the classic sign of a
       // pre-auth/stale Moodle session — logged for diagnostics (no cookie value).
-      if ((e as { cause?: Error })?.cause && /redirect count exceeded/i.test(String((e as { cause?: Error }).cause))) {
+      if (
+        (e as { cause?: Error })?.cause &&
+        /redirect count exceeded/i.test(String((e as { cause?: Error }).cause))
+      ) {
         this.logger.warn('Kulon session probe: redirect loop');
       }
       return { valid: false, reason: 'stale' };
@@ -281,12 +306,16 @@ export class KulonService {
       return { valid: false, reason: 'stale' };
     }
     if (/(login\.microsoftonline\.com|\/login\/)/i.test(res.url)) {
-      this.logger.warn(`Kulon session probe: redirected to ${res.url.slice(0, 80)}`);
+      this.logger.warn(
+        `Kulon session probe: redirected to ${res.url.slice(0, 80)}`,
+      );
       return { valid: false, reason: 'stale' };
     }
     const html = await res.text();
     if (!/name="sesskey"/.test(html)) {
-      this.logger.warn('Kulon session probe: page missing sesskey (login redirect)');
+      this.logger.warn(
+        'Kulon session probe: page missing sesskey (login redirect)',
+      );
       return { valid: false, reason: 'stale' };
     }
     return { valid: true, reason: 'ok' };
@@ -336,7 +365,9 @@ export class KulonService {
   }
 
   /** Scrape the NIM from the /user/profile.php page title. */
-  private async identityFromProfilePage(sessionCookie: string): Promise<string | null> {
+  private async identityFromProfilePage(
+    sessionCookie: string,
+  ): Promise<string | null> {
     try {
       const res = await fetch(`${this.baseUrl}/user/profile.php`, {
         headers: { Cookie: sessionCookie },
@@ -365,7 +396,9 @@ export class KulonService {
     siapCookie?: string,
   ): Promise<KulonCourse[]> {
     if (userSub && this.cache) {
-      const hit = await this.cache.get<KulonCourse[]>(`${userSub}:kulon:courses`);
+      const hit = await this.cache.get<KulonCourse[]>(
+        `${userSub}:kulon:courses`,
+      );
       if (hit) return hit;
     }
     // Moodle's own timeline classification is the source of truth for
@@ -420,7 +453,9 @@ export class KulonService {
           byCode.set(l.kode, l.dosen);
         }
         result = mergedWithProgress.map((c) =>
-          byCode.has(c.shortname) ? { ...c, lecturer: byCode.get(c.shortname) } : c,
+          byCode.has(c.shortname)
+            ? { ...c, lecturer: byCode.get(c.shortname) }
+            : c,
         );
       } catch {
         /* best-effort: omit lecturers on failure */
@@ -437,12 +472,17 @@ export class KulonService {
     sesskey: string,
     classification: string,
   ): Promise<Omit<KulonCourse, 'timelineStatus'>[]> {
-    const data = (await this.ajax(sessionCookie, sesskey, 'core_course_get_enrolled_courses_by_timeline_classification', {
-      classification,
-      limit: 0,
-      offset: 0,
-      sort: 'fullname',
-    })) as { courses: any[] };
+    const data = (await this.ajax(
+      sessionCookie,
+      sesskey,
+      'core_course_get_enrolled_courses_by_timeline_classification',
+      {
+        classification,
+        limit: 0,
+        offset: 0,
+        sort: 'fullname',
+      },
+    )) as { courses: any[] };
     return (data?.courses ?? []).map((c: any) => ({
       id: c.id,
       // Some courses carry a "[SIAP] ..." prefix (SIAP integration) — keep only
@@ -459,11 +499,16 @@ export class KulonService {
     sessionCookie: string,
     sesskey: string,
   ): Promise<KulonAssignment[]> {
-    const data = (await this.ajax(sessionCookie, sesskey, 'core_calendar_get_action_events_by_timesort', {
-      timesortfrom: 0,
-      timesortto: 0,
-      limitnum: 50,
-    })) as { events: any[] };
+    const data = (await this.ajax(
+      sessionCookie,
+      sesskey,
+      'core_calendar_get_action_events_by_timesort',
+      {
+        timesortfrom: 0,
+        timesortto: 0,
+        limitnum: 50,
+      },
+    )) as { events: any[] };
     return (data?.events ?? [])
       .filter((e: any) => e.eventtype === 'due')
       .map((e: any): KulonAssignment => {
@@ -502,7 +547,9 @@ export class KulonService {
     userSub?: string,
   ): Promise<KulonAssignment[]> {
     if (userSub && this.cache) {
-      const hit = await this.cache.get<KulonAssignment[]>(`${userSub}:kulon:assignments`);
+      const hit = await this.cache.get<KulonAssignment[]>(
+        `${userSub}:kulon:assignments`,
+      );
       if (hit) return hit;
     }
     const courses = await this.getCourses(sessionCookie, sesskey, userSub);
@@ -581,14 +628,22 @@ export class KulonService {
     const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let tr: RegExpExecArray | null;
     while ((tr = trRe.exec(html)) !== null) {
-      const link = tr[1].match(/href="[^"]*\/mod\/quiz\/view\.php\?id=(\d+)"|<a\s+href="view\.php\?id=(\d+)"/i);
+      const link = tr[1].match(
+        /href="[^"]*\/mod\/quiz\/view\.php\?id=(\d+)"|<a\s+href="view\.php\?id=(\d+)"/i,
+      );
       if (!link) continue;
       const cmid = Number(link[1] ?? link[2]);
       // Quiz closes column (c2) — may be a date, "No close date", or "-".
-      const closesRaw = ((tr[1].match(/<td[^>]*class="cell c2"[^>]*>([\s\S]*?)<\/td>/i) ?? [])[1] ?? '')
-        .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-      const name = (tr[1].match(/(?:view\.php\?id=\d+|mod\/quiz\/view\.php\?id=\d+)">([\s\S]*?)<\/a>/i) ??
-        tr[1].match(/<a[^>]*>([\s\S]*?)<\/a>/i))?.[1];
+      const closesRaw = (
+        (tr[1].match(/<td[^>]*class="cell c2"[^>]*>([\s\S]*?)<\/td>/i) ??
+          [])[1] ?? ''
+      )
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const name = (tr[1].match(
+        /(?:view\.php\?id=\d+|mod\/quiz\/view\.php\?id=\d+)">([\s\S]*?)<\/a>/i,
+      ) ?? tr[1].match(/<a[^>]*>([\s\S]*?)<\/a>/i))?.[1];
       if (!name) continue;
       const due = this.parseMoodleDate(closesRaw);
       const nowSec = Math.floor(Date.now() / 1000);
@@ -601,7 +656,11 @@ export class KulonService {
         module: 'quiz',
         eventType: 'due',
         duedate: due ?? 0,
-        overdue: noDue ? false : due !== null ? due < nowSec : isOverdueRelative,
+        overdue: noDue
+          ? false
+          : due !== null
+            ? due < nowSec
+            : isOverdueRelative,
         course: courseName,
         courseId,
         assignmentId: cmid,
@@ -631,12 +690,24 @@ export class KulonService {
     const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let tr: RegExpExecArray | null;
     while ((tr = trRe.exec(html)) !== null) {
-      const link = tr[1].match(/href="[^"]*\/mod\/assign\/view\.php\?id=(\d+)"/i);
+      const link = tr[1].match(
+        /href="[^"]*\/mod\/assign\/view\.php\?id=(\d+)"/i,
+      );
       if (!link) continue;
-      const dueRaw = ((tr[1].match(/<td[^>]*class="cell c2"[^>]*>([\s\S]*?)<\/td>/i) ?? [])[1] ?? '')
-        .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-      const subRaw = ((tr[1].match(/<td[^>]*class="cell c3"[^>]*>([\s\S]*?)<\/td>/i) ?? [])[1] ?? '')
-        .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      const dueRaw = (
+        (tr[1].match(/<td[^>]*class="cell c2"[^>]*>([\s\S]*?)<\/td>/i) ??
+          [])[1] ?? ''
+      )
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const subRaw = (
+        (tr[1].match(/<td[^>]*class="cell c3"[^>]*>([\s\S]*?)<\/td>/i) ??
+          [])[1] ?? ''
+      )
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       // Assignment rows always expose Due (c2) and Submission (c3) cells.
       if (!dueRaw && !subRaw) continue;
       const name = (tr[1].match(/view\.php\?id=\d+">([\s\S]*?)<\/a>/i) ??
@@ -665,7 +736,8 @@ export class KulonService {
 
   /** Map the index "Submission" cell text to our status enum. */
   private mapIndexSubmissionStatus(text: string): KulonSubmission['status'] {
-    if (/no submission|not submitted|no submissions|draft/i.test(text)) return 'not_submitted';
+    if (/no submission|not submitted|no submissions|draft/i.test(text))
+      return 'not_submitted';
     if (/graded/i.test(text)) return 'graded';
     if (/submitted/i.test(text)) return 'submitted';
     return 'unknown';
@@ -675,7 +747,14 @@ export class KulonService {
     sessionCookie: string,
     assignmentId: number,
     cmid: number,
+    userSub?: string,
   ): Promise<KulonAssignmentDetail> {
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<KulonAssignmentDetail>(
+        `${userSub}:kulon:assignment-detail:${cmid}`,
+      );
+      if (hit) return hit;
+    }
     const pageUrl = `${this.baseUrl}/mod/assign/view.php?id=${cmid}`;
     const res = await fetch(pageUrl, {
       headers: { Cookie: sessionCookie },
@@ -684,7 +763,7 @@ export class KulonService {
     if (res.status === 404) throw new Error('ASSIGNMENT_NOT_FOUND');
     if (!res.ok) throw new Error(`Kulon assignment page failed: ${res.status}`);
     const html = await res.text();
-    return {
+    const detail = {
       assignmentId,
       name: this.extractName(html),
       descriptionHtml: this.extractDescription(html),
@@ -692,6 +771,14 @@ export class KulonService {
       submission: this.parseSubmissionFromHtml(html),
       kulonUrl: pageUrl,
     };
+    if (userSub && this.cache) {
+      await this.cache.set(
+        `${userSub}:kulon:assignment-detail:${cmid}`,
+        detail,
+        60_000,
+      );
+    }
+    return detail;
   }
 
   /**
@@ -702,7 +789,11 @@ export class KulonService {
    * falls back to `{ status: 'unknown' }`.
    */
   private parseSubmissionFromHtml(html: string): KulonSubmission {
-    const fallback: KulonSubmission = { status: 'unknown', grade: null, maxGrade: null };
+    const fallback: KulonSubmission = {
+      status: 'unknown',
+      grade: null,
+      maxGrade: null,
+    };
     // Grab the submission summary TABLE that lives inside the
     // `submissionstatustable` div. Capturing the table (not counting enclosing
     // divs) is robust to theme nesting depth. All status rows are in it.
@@ -720,21 +811,30 @@ export class KulonService {
       const valueMatch = tr[1].match(/<td[^>]*>([\s\S]*?)<\/td>/i);
       if (!labelMatch || !valueMatch) continue;
       rows.push({
-        label: labelMatch[1].replace(/<[^>]*>/g, '').trim().toLowerCase(),
-        value: valueMatch[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+        label: labelMatch[1]
+          .replace(/<[^>]*>/g, '')
+          .trim()
+          .toLowerCase(),
+        value: valueMatch[1]
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
       });
     }
     if (rows.length === 0) return fallback;
 
-    const get = (label: string) => rows.find((r) => r.label.includes(label))?.value ?? '';
+    const get = (label: string) =>
+      rows.find((r) => r.label.includes(label))?.value ?? '';
     const submissionStatus = get('submission status');
     const gradingStatus = get('grading status');
     const lastModified = get('last modified');
 
     let status: KulonSubmission['status'] = 'unknown';
-    const isGraded = /graded/i.test(gradingStatus) && !/not graded/i.test(gradingStatus);
+    const isGraded =
+      /graded/i.test(gradingStatus) && !/not graded/i.test(gradingStatus);
     if (isGraded) status = 'graded';
-    else if (/not submitted|no submissions|draft/i.test(submissionStatus)) status = 'not_submitted';
+    else if (/not submitted|no submissions|draft/i.test(submissionStatus))
+      status = 'not_submitted';
     else if (/submitted/i.test(submissionStatus)) status = 'submitted';
 
     const grade = this.extractGrade(block);
@@ -753,7 +853,9 @@ export class KulonService {
    * somewhere in the submission summary. Scan the whole block for the pair;
    * return null when absent (UI renders "Belum dinilai").
    */
-  private extractGrade(block: string): { grade: number; maxGrade: number } | null {
+  private extractGrade(
+    block: string,
+  ): { grade: number; maxGrade: number } | null {
     const m = block.match(/(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/);
     if (!m) return null;
     const toNum = (s: string) => Number(s.replace(',', '.'));
@@ -770,11 +872,23 @@ export class KulonService {
    */
   private parseMoodleDate(text: string): number | null {
     if (!text) return null;
-    const m = text.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4}),?\s+(?:(\d{1,2}):(\d{2}))?\s*(AM|PM)?/i);
+    const m = text.match(
+      /(\d{1,2})\s+([A-Za-z]+)\s+(\d{4}),?\s+(?:(\d{1,2}):(\d{2}))?\s*(AM|PM)?/i,
+    );
     if (!m) return null;
     const months: Record<string, number> = {
-      january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
-      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+      january: 0,
+      february: 1,
+      march: 2,
+      april: 3,
+      may: 4,
+      june: 5,
+      july: 6,
+      august: 7,
+      september: 8,
+      october: 9,
+      november: 10,
+      december: 11,
     };
     const month = months[(m[2] || '').toLowerCase()];
     if (month === undefined) return null;
@@ -786,7 +900,11 @@ export class KulonService {
     // Date.UTC gives the instant UTC would show for that wall-clock; subtracting
     // 7h converts from WIB (UTC+7) to the true UTC instant. Date.UTC normalizes
     // hour < 0 / > 24 across day boundaries correctly.
-    return Math.floor((Date.UTC(Number(m[3]), month, Number(m[1]), hour, minute) - 7 * 3_600_000) / 1000);
+    return Math.floor(
+      (Date.UTC(Number(m[3]), month, Number(m[1]), hour, minute) -
+        7 * 3_600_000) /
+        1000,
+    );
   }
 
   /**
@@ -802,18 +920,23 @@ export class KulonService {
   }
 
   private extractDescription(html: string): string {
-    const match = html.match(/id="intro"[\s\S]*?<div class="no-overflow">([\s\S]*?)<\/div>/);
+    const match = html.match(
+      /id="intro"[\s\S]*?<div class="no-overflow">([\s\S]*?)<\/div>/,
+    );
     return match ? match[1].trim() : '';
   }
 
   private extractName(html: string): string {
-    const match = html.match(/id="page-header"[\s\S]*?<h1[^>]*>([\s\S]*?)<\/h1>/);
+    const match = html.match(
+      /id="page-header"[\s\S]*?<h1[^>]*>([\s\S]*?)<\/h1>/,
+    );
     if (!match) return '';
     return match[1].replace(/<[^>]*>/g, '').trim();
   }
 
   private extractFiles(html: string): KulonFile[] {
-    const regex = /<a[^>]+href="([^"]*\/pluginfile\.php\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const regex =
+      /<a[^>]+href="([^"]*\/pluginfile\.php\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
     const result: KulonFile[] = [];
     let m: RegExpExecArray | null;
     while ((m = regex.exec(html)) !== null) {
@@ -825,13 +948,20 @@ export class KulonService {
 
   private moduleKind(modname: string): KulonContentItemKind {
     switch (modname) {
-      case 'assign': return 'assign';
-      case 'quiz': return 'quiz';
-      case 'url': return 'url';
-      case 'forum': return 'forum';
-      case 'page': return 'page';
-      case 'resource': return 'file';
-      default: return 'other';
+      case 'assign':
+        return 'assign';
+      case 'quiz':
+        return 'quiz';
+      case 'url':
+        return 'url';
+      case 'forum':
+        return 'forum';
+      case 'page':
+        return 'page';
+      case 'resource':
+        return 'file';
+      default:
+        return 'other';
     }
   }
 
@@ -881,7 +1011,8 @@ export class KulonService {
     // make `</div></div>`-based regexes truncate before the <a> link (B12).
     const itemRe =
       /<div class="activity-item[^"]*" data-activityname="([^"]*)"([\s\S]*?)(?=<div class="activity-item|<\/ul>)/g;
-    const linkRe = /<a[^>]+href="([^"]*\/mod\/([a-z]+)\/view\.php\?id=(\d+)[^"]*)"[^>]*>/;
+    const linkRe =
+      /<a[^>]+href="([^"]*\/mod\/([a-z]+)\/view\.php\?id=(\d+)[^"]*)"[^>]*>/;
     const iconRe = /<img[^>]+src="([^"]*\/f\/([A-Za-z0-9.\-]+))[?"]/;
 
     const sections = headers.map((h) => ({
@@ -961,14 +1092,27 @@ export class KulonService {
     for (const sec of sections) byId.set(sec.id, sec);
 
     for (const cm of raw?.cm ?? []) {
-      if (cm.uservisible === false && cm.module !== 'assign' && cm.module !== 'quiz') continue;
+      if (
+        cm.uservisible === false &&
+        cm.module !== 'assign' &&
+        cm.module !== 'quiz'
+      )
+        continue;
       // Bucket by cm.sectionnumber (ordinal), matching the section id above.
       const owner = byId.get(Number(cm.sectionnumber ?? cm.sectionid));
       if (!owner) continue;
       const kind = this.moduleKind(cm.module);
-      const base = { name: cm.name ?? '', url: cm.url ?? '', cmid: Number(cm.id) };
+      const base = {
+        name: cm.name ?? '',
+        url: cm.url ?? '',
+        cmid: Number(cm.id),
+      };
       if (kind === 'file') {
-        owner.items.push({ ...base, kind, fileType: extractFileType(cm.url ?? '') });
+        owner.items.push({
+          ...base,
+          kind,
+          fileType: extractFileType(cm.url ?? ''),
+        });
       } else {
         owner.items.push({ ...base, kind, duedate: undefined });
       }
@@ -980,14 +1124,30 @@ export class KulonService {
     cookie: string,
     sesskey: string,
     courseId: number,
+    userSub?: string,
   ): Promise<KulonCourseContent> {
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<KulonCourseContent>(
+        `${userSub}:kulon:course-content:${courseId}`,
+      );
+      if (hit) return hit;
+    }
     // JSON-first via core_courseformat_get_state; fall back to the HTML scrape on
     // ANY error (method disabled, session quirks, even a missing res.json() on a
     // stubbed response) so a JSON regression never breaks course content.
+    let content: KulonCourseContent;
     try {
-      return await this.getCourseState(cookie, sesskey, courseId);
+      content = await this.getCourseState(cookie, sesskey, courseId);
     } catch {
-      return this.contentFromHTML(cookie, courseId);
+      content = await this.contentFromHTML(cookie, courseId);
     }
+    if (userSub && this.cache) {
+      await this.cache.set(
+        `${userSub}:kulon:course-content:${courseId}`,
+        content,
+        60_000,
+      );
+    }
+    return content;
   }
 }

@@ -1,6 +1,13 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
-import { IsEnum, IsIn, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export enum Env {
   Development = 'development',
@@ -91,7 +98,7 @@ export class EnvConfig {
 
   @IsOptional()
   @Min(1000)
-  CACHE_TTL_MS: number = 60000;
+  CACHE_TTL_MS: number = 300000;
 
   @IsOptional()
   @IsString()

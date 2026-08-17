@@ -792,7 +792,11 @@ export class SiapService {
    * by `uuid_pertemuan`, each entry with date/time/room/code. Normalize into a
    * flat `SiapJadwal[]` (mirrors the web type used by `parseJadwal`).
    */
-  async getJadwal(siapCookie: string): Promise<SiapJadwal[]> {
+  async getJadwal(siapCookie: string, userSub?: string): Promise<SiapJadwal[]> {
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<SiapJadwal[]>(`${userSub}:siap:jadwal`);
+      if (hit) return hit;
+    }
     const data = await this.siapFetchJson<Record<string, SiapJadwalUpstream>>(
       `${this.baseUrl}/jadwal_mahasiswa/mhs/jadwal/get_jadwal`,
       {
@@ -820,6 +824,9 @@ export class SiapService {
         waktu: `${e.waktu_mulai ?? ''} s/d ${e.waktu_selesai ?? ''}`.trim(),
         sks,
       });
+    }
+    if (userSub && this.cache) {
+      await this.cache.set(`${userSub}:siap:jadwal`, out);
     }
     return out;
   }

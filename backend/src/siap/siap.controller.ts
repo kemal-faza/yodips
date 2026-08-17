@@ -59,7 +59,7 @@ export class SiapController {
   @Get('jadwal')
   async getJadwal(@Req() req: AuthedRequest) {
     const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getJadwal(cookie);
+    return this.siapService.getJadwal(cookie, req.user?.sub);
   }
 
   @Get('kehadiran/:id')
