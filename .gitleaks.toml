@@ -1,0 +1,9 @@
+# gitleaks config: extend the default secret-detection rules (useDefault keeps
+# all built-in rules) but skip gitignored `.env` dev configs. `.env*` is not
+# tracked (see .gitignore); dev secrets correctly live there and must not be
+# committed. Tracked `.env.example` templates are NOT matched by this regex.
+[extend]
+useDefault = true
+
+[allowlist]
+paths = ['\.env$']
