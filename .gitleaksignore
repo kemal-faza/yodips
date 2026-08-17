@@ -1,0 +1,7 @@
+# gitleaksignore — gitleaks-native suppression.
+# backend/.env is GITIGNORED (never committed; git ls-files = []) — dev secrets
+# belong there by repo design and are excluded from git. The pi-lens gitleaks
+# working-tree scan flags it; this suppresses that one gitignored file. It is
+# bound to this repo's remote URL + rule + file, so a real .env committed to
+# git (different commit/path) is still caught.
+git@github.com:kemal-faza/sso.git:*:backend/.env:generic-api-key:*
