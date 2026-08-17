@@ -12,6 +12,7 @@ import ac.undip.sso.ui.theme.Primary
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -66,6 +67,10 @@ fun AppShell(onLogout: () -> Unit = {}) {
 
     Scaffold(
         bottomBar = { ShellBottomBar(currentRoute) { route -> navigate(navController, route) } },
+        // Don't consume the top inset: FeatureScreen headers bleed under the status
+        // bar and Dashboard adds its own statusBarsPadding. Only the bottom nav inset
+        // is applied via the contentPadding below.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { pad ->
         NavHost(
             navController = navController,
