@@ -1,8 +1,10 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,6 +19,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,14 +53,31 @@ private fun scheduleRowKey(
 
 @Composable
 fun ScheduleScreen(repo: SsoRepository) {
+    var lecturerByKode by remember { mutableStateOf(emptyMap<String, String>()) }
     FeatureScreen("Jadwal") {
-        LoadableData(load = { repo.jadwal() }, emptyMessage = "Belum ada jadwal.") { jadwal ->
+        LoadableData(
+            load = {
+                // Dosen di-join dari SIAP `get_irs` (kode MIK), bukan dari Kulon, karena
+                // matkul semester berjalan tak selalu ada di daftar kursus Kulon.
+                when (val r = repo.lecturers()) {
+                    is ApiResult.Success -> {
+                        lecturerByKode = r.data.filter { it.dosen.isNotBlank() }.associate { it.kode to it.dosen }
+                    }
+
+                    is ApiResult.Error -> {
+                        Unit
+                    }
+                }
+                repo.jadwal()
+            },
+            emptyMessage = "Belum ada jadwal.",
+        ) { jadwal ->
             val sections = scheduleSections(jadwal)
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 sections.forEach { (day, rows) ->
                     item { SectionHeader(capitalizeDay(day)) }
                     rows.forEach { (key, e) ->
-                        item(key) { ScheduleCard(e) }
+                        item(key) { ScheduleCard(e, lecturerByKode[e.kode.orEmpty()]) }
                     }
                 }
             }
@@ -62,10 +85,11 @@ fun ScheduleScreen(repo: SsoRepository) {
     }
 }
 
-private val SiapJadwal.kuota get() = sks
-
 @Composable
-private fun ScheduleCard(j: SiapJadwal) {
+private fun ScheduleCard(
+    j: SiapJadwal,
+    lecturer: String?,
+) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -86,12 +110,15 @@ private fun ScheduleCard(j: SiapJadwal) {
             Text(
                 j.waktu,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
+                color = accentForeground(),
                 fontWeight = FontWeight.Medium,
             )
             Spacer(Modifier.height(2.dp))
             if (!j.ruang.isNullOrBlank()) {
                 Text("Ruang: ${j.ruang}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (!lecturer.isNullOrBlank()) {
+                Text("Dosen: $lecturer", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

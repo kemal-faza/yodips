@@ -6,9 +6,11 @@ import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
+import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapKhs
+import ac.undip.sso.core.network.SiapLecturer
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SsoApi
 import kotlinx.serialization.SerializationException
@@ -33,6 +35,10 @@ class SsoRepository(
     suspend fun jadwal(): ApiResult<List<SiapJadwal>> = safe { api.jadwal() }
 
     suspend fun assignments(): ApiResult<List<KulonAssignment>> = safe { api.assignments() }
+
+    suspend fun courses(): ApiResult<List<KulonCourse>> = safe { api.courses() }
+
+    suspend fun lecturers(): ApiResult<List<SiapLecturer>> = safe { api.lecturers() }
 
     suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> = safe { api.markKehadiran(KehadiranRequest(token)) }
 }

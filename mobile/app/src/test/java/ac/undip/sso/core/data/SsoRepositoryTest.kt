@@ -5,9 +5,11 @@ import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
+import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapKhs
+import ac.undip.sso.core.network.SiapLecturer
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SsoApi
 import kotlinx.coroutines.runBlocking
@@ -33,6 +35,10 @@ private class FakeApi : SsoApi {
     override suspend fun jadwal(): List<SiapJadwal> = throw UnsupportedOperationException()
 
     override suspend fun assignments(): List<KulonAssignment> = throw UnsupportedOperationException()
+
+    override suspend fun courses(): List<KulonCourse> = throw UnsupportedOperationException()
+
+    override suspend fun lecturers(): List<SiapLecturer> = throw UnsupportedOperationException()
 
     override suspend fun markKehadiran(body: KehadiranRequest): KehadiranResponse = throw UnsupportedOperationException()
 }

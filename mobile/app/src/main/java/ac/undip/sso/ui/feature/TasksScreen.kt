@@ -1,8 +1,11 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.KulonAssignment
+import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,15 +46,41 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /**
- * Tugas list grouped the same way as the web Kulon task page: a filter bar
- * (Semua / Perlu dikerjakan / Sudah dikerjakan / Terlambat) over the flat
- * list, each card tagged with its bucket. `null` filter = Semua.
+ * Aktif course ids (`timelineStatus == "inprogress"`), populated from
+ * /api/kulon/courses so `taskBucket` matches web categorization (Perlu dikerjakan
+ * hanya utk matkul semester berjalan).
  */
+private data class CourseCtx(
+    val activeCourseIds: Set<Long> = emptySet(),
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TasksScreen(repo: SsoRepository) {
+    var ctx by remember { mutableStateOf(CourseCtx()) }
     FeatureScreen("Tugas") {
-        LoadableData(load = { repo.assignments() }, emptyMessage = "Tidak ada tugas saat ini.") { tasks ->
+        LoadableData(
+            load = {
+                when (val r = repo.courses()) {
+                    is ApiResult.Success -> {
+                        ctx =
+                            CourseCtx(
+                                activeCourseIds =
+                                    r.data
+                                        .filter { it.timelineStatus == "inprogress" }
+                                        .map { it.id }
+                                        .toSet(),
+                            )
+                    }
+
+                    is ApiResult.Error -> {
+                        Unit
+                    }
+                }
+                repo.assignments()
+            },
+            emptyMessage = "Tidak ada tugas saat ini.",
+        ) { tasks ->
             var filter by remember { mutableStateOf<TaskBucket?>(TaskBucket.NEED) }
             Column(Modifier.fillMaxSize()) {
                 Row(
@@ -68,7 +97,7 @@ fun TasksScreen(repo: SsoRepository) {
                 }
                 val visible =
                     tasks
-                        .filter { filter == null || taskBucket(it) == filter }
+                        .filter { filter == null || taskBucket(it, ctx.activeCourseIds) == filter }
                         .sortedBy { it.duedate }
                 if (visible.isEmpty()) {
                     EmptyTasks(filter)
@@ -79,7 +108,7 @@ fun TasksScreen(repo: SsoRepository) {
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(visible, key = { it.id }) { t ->
-                            TaskCard(t, taskBucket(t))
+                            TaskCard(t, taskBucket(t, ctx.activeCourseIds))
                         }
                     }
                 }
@@ -91,7 +120,7 @@ fun TasksScreen(repo: SsoRepository) {
 private fun emptyTasksMessage(filter: TaskBucket?): String =
     when (filter) {
         null -> "Tidak ada tugas saat ini."
-        TaskBucket.NEED -> "Tidak ada tugas yang perlu dikerjakan — kamu sudah beres."
+        TaskBucket.NEED -> "Tidak ada tugas yang perlu dikerjakan. Kamu sudah beres."
         TaskBucket.DONE -> "Belum ada tugas yang selesai dikerjakan."
         TaskBucket.LATE -> "Tidak ada tugas terlambat."
     }
@@ -115,7 +144,7 @@ private fun EmptyTasks(filter: TaskBucket?) {
 @Composable
 private fun TaskCard(
     t: KulonAssignment,
-    bucket: TaskBucket,
+    bucket: TaskBucket?,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -136,8 +165,10 @@ private fun TaskCard(
                     maxLines = 2,
                     modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.width(10.dp))
-                BucketPill(bucket)
+                if (bucket != null) {
+                    Spacer(Modifier.width(10.dp))
+                    BucketPill(bucket)
+                }
             }
             Spacer(Modifier.height(6.dp))
             Text(t.course, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -146,7 +177,7 @@ private fun TaskCard(
                 Text(
                     "Status: $it",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = accentForeground(),
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }

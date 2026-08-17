@@ -69,10 +69,17 @@ class DashboardHelpersTest {
 
     @Test
     fun `taskBucket maps submissions, overdue and pending like the web`() {
-        assertEquals(TaskBucket.DONE, taskBucket(task(submissionStatus = "submitted")))
-        assertEquals(TaskBucket.DONE, taskBucket(task(submissionStatus = "graded")))
-        assertEquals(TaskBucket.LATE, taskBucket(task(overdue = true)))
-        assertEquals(TaskBucket.NEED, taskBucket(task()))
+        val active = setOf(0L)
+        assertEquals(TaskBucket.DONE, taskBucket(task(submissionStatus = "submitted"), active))
+        assertEquals(TaskBucket.DONE, taskBucket(task(submissionStatus = "graded"), active))
+        assertEquals(TaskBucket.LATE, taskBucket(task(overdue = true), active))
+        assertEquals(TaskBucket.NEED, taskBucket(task(), active))
+        // Course not in the active semester → no named bucket (only in "Semua").
+        assertEquals(null, taskBucket(task(), emptySet()))
+        assertEquals(null, taskBucket(task(), setOf(99L)))
+        // Overdue/submitted ignore course activity (like the web).
+        assertEquals(TaskBucket.LATE, taskBucket(task(overdue = true), emptySet()))
+        assertEquals(TaskBucket.DONE, taskBucket(task(submissionStatus = "submitted"), emptySet()))
     }
 
     @Test
@@ -87,6 +94,7 @@ class DashboardHelpersTest {
                     task(),
                     task(),
                 ),
+                setOf(0L),
             )
         assertEquals(2, counts[TaskBucket.LATE])
         assertEquals(1, counts[TaskBucket.DONE])

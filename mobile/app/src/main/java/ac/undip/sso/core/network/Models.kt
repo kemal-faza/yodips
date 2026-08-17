@@ -36,6 +36,22 @@ data class SiapProfile(
     val alamatSekarang: String? = null,
 )
 
+/** Kulon course (minimal shape): id + Moodle timeline classification.
+ *  `timelineStatus == "inprogress"` marks the course as in the current semester. */
+@Serializable
+data class KulonCourse(
+    val id: Long = 0,
+    val timelineStatus: String = "",
+    val lecturer: String? = null,
+)
+
+/** SIAP lecturer per course code (from `get_irs`), joined to schedule by `kode` (MIK). */
+@Serializable
+data class SiapLecturer(
+    val kode: String = "",
+    val dosen: String = "",
+)
+
 @Serializable
 data class SiapNilai(
     val mataKuliah: String = "",

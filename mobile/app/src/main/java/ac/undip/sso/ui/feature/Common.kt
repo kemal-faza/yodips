@@ -6,6 +6,7 @@ import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.sksKumulatif
+import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -88,7 +89,7 @@ internal fun SectionHeader(
         modifier = modifier,
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.primary,
+        color = accentForeground(),
     )
 }
 
@@ -123,12 +124,22 @@ internal fun AcademicStats(
 /** Web Kulon bucket for a task — single source of truth for list grouping + counts. */
 internal enum class TaskBucket { NEED, DONE, LATE }
 
-internal fun taskBucket(a: KulonAssignment): TaskBucket {
+/**
+ * Categorise like the web: DONE = submitted/graded; LATE = overdue & not done;
+ * NEED = active-semester course, not done, not overdue. A task that is neither
+ * done nor overdue but whose course is NOT in the current semester returns null
+ * (it belongs to no named bucket and only shows under "Semua").
+ */
+internal fun taskBucket(
+    a: KulonAssignment,
+    activeCourseIds: Set<Long>,
+): TaskBucket? {
     val done = a.submissionStatus == "submitted" || a.submissionStatus == "graded"
     return when {
         done -> TaskBucket.DONE
         a.overdue -> TaskBucket.LATE
-        else -> TaskBucket.NEED
+        a.courseId in activeCourseIds -> TaskBucket.NEED
+        else -> null
     }
 }
 
@@ -139,8 +150,11 @@ internal fun taskBucketLabel(b: TaskBucket): String =
         TaskBucket.LATE -> "Terlambat"
     }
 
-internal fun taskCounts(tasks: List<KulonAssignment>): Map<TaskBucket, Int> {
+internal fun taskCounts(
+    tasks: List<KulonAssignment>,
+    activeCourseIds: Set<Long> = emptySet(),
+): Map<TaskBucket, Int> {
     val m = mutableMapOf(TaskBucket.NEED to 0, TaskBucket.DONE to 0, TaskBucket.LATE to 0)
-    tasks.forEach { m[taskBucket(it)] = m.getValue(taskBucket(it)) + 1 }
+    tasks.forEach { taskBucket(it, activeCourseIds)?.let { b -> m[b] = m.getValue(b) + 1 } }
     return m
 }
