@@ -87,7 +87,7 @@ fun AppShell(onLogout: () -> Unit = {}) {
             composable(Tab.Tasks.route) { TasksScreen(repo) }
             composable(Tab.Scan.route) { ScanScreen() }
             composable(Tab.Schedule.route) { ScheduleScreen(repo) }
-            composable(Tab.Profile.route) { ProfileScreen(repo, onOpenKhs = { navController.navigate("khs") }, onLogout = onLogout) }
+            composable(Tab.Profile.route) { ProfileScreen(repo, onLogout = onLogout) }
             composable("khs") { KhsScreen(repo, onBack = { navController.popBackStack() }) }
             composable("irs") { IrsScreen(repo, onBack = { navController.popBackStack() }) }
         }

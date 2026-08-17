@@ -47,12 +47,11 @@ private data class PGroup(
 @Composable
 fun ProfileScreen(
     repo: SsoRepository,
-    onOpenKhs: () -> Unit,
     onLogout: () -> Unit,
 ) {
     FeatureScreen("Profil") {
         LoadableData(load = { repo.profile() }, emptyMessage = "Profil belum tersedia") { p ->
-            ProfileContent(p, onOpenKhs, onLogout)
+            ProfileContent(p, onLogout)
         }
     }
 }
@@ -60,7 +59,6 @@ fun ProfileScreen(
 @Composable
 private fun ProfileContent(
     p: SiapProfile,
-    onOpenKhs: () -> Unit,
     onLogout: () -> Unit,
 ) {
     var showNamaIbu by remember { mutableStateOf(false) }
@@ -147,12 +145,6 @@ private fun ProfileContent(
             FieldGroup(group, maskShown = showNamaIbu, onToggleMask = { showNamaIbu = !showNamaIbu })
         }
 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = onOpenKhs) {
-                Text("Lihat KHS (nilai + IPK)", style = MaterialTheme.typography.titleSmall)
-            }
-        }
-
         Button(
             onClick = onLogout,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
@@ -222,9 +214,9 @@ private fun InfoRow(
     label: String,
     value: String,
 ) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(6.dp))
     }
-    Spacer(Modifier.height(6.dp))
 }
