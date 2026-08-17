@@ -154,7 +154,7 @@ export class PlaywrightAuthService {
       }
       if (Date.now() > deadline) {
         throw new Error(
-          'Kulon session tidak terverifikasi — silakan selesaikan login di window browser atau coba lagi nanti',
+          'Kulon session tidak terverifikasi. Silakan selesaikan login di window browser atau coba lagi nanti',
         );
       }
       await this.sleep(POLL_INTERVAL_MS);
@@ -195,7 +195,7 @@ export class PlaywrightAuthService {
       }
       if (Date.now() > deadline) {
         throw new Error(
-          'SIAP session tidak terverifikasi — silakan selesaikan login di window browser atau coba lagi nanti',
+          'SIAP session tidak terverifikasi. Silakan selesaikan login di window browser atau coba lagi nanti',
         );
       }
       await this.sleep(POLL_INTERVAL_MS);

@@ -93,7 +93,7 @@ export class SiapController {
     const session = await this.sessionStore.get(req.user?.sub ?? '');
     if (!session?.siapCookie) {
       throw new HttpException(
-        { message: 'SIAP session belum ada — silakan login ulang via SSO' },
+        { message: 'SIAP session belum ada. Silakan login ulang via SSO' },
         HttpStatus.UNAUTHORIZED,
       );
     }

@@ -172,7 +172,7 @@ export class SiapService {
    * surfaces a friendly "login ulang" prompt instead of a raw error.
    */
   private stale(
-    message = 'Session SIAP expired — silakan login ulang via SSO',
+    message = 'Session SIAP expired. Silakan login ulang via SSO',
   ): HttpException {
     return new HttpException({ message }, HttpStatus.UNAUTHORIZED);
   }

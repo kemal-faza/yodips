@@ -207,7 +207,7 @@ export class AuthService {
       const code = check.reason === 'no-cookie' ? 'KULON_NO_COOKIE' : 'KULON_STALE';
       throw new HttpException(
         {
-          message: 'Session Kulon tidak valid — silakan login ulang',
+          message: 'Session Kulon tidak valid. Silakan login ulang',
           code,
           reason: check.reason,
         },

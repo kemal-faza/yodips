@@ -16,7 +16,7 @@ export class KulonController {
     const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
-        { message: 'Kulon session belum ada — silakan login ulang via SSO' },
+        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
         HttpStatus.UNAUTHORIZED,
       );
     }
@@ -35,7 +35,7 @@ export class KulonController {
     const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
-        { message: 'Kulon session belum ada — silakan login ulang via SSO' },
+        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
         HttpStatus.UNAUTHORIZED,
       );
     }
@@ -48,7 +48,7 @@ export class KulonController {
     const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
-        { message: 'Kulon session belum ada — silakan login ulang via SSO' },
+        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
         HttpStatus.UNAUTHORIZED,
       );
     }
@@ -61,7 +61,7 @@ export class KulonController {
     const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
-        { message: 'Kulon session belum ada — silakan login ulang via SSO' },
+        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
         HttpStatus.UNAUTHORIZED,
       );
     }
@@ -96,7 +96,7 @@ export class KulonController {
     const session = await this.sessionStore.get(req.user?.sub);
     if (!session?.kulonCookie) {
       throw new HttpException(
-        { message: 'Kulon session belum ada — silakan login ulang via SSO' },
+        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
         HttpStatus.UNAUTHORIZED,
       );
     }
@@ -131,7 +131,7 @@ export class KulonController {
     } catch (e) {
       if ((e as Error)?.cause && /redirect count exceeded/i.test(String((e as Error).cause))) {
         throw new HttpException(
-          { message: 'Session Kulon expired — silakan login ulang via SSO' },
+          { message: 'Session Kulon expired. Silakan login ulang via SSO' },
           HttpStatus.UNAUTHORIZED,
         );
       }
@@ -142,7 +142,7 @@ export class KulonController {
     }
     if (!res.ok) {
       throw new HttpException(
-        `Kulon merespons ${res.status} — silakan login ulang via SSO`,
+        `Kulon merespons ${res.status}. Silakan login ulang via SSO`,
         HttpStatus.UNAUTHORIZED,
       );
     }
@@ -157,7 +157,7 @@ export class KulonController {
       // raw 500.
       if (this.isLoginPage(res.url, html)) {
         throw new HttpException(
-          { message: 'Session Kulon expired — silakan login ulang via SSO' },
+          { message: 'Session Kulon expired. Silakan login ulang via SSO' },
           HttpStatus.UNAUTHORIZED,
         );
       }
