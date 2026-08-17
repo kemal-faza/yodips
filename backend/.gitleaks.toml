@@ -1,0 +1,8 @@
+# gitleaks config (backend/): extend default secret rules, skip gitignored `.env`.
+# `.env` is not tracked (see .gitignore) — dev secrets correctly live there and
+# must never be committed. `.env.example` templates are not matched.
+[extend]
+useDefault = true
+
+[allowlist]
+paths = ['\.env$']
