@@ -14,15 +14,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /**
@@ -86,20 +91,21 @@ fun TasksScreen(repo: SsoRepository) {
 private fun emptyTasksMessage(filter: TaskBucket?): String =
     when (filter) {
         null -> "Tidak ada tugas saat ini."
-        TaskBucket.NEED -> "Tidak ada tugas yang perlu dikerjakan — kamu sudah beres! 👍"
+        TaskBucket.NEED -> "Tidak ada tugas yang perlu dikerjakan — kamu sudah beres."
         TaskBucket.DONE -> "Belum ada tugas yang selesai dikerjakan."
-        TaskBucket.LATE -> "Tidak ada tugas terlambat. Mantap! 🎉"
+        TaskBucket.LATE -> "Tidak ada tugas terlambat."
     }
 
 @Composable
 private fun EmptyTasks(filter: TaskBucket?) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("—", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.outline)
+            Icon(Icons.Outlined.Inbox, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(56.dp))
             Text(
                 emptyTasksMessage(filter),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 32.dp),
             )
         }

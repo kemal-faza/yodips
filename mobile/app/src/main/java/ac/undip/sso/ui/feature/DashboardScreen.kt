@@ -92,6 +92,8 @@ private fun DashboardContent(
         LoadableData(load = { repo.jadwal() }, emptyMessage = "Belum ada jadwal") { jadwal ->
             UpcomingClasses(jadwal)
         }
+
+        AcademicCharts(repo)
     }
 }
 

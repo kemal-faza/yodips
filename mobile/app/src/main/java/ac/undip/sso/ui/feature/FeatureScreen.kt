@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
@@ -47,24 +48,22 @@ fun FeatureScreen(
 }
 
 /** Slim header bar: surface background bleeds to the very top (AppShell no longer
- *  consumes the top inset), and statusBarsPadding drops the title just below the
- *  status icons so the white bar runs seamlessly behind the status bar. */
+ *  consumes the top inset), statusBarsPadding drops content below the status icons,
+ *  and the title is centered horizontally (back button pinned to the start). */
 @Composable
 private fun CompactFeatureBar(
     title: String,
     onBack: (() -> Unit)?,
 ) {
-    Row(
+    Box(
         Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
             .statusBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+            .heightIn(min = 52.dp),
     ) {
         if (onBack != null) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
             }
         }
@@ -74,6 +73,7 @@ private fun CompactFeatureBar(
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.align(Alignment.Center),
         )
     }
 }
