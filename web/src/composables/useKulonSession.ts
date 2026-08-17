@@ -14,7 +14,7 @@ export function useKulonSession() {
     const serverMsg = anyE.response?.data?.message;
     if (status === 401 || status === 403) {
       sessionExpired.value = true;
-      return serverMsg || 'Session Kulon kedaluwarsa — silakan login ulang.';
+      return serverMsg || 'Session Kulon kedaluwarsa. Silakan login ulang.';
     }
     return serverMsg || 'Terjadi kesalahan tidak diketahui.';
   }

@@ -99,7 +99,7 @@ async function load() {
     detail.value = null;
     const statusCode = (e as { response?: { status?: number } })?.response?.status;
     if (statusCode === 401 || statusCode === 403) {
-      error.value = 'Session Kulon kedaluwarsa — login ulang lewat kartu di dashboard.';
+      error.value = 'Session Kulon kedaluwarsa. Silakan login ulang lewat kartu di dashboard.';
     } else if (statusCode === 404) {
       error.value = 'Detail tugas tidak ditemukan.';
     } else {

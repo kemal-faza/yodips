@@ -45,7 +45,7 @@ export const useAuthStore = defineStore('auth', {
           this.error = null;
         } else if (!result.hasKulon) {
           // SSO sukses tapi session Kulon kosong — dashboard mungkin kosong.
-          this.error = 'Login SSO berhasil, tapi session Kulon belum lengkap — beberapa data mungkin kosong.';
+          this.error = 'Login SSO berhasil, tapi session Kulon belum lengkap. Beberapa data mungkin kosong.';
         }
       } catch (e) {
         const status = (e as { response?: { status?: number } })?.response?.status;
