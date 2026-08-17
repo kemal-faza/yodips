@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -25,16 +24,34 @@ import androidx.compose.ui.unit.dp
 
 private val dayOrder = listOf("senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu")
 
+/**
+ * Groups jadwal by day (ordered Monday-first) assigning a globally unique, stable
+ * key to every row. SIAP emits duplicate (hari, matakuliah, waktu) rows for real
+ * schedules, so the per-day index disambiguates them — otherwise LazyColumn would
+ * crash with "Key was already used". Extracted for unit-testing the key guarantee.
+ */
+internal fun scheduleSections(jadwal: List<SiapJadwal>): Map<String, List<Pair<String, SiapJadwal>>> =
+    jadwal
+        .groupBy { it.hari.lowercase() }
+        .toSortedMap(compareBy { dayOrder.indexOf(it) })
+        .mapValues { (day, entries) -> entries.mapIndexed { index, e -> scheduleRowKey(day, index, e) to e } }
+
+private fun scheduleRowKey(
+    day: String,
+    index: Int,
+    e: SiapJadwal,
+): String = "$day-$index-${e.matakuliah}-${e.waktu}"
+
 @Composable
 fun ScheduleScreen(repo: SsoRepository) {
     FeatureScreen("Jadwal") {
         LoadableData(load = { repo.jadwal() }, emptyMessage = "Belum ada jadwal.") { jadwal ->
-            val grouped = jadwal.groupBy { it.hari.lowercase() }.toSortedMap(compareBy { dayOrder.indexOf(it) })
+            val sections = scheduleSections(jadwal)
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                grouped.forEach { (day, entries) ->
+                sections.forEach { (day, rows) ->
                     item { SectionHeader(day.replaceFirstChar { it.uppercase() }) }
-                    items(entries, key = { "$day-${it.matakuliah}-${it.waktu}" }) { e ->
-                        ScheduleCard(e)
+                    rows.forEach { (key, e) ->
+                        item(key) { ScheduleCard(e) }
                     }
                 }
             }
