@@ -13,15 +13,14 @@ const gridItems = computed(() => props.items.filter((i) => i.day && i.timeStart 
 </script>
 
 <template>
-  <section class="-mx-6 space-y-4 border-y border-border bg-secondary/50 px-6 py-6 md:-mx-8 md:px-8" data-test="schedule-section">
+  <section class="rounded-xl border border-border bg-card p-6 space-y-4" data-test="schedule-section">
     <div v-if="loading" class="space-y-3">
       <Skeleton v-for="i in 3" :key="i" class="h-16 rounded-lg" />
     </div>
     <template v-else>
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 class="text-base font-bold text-foreground">Jadwal Kuliah IRS {{ semester ? `— ${semester}` : '' }}</h2>
-          <p class="mt-0.5 text-xs text-muted-foreground">Jadwal perkuliahan mingguan dari SIAP Undip</p>
+          <h2 class="text-base font-bold text-foreground">Jadwal Kuliah</h2>
         </div>
         <div class="flex gap-1 text-xs">
           <Button variant="outline" size="sm" :class="view === 'grid' ? 'bg-primary/10 font-semibold text-foreground' : ''" data-test="schedule-view-grid" @click="view = 'grid'">Grid</Button>

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 import {
   taskStats,
   ipTrend,
@@ -6,44 +6,78 @@ import {
   gradeDistribution,
   parseSchedule,
   parseJadwal,
+  dedupeSchedule,
   semesterXTicks,
   semesterXLabel,
-} from './dashboard';
-import type { SiapKhs, SiapIrs, SiapJadwal, Assignment, Course } from '../types';
+} from "./dashboard";
+import type {
+  SiapKhs,
+  SiapIrs,
+  SiapJadwal,
+  Assignment,
+  Course,
+} from "../types";
 
 const NOW = 1000 * 1000; // 1000s past epoch — only relative deltas matter
 
 const khs: SiapKhs = {
   ipk: 3.71,
   semesters: [
-    { semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [
-      { mataKuliah: 'Aljabar', sks: 3, nilaiHuruf: 'A', bobot: 4 },
-      { mataKuliah: 'Logika', sks: 3, nilaiHuruf: 'AB', bobot: 3.5 },
-    ]},
-    { semester: 'Genap 22/23', ip: 3.64, totalSks: 22, nilai: [
-      { mataKuliah: 'Dasar Sistem', sks: 3, nilaiHuruf: 'A', bobot: 4 },
-    ]},
+    {
+      semester: "Gasal 22/23",
+      ip: 3.52,
+      totalSks: 20,
+      nilai: [
+        { mataKuliah: "Aljabar", sks: 3, nilaiHuruf: "A", bobot: 4 },
+        { mataKuliah: "Logika", sks: 3, nilaiHuruf: "AB", bobot: 3.5 },
+      ],
+    },
+    {
+      semester: "Genap 22/23",
+      ip: 3.64,
+      totalSks: 22,
+      nilai: [
+        { mataKuliah: "Dasar Sistem", sks: 3, nilaiHuruf: "A", bobot: 4 },
+      ],
+    },
   ],
 };
 
 const irs: SiapIrs = {
-  semester: 'Ganjil 2025/2026',
+  semester: "Ganjil 2025/2026",
   totalSks: 18,
   mataKuliah: [
-    { kode: 'PAIK6402', nama: 'Kecerdasan Buatan', sks: 3, ruang: 'A301', jadwal: 'Senin 07:00 - 09:30', status: 'disetujui' },
-    { kode: 'PAIK6499', nama: 'Mata Kuliah Tanpa Jadwal', sks: 2, status: 'disetujui' },
+    {
+      kode: "PAIK6402",
+      nama: "Kecerdasan Buatan",
+      sks: 3,
+      ruang: "A301",
+      jadwal: "Senin 07:00 - 09:30",
+      status: "disetujui",
+    },
+    {
+      kode: "PAIK6499",
+      nama: "Mata Kuliah Tanpa Jadwal",
+      sks: 2,
+      status: "disetujui",
+    },
   ],
 };
 
-function mk(n: Partial<Assignment> & { duedate: number; submissionStatus: Assignment['submissionStatus'] }): Assignment {
+function mk(
+  n: Partial<Assignment> & {
+    duedate: number;
+    submissionStatus: Assignment["submissionStatus"];
+  },
+): Assignment {
   return {
     id: n.id ?? 0,
-    name: n.name ?? 'x',
-    module: n.module ?? 'assign',
-    eventType: n.eventType ?? '',
+    name: n.name ?? "x",
+    module: n.module ?? "assign",
+    eventType: n.eventType ?? "",
     duedate: n.duedate,
     overdue: n.overdue ?? false,
-    course: n.course ?? 'c',
+    course: n.course ?? "c",
     courseId: n.courseId ?? 1,
     assignmentId: n.assignmentId,
     courseModuleId: n.courseModuleId,
@@ -51,17 +85,39 @@ function mk(n: Partial<Assignment> & { duedate: number; submissionStatus: Assign
   };
 }
 
-describe('taskStats', () => {
-  it('buckets need/late/done matching the Kulon filter semantics', () => {
+describe("taskStats", () => {
+  it("buckets need/late/done matching the Kulon filter semantics", () => {
     const courses: Course[] = [
-      { id: 1, fullname: 'KB', shortname: 'X', idnumber: '', semester: 'Gasal 25/26', timelineStatus: 'inprogress' },
-      { id: 2, fullname: 'P', shortname: 'Y', idnumber: '', semester: 'Genap 24/25', timelineStatus: 'past' },
+      {
+        id: 1,
+        fullname: "KB",
+        shortname: "X",
+        idnumber: "",
+        semester: "Gasal 25/26",
+        timelineStatus: "inprogress",
+      },
+      {
+        id: 2,
+        fullname: "P",
+        shortname: "Y",
+        idnumber: "",
+        semester: "Genap 24/25",
+        timelineStatus: "past",
+      },
     ];
     const assignments = [
-      mk({ duedate: NOW / 1000 - 100, submissionStatus: 'graded' }),                      // done
-      mk({ duedate: NOW / 1000 - 100, submissionStatus: 'not_submitted', overdue: true }), // late
-      mk({ duedate: NOW / 1000 + 1000, submissionStatus: 'not_submitted' }),               // need (active course, not overdue)
-      mk({ duedate: NOW / 1000 + 1000, submissionStatus: 'not_submitted', courseId: 2 }),  // NOT need (past course)
+      mk({ duedate: NOW / 1000 - 100, submissionStatus: "graded" }), // done
+      mk({
+        duedate: NOW / 1000 - 100,
+        submissionStatus: "not_submitted",
+        overdue: true,
+      }), // late
+      mk({ duedate: NOW / 1000 + 1000, submissionStatus: "not_submitted" }), // need (active course, not overdue)
+      mk({
+        duedate: NOW / 1000 + 1000,
+        submissionStatus: "not_submitted",
+        courseId: 2,
+      }), // NOT need (past course)
     ];
     const s = taskStats(assignments, courses);
     expect(s).toEqual({ need: 1, late: 1, done: 1 });
@@ -73,82 +129,190 @@ describe('taskStats', () => {
 const khsWithUngraded: SiapKhs = {
   ipk: 3.78,
   semesters: [
-    { semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [{ mataKuliah: 'Aljabar', sks: 3, nilaiHuruf: 'A', bobot: 4 }] },
-    { semester: '2025/2026 Genap', ip: 0, totalSks: 0, nilai: [] },
+    {
+      semester: "Gasal 22/23",
+      ip: 3.52,
+      totalSks: 20,
+      nilai: [{ mataKuliah: "Aljabar", sks: 3, nilaiHuruf: "A", bobot: 4 }],
+    },
+    { semester: "2025/2026 Genap", ip: 0, totalSks: 0, nilai: [] },
   ],
 };
 
-describe('ipTrend', () => {
-  it('maps semesters to ip rows', () => {
+describe("ipTrend", () => {
+  it("maps semesters to ip rows", () => {
     expect(ipTrend(khs)).toEqual([
-      { semester: 'Gasal 22/23', ip: 3.52 },
-      { semester: 'Genap 22/23', ip: 3.64 },
+      { semester: "Gasal 22/23", ip: 3.52 },
+      { semester: "Genap 22/23", ip: 3.64 },
     ]);
   });
-  it('excludes ungraded semesters (ip 0) so the line does not crash to 0', () => {
-    expect(ipTrend(khsWithUngraded)).toEqual([{ semester: 'Gasal 22/23', ip: 3.52 }]);
+  it("excludes ungraded semesters (ip 0) so the line does not crash to 0", () => {
+    expect(ipTrend(khsWithUngraded)).toEqual([
+      { semester: "Gasal 22/23", ip: 3.52 },
+    ]);
   });
-  it('returns [] for null', () => expect(ipTrend(null)).toEqual([]));
+  it("returns [] for null", () => expect(ipTrend(null)).toEqual([]));
 });
 
-describe('cumulativeSks', () => {
-  it('computes a running total', () => {
+describe("cumulativeSks", () => {
+  it("computes a running total", () => {
     expect(cumulativeSks(khs)).toEqual([
-      { semester: 'Gasal 22/23', sksSemester: 20, sksKumulatif: 20 },
-      { semester: 'Genap 22/23', sksSemester: 22, sksKumulatif: 42 },
+      { semester: "Gasal 22/23", sksSemester: 20, sksKumulatif: 20 },
+      { semester: "Genap 22/23", sksSemester: 22, sksKumulatif: 42 },
     ]);
   });
-  it('excludes ungraded semesters (0 SKS) from the running total', () => {
-    expect(cumulativeSks(khsWithUngraded)).toEqual([{ semester: 'Gasal 22/23', sksSemester: 20, sksKumulatif: 20 }]);
+  it("excludes ungraded semesters (0 SKS) from the running total", () => {
+    expect(cumulativeSks(khsWithUngraded)).toEqual([
+      { semester: "Gasal 22/23", sksSemester: 20, sksKumulatif: 20 },
+    ]);
   });
-  it('returns [] for null', () => expect(cumulativeSks(null)).toEqual([]));
+  it("returns [] for null", () => expect(cumulativeSks(null)).toEqual([]));
 });
 
-describe('gradeDistribution', () => {
-  it('counts grades per semester, zero-filled', () => {
+describe("gradeDistribution", () => {
+  it("counts grades per semester, zero-filled", () => {
     const rows = gradeDistribution(khs);
-    expect(rows[0]).toMatchObject({ semester: 'Gasal 22/23', A: 1, AB: 1, B: 0 });
-    expect(rows[1]).toMatchObject({ semester: 'Genap 22/23', A: 1, AB: 0 });
+    expect(rows[0]).toMatchObject({
+      semester: "Gasal 22/23",
+      A: 1,
+      AB: 1,
+      B: 0,
+    });
+    expect(rows[1]).toMatchObject({ semester: "Genap 22/23", A: 1, AB: 0 });
   });
-  it('excludes ungraded semesters (empty nilai) so bars are not empty', () => {
+  it("excludes ungraded semesters (empty nilai) so bars are not empty", () => {
     const rows = gradeDistribution(khsWithUngraded);
-    expect(rows.map((r) => r.semester)).toEqual(['Gasal 22/23']);
+    expect(rows.map((r) => r.semester)).toEqual(["Gasal 22/23"]);
   });
 });
 
-describe('parseSchedule', () => {
-  it('parses day + time from jadwal string', () => {
+describe("parseSchedule", () => {
+  it("parses day + time from jadwal string", () => {
     const items = parseSchedule(irs);
     expect(items[0]).toMatchObject({
-      code: 'PAIK6402', courseName: 'Kecerdasan Buatan', day: 'Senin',
-      timeStart: '07:00', timeEnd: '09:30', room: 'A301', sks: 3, status: 'disetujui',
+      code: "PAIK6402",
+      courseName: "Kecerdasan Buatan",
+      day: "Senin",
+      timeStart: "07:00",
+      timeEnd: "09:30",
+      room: "A301",
+      sks: 3,
+      status: "disetujui",
     });
   });
-  it('keeps unparsable rows with day undefined and raw text', () => {
+  it("keeps unparsable rows with day undefined and raw text", () => {
     const items = parseSchedule(irs);
     expect(items[1].day).toBeUndefined();
-    expect(items[1].code).toBe('PAIK6499');
+    expect(items[1].code).toBe("PAIK6499");
     expect(items[1].jadwalRaw).toBeUndefined(); // empty string -> undefined
   });
-  it('returns [] for null', () => expect(parseSchedule(null)).toEqual([]));
+  it("returns [] for null", () => expect(parseSchedule(null)).toEqual([]));
 });
 
 const jadwalRows: SiapJadwal[] = [
-  { no: 1, kode: 'PAIK6402', hari: 'senin', matakuliah: 'Kecerdasan Buatan', ruang: 'A301', waktu: '09:40:00 s/d 12:10:00', sks: 3 },
-  { no: 2, kode: 'PAIK6403', hari: 'KAMIS', matakuliah: 'Metode Numerik', ruang: 'A302', waktu: '13:00:00 s/d 15:30:00', sks: 3 },
+  {
+    no: 1,
+    kode: "PAIK6402",
+    hari: "senin",
+    matakuliah: "Kecerdasan Buatan",
+    ruang: "A301",
+    waktu: "09:40:00 s/d 12:10:00",
+    sks: 3,
+  },
+  {
+    no: 2,
+    kode: "PAIK6403",
+    hari: "KAMIS",
+    matakuliah: "Metode Numerik",
+    ruang: "A302",
+    waktu: "13:00:00 s/d 15:30:00",
+    sks: 3,
+  },
 ];
 
-describe('parseJadwal', () => {
-  it('normalizes day and parses s/d time with seconds', () => {
+describe("parseJadwal", () => {
+  it("normalizes day and parses s/d time with seconds", () => {
     const items = parseJadwal(jadwalRows);
-    expect(items[0]).toMatchObject({ code: 'PAIK6402', day: 'Senin', courseName: 'Kecerdasan Buatan', timeStart: '09:40', timeEnd: '12:10', room: 'A301', sks: 3 });
-    expect(items[1].day).toBe('Kamis');
+    expect(items[0]).toMatchObject({
+      code: "PAIK6402",
+      day: "Senin",
+      courseName: "Kecerdasan Buatan",
+      timeStart: "09:40",
+      timeEnd: "12:10",
+      room: "A301",
+      sks: 3,
+    });
+    expect(items[1].day).toBe("Kamis");
   });
-  it('parses the dash-separated time form for backward compatibility', () => {
-    const items = parseJadwal([{ kode: 'X', hari: 'rabu', matakuliah: 'Statistika', ruang: 'B1', waktu: '13:00-15:30', sks: 2 }]);
-    expect(items[0]).toMatchObject({ timeStart: '13:00', timeEnd: '15:30' });
+  it("parses the dash-separated time form for backward compatibility", () => {
+    const items = parseJadwal([
+      {
+        kode: "X",
+        hari: "rabu",
+        matakuliah: "Statistika",
+        ruang: "B1",
+        waktu: "13:00-15:30",
+        sks: 2,
+      },
+    ]);
+    expect(items[0]).toMatchObject({ timeStart: "13:00", timeEnd: "15:30" });
   });
-  it('returns [] for empty input', () => expect(parseJadwal([])).toEqual([]));
+  it("returns [] for empty input", () => expect(parseJadwal([])).toEqual([]));
+});
+
+// The dashboard merges two SIAP sources (jadwal + IRS) that share the same
+// enrolling courses; concatenating raw would render each course multiple times.
+describe("dedupeSchedule", () => {
+  it("keeps the first occurrence per course code across merged sources", () => {
+    const jadwal = parseJadwal([
+      {
+        no: 1,
+        kode: "PAIK6402",
+        hari: "senin",
+        matakuliah: "Kecerdasan Buatan",
+        ruang: "A301",
+        waktu: "09:40:00 s/d 12:10:00",
+        sks: 3,
+      },
+    ]);
+    const irsItems = parseSchedule(irs);
+    const out = dedupeSchedule([...jadwal, ...irsItems]);
+    // The richer jadwal entry (with day/time) wins; the IRS duplicate is dropped,
+    // while the second distinct IRS course is kept.
+    expect(out).toHaveLength(2);
+    const kb = out.find((i) => i.code === "PAIK6402");
+    expect(kb).toMatchObject({
+      code: "PAIK6402",
+      day: "Senin",
+      timeStart: "09:40",
+    });
+    const mk = out.find((i) => i.code === "PAIK6499");
+    expect(mk).toBeDefined();
+  });
+  it("keeps distinct codes and drops code-less repeats", () => {
+    const a = parseJadwal([
+      {
+        no: 1,
+        kode: "A",
+        hari: "senin",
+        matakuliah: "X",
+        waktu: "09:40:00 s/d 12:10:00",
+        sks: 2,
+      },
+    ]);
+    const b = parseJadwal([
+      {
+        no: 2,
+        kode: "B",
+        hari: "selasa",
+        matakuliah: "Y",
+        waktu: "08:00:00 s/d 10:00:00",
+        sks: 2,
+      },
+    ]);
+    const out = dedupeSchedule([...a, ...a, ...b]);
+    expect(out.map((i) => i.code)).toEqual(["A", "B"]);
+  });
 });
 
 // Regression from the getKhs fix: the CURRENT term now returns enrolled courses
@@ -158,41 +322,70 @@ describe('parseJadwal', () => {
 const khsCurrentTerm: SiapKhs = {
   ipk: 2.73,
   semesters: [
-    { semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [{ mataKuliah: 'Aljabar', sks: 3, nilaiHuruf: 'A', bobot: 4 }] },
-    { semester: '2026/2027 Ganjil', ip: 0, totalSks: 23, nilai: [
-      { mataKuliah: 'Sistem Informasi', sks: 3, nilaiHuruf: '', bobot: 0 },
-    ]},
+    {
+      semester: "Gasal 22/23",
+      ip: 3.52,
+      totalSks: 20,
+      nilai: [{ mataKuliah: "Aljabar", sks: 3, nilaiHuruf: "A", bobot: 4 }],
+    },
+    {
+      semester: "2026/2027 Ganjil",
+      ip: 0,
+      totalSks: 23,
+      nilai: [
+        { mataKuliah: "Sistem Informasi", sks: 3, nilaiHuruf: "", bobot: 0 },
+      ],
+    },
   ],
 };
 
-describe('getKhs-fix regression', () => {
-  it('ipTrend excludes a current term with SKS but no grades', () => {
-    expect(ipTrend(khsCurrentTerm)).toEqual([{ semester: 'Gasal 22/23', ip: 3.52 }]);
-  });
-  it('gradeDistribution excludes a current term with SKS but no grades', () => {
-    expect(gradeDistribution(khsCurrentTerm).map((r) => r.semester)).toEqual(['Gasal 22/23']);
-  });
-  it('cumulativeSks keeps the current term via totalSks>0 filter', () => {
-    expect(cumulativeSks(khsCurrentTerm)).toEqual([
-      { semester: 'Gasal 22/23', sksSemester: 20, sksKumulatif: 20 },
-      { semester: '2026/2027 Ganjil', sksSemester: 23, sksKumulatif: 43 },
+describe("getKhs-fix regression", () => {
+  it("ipTrend excludes a current term with SKS but no grades", () => {
+    expect(ipTrend(khsCurrentTerm)).toEqual([
+      { semester: "Gasal 22/23", ip: 3.52 },
     ]);
   });
-  it('gradeDistribution tolerates a null nilaiHuruf', () => {
-    const khsNull = { ...khs, semesters: [{ ...khs.semesters[0], nilai: [{ mataKuliah: 'X', sks: 2, nilaiHuruf: null as unknown as string, bobot: 4 }] }] };
+  it("gradeDistribution excludes a current term with SKS but no grades", () => {
+    expect(gradeDistribution(khsCurrentTerm).map((r) => r.semester)).toEqual([
+      "Gasal 22/23",
+    ]);
+  });
+  it("cumulativeSks keeps the current term via totalSks>0 filter", () => {
+    expect(cumulativeSks(khsCurrentTerm)).toEqual([
+      { semester: "Gasal 22/23", sksSemester: 20, sksKumulatif: 20 },
+      { semester: "2026/2027 Ganjil", sksSemester: 23, sksKumulatif: 43 },
+    ]);
+  });
+  it("gradeDistribution tolerates a null nilaiHuruf", () => {
+    const khsNull = {
+      ...khs,
+      semesters: [
+        {
+          ...khs.semesters[0],
+          nilai: [
+            {
+              mataKuliah: "X",
+              sks: 2,
+              nilaiHuruf: null as unknown as string,
+              bobot: 4,
+            },
+          ],
+        },
+      ],
+    };
     expect(() => gradeDistribution(khsNull)).not.toThrow();
   });
 });
 
-describe('semesterXTicks / semesterXLabel', () => {
-  it('produces integer 0-based tick values for whole-semester labels', () => {
+describe("semesterXTicks / semesterXLabel", () => {
+  it("produces integer 0-based tick values for whole-semester labels", () => {
     expect(semesterXTicks(0)).toEqual([]);
     expect(semesterXTicks(1)).toEqual([0]);
     expect(semesterXTicks(4)).toEqual([0, 1, 2, 3]);
   });
-  it('maps 0-based tick index to a 1-based integer semester label (no decimals)', () => {
-    expect(semesterXLabel(0)).toBe('1');
-    expect(semesterXLabel(1)).toBe('2');
-    expect(semesterXLabel(3)).toBe('4');
+  it("maps 0-based tick index to a 1-based integer semester label (no decimals)", () => {
+    expect(semesterXLabel(0)).toBe("1");
+    expect(semesterXLabel(1)).toBe("2");
+    expect(semesterXLabel(3)).toBe("4");
   });
 });
