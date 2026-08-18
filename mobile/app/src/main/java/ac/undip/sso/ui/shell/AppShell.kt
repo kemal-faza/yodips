@@ -13,8 +13,10 @@ import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -38,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -120,32 +123,31 @@ fun ShellBottomBar(
     NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
         Tab.entries.forEach { tab ->
             if (tab == Tab.Scan) {
-                // Center slot: a filled raised teal circle. Tapping it navigates to scan.
+                // Center slot: raised teal FAB — the big green circle. Enlarged so
+                // the circle clearly reads larger than the nav icons beside it.
                 Box(
                     modifier =
                         Modifier
                             .navigationBarsPadding()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .fillMaxHeight(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    androidx.compose.material3.IconButton(
-                        onClick = { onSelect(tab.route) },
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(84.dp)
+                                .clip(CircleShape)
+                                .background(Primary)
+                                .border(6.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                                .clickable { onSelect(tab.route) },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Box(
-                            modifier =
-                                Modifier
-                                    .size(70.dp)
-                                    .background(color = Primary, shape = CircleShape)
-                                    .border(4.dp, MaterialTheme.colorScheme.surface, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Filled.QrCodeScanner,
-                                contentDescription = "Scan",
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(50.dp),
-                            )
-                        }
+                        Icon(
+                            Icons.Filled.QrCodeScanner,
+                            contentDescription = "Scan",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(54.dp),
+                        )
                     }
                 }
             } else {
