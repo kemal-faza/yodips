@@ -58,6 +58,12 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      # assemble.sh membangun DUA-DUANYA (backend + web). Install web deps juga
+      # supaya `vue-tsc -b` ada; tanpa ini build web gagal `vue-tsc: not found`.
+      - name: Install web deps (untuk build)
+        working-directory: web
+        run: npm ci
+
       - name: Rakit paket deploy
         run: bash tools/deploy/assemble.sh
 
