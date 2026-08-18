@@ -99,7 +99,6 @@ fun LoginScreen(
 ) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Membuka halaman SSO…") }
     var error by remember { mutableStateOf<String?>(null) }
     var phase by remember { mutableIntStateOf(0) } // 0=SSO,1=Kulon,2=SIAP,3=handoff
     var seenMicrosoft by remember { mutableStateOf(false) }
@@ -141,7 +140,6 @@ fun LoginScreen(
         if (phase != 2) return
         phase = 3
         loading = true
-        status = "Menyinkronkan sesi…"
         slog("handoff siap=${siap.isNotBlank()} kulon=${kulon.isNotBlank()}")
         scope.launch {
             when (val r = ApiClient.handoff(siap, kulon)) {
@@ -167,7 +165,6 @@ fun LoginScreen(
         seenMicrosoft = false
         error = null
         loading = false
-        status = "Membuka halaman SSO…"
         webView?.loadUrl(LoginUrls.SSO_LOGIN)
     }
 
@@ -230,13 +227,11 @@ fun LoginScreen(
                                             )
                                         -> {
                                             phase = 1
-                                            status = "Masuk ke Kulon…"
                                             view?.loadUrl(kulonTicketUrl(generateSsoTicket()))
                                         }
 
                                         phase == 1 && isAuthenticatedKulonUrl(url) -> {
                                             phase = 2
-                                            status = "Masuk ke SIAP…"
                                             view?.loadUrl(siapTicketUrl(generateSsoTicket()))
                                         }
 
@@ -288,13 +283,7 @@ fun LoginScreen(
                 }
 
                 loading -> {
-                    Column(
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        CircularProgressIndicator()
-                        Text(status, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
-                    }
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 }
             }
         }
