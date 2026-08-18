@@ -7,6 +7,8 @@ dist/
 .DS_Store
 coverage/
 docs/
+# Build output dari tools/deploy/assemble.sh — jangan di-commit
+deploy-artifacts/
 AGENTS.md
 design-reference/
 # Real captured SIAP session data (personal) — never commit.

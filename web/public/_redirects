@@ -1,0 +1,5 @@
+# SPA fallback (HTML5 history mode) — Cloudflare Pages / Netlify.
+# Kirim rute tanpa file nyata ke index.html. /assets/* (file nyata) tetap diserve.
+# Catatan: /api/* TIDAK di-rewrite di sini — endpoint API dipanggil ke
+# VITE_API_BASE_URL (domain backend, cross-origin), bukan ke host SPA.
+/* /index.html 200

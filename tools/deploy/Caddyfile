@@ -1,0 +1,39 @@
+# Caddyfile — reverse-proxy same-origin untuk Undip SSO Aggregator.
+# Caddy meng-handle HTTPS otomatis (Let's Encrypt) + SPA fallback + proxy /api.
+# Ini PENGGANTI cara serve SPA dari dalam Nest → tidak perlu ubah AppController.
+
+# Ganti dua DOMAIN placeholder di bawah dengan domain-mu (harus sudah di-DNS).
+# Setup: `sudo apt install caddy` lalu jalankan `sudo caddy run` dari dir ini.
+
+sso.example.com {
+    # SPA (web/dist) — root filesystem
+    root * /srv/sso/web
+    encode gzip
+
+    # Semua /api/* diproxy ke backend Nest di 127.0.0.1:3000
+    handle /api/* {
+        reverse_proxy 127.0.0.1:3000
+    }
+    handle /auth/* {
+        reverse_proxy 127.0.0.1:3000
+    }
+
+    # Fallback SPA (HTML5 history mode): route non-file → index.html
+    handle {
+        try_files {path} /index.html
+    }
+
+    # Kalau frontend & API beda origin, aktifkan CORS di blok /api/* (umumnya tak perlu di same-origin):
+    # handle /api/* {
+    #     header Access-Control-Allow-Origin *
+    #     header Access-Control-Allow-Methods "GET,POST,OPTIONS"
+    #     header Access-Control-Allow-Headers "*"
+    #     @preflight method OPTIONS
+    #     respond @preflight 204
+    #     reverse_proxy 127.0.0.1:3000
+    # }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    }
+}
