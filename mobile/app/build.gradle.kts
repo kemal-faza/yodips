@@ -1,3 +1,26 @@
+import java.io.FileInputStream
+import java.util.Properties
+
+// Secrets never live in the repo: `keystore.properties` is git-ignored and
+// holds the release keystore path + passwords. Absent → release stays unsigned
+// (an explicit warning) so CI / fresh clones still configure cleanly.
+fun loadReleaseProps(): Properties? {
+    val file = rootProject.file("keystore.properties")
+    if (!file.exists()) return null
+    val props = Properties()
+    FileInputStream(file).use { props.load(it) }
+    return props
+}
+
+fun releaseStoreFile(): java.io.File? {
+    val props = loadReleaseProps() ?: return null
+    return try {
+        rootProject.file(props.getProperty("storeFile") ?: "keystore/undip-sso.jks")
+    } catch (_: Exception) {
+        null
+    }
+}
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -17,6 +40,17 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            val props = loadReleaseProps()
+            if (props != null) {
+                storeFile = rootProject.file(props.getProperty("storeFile") ?: "keystore/undip-sso.jks")
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -24,6 +58,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            val storeFile = releaseStoreFile()
+            if (storeFile != null && storeFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                logger.warn("keystore.properties tidak ada — build release ini TIDAK ditanda-tangani.")
+            }
         }
     }
     compileOptions {

@@ -14,5 +14,10 @@ local.properties
 # Android
 captures/
 
+# Release keystore + secrets (JANGAN commit)
+keystore.properties
+keystore/
+*.jks
+
 # Logs
 *.log

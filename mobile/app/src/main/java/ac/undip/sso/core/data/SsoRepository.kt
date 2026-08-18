@@ -25,22 +25,40 @@ import java.io.IOException
  */
 class SsoRepository(
     private val api: SsoApi = ApiClient.api,
+    private val cache: DataCache = InMemoryDataCache(),
 ) {
-    suspend fun profile(): ApiResult<SiapProfile> = safe { api.profile() }
+    suspend fun profile(): ApiResult<SiapProfile> = cached("profile") { safe { api.profile() } }
 
-    suspend fun irs(): ApiResult<SiapIrs> = safe { api.irs() }
+    suspend fun irs(): ApiResult<SiapIrs> = cached("irs") { safe { api.irs() } }
 
-    suspend fun khs(): ApiResult<SiapKhs> = safe { api.khs() }
+    suspend fun khs(): ApiResult<SiapKhs> = cached("khs") { safe { api.khs() } }
 
-    suspend fun jadwal(): ApiResult<List<SiapJadwal>> = safe { api.jadwal() }
+    suspend fun jadwal(): ApiResult<List<SiapJadwal>> = cached("jadwal") { safe { api.jadwal() } }
 
-    suspend fun assignments(): ApiResult<List<KulonAssignment>> = safe { api.assignments() }
+    suspend fun assignments(): ApiResult<List<KulonAssignment>> = cached("assignments") { safe { api.assignments() } }
 
-    suspend fun courses(): ApiResult<List<KulonCourse>> = safe { api.courses() }
+    suspend fun courses(): ApiResult<List<KulonCourse>> = cached("courses") { safe { api.courses() } }
 
-    suspend fun lecturers(): ApiResult<List<SiapLecturer>> = safe { api.lecturers() }
+    suspend fun lecturers(): ApiResult<List<SiapLecturer>> = cached("lecturers") { safe { api.lecturers() } }
 
     suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> = safe { api.markKehadiran(KehadiranRequest(token)) }
+
+    /** Fresh cache → serve instantly. Otherwise fetch; success refreshes the
+     *  cache, a network failure falls back to stale data when available. */
+    private suspend fun <T> cached(
+        key: String,
+        block: suspend () -> ApiResult<T>,
+    ): ApiResult<T> {
+        val prev = cache.get<T>(key)
+        if (prev is DataCache.Cached.Fresh) return prev.data
+        val fresh = block()
+        if (fresh is ApiResult.Success) {
+            cache.put(key, fresh)
+        } else if (prev is DataCache.Cached.Stale) {
+            return prev.data
+        }
+        return fresh
+    }
 }
 
 private suspend fun <T> safe(block: suspend () -> T): ApiResult<T> =

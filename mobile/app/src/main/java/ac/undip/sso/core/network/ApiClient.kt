@@ -13,12 +13,13 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Backend base URL. On the Android emulator, `10.0.2.2` is the host machine's
- * loopback — so the dev backend at localhost:3000 is reached as 10.0.2.2:3000.
- * Override via a BuildConfig field in a real build if the backend is remote.
+ * Backend base URL. Production points at the shared HTTPS backend (Caddy/
+ * reverse-proxy in front of Heroku) so build runs on any device. For local
+ * emulator dev against a local backend, temporarily use
+ * `http://10.0.2.2:3000` (requires cleartext in network_security_config).
  */
 object ApiClient {
-    const val BASE_URL = "http://10.0.2.2:3000"
+    const val BASE_URL = "https://backend.crunchy.my.id"
     private const val API_BASE = "$BASE_URL/"
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()

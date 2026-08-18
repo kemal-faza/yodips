@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,6 +84,9 @@ fun TasksScreen(repo: SsoRepository) {
             emptyMessage = "Tidak ada tugas saat ini.",
         ) { tasks ->
             var filter by remember { mutableStateOf<TaskBucket?>(TaskBucket.NEED) }
+            var showCount by remember { mutableStateOf(TASK_PAGE_SIZE) }
+            // Switching filter resets the page back to the first chunk.
+            LaunchedEffect(filter) { showCount = TASK_PAGE_SIZE }
             Column(Modifier.fillMaxSize()) {
                 Row(
                     Modifier
@@ -102,13 +107,19 @@ fun TasksScreen(repo: SsoRepository) {
                 if (visible.isEmpty()) {
                     EmptyTasks(filter)
                 } else {
+                    val (page, remaining) = pagedTasks(visible, showCount)
                     LazyColumn(
                         Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        items(visible, key = { it.id }) { t ->
+                        items(page, key = { it.id }) { t ->
                             TaskCard(t, taskBucket(t, ctx.activeCourseIds))
+                        }
+                        if (remaining > 0) {
+                            item(key = "load-more") {
+                                LoadMoreTasks(remaining) { showCount += TASK_PAGE_SIZE }
+                            }
                         }
                     }
                 }
@@ -204,5 +215,32 @@ private fun BucketPill(bucket: TaskBucket) {
             color = content,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
         )
+    }
+}
+
+/** Client-side page size for the tasks list (not all assignments render at once). */
+internal const val TASK_PAGE_SIZE = 15
+
+/** Slice for one page of a sorted task list; returns (shown slice, how many remain).
+ *  Kept pure so pagination behavior is unit-testable. */
+internal fun <T> pagedTasks(
+    list: List<T>,
+    showCount: Int,
+): Pair<List<T>, Int> {
+    val safe = showCount.coerceAtLeast(0)
+    val slice = list.take(safe)
+    return slice to (list.size - slice.size).coerceAtLeast(0)
+}
+
+@Composable
+private fun LoadMoreTasks(
+    remaining: Int,
+    onLoadMore: () -> Unit,
+) {
+    Button(
+        onClick = onLoadMore,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text("Muat lebih banyak ($remaining lagi)")
     }
 }
