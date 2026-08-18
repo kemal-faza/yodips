@@ -6,6 +6,20 @@ import { useAuthStore } from '../stores/auth';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 
+// Konfigurasi module di-mock agar tiap test bisa mengendalikan apakah jalur
+// /sso/capture diaktifkan dan apakah user-agent = seluler.
+const cfg = vi.hoisted(() => ({
+  ssoCaptureEnabled: true,
+  mobile: false,
+}));
+vi.mock('../config/extension', () => ({
+  EXTENSION_ID: 'mock-extension-id',
+  get SSO_CAPTURE_ENABLED() {
+    return cfg.ssoCaptureEnabled;
+  },
+  isMobileUserAgent: () => cfg.mobile,
+}));
+
 function makeStore(overrides: Record<string, any> = {}) {
   const store = {
     login: vi.fn().mockResolvedValue(undefined),
@@ -28,12 +42,15 @@ describe('LoginView', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    // Default utk sebagian besar test lama: jalur capture aktif, bukan HP.
+    cfg.ssoCaptureEnabled = true;
+    cfg.mobile = false;
   });
 
   it('renders login button', () => {
     makeStore();
     const w = mount(LoginView);
-    expect(w.text()).toContain('Memeriksa extension');
+    expect(w.text()).toContain('Memeriksa');
     expect(w.text()).not.toContain('Login via SSO');
   });
 
@@ -42,7 +59,7 @@ describe('LoginView', () => {
     const detection = new Promise<boolean>((resolve) => { resolveDetection = resolve; });
     makeStore({ isExtensionInstalled: vi.fn().mockReturnValue(detection) });
     const w = mount(LoginView);
-    expect(w.text()).toContain('Memeriksa extension');
+    expect(w.text()).toContain('Memeriksa');
     expect(w.find('button').attributes('disabled')).toBeDefined();
     expect(w.text()).not.toContain('Login via SSO');
     resolveDetection(false);
@@ -62,6 +79,25 @@ describe('LoginView', () => {
     const w = mount(LoginView);
     await flushPromises();
     expect(w.text()).toContain('Login via SSO');
+  });
+
+  it('hides the interactive SSO capture button when capture is disabled (production default)', async () => {
+    cfg.ssoCaptureEnabled = false;
+    makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(false) });
+    const w = mount(LoginView);
+    await flushPromises();
+    expect(w.text()).not.toContain('Login via SSO');
+    expect(w.text()).toContain('Pasang di Chrome/Edge');
+  });
+
+  it('does not offer interactive login on mobile and points to the native app', async () => {
+    cfg.mobile = true;
+    makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(false) });
+    const w = mount(LoginView);
+    await flushPromises();
+    expect(w.text()).not.toContain('Login via SSO');
+    expect(w.text()).toContain('aplikasi');
+    expect(w.text()).toContain('Play Store');
   });
 
   it('explains how to fix an undetected extension before falling back to SSO', async () => {

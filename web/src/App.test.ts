@@ -8,6 +8,16 @@ import { useAuthStore } from './stores/auth';
 import { emitReauthRequested } from './lib/reauth';
 import * as api from './api/client';
 
+// Aktifkan jalur interactive capture (dev) supaya tombol 'Login via SSO' muncul
+// di test login. Produksi menyembunyikannya (lihat LoginView).
+vi.mock('./config/extension', () => ({
+  EXTENSION_ID: 'mock-ext',
+  get SSO_CAPTURE_ENABLED() {
+    return true;
+  },
+  isMobileUserAgent: () => false,
+}));
+
 vi.mock('./api/client', () => ({
   getAssignments: vi.fn().mockResolvedValue([]),
   getAllAssignments: vi.fn().mockResolvedValue([]),

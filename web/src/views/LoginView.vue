@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import AuroraBackground from '@/components/ui/aurora-background/AuroraBackground.vue';
 import MultiStepLoader from '@/components/ui/multi-step-loader/MultiStepLoader.vue';
+import { SSO_CAPTURE_ENABLED, isMobileUserAgent } from '../config/extension';
 
 const store = useAuthStore();
 const inst = getCurrentInstance()!;
@@ -22,6 +23,10 @@ const extMode = ref<'auto' | 'semi'>('auto');
 const extMsg = ref<string | null>(null);
 const extPhase = ref<string | null | undefined>(undefined);
 const phaseToStep: Record<string, number> = { sso: 0, kulon: 1, siap: 2 };
+// Di HP jalur /sso/capture (dan extension) tidak relevan — arahkan ke app.
+const isMobile = isMobileUserAgent();
+// Jalur interaktif Playwright di-server = single-admin/dev-only.
+const ssoCaptureEnabled = SSO_CAPTURE_ENABLED && !isMobile;
 let stopListening: (() => void) | null = null;
 let stopFocusListeners: (() => void) | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -196,15 +201,31 @@ async function handleExtensionDone() {
           class="mt-6 h-11 w-full"
           disabled
         >
-          Memeriksa extension…
+          Memeriksa…
         </Button>
         <InteractiveHoverButton
-          v-else-if="!extInstalled"
+          v-else-if="!extInstalled && ssoCaptureEnabled"
           class="mt-6 h-11 w-full"
           :disabled="store.checking"
           :text="store.checking ? 'Memeriksa session…' : 'Login via SSO'"
           @click="handleLogin"
         />
+        <!-- Perangkat seluler: jalur /sso/capture & extension tidak relevan.
+             Arahkan ke app native. -->
+        <Alert v-else-if="!extInstalled && isMobile" class="mt-6 border-primary/30 bg-primary/5 p-3">
+          <AlertDescription class="text-center text-sm text-foreground">
+            Login lewat web di perangkat seluler belum tersedia. Gunakan aplikasi
+            Undip SSO dari Play Store / App Store untuk login yang aman.
+          </AlertDescription>
+        </Alert>
+        <!-- Desktop tanpa extension & tanpa jalur capture (produksi): beri panduan. -->
+        <Alert v-else-if="!extInstalled && !ssoCaptureEnabled" class="mt-6 border-warn/40 bg-warn/10 p-3">
+          <AlertDescription class="text-sm text-foreground">
+            Login via web membutuhkan extension <strong>Undip SSO Login</strong>.
+            Pasang di Chrome/Edge lalu kembali ke halaman ini. (Jalur login
+            interaktif hanya aktif di lingkungan pengembangan.)
+          </AlertDescription>
+        </Alert>
         <InteractiveHoverButton
           v-if="extInstalled && !extWaiting"
           class="mt-6 h-11 w-full"
@@ -239,7 +260,7 @@ async function handleExtensionDone() {
         <Alert v-if="extMsg" variant="destructive" class="mt-4 bg-danger/10 p-3">
           <AlertDescription>{{ extMsg }}</AlertDescription>
         </Alert>
-        <p v-if="!extInstalled" class="mt-3 text-center text-xs text-muted-foreground">
+        <p v-if="!extInstalled && ssoCaptureEnabled" class="mt-3 text-center text-xs text-muted-foreground">
           Login membuka window Chrome terpisah. Jika langsung masuk tanpa window, sesi kamu masih
           valid — tidak perlu menekan ulang.
         </p>
