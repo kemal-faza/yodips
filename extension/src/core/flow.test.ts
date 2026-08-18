@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { initialState, advance, attachTab, normalizeState, pollStatus, isPhaseSatisfied, type FlowState, type FlowDeps } from './flow.js';
+import { initialState, advance, attachTab, normalizeState, pollStatus, isPhaseSatisfied, isSsoLoggedInUrl, type FlowState, type FlowDeps } from './flow.js';
 
 const LOGIN = { sso: 'SSO_URL', kulon: 'KULON_URL', siap: 'SIAP_URL' };
 const D: FlowDeps = { flags: { hasSso: false, hasKulon: false, hasSiap: false }, now: () => 1_000_000, MAX_RELOGIN: 2, PHASE_TIMEOUT_MS: 1000, SSO_GUARD_MS: 1500, loginUrl: (s) => LOGIN[s] };
@@ -55,27 +55,28 @@ describe('REQUEST', () => {
     const r = advance(stale, { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: false, hasKulon: false, hasSiap: false } });
     expect(r.state.appTabId).toBe(42);
   });
-  it('skips the SSO tab and opens Kulon directly when SSO is already logged in', () => {
+  it('always starts at SSO (does NOT skip straight to Kulon on ambient hasSso)', () => {
+    // Regression: a stale/guest `ci_session_sso` cookie (hasSso true) must NOT
+    // skip SSO and open Kulon's OIDC — it used to jump users to Microsoft.
     const r = advance(st(), { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
     expect(r.state.core).toBe('authing');
-    expect(r.state.service).toBe('kulon');
-    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'KULON_URL' });
-    // Must NOT clear the (still valid) SSO session cookie.
+    expect(r.state.service).toBe('sso');
+    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'SSO_URL' });
+    expect(r.effects).not.toContainEqual({ kind: 'openTab', url: 'KULON_URL' });
+    // must NOT clear the (still-valid) SSO session cookie
     expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'sso' });
-    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'kulon' });
-    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'siap' });
   });
-  it('SSO skip also applies when only SIAP is missing', () => {
+  it('also starts at SSO when only SIAP is missing (no SSO skip)', () => {
     const r = advance(st(), { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: true } });
-    expect(r.state.service).toBe('kulon');
-    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'KULON_URL' });
+    expect(r.state.service).toBe('sso');
+    expect(r.effects).toContainEqual({ kind: 'openTab', url: 'SSO_URL' });
   });
-  it('opens the SSO login tab when SSO is NOT logged in (legacy behavior)', () => {
+  it('opens the SSO login tab when SSO is NOT logged in, WITHOUT clearing the cookie', () => {
     const r = advance(st(), { type: 'REQUEST', mode: 'auto' }, { ...D, flags: { hasSso: false, hasKulon: false, hasSiap: false } });
     expect(r.state.core).toBe('authing');
     expect(r.state.service).toBe('sso');
     expect(r.effects).toContainEqual({ kind: 'openTab', url: 'SSO_URL' });
-    expect(r.effects).toContainEqual({ kind: 'clearCookies', service: 'sso' });
+    expect(r.effects).not.toContainEqual({ kind: 'clearCookies', service: 'sso' });
   });
   it('stale-presence skip: kulon phase does NOT advance on a non-MoodleSession cookie, then TIMEOUT errors (bounded)', () => {
     const r = advance(
@@ -177,6 +178,38 @@ describe('COOKIE_SET cascade (mode auto)', () => {
       expect(r.state.service).toBe('sso');
       expect(r.effects).toEqual([]);
     });
+    it('TAB_LOADED on sso advances sso→kulon when the URL is the logged-in dashboard', () => {
+      const r = advance(auth('sso'), { type: 'TAB_LOADED', url: 'https://sso.undip.ac.id/' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+      expect(r.state.service).toBe('kulon');
+      expect(r.effects).toContainEqual({ kind: 'navigateTab', url: 'KULON_URL' });
+    });
+    it('TAB_LOADED on sso does NOT advance on the login form URL even with hasSso', () => {
+      const r = advance(auth('sso'), { type: 'TAB_LOADED', url: 'https://sso.undip.ac.id/auth/user/login' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+      expect(r.state.service).toBe('sso');
+      expect(r.effects).toEqual([]);
+    });
+    it('TAB_LOADED on sso does NOT advance when the URL is a non-SSO host (OIDC interlude)', () => {
+      const r = advance(auth('sso'), { type: 'TAB_LOADED', url: 'https://login.microsoftonline.com/oauth2/authorize' }, { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } });
+      expect(r.state.service).toBe('sso');
+    });
+  });
+});
+
+describe('isSsoLoggedInUrl', () => {
+  it('true for the logged-in SSO dashboard', () => {
+    expect(isSsoLoggedInUrl('https://sso.undip.ac.id/')).toBe(true);
+    expect(isSsoLoggedInUrl('https://sso.undip.ac.id/dashboard')).toBe(true);
+  });
+  it('false for the login form / auth paths', () => {
+    expect(isSsoLoggedInUrl('https://sso.undip.ac.id/auth/user/login')).toBe(false);
+    expect(isSsoLoggedInUrl('https://sso.undip.ac.id/auth/login')).toBe(false);
+    expect(isSsoLoggedInUrl('https://sso.undip.ac.id/sso/auth_v2')).toBe(false);
+  });
+  it('false for a non-SSO host (e.g. Microsoft OIDC) and for empty/undefined', () => {
+    expect(isSsoLoggedInUrl('https://login.microsoftonline.com/oauth2/authorize')).toBe(false);
+    expect(isSsoLoggedInUrl('https://kulon2.undip.ac.id/auth/oidc/')).toBe(false);
+    expect(isSsoLoggedInUrl(undefined)).toBe(false);
+    expect(isSsoLoggedInUrl('not a url')).toBe(false);
   });
 });
 
@@ -313,13 +346,13 @@ describe('normalizeState (zombie-flow recovery)', () => {
   });
   it('defaults settledAt to 0 for a persisted state written before settledAt existed', () => {
     const legacy = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000 } as unknown as FlowState;
-    delete (legacy as Record<string, unknown>).settledAt; // simulate old persisted shape
+    delete (legacy as unknown as Record<string, unknown>).settledAt; // simulate old persisted shape
     const r = normalizeState(legacy, NOW);
     expect(r.settledAt).toBe(0);
   });
   it('defaults recentSessionChange to false and preserves same reference for a live state', () => {
     const legacy = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000 } as unknown as FlowState;
-    delete (legacy as Record<string, unknown>).settledAt; // simulate old persisted shape
+    delete (legacy as unknown as Record<string, unknown>).settledAt; // simulate old persisted shape
     expect(normalizeState(legacy, NOW).recentSessionChange).toBe(false);
     // A live state with settledAt: 0 and recentSessionChange: false is returned as the same reference.
     const live = { ...st(), core: 'authing', service: 'sso', tabId: 7, deadline: NOW + 1000, settledAt: 0, recentSessionChange: false } as FlowState;

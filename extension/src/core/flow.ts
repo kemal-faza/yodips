@@ -25,7 +25,7 @@ export interface FlowState {
 export type FlowEvent =
   | { type: 'REQUEST'; mode: FlowMode }
   | { type: 'COOKIE_SET'; changed?: string[] }
-  | { type: 'TAB_LOADED' }
+  | { type: 'TAB_LOADED'; url?: string }
   | { type: 'HANDOFF_OK'; token: string }
   | { type: 'HANDOFF_NEEDS_SERVICE'; service: Service }
   | { type: 'HANDOFF_STALE'; service: Service }
@@ -59,6 +59,27 @@ export type FlowEffect =
 
 export function initialState(mode: FlowMode = 'auto'): FlowState {
   return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, settledAt: 0, recentSessionChange: false };
+}
+
+/**
+ * POSITIVE login signal for the SSO phase, decoded from the login tab's URL
+ * when it finishes loading. A logged-in SSO session lands on the dashboard /
+ * a non-login path; the login FORM is `/auth/user/login` (or `/sso/auth`).
+ * We can NOT rely on the `ci_session_sso` cookie CHANGING — an
+ * already-established session never emits a set event, and a guest session
+ * carries the cookie BEFORE login. The loaded URL cleanly separates the two,
+ * and a Microsoft OIDC hop (different host) is excluded.
+ */
+export function isSsoLoggedInUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.hostname !== 'sso.undip.ac.id') return false;
+  return !/^\/(auth\/user\/login|auth\/login|sso\/auth)/.test(u.pathname);
 }
 
 export function attachTab(state: FlowState, tabId: number): FlowState {
@@ -233,23 +254,17 @@ export function advance(
     // Fresh flow base preserves the SPA tab id so results can be delivered.
     const base: FlowState = { ...initialState(event.mode), appTabId: state.appTabId ?? null };
     if (!flags.hasKulon) {
-      // SSO belum login → buka tab login SSO (perilaku lama: clear sso + open SSO).
-      if (!flags.hasSso) {
-        return {
-          state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
-          effects: [
-            ...clearFor('sso'),
-            { kind: 'openTab', url: deps.loginUrl('sso') },
-            { kind: 'scheduleTimers', deadline: deadline(deps) },
-          ],
-        };
-      }
-      // SSO sudah login → langkahi SSO: langsung tab Kulon via ticket URL,
-      // TANPA clearFor('sso') (pertahankan cookie SSO valid).
+      // Always start at SSO (deterministic). We deliberately DON'T skip straight
+      // to Kulon based on ambient `hasSso` cookie presence: a stale/guest
+      // `ci_session_sso` falsely proves "logged in", which used to send users
+      // straight to Kulon's interactive OIDC (Microsoft) — the deprecated path.
+      // Advance is decided by the logged-in-page URL signal (isSsoLoggedInUrl)
+      // or the SSO cookie gate, so a genuinely valid session still fast-passes
+      // without re-prompting. No clearFor('sso') — keep a valid session.
       return {
-        state: { ...base, core: 'authing', service: 'kulon', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
+        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
         effects: [
-          { kind: 'openTab', url: deps.loginUrl('kulon') },
+          { kind: 'openTab', url: deps.loginUrl('sso') },
           { kind: 'scheduleTimers', deadline: deadline(deps) },
         ],
       };
@@ -275,6 +290,13 @@ export function advance(
       const settled = { ...state, settledAt: deps.now() };
       if (state.mode === 'auto') {
         const svc = state.service;
+        // SSO: a logged-in page URL is the POSITIVE signal — NOT a cookie change
+        // (which never fires for an already-established session). Handles both
+        // "already logged in" (fast-pass) and "manual login completed" (page left
+        // the form), without trusting ambient cookie presence.
+        if (svc === 'sso' && isSsoLoggedInUrl(event.url) && flags.hasSso) {
+          return advanceAuth({ ...settled, recentSessionChange: false }, deps);
+        }
         if (state.recentSessionChange && ((svc === 'kulon' && flags.hasKulon) || (svc === 'siap' && flags.hasSiap))) {
           return advanceAuth({ ...settled, recentSessionChange: false }, deps);
         }

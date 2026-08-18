@@ -352,7 +352,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   void (async () => {
     const s = await getState();
     if (s.tabId === tabId && s.core === 'authing') {
-      await runFlow({ type: 'TAB_LOADED' }).catch(() => {});
+      let url: string | undefined;
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        url = tab.url;
+      } catch {
+        /* tab may be gone — leave url undefined */
+      }
+      await runFlow({ type: 'TAB_LOADED', url }).catch(() => {});
     }
   })();
 });
