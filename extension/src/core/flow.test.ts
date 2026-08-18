@@ -347,6 +347,19 @@ describe("COOKIE_SET cascade (mode auto)", () => {
         url: "KULON_URL",
       });
     });
+
+    it("TAB_LOADED advances sso on /pages/dashboard (real Undip SSO dashboard URL)", () => {
+      const r = advance(
+        auth("sso"),
+        { type: "TAB_LOADED", url: "https://sso.undip.ac.id/pages/dashboard" },
+        { ...D, flags: { hasSso: true, hasKulon: false, hasSiap: false } },
+      );
+      expect(r.state.service).toBe("kulon");
+      expect(r.effects).toContainEqual({
+        kind: "navigateTab",
+        url: "KULON_URL",
+      });
+    });
     it("TAB_LOADED on sso does NOT advance on the login form URL even with hasSso", () => {
       const r = advance(
         auth("sso"),

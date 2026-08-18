@@ -169,7 +169,7 @@ function cookieNamesDiag(cookies: { name: string; domain: string }[]) {
  * state-machine event. Called by the `postHandoff` effect, which re-enters the
  * loop with this event to keep everything within a single lock pass.
  */
-async function postHandoffDecision(state: FlowState): Promise<FlowEvent> {
+async function postHandoffDecision(_state: FlowState): Promise<FlowEvent> {
   const cookies = await chrome.cookies.getAll({});
   console.info(
     "[Undip SSO] handoff cookie names",
@@ -472,18 +472,16 @@ chrome.cookies.onChanged.addListener((info) => {
   cookieDebounceTimer = setTimeout(flushCookieChange, COOKIE_DEBOUNCE_MS);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   void (async () => {
     const s = await getState();
     if (s.tabId === tabId && s.core === "authing") {
-      let url: string | undefined;
-      try {
-        const tab = await chrome.tabs.get(tabId);
-        url = tab.url;
-      } catch {
-        /* tab may be gone — leave url undefined */
-      }
+      // Use the `tab` argument from onUpdated (not chrome.tabs.get): its `url`
+      // is populated reliably for MV3, whereas tabs.get().url can be undefined
+      // at status:'complete' (esp. on incognito). This is the positive SSO
+      // login signal (isSsoLoggedInUrl) — missing it wedged the sso phase.
+      const url = tab?.url;
       await runFlow({ type: "TAB_LOADED", url }).catch(() => {});
     }
   })();
