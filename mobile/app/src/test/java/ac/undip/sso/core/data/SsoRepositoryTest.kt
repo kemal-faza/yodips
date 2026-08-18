@@ -100,4 +100,67 @@ class SsoRepositoryTest {
         assertTrue(r is ApiResult.Success)
         assertEquals("OK", (r as ApiResult.Success).data.nama)
     }
+
+    @Test
+    fun `stale cache serves stale data immediately (stale-while-revalidate)`() {
+        // The network stub is never awaited: a stale hit must return the cached
+        // value now and refresh in the background, not block on the slow scrape.
+        val cachedProfile = SiapProfile(nama = "CACHED", nim = "0000")
+        val staleCache = SingleStaleCache(ApiResult.Success(cachedProfile))
+        val api = FakeApi().apply { profileStub = { SiapProfile(nama = "FRESH-NET", nim = "9999") } }
+
+        val r = runBlocking { SsoRepository(api, staleCache).profile() }
+
+        assertTrue(r is ApiResult.Success)
+        assertEquals("CACHED", (r as ApiResult.Success).data.nama)
+    }
+
+    @Test
+    fun `cold miss restores fresh-enough data from disk before hitting the network`() {
+        // Empty in-memory cache + nothing on disk would mean a blocking network
+        // call. A disk entry (fresh enough) must be served instantly instead,
+        // seeding the in-memory cache so a follow-up visit is cold-free.
+        val onDisk = SiapProfile(nama = "FROM-DISK", nim = "1111")
+        val diskJson = jsonSerializer.encodeToString(SiapProfile.serializer(), onDisk)
+        val disk = MapPersistentCache(mapOf("profile" to PersistentCache.Entry(diskJson, System.currentTimeMillis())))
+        val inMemory = InMemoryDataCache()
+        val api = FakeApi().apply { profileStub = { SiapProfile(nama = "NET", nim = "9999") } }
+
+        val r = runBlocking { SsoRepository(api, inMemory, disk).profile() }
+
+        assertEquals("FROM-DISK", (r as ApiResult.Success).data.nama)
+    }
+}
+
+private val jsonSerializer =
+    kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+/** A [PersistentCache] that answers from a fixed map (unit-test friendly). */
+private class MapPersistentCache(
+    private val map: Map<String, PersistentCache.Entry>,
+) : PersistentCache {
+    override suspend fun load(key: String): PersistentCache.Entry? = map[key]
+
+    override suspend fun save(
+        key: String,
+        json: String,
+        fetchedAt: Long,
+    ) = Unit
+}
+
+/** Always reports the stored value as Stale so the repository takes the stale path. */
+private class SingleStaleCache(
+    private val value: ApiResult<*>,
+) : DataCache {
+    override fun <T> get(
+        key: String,
+        now: Long,
+    ): DataCache.Cached<ApiResult<T>>? = DataCache.Cached.Stale(value as ApiResult<T>)
+
+    override fun <T> put(
+        key: String,
+        value: ApiResult<T>,
+    ) {
+        // no-op; the background refresh in real life writes here.
+    }
 }

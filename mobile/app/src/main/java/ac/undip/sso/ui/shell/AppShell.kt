@@ -1,5 +1,6 @@
 package ac.undip.sso.ui.shell
 
+import ac.undip.sso.core.data.PrefsPersistentCache
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.ui.feature.DashboardScreen
 import ac.undip.sso.ui.feature.IrsScreen
@@ -41,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -70,7 +72,8 @@ fun AppShell(
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val repo = remember { SsoRepository() }
+    val context = LocalContext.current.applicationContext
+    val repo = remember { SsoRepository(persistent = PrefsPersistentCache(context)) }
 
     Scaffold(
         bottomBar = { ShellBottomBar(currentRoute) { route -> navigate(navController, route) } },

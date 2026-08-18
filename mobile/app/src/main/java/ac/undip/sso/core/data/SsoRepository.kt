@@ -13,51 +13,156 @@ import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.SiapLecturer
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SsoApi
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import retrofit2.HttpException
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
+
+/** Oldest on-disk entry we will serve before falling back to the network. */
+private const val DEFAULT_DISK_MAX_AGE_MS = 12 * 60 * 60 * 1000L // 12h
 
 /**
  * Repository: maps every Retrofit call into [ApiResult] with a coarse error
  * taxonomy (see [ErrorType]). Screens clamp to Loading/Empty/Error/Content.
  * A [retrofit2.HttpException] 401 is surfaced as [ErrorType.UNAUTHORIZED] so
  * the app can trigger a re-login; network/parse failures map to NETWORK/SERVER.
+ *
+ * Caching is two-tier:
+ *  - in-memory [DataCache] (Fresh → instant; Stale → instant + background refresh),
+ *  - on-disk [PersistentCache] (DataStore) restored on a cold memory miss so the
+ *    screen still opens instantly after a process restart / app relaunch, and
+ *    written back whenever a fresh result arrives.
  */
 class SsoRepository(
     private val api: SsoApi = ApiClient.api,
     private val cache: DataCache = InMemoryDataCache(),
+    private val persistent: PersistentCache = NoOpPersistentCache,
+    private val diskMaxAgeMs: Long = DEFAULT_DISK_MAX_AGE_MS,
 ) {
-    suspend fun profile(): ApiResult<SiapProfile> = cached("profile") { safe { api.profile() } }
+    // Stale-while-revalidate: stale data is served instantly and re-fetched in
+    // the background so a tab revisit never blocks on the slow backend scrape.
+    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val refreshing = ConcurrentHashMap.newKeySet<String>()
 
-    suspend fun irs(): ApiResult<SiapIrs> = cached("irs") { safe { api.irs() } }
+    private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun khs(): ApiResult<SiapKhs> = cached("khs") { safe { api.khs() } }
+    suspend fun profile(): ApiResult<SiapProfile> = cached("profile", SiapProfile.serializer()) { safe { api.profile() } }
 
-    suspend fun jadwal(): ApiResult<List<SiapJadwal>> = cached("jadwal") { safe { api.jadwal() } }
+    suspend fun irs(): ApiResult<SiapIrs> = cached("irs", SiapIrs.serializer()) { safe { api.irs() } }
 
-    suspend fun assignments(): ApiResult<List<KulonAssignment>> = cached("assignments") { safe { api.assignments() } }
+    suspend fun khs(): ApiResult<SiapKhs> = cached("khs", SiapKhs.serializer()) { safe { api.khs() } }
 
-    suspend fun courses(): ApiResult<List<KulonCourse>> = cached("courses") { safe { api.courses() } }
+    suspend fun jadwal(): ApiResult<List<SiapJadwal>> = cached("jadwal", ListSerializer(SiapJadwal.serializer())) { safe { api.jadwal() } }
 
-    suspend fun lecturers(): ApiResult<List<SiapLecturer>> = cached("lecturers") { safe { api.lecturers() } }
+    suspend fun assignments(): ApiResult<List<KulonAssignment>> =
+        cached("assignments", ListSerializer(KulonAssignment.serializer())) {
+            safe { api.assignments() }
+        }
+
+    suspend fun courses(): ApiResult<List<KulonCourse>> =
+        cached("courses", ListSerializer(KulonCourse.serializer())) { safe { api.courses() } }
+
+    suspend fun lecturers(): ApiResult<List<SiapLecturer>> =
+        cached("lecturers", ListSerializer(SiapLecturer.serializer())) {
+            safe { api.lecturers() }
+        }
 
     suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> = safe { api.markKehadiran(KehadiranRequest(token)) }
 
-    /** Fresh cache → serve instantly. Otherwise fetch; success refreshes the
-     *  cache, a network failure falls back to stale data when available. */
+    /**
+     * Fresh cache → serve instantly, never hitting the network.
+     * Stale cache → serve the stale value instantly AND re-fetch in the
+     * background to warm the cache for the next visit (no visible spinner).
+     * Cold cache → try the on-disk cache first (no spinner after a relaunch),
+     * and only block on the network if the disk is also empty/too old.
+     *
+     * A background refresh is skipped if one is already in flight for the key,
+     * and its result is written back to memory + disk only on success.
+     */
     private suspend fun <T> cached(
         key: String,
+        serializer: KSerializer<T>,
         block: suspend () -> ApiResult<T>,
     ): ApiResult<T> {
         val prev = cache.get<T>(key)
-        if (prev is DataCache.Cached.Fresh) return prev.data
-        val fresh = block()
-        if (fresh is ApiResult.Success) {
-            cache.put(key, fresh)
-        } else if (prev is DataCache.Cached.Stale) {
-            return prev.data
+        when (prev) {
+            is DataCache.Cached.Fresh -> {
+                return prev.data
+            }
+
+            is DataCache.Cached.Stale -> {
+                refreshBackground(key, serializer, block)
+                return prev.data
+            }
+
+            null -> {
+                restoreFromDisk(key, serializer)?.let { fromDisk ->
+                    refreshBackground(key, serializer, block)
+                    return fromDisk
+                }
+                val fresh = block()
+                if (fresh is ApiResult.Success) {
+                    cache.put(key, fresh)
+                    persist(key, serializer, fresh)
+                }
+                return fresh
+            }
         }
-        return fresh
+    }
+
+    /** Serve a fresh-enough on-disk payload, seeding the in-memory cache with it. */
+    private suspend fun <T> restoreFromDisk(
+        key: String,
+        serializer: KSerializer<T>,
+    ): ApiResult<T>? {
+        val entry = runCatching { persistent.load(key) }.getOrNull() ?: return null
+        if (System.currentTimeMillis() - entry.fetchedAt > diskMaxAgeMs) return null
+        return runCatching {
+            val value = json.decodeFromString(serializer, entry.json)
+            cache.put(key, ApiResult.Success(value))
+            ApiResult.Success(value)
+        }.getOrNull()
+    }
+
+    private fun <T> refreshBackground(
+        key: String,
+        serializer: KSerializer<T>,
+        block: suspend () -> ApiResult<T>,
+    ) {
+        if (!refreshing.add(key)) return
+        refreshScope.launch {
+            try {
+                val fresh = block()
+                if (fresh is ApiResult.Success) {
+                    cache.put(key, fresh)
+                    persist(key, serializer, fresh)
+                }
+            } finally {
+                refreshing.remove(key)
+            }
+        }
+    }
+
+    /** Fire-and-forget write of a successful payload to disk. */
+    private fun <T> persist(
+        key: String,
+        serializer: KSerializer<T>,
+        result: ApiResult<T>,
+    ) {
+        val value = (result as? ApiResult.Success)?.data ?: return
+        val payload = runCatching { json.encodeToString(serializer, value) }.getOrNull() ?: return
+        refreshScope.launch {
+            runCatching { persistent.save(key, payload, System.currentTimeMillis()) }
+        }
     }
 }
 
