@@ -78,11 +78,17 @@ jobs:
           printf '{"orgId":"%s","projectId":"%s"}\n' \
             "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
 
-          # Build dengan env yang benar, tanpa menunggu interaksi.
-          npx vercel build --prod \
-            --token "$VERCEL_TOKEN" \
-            --yes \
-            -e VITE_API_BASE_URL="$VITE_API_BASE_URL"
+          # Sinkron project env Vercel (termasuk project-level VITE_* vars)
+          # supaya `vercel build` tahu konteks tanpa interaksi.
+          npx vercel pull --yes --environment=production \
+            --token "$VERCEL_TOKEN" || true
+
+          # Build; Vite membaca VITE_API_BASE_URL dari env shell saat build
+          # (Vercel CLI tidak mendukung flag `-e` pada subcommand build).
+          VITE_API_BASE_URL="$VITE_API_BASE_URL" \
+            npx vercel build --prod \
+              --token "$VERCEL_TOKEN" \
+              --yes
 
           npx vercel deploy --prebuilt --prod \
             --token "$VERCEL_TOKEN" \
