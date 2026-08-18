@@ -83,8 +83,11 @@ internal fun sksCumulative(khs: SiapKhs): List<Pair<Int, Double>> {
 // ===== Section that renders the three web charts =====
 
 @Composable
-fun AcademicCharts(repo: SsoRepository) {
-    LoadableData(load = { repo.khs() }, emptyMessage = "Belum ada data nilai untuk grafik") { khs ->
+fun AcademicCharts(
+    repo: SsoRepository,
+    refreshTick: Int = 0,
+) {
+    LoadableData(load = { repo.khs() }, emptyMessage = "Belum ada data nilai untuk grafik", refreshTrigger = refreshTick) { khs ->
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             LineChartCard(
                 title = "Tren Indeks Prestasi (IP)",

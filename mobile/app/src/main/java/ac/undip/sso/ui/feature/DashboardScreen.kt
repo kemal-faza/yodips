@@ -5,6 +5,7 @@ import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,7 +27,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -39,8 +43,16 @@ fun DashboardScreen(
     onOpenIrs: () -> Unit,
     onOpenKhs: () -> Unit,
 ) {
-    LoadableData(load = { repo.profile() }, emptyMessage = "Belum ada data") { profile ->
-        DashboardContent(profile, repo, onOpenIrs, onOpenKhs)
+    var refreshTick by remember { mutableIntStateOf(0) }
+    RefreshableLoadableData(
+        load = { repo.profile() },
+        onRefresh = {
+            refreshTick++
+            repo.profile(force = true)
+        },
+        emptyMessage = "Belum ada data",
+    ) { profile ->
+        DashboardContent(profile, repo, onOpenIrs, onOpenKhs, refreshTick)
     }
 }
 
@@ -50,6 +62,7 @@ private fun DashboardContent(
     repo: SsoRepository,
     onOpenIrs: () -> Unit,
     onOpenKhs: () -> Unit,
+    refreshTick: Int,
 ) {
     Column(
         Modifier
@@ -81,11 +94,11 @@ private fun DashboardContent(
                 ),
         )
 
-        LoadableData(load = { repo.jadwal() }, emptyMessage = "Belum ada jadwal") { jadwal ->
+        LoadableData(load = { repo.jadwal() }, emptyMessage = "Belum ada jadwal", refreshTrigger = refreshTick) { jadwal ->
             UpcomingClasses(jadwal)
         }
 
-        AcademicCharts(repo)
+        AcademicCharts(repo, refreshTick)
     }
 }
 

@@ -5,6 +5,7 @@ import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -61,25 +62,32 @@ private data class CourseCtx(
 fun TasksScreen(repo: SsoRepository) {
     var ctx by remember { mutableStateOf(CourseCtx()) }
     FeatureScreen("Tugas") {
-        LoadableData(
-            load = {
-                when (val r = repo.courses()) {
-                    is ApiResult.Success -> {
-                        ctx =
-                            CourseCtx(
-                                activeCourseIds =
-                                    r.data
-                                        .filter { it.timelineStatus == "inprogress" }
-                                        .map { it.id }
-                                        .toSet(),
-                            )
-                    }
-
-                    is ApiResult.Error -> {
-                        Unit
-                    }
+        suspend fun loadCtx(force: Boolean) {
+            when (val r = repo.courses(force)) {
+                is ApiResult.Success -> {
+                    ctx =
+                        CourseCtx(
+                            activeCourseIds =
+                                r.data
+                                    .filter { it.timelineStatus == "inprogress" }
+                                    .map { it.id }
+                                    .toSet(),
+                        )
                 }
+
+                is ApiResult.Error -> {
+                    Unit
+                }
+            }
+        }
+        RefreshableLoadableData(
+            load = {
+                loadCtx(false)
                 repo.assignments()
+            },
+            onRefresh = {
+                loadCtx(true)
+                repo.assignments(force = true)
             },
             emptyMessage = "Tidak ada tugas saat ini.",
         ) { tasks ->

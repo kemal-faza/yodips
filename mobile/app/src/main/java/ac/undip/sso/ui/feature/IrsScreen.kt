@@ -4,6 +4,7 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapIrsMataKuliah
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.common.REFRESH_COOLDOWN_MS
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,13 +18,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +53,7 @@ internal fun semesterOrdinal(
     return (tahunMulai - ak) * 2 + withinYear
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IrsScreen(
     repo: SsoRepository,
@@ -56,6 +63,27 @@ fun IrsScreen(
     // key = kode MIK); endpoint /api/siap/irs tidak menyertakan kolom dosen.
     var lecturerByKode by remember { mutableStateOf(emptyMap<String, String>()) }
     FeatureScreen("IRS", onBack = onBack) {
+        var refreshTick by remember { mutableIntStateOf(0) }
+        var isRefreshing by remember { mutableStateOf(false) }
+        val lastRefreshAt = remember { arrayOf(0L) }
+        val scope = rememberCoroutineScope()
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                val now = System.currentTimeMillis()
+                if (now - lastRefreshAt[0] < REFRESH_COOLDOWN_MS) return@PullToRefreshBox
+                lastRefreshAt[0] = now
+                isRefreshing = true
+                scope.launch {
+                    repo.profile(force = true)
+                    repo.lecturers(force = true)
+                    repo.irs(force = true)
+                    refreshTick++
+                    isRefreshing = false
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        ) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -64,7 +92,7 @@ fun IrsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Semester — derived from the profile (the IRS payload itself carries no label).
-            LoadableData(load = { repo.profile() }, emptyMessage = "") { profile ->
+            LoadableData(load = { repo.profile() }, emptyMessage = "", refreshTrigger = refreshTick) { profile ->
                 val ordinal = semesterOrdinal(profile.angkatan, profile.semesterBerjalan)
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                     Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -99,6 +127,7 @@ fun IrsScreen(
                     repo.irs()
                 },
                 emptyMessage = "Belum ada IRS",
+                refreshTrigger = refreshTick,
             ) { irs ->
                 Card(Modifier.fillMaxWidth()) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -116,6 +145,7 @@ fun IrsScreen(
                     Spacer(Modifier.height(12.dp))
                 }
             }
+        }
         }
     }
 }

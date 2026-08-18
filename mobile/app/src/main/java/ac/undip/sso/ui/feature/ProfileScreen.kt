@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.background
@@ -73,7 +74,9 @@ fun ProfileScreen(
             }
         },
     ) {
-        LoadableData(load = { repo.profile() }, emptyMessage = "Profil belum tersedia") { p ->
+        RefreshableLoadableData(load = {
+            repo.profile()
+        }, onRefresh = { repo.profile(force = true) }, emptyMessage = "Profil belum tersedia") { p ->
             ProfileContent(p, onLogout)
         }
     }

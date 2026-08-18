@@ -55,24 +55,38 @@ class SsoRepository(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun profile(): ApiResult<SiapProfile> = cached("profile", SiapProfile.serializer()) { safe { api.profile() } }
+    suspend fun profile(force: Boolean = false): ApiResult<SiapProfile> =
+        cached("profile", SiapProfile.serializer(), force) {
+            safe { api.profile() }
+        }
 
-    suspend fun irs(): ApiResult<SiapIrs> = cached("irs", SiapIrs.serializer()) { safe { api.irs() } }
+    suspend fun irs(force: Boolean = false): ApiResult<SiapIrs> =
+        cached("irs", SiapIrs.serializer(), force) {
+            safe { api.irs() }
+        }
 
-    suspend fun khs(): ApiResult<SiapKhs> = cached("khs", SiapKhs.serializer()) { safe { api.khs() } }
+    suspend fun khs(force: Boolean = false): ApiResult<SiapKhs> =
+        cached("khs", SiapKhs.serializer(), force) {
+            safe { api.khs() }
+        }
 
-    suspend fun jadwal(): ApiResult<List<SiapJadwal>> = cached("jadwal", ListSerializer(SiapJadwal.serializer())) { safe { api.jadwal() } }
+    suspend fun jadwal(force: Boolean = false): ApiResult<List<SiapJadwal>> =
+        cached("jadwal", ListSerializer(SiapJadwal.serializer()), force) {
+            safe { api.jadwal() }
+        }
 
-    suspend fun assignments(): ApiResult<List<KulonAssignment>> =
-        cached("assignments", ListSerializer(KulonAssignment.serializer())) {
+    suspend fun assignments(force: Boolean = false): ApiResult<List<KulonAssignment>> =
+        cached("assignments", ListSerializer(KulonAssignment.serializer()), force) {
             safe { api.assignments() }
         }
 
-    suspend fun courses(): ApiResult<List<KulonCourse>> =
-        cached("courses", ListSerializer(KulonCourse.serializer())) { safe { api.courses() } }
+    suspend fun courses(force: Boolean = false): ApiResult<List<KulonCourse>> =
+        cached("courses", ListSerializer(KulonCourse.serializer()), force) {
+            safe { api.courses() }
+        }
 
-    suspend fun lecturers(): ApiResult<List<SiapLecturer>> =
-        cached("lecturers", ListSerializer(SiapLecturer.serializer())) {
+    suspend fun lecturers(force: Boolean = false): ApiResult<List<SiapLecturer>> =
+        cached("lecturers", ListSerializer(SiapLecturer.serializer()), force) {
             safe { api.lecturers() }
         }
 
@@ -91,8 +105,18 @@ class SsoRepository(
     private suspend fun <T> cached(
         key: String,
         serializer: KSerializer<T>,
+        force: Boolean,
         block: suspend () -> ApiResult<T>,
     ): ApiResult<T> {
+        // Pull-to-refresh: bypass the cache and re-fetch from the network now.
+        if (force) {
+            val fresh = block()
+            if (fresh is ApiResult.Success) {
+                cache.put(key, fresh)
+                persist(key, serializer, fresh)
+            }
+            return fresh
+        }
         val prev = cache.get<T>(key)
         when (prev) {
             is DataCache.Cached.Fresh -> {

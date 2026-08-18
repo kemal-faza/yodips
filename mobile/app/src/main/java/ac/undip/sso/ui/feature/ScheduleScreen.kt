@@ -4,6 +4,7 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -55,20 +56,27 @@ private fun scheduleRowKey(
 fun ScheduleScreen(repo: SsoRepository) {
     var lecturerByKode by remember { mutableStateOf(emptyMap<String, String>()) }
     FeatureScreen("Jadwal") {
-        LoadableData(
-            load = {
-                // Dosen di-join dari SIAP `get_irs` (kode MIK), bukan dari Kulon, karena
-                // matkul semester berjalan tak selalu ada di daftar kursus Kulon.
-                when (val r = repo.lecturers()) {
-                    is ApiResult.Success -> {
-                        lecturerByKode = r.data.filter { it.dosen.isNotBlank() }.associate { it.kode to it.dosen }
-                    }
-
-                    is ApiResult.Error -> {
-                        Unit
-                    }
+        suspend fun loadLecturers(force: Boolean) {
+            // Dosen di-join dari SIAP `get_irs` (kode MIK), bukan dari Kulon, karena
+            // matkul semester berjalan tak selalu ada di daftar kursus Kulon.
+            when (val r = repo.lecturers(force)) {
+                is ApiResult.Success -> {
+                    lecturerByKode = r.data.filter { it.dosen.isNotBlank() }.associate { it.kode to it.dosen }
                 }
+
+                is ApiResult.Error -> {
+                    Unit
+                }
+            }
+        }
+        RefreshableLoadableData(
+            load = {
+                loadLecturers(false)
                 repo.jadwal()
+            },
+            onRefresh = {
+                loadLecturers(true)
+                repo.jadwal(force = true)
             },
             emptyMessage = "Belum ada jadwal.",
         ) { jadwal ->

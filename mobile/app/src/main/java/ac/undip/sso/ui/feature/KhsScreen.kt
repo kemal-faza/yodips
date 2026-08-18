@@ -2,6 +2,7 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,7 +30,7 @@ fun KhsScreen(
     onBack: () -> Unit,
 ) {
     FeatureScreen("KHS", onBack = onBack) {
-        LoadableData(load = { repo.khs() }, emptyMessage = "Belum ada KHS") { khs ->
+        RefreshableLoadableData(load = { repo.khs() }, onRefresh = { repo.khs(force = true) }, emptyMessage = "Belum ada KHS") { khs ->
             LazyColumn(
                 Modifier.fillMaxSize(),
                 contentPadding =
