@@ -1,0 +1,99 @@
+# Deploy Backend (Heroku)
+
+# Auto-deploy backend ke Heroku tiap push ke main (setelah CI lolos) atau
+# manual.
+#
+# Latar belakang:
+#   Repo ini monorepo TS TANPA root package.json. Buildpack Heroku
+#   `heroku/nodejs` butuh app root = `deploy-artifacts/backend` (bukan root
+#   repo). Push ke akar repo akan ditolak ("Application not supported").
+#   Karena itu workflow ini:
+#     1. Menjalankan `tools/deploy/assemble.sh` -> menghasilkan
+#        deploy-artifacts/.
+#     2. `git init` di dalam deploy-artifacts/backend.
+#     3. Push branch `master` ke remote Heroku.
+#
+# Secrets yang WAJIB di-set (Settings -> Secrets and variables -> Actions):
+#   HEROKU_API_KEY   - `heroku authorizations:create` (atau token akun)
+#   HEROKU_APP_NAME  - nama app Heroku, mis. `sso-undip`
+#
+# Workflow ini dipicu OLEH suksesnya workflow `CI` (workflow_run), jadi kode
+# TIDAK terdeploy bila test/build CI gagal. Jalankan manual via Actions ->
+# "Deploy Backend (Heroku)" -> Run workflow bila perlu paksa.
+
+name: Deploy Backend (Heroku)
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # workflow_run: deploy hanya bila CI SUCCESS. workflow_dispatch: bebas.
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.workflow_run.conclusion == 'success')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend deps (untuk build)
+        working-directory: backend
+        run: npm ci
+
+      - name: Rakit paket deploy
+        run: bash tools/deploy/assemble.sh
+
+      - name: Cek hasil assemble
+        run: |
+          test -f deploy-artifacts/backend/dist/main.js \
+            || { echo "dist/main.js tidak ada"; exit 1; }
+          test -f deploy-artifacts/backend/package.json \
+            || { echo "package.json tidak ada"; exit 1; }
+          test -f deploy-artifacts/backend/Procfile \
+            || { echo "Procfile tidak ada"; exit 1; }
+
+      - name: Deploy ke Heroku
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
+        run: |
+          set -euo pipefail
+          test -n "$HEROKU_API_KEY" \
+            || { echo "secret HEROKU_API_KEY kosong"; exit 1; }
+          test -n "$HEROKU_APP_NAME" \
+            || { echo "secret HEROKU_APP_NAME kosong"; exit 1; }
+
+          cd deploy-artifacts/backend
+
+          # Auth via oauth token yang di-derivasi dari HEROKU_API_KEY.
+          API="$HEROKU_API_KEY"
+          if [[ "$API" != *@* ]]; then API="heroku:$API"; fi
+
+          git init -q -b master
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "deploy: ${GITHUB_SHA:0:10}"
+          git remote add heroku \
+            "https://${API}@git.heroku.com/${HEROKU_APP_NAME}.git"
+          GIT_TERMINAL_PROMPT=0 git push heroku master --force
+
+          echo "Deploy terkirim ke Heroku app: ${HEROKU_APP_NAME}"
