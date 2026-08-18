@@ -1,0 +1,80 @@
+{
+  "course": { "id": "15452" },
+  "section": [
+    { "number": 0, "id": "114100", "title": "General" },
+    { "number": 1, "id": "114101", "title": "9 February - 15 February" },
+    { "number": 12, "id": "114112", "title": "Pertemuan 11 - Branch and Bound" }
+  ],
+  "cm": [
+    {
+      "id": "105220",
+      "name": "Announcements",
+      "module": "forum",
+      "cmid": "105220",
+      "sectionnumber": 0,
+      "url": "https://kulon2.undip.ac.id/mod/forum/view.php?id=105220",
+      "modname": "forum",
+      "uservisible": true
+    },
+    {
+      "id": "105221",
+      "name": "Kontrak Kuliah",
+      "module": "resource",
+      "cmid": "105221",
+      "sectionnumber": 0,
+      "url": "https://kulon2.undip.ac.id/pluginfile.php/105221/mod_resource/content/1/kontrak.pdf",
+      "modname": "resource",
+      "uservisible": true
+    },
+    {
+      "id": "105222",
+      "name": "Kuis Pertemuan 1",
+      "module": "quiz",
+      "cmid": "105222",
+      "sectionnumber": 1,
+      "url": "https://kulon2.undip.ac.id/mod/quiz/view.php?id=105222",
+      "modname": "quiz",
+      "uservisible": false
+    },
+    {
+      "id": "105223",
+      "name": "Materi Pertemuan 1",
+      "module": "resource",
+      "cmid": "105223",
+      "sectionnumber": 1,
+      "url": "https://kulon2.undip.ac.id/mod/resource/view.php?id=105223",
+      "modname": "resource",
+      "uservisible": true
+    },
+    {
+      "id": "126796",
+      "name": "Orphaned cm (no matching section)",
+      "module": "assign",
+      "cmid": "126796",
+      "sectionnumber": 11,
+      "url": "https://kulon2.undip.ac.id/mod/assign/view.php?id=126796",
+      "modname": "assign",
+      "uservisible": true
+    },
+    {
+      "id": "128338",
+      "name": "Hidden Resource",
+      "module": "resource",
+      "cmid": "128338",
+      "sectionnumber": 1,
+      "url": "https://kulon2.undip.ac.id/mod/resource/view.php?id=128338",
+      "modname": "resource",
+      "uservisible": false
+    },
+    {
+      "id": "128341",
+      "name": "Tugas BnB",
+      "module": "assign",
+      "cmid": "128341",
+      "sectionnumber": 12,
+      "url": "https://kulon2.undip.ac.id/mod/assign/view.php?id=128341",
+      "modname": "assign",
+      "uservisible": true
+    }
+  ]
+}

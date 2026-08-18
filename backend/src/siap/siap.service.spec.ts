@@ -10,6 +10,17 @@ function fixture(name: string): string {
   );
 }
 
+// Inline minimal profile used by multi-semester tests (getKhs, getLecturers)
+// so the loop count is deterministic regardless of the profile fixture file.
+// angkatan 2024 + semester "2026/2027 Ganjil" => 5 semesters.
+const PROFILE_2024_5_SEM =
+  '<html><div id="tabmhs_profile">' +
+  '<b>NIM</b>:</div><div class="col-sm-9">20999999999999</div>' +
+  '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
+  '<p class="text-muted">2026/2027 Ganjil</p>' +
+  '<p><span class="badge badge-success">AKTIF</span></p>' +
+  '</div></html>';
+
 /**
  * Build a fetch mock that routes by URL substring (or regex) to a fixture body.
  * Mirrors the real transport: each SIAP endpoint returns a distinct payload.
@@ -110,25 +121,25 @@ describe('SiapService', () => {
         { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
       ]);
       const profile = await svc.getProfile('sia_app_session=K');
-      expect(profile.nama).toBe('ANONIM UJI');
-      expect(profile.nim).toBe('24060121130000');
-      expect(profile.fakultas).toBe('SAINS DAN MATEMATIKA');
-      expect(profile.prodi).toBe('Informatika S1');
-      expect(profile.angkatan).toBe('2024');
+      expect(profile.nama).toBe('NAMA UJI ANONIM');
+      expect(profile.nim).toBe('20999999999999');
+      expect(profile.fakultas).toBe('FAKULTAS UJI');
+      expect(profile.prodi).toBe('Informatika Uji S1');
+      expect(profile.angkatan).toBe('2099');
       expect(profile.status).toBe('AKTIF');
-      expect(profile.semesterBerjalan).toBe('2026/2027 Ganjil');
+      expect(profile.semesterBerjalan).toBe('2099/2100 Ganjil');
       // Biodata detail fields (Task 1)
       expect(profile.fotoUrl).toContain('disk.undip.ac.id');
       expect(profile.tempatLahir).toBe('KOTA UJI');
-      expect(profile.tanggalLahir).toBe('01 Januari 2000');
-      expect(profile.nik).toBe('000000 000000 0000');
-      expect(profile.namaIbu).toBe('IBU UJI');
+      expect(profile.tanggalLahir).toBe('1 Januari 2099');
+      expect(profile.nik).toBe('999999 999999 9999');
+      expect(profile.namaIbu).toBe('IBU UJI ANONIM');
       expect(profile.kodeKewarganegaraan).toBe('ID');
-      expect(profile.nomorHp).toBe('080000000000');
+      expect(profile.nomorHp).toBe('089999999999');
       expect(profile.emailSso).toBe('anonim.sso@students.undip.ac.id');
-      expect(profile.emailPribadi).toBe('anonim.pribadi@contoh.test');
-      expect(profile.alamatAsal).toContain('Jalan Uji');
-      expect(profile.alamatSekarang).toContain('Uji');
+      expect(profile.emailPribadi).toBe('anonim.uji@contoh.test');
+      expect(profile.alamatAsal).toContain('Jalan Uji Panduan');
+      expect(profile.alamatSekarang).toContain('Kota Uji');
     });
   });
 
@@ -240,7 +251,7 @@ describe('SiapService', () => {
 
     it('returns [] when every semester IRS is empty/not approved', async () => {
       mockFetchRouting([
-        { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
+        { match: '/pages/mhs/dashboard', body: PROFILE_2024_5_SEM },
         { match: GET_IRS, body: '<html>belum disetujui</html>' },
       ]);
       expect(await svc.getLecturers('sia_app_session=K')).toEqual([]);
@@ -248,7 +259,7 @@ describe('SiapService', () => {
 
     it('POSTs get_irs per semester and parses kode + dosen from the 8-column table (deduped)', async () => {
       mockFetchRouting([
-        { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
+        { match: '/pages/mhs/dashboard', body: PROFILE_2024_5_SEM },
         { match: GET_IRS, body: fixture('irs_get.html') },
       ]);
       const result = await svc.getLecturers('sia_app_session=K');
@@ -261,12 +272,10 @@ describe('SiapService', () => {
       const byCode = new Map(result.map((r) => [r.kode, r.dosen]));
       // <br>-separated names become pipe (|)-separated for a cleaner card line.
       expect(byCode.get('MIK1624105')).toBe(
-        'Dr. Helmie Arif Wibawa, S.Si., M.Cs. | Dr. Aris Sugiharto, S.Si., M.Kom. | Prajanto Wahyu Adi, M.Kom.',
+        'Dosen Uji Satu | Dosen Uji Dua | Dosen Uji Tiga',
       );
-      expect(byCode.get('UUW1624002')).toBe('Dr. Drs. Slamet Subekti, M.Hum.');
-      expect(byCode.get('MIK1624104')).toBe(
-        'Prof. Dr. Dra. Sunarsih, M.Si. | Etna Vianita, S.Mat., M.Mat.',
-      );
+      expect(byCode.get('UUW1624002')).toBe('Dosen Uji Empat');
+      expect(byCode.get('MIK1624104')).toBe('Dosen Uji Lima | Dosen Uji Enam');
     });
 
     it('POSTs get_irs with the correct per-semester ta/smt_ambil/smt params', async () => {
@@ -279,8 +288,8 @@ describe('SiapService', () => {
               ok: true,
               url,
               headers: { get: () => 'application/json' },
-              text: async () => fixture('profile.html'),
-              json: async () => JSON.parse(fixture('profile.html')),
+              text: async () => PROFILE_2024_5_SEM,
+              json: async () => JSON.parse(PROFILE_2024_5_SEM),
             };
           }
           if (url.includes(GET_IRS)) {
@@ -592,8 +601,17 @@ describe('SiapService', () => {
 
   describe('getKhs', () => {
     it('parses IPK and per-semester nilai from the khs fixtures', async () => {
+      // Inline profile (angkatan 2024 + semester '2026/2027 Ganjil') drives a
+      // 5-semester loop deterministically, independent of the profile fixture.
+      const profileHtml =
+        '<html><div id="tabmhs_profile">' +
+        '<b>NIM</b>:</div><div class="col-sm-9">20999999999999</div>' +
+        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
+        '<p class="text-muted">2026/2027 Ganjil</p>' +
+        '<p><span class="badge badge-success">AKTIF</span></p>' +
+        '</div></html>';
       mockFetchRouting([
-        { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
+        { match: '/pages/mhs/dashboard', body: profileHtml },
         { match: '/irs/mhs/irs/get_khs', body: fixture('khs.html') },
         {
           match: '/irs/mhs/irs/get_total_sks',
@@ -608,7 +626,7 @@ describe('SiapService', () => {
       expect(khs.semesters[0].totalSks).toBe(20);
       expect(khs.semesters[0].ip).toBe(3.95);
       expect(khs.semesters[0].nilai.length).toBe(8);
-      expect(khs.semesters[0].nilai[0].mataKuliah).toBe('Aljabar Linier');
+      expect(khs.semesters[0].nilai[0].mataKuliah).toBe('MATKUL UJI 1');
       expect(khs.semesters[0].nilai[0].nilaiHuruf).toBe('A');
       expect(khs.semesters[0].nilai[0].sks).toBe(3);
       expect(khs.semesters[0].nilai[0].bobot).toBe(4);

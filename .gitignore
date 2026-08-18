@@ -11,7 +11,9 @@ docs/
 deploy-artifacts/
 AGENTS.md
 design-reference/
-# Real captured SIAP session data (personal) — never commit.
+# Real captured SIAP session data (personal) — never commit. Authored SYNTHETIC
+# fixtures used by specs (no personal data) are force-added via `git add -f` so
+# the rest of this dir (dashboard/probe captures) stays ignored.
 backend/test/fixtures/
 .codegraph/
 .superpowers/
