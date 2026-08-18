@@ -1,6 +1,7 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapIrsMataKuliah
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.theme.accentForeground
@@ -19,6 +20,10 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +52,9 @@ fun IrsScreen(
     repo: SsoRepository,
     onBack: () -> Unit,
 ) {
+    // Nama dosen per matkul di-join dari GET /api/siap/lecturers (parse get_irs,
+    // key = kode MIK); endpoint /api/siap/irs tidak menyertakan kolom dosen.
+    var lecturerByKode by remember { mutableStateOf(emptyMap<String, String>()) }
     FeatureScreen("IRS", onBack = onBack) {
         Column(
             Modifier
@@ -76,7 +84,22 @@ fun IrsScreen(
                 }
             }
 
-            LoadableData(load = { repo.irs() }, emptyMessage = "Belum ada IRS") { irs ->
+            LoadableData(
+                load = {
+                    when (val r = repo.lecturers()) {
+                        is ApiResult.Success -> {
+                            lecturerByKode =
+                                r.data.filter { it.dosen.isNotBlank() }.associate { it.kode to it.dosen }
+                        }
+
+                        is ApiResult.Error -> {
+                            Unit
+                        }
+                    }
+                    repo.irs()
+                },
+                emptyMessage = "Belum ada IRS",
+            ) { irs ->
                 Card(Modifier.fillMaxWidth()) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("${irs.mataKuliah.size} mata kuliah", style = MaterialTheme.typography.bodyMedium)
@@ -89,7 +112,7 @@ fun IrsScreen(
                 }
                 Spacer(Modifier.height(4.dp))
                 irs.mataKuliah.forEach { mk ->
-                    MkCard(mk)
+                    MkCard(mk = mk, dosen = lecturerByKode[mk.kode] ?: mk.dosen)
                     Spacer(Modifier.height(12.dp))
                 }
             }
@@ -98,7 +121,10 @@ fun IrsScreen(
 }
 
 @Composable
-private fun MkCard(mk: SiapIrsMataKuliah) {
+private fun MkCard(
+    mk: SiapIrsMataKuliah,
+    dosen: String?,
+) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
@@ -111,8 +137,10 @@ private fun MkCard(mk: SiapIrsMataKuliah) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
+                    // SKS mata kuliah itu sendiri (mk.sks), bukan semester.
                     "SKS ${formatSks(mk.sks)}",
                     style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -121,8 +149,8 @@ private fun MkCard(mk: SiapIrsMataKuliah) {
             if (!mk.kelas.isNullOrBlank()) {
                 Text("Kelas ${mk.kelas}", style = MaterialTheme.typography.bodySmall, color = accentForeground())
             }
-            if (!mk.dosen.isNullOrBlank()) {
-                Text("Dosen: ${mk.dosen}", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (!dosen.isNullOrBlank()) {
+                Text("Dosen: $dosen", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             if (!mk.jadwal.isNullOrBlank()) {
                 Text(
