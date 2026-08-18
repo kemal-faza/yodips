@@ -11,24 +11,24 @@ import org.junit.Test
 class ScanOutcomeTest {
     // Success
     @Test
-    fun `success with SIAP message shows the backend message`() {
+    fun `success maps to a Berhasil Absen caption`() {
         val out = scanOutcome(ApiResult.Success(KehadiranResponse(status = "success", message = "Kehadiran tercatat")))
         assertTrue(out.success)
-        assertEquals("Kehadiran tercatat", out.message)
+        assertEquals("Berhasil Absen", out.message)
     }
 
     @Test
-    fun `success with blank status and no message uses default success text`() {
+    fun `success with blank status and no message still maps to Berhasil Absen`() {
         val out = scanOutcome(ApiResult.Success(KehadiranResponse(status = "", message = null)))
         assertTrue(out.success)
-        assertEquals("Absensi berhasil dicatat. ✅", out.message)
+        assertEquals("Berhasil Absen", out.message)
     }
 
     @Test
-    fun `non-success status without message maps to rejected QR text`() {
+    fun `non-success status without message maps to QR Code Invalid caption`() {
         val out = scanOutcome(ApiResult.Success(KehadiranResponse(status = "error", message = null)))
         assertFalse(out.success)
-        assertTrue(out.message.contains("ditolak", ignoreCase = true))
+        assertEquals("QR Code Invalid", out.message)
     }
 
     // Errors
@@ -47,20 +47,20 @@ class ScanOutcomeTest {
     }
 
     @Test
-    fun `UPSTREAM business error falls back to a QR-expired hint when message blank`() {
+    fun `UPSTREAM business rejection shows QR Code Invalid`() {
         val out = scanOutcome(ApiResult.Error(400, "", ErrorType.UPSTREAM))
         assertFalse(out.success)
-        assertTrue(out.message.contains("kedaluwarsa", ignoreCase = true))
+        assertEquals("QR Code Invalid", out.message)
     }
 
     @Test
-    fun `UPSTREAM with a real SIAP message is surfaced verbatim`() {
+    fun `UPSTREAM ignores the raw SIAP message for a clean caption`() {
         val out =
             scanOutcome(
                 ApiResult.Error(400, "Gagal: QRcode tidak valid atau sudah expired", ErrorType.UPSTREAM),
             )
         assertFalse(out.success)
-        assertEquals("Gagal: QRcode tidak valid atau sudah expired", out.message)
+        assertEquals("QR Code Invalid", out.message)
     }
 
     @Test
