@@ -16,7 +16,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -123,19 +122,21 @@ fun ShellBottomBar(
     NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
         Tab.entries.forEach { tab ->
             if (tab == Tab.Scan) {
-                // Center slot: raised teal FAB — the big green circle. Enlarged so
-                // the circle clearly reads larger than the nav icons beside it.
+                // Center slot: raised teal FAB — the big green circle. Enlarged
+                // (84dp vs ~24dp nav icons) so it clearly reads bigger; protrudes
+                // above the bar via natural overflow (no fill* modifier: a fill
+                // here inflated the M3 NavigationBar height and blanked content).
                 Box(
                     modifier =
                         Modifier
                             .navigationBarsPadding()
-                            .fillMaxHeight(),
+                            .padding(vertical = 6.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(
                         modifier =
                             Modifier
-                                .size(84.dp)
+                                .size(78.dp)
                                 .clip(CircleShape)
                                 .background(Primary)
                                 .border(6.dp, MaterialTheme.colorScheme.surface, CircleShape)
