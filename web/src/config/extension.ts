@@ -1,6 +1,6 @@
 /** ID extension "Undip SSO Login". Untuk dev load-unpacked, isi dari chrome://extensions
  *  ke web/.env sebagai ViteExtensionId (menggantikan placeholder). */
-export const EXTENSION_ID: string = import.meta.env.VITE_EXTENSION_ID ?? '';
+export const EXTENSION_ID: string = import.meta.env.VITE_EXTENSION_ID ?? "";
 
 /**
  * Aktifkan jalur login interaktif `/api/auth/sso/capture` (Playwright buka
@@ -12,7 +12,7 @@ export const EXTENSION_ID: string = import.meta.env.VITE_EXTENSION_ID ?? '';
  * benar (extension desktop / app mobile / handoff).
  */
 export const SSO_CAPTURE_ENABLED: boolean =
-  import.meta.env.VITE_ENABLE_SSO_CAPTURE === 'true';
+ import.meta.env.VITE_ENABLE_SSO_CAPTURE === "true";
 
 /**
  * Deteksi pengguna di perangkat seluler. Di HP jalur `/sso/capture` (dan
@@ -20,5 +20,5 @@ export const SSO_CAPTURE_ENABLED: boolean =
  * menyembunyikan tombol interactive capture di layar kecil.
  */
 export function isMobileUserAgent(ua: string = navigator.userAgent): boolean {
-  return /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua);
+ return /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua);
 }
