@@ -148,13 +148,32 @@ describe('KulonCourseDetailView', () => {
   });
 
   it("shows the 'Minggu Ini' badge only on the section whose recognized (English) month is the current week", async () => {
-    // Today is 2026-08-06 → "3 August - 9 August" is the current week.
+    // Date-agnostic: build ranges from TODAY so the middle section is always
+    // the current week, regardless of when the suite runs. (Previously this
+    // hardcoded "2026-08-06" and went stale → pre-existing time-bomb.)
+    const MONTH = {
+      January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+      July: 6, August: 7, September: 8, October: 9, November: 10, December: 11,
+    };
+    const names = Object.keys(MONTH);
+    const fmt = (d: Date) => `${d.getDate()} ${names[d.getMonth()]}`;
+    const shift = (days: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      d.setFullYear(d.getFullYear());
+      return d;
+    };
+    const year = new Date().getFullYear();
+    const prev = shift(-14);
+    const cur = shift(0);
+    const next = shift(14);
     (api.getCourseContent as any).mockResolvedValue({
       courseId: 9,
       sections: [
-        { id: 6, label: 'Pertemuan 6', dateRange: '27 July - 2 August', items: [] },
-        { id: 7, label: 'Pertemuan 7', dateRange: '3 August - 9 August', items: [] },
-        { id: 15, label: 'Pertemuan 15', dateRange: '10 August - 16 August', items: [] },
+        // Only the middle range includes today; prev/next are well outside.
+        { id: 6, label: 'Pertemuan 6', dateRange: `${fmt(prev)} - ${fmt(shift(-7))} ${year}`, items: [] },
+        { id: 7, label: 'Pertemuan 7', dateRange: `${fmt(cur)} - ${fmt(cur)} ${year}`, items: [] },
+        { id: 15, label: 'Pertemuan 15', dateRange: `${fmt(next)} - ${fmt(shift(14))} ${year}`, items: [] },
       ],
     });
     (api.getCourses as any).mockResolvedValue([]);
