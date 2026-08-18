@@ -184,14 +184,6 @@ private fun TaskCard(
             Spacer(Modifier.height(6.dp))
             Text(t.course, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Deadline: ${epochToDate(t.duedate)}", style = MaterialTheme.typography.bodySmall)
-            t.submissionStatus?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    "Status: $it",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = accentForeground(),
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
         }
     }
 }
