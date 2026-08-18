@@ -13,9 +13,9 @@ const KNOWN_PATHS = [
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
 ];
 
-export function detectEdgeBin(env = process.env) {
+export function detectEdgeBin(env = process.env, knownPaths = KNOWN_PATHS) {
   if (env.EDGE_BIN && existsSync(env.EDGE_BIN)) return env.EDGE_BIN;
-  return KNOWN_PATHS.find((p) => existsSync(p)) ?? null;
+  return knownPaths.find((p) => existsSync(p)) ?? null;
 }
 
 export function resolveDevProfile(env = process.env) {

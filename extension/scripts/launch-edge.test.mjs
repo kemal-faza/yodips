@@ -7,8 +7,8 @@ describe('launch-edge pure helpers', () => {
   it('detectEdgeBin honors EDGE_BIN when the path exists', () => {
     expect(detectEdgeBin({ EDGE_BIN: EXISTING })).toBe(EXISTING);
   });
-  it('detectEdgeBin returns null for a non-existent EDGE_BIN path', () => {
-    expect(detectEdgeBin({ EDGE_BIN: '/definitely/not/existing/edge' })).toBeNull();
+  it('detectEdgeBin returns null for a non-existent EDGE_BIN path and no known paths', () => {
+    expect(detectEdgeBin({ EDGE_BIN: '/definitely/not/existing/edge' }, [])).toBeNull();
   });
   it('resolveDevProfile uses tmpdir/edge-sso-dev', () => {
     expect(resolveDevProfile().endsWith('edge-sso-dev')).toBe(true);
