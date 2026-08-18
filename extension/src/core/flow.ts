@@ -1,8 +1,17 @@
-import type { CookieFlags, FlowMode, OutboundStatus, Service } from './contract.js';
-import { phasesToClear, SSO_SESSION_COOKIE, SIAP_SESSION_COOKIE_RE } from './cookies.js';
+import type {
+  CookieFlags,
+  FlowMode,
+  OutboundStatus,
+  Service,
+} from "./contract.js";
+import {
+  phasesToClear,
+  SSO_SESSION_COOKIE,
+  SIAP_SESSION_COOKIE_RE,
+} from "./cookies.js";
 
 export interface FlowState {
-  core: 'idle' | 'authing' | 'handoff' | 'done' | 'error';
+  core: "idle" | "authing" | "handoff" | "done" | "error";
   service: Service | null;
   tabId: number | null;
   tabs: number[];
@@ -23,17 +32,17 @@ export interface FlowState {
 }
 
 export type FlowEvent =
-  | { type: 'REQUEST'; mode: FlowMode }
-  | { type: 'COOKIE_SET'; changed?: string[] }
-  | { type: 'TAB_LOADED'; url?: string }
-  | { type: 'HANDOFF_OK'; token: string }
-  | { type: 'HANDOFF_NEEDS_SERVICE'; service: Service }
-  | { type: 'HANDOFF_STALE'; service: Service }
-  | { type: 'HANDOFF_ERROR'; message: string }
-  | { type: 'TIMEOUT' }
-  | { type: 'USER_DONE' }
-  | { type: 'CLOSE_ALL' }
-  | { type: 'LOGOUT' };
+  | { type: "REQUEST"; mode: FlowMode }
+  | { type: "COOKIE_SET"; changed?: string[] }
+  | { type: "TAB_LOADED"; url?: string }
+  | { type: "HANDOFF_OK"; token: string }
+  | { type: "HANDOFF_NEEDS_SERVICE"; service: Service }
+  | { type: "HANDOFF_STALE"; service: Service }
+  | { type: "HANDOFF_ERROR"; message: string }
+  | { type: "TIMEOUT" }
+  | { type: "USER_DONE" }
+  | { type: "CLOSE_ALL" }
+  | { type: "LOGOUT" };
 
 export interface FlowDeps {
   flags: CookieFlags;
@@ -47,18 +56,29 @@ export interface FlowDeps {
 }
 
 export type FlowEffect =
-  | { kind: 'openTab'; url: string }
-  | { kind: 'navigateTab'; url: string }
-  | { kind: 'closeAllTabs' }
-  | { kind: 'clearCookies'; service: Service }
-  | { kind: 'postHandoff' }
-  | { kind: 'sendResult'; payload: OutboundStatus }
-  | { kind: 'scheduleTimers'; deadline: number }
-  | { kind: 'clearTimers' }
-  | { kind: 'focusAppTab' };
+  | { kind: "openTab"; url: string }
+  | { kind: "navigateTab"; url: string }
+  | { kind: "closeAllTabs" }
+  | { kind: "clearCookies"; service: Service }
+  | { kind: "postHandoff" }
+  | { kind: "sendResult"; payload: OutboundStatus }
+  | { kind: "scheduleTimers"; deadline: number }
+  | { kind: "clearTimers" }
+  | { kind: "focusAppTab" };
 
-export function initialState(mode: FlowMode = 'auto'): FlowState {
-  return { core: 'idle', service: null, tabId: null, tabs: [], appTabId: null, deadline: 0, reloginCount: 0, mode, settledAt: 0, recentSessionChange: false };
+export function initialState(mode: FlowMode = "auto"): FlowState {
+  return {
+    core: "idle",
+    service: null,
+    tabId: null,
+    tabs: [],
+    appTabId: null,
+    deadline: 0,
+    reloginCount: 0,
+    mode,
+    settledAt: 0,
+    recentSessionChange: false,
+  };
 }
 
 /**
@@ -78,12 +98,16 @@ export function isSsoLoggedInUrl(url: string | undefined): boolean {
   } catch {
     return false;
   }
-  if (u.hostname !== 'sso.undip.ac.id') return false;
+  if (u.hostname !== "sso.undip.ac.id") return false;
   return !/^\/(auth\/user\/login|auth\/login|sso\/auth)/.test(u.pathname);
 }
 
 export function attachTab(state: FlowState, tabId: number): FlowState {
-  return { ...state, tabId, tabs: state.tabs.includes(tabId) ? state.tabs : [...state.tabs, tabId] };
+  return {
+    ...state,
+    tabId,
+    tabs: state.tabs.includes(tabId) ? state.tabs : [...state.tabs, tabId],
+  };
 }
 
 /**
@@ -101,23 +125,33 @@ export function normalizeState(state: FlowState, now: number): FlowState {
   // Migrate a persisted state written before `settledAt`/`recentSessionChange`
   // existed: default `settledAt` to 0 (not yet settled) and the change flag to
   // false, so the load-gate suppresses transient cookies correctly.
-  const settled = typeof state.settledAt === 'number' && state.settledAt >= 0 ? state.settledAt : 0;
+  const settled =
+    typeof state.settledAt === "number" && state.settledAt >= 0
+      ? state.settledAt
+      : 0;
   const changed = state.recentSessionChange === true;
   const normalized =
     settled === state.settledAt && changed === state.recentSessionChange
       ? state
       : { ...state, settledAt: settled, recentSessionChange: changed };
-  if (state.core === 'done' || state.core === 'error') {
+  if (state.core === "done" || state.core === "error") {
     if (state.tabId == null) return initialState(state.mode);
     return normalized;
   }
-  if ((state.core === 'authing' || state.core === 'handoff') && now > state.deadline) {
+  if (
+    (state.core === "authing" || state.core === "handoff") &&
+    now > state.deadline
+  ) {
     return initialState(state.mode);
   }
   return normalized;
 }
 
-export function redact(state: FlowState): { core: string; phase: string | null; tabId: number | null } {
+export function redact(state: FlowState): {
+  core: string;
+  phase: string | null;
+  tabId: number | null;
+} {
   return { core: state.core, phase: state.service, tabId: state.tabId };
 }
 
@@ -131,16 +165,16 @@ export function redact(state: FlowState): { core: string; phase: string | null; 
  * the user to close the login tab manually.
  */
 export function isPhaseSatisfied(
-  state: Pick<FlowState, 'core' | 'service'>,
+  state: Pick<FlowState, "core" | "service">,
   flags: CookieFlags,
 ): boolean {
-  if (state.core !== 'authing') return false;
+  if (state.core !== "authing") return false;
   switch (state.service) {
-    case 'sso':
+    case "sso":
       return flags.hasSso;
-    case 'kulon':
+    case "kulon":
       return flags.hasKulon;
-    case 'siap':
+    case "siap":
       return flags.hasSiap;
     default:
       return false;
@@ -149,7 +183,7 @@ export function isPhaseSatisfied(
 
 export type PollStatus =
   | OutboundStatus
-  | { status: 'ok'; active: boolean; phase: string | null };
+  | { status: "ok"; active: boolean; phase: string | null };
 
 /**
  * Decide the SPA's self-healing `status` poll response from the cached result
@@ -161,12 +195,16 @@ export type PollStatus =
  */
 export function pollStatus(
   cached: OutboundStatus | undefined,
-  state: Pick<FlowState, 'core' | 'service'>,
+  state: Pick<FlowState, "core" | "service">,
 ): PollStatus {
   if (cached) return cached;
-  const active = state.core === 'authing' || state.core === 'handoff';
-  if (active) return { status: 'ok', active: true, phase: state.service };
-  return { status: 'error', message: 'Sesi login belum selesai. Silakan klik "Login via Extension" lagi.' };
+  const active = state.core === "authing" || state.core === "handoff";
+  if (active) return { status: "ok", active: true, phase: state.service };
+  return {
+    status: "error",
+    message:
+      'Sesi login belum selesai. Silakan klik "Login via Extension" lagi.',
+  };
 }
 
 function deadline(deps: FlowDeps): number {
@@ -174,7 +212,10 @@ function deadline(deps: FlowDeps): number {
 }
 
 function clearFor(service: Service): FlowEffect[] {
-  return phasesToClear(service).map((s) => ({ kind: 'clearCookies' as const, service: s }));
+  return phasesToClear(service).map((s) => ({
+    kind: "clearCookies" as const,
+    service: s,
+  }));
 }
 
 const KULON_SESSION_COOKIE_RE = /^MoodleSession/;
@@ -193,46 +234,72 @@ const KULON_SESSION_COOKIE_RE = /^MoodleSession/;
  * hand are only ever entered AFTER an SSO login (or a validated handoff), so
  * their flag checks are meaningful — the poll may finish them.
  */
-function sessionCookieChanged(event: Extract<FlowEvent, { type: 'COOKIE_SET' }>, phase: Service | null): boolean {
+function sessionCookieChanged(
+  event: Extract<FlowEvent, { type: "COOKIE_SET" }>,
+  phase: Service | null,
+): boolean {
   const changed = event.changed;
-  if (!changed || changed.length === 0) return phase !== 'sso'; // poll: flags decide EXCEPT sso
-  if (phase === 'sso') return changed.includes(SSO_SESSION_COOKIE);
-  if (phase === 'kulon') return changed.some((n) => KULON_SESSION_COOKIE_RE.test(n));
-  if (phase === 'siap') return changed.some((n) => SIAP_SESSION_COOKIE_RE.test(n));
+  if (!changed || changed.length === 0) return phase !== "sso"; // poll: flags decide EXCEPT sso
+  if (phase === "sso") return changed.includes(SSO_SESSION_COOKIE);
+  if (phase === "kulon")
+    return changed.some((n) => KULON_SESSION_COOKIE_RE.test(n));
+  if (phase === "siap")
+    return changed.some((n) => SIAP_SESSION_COOKIE_RE.test(n));
   return true;
 }
 
 /** Shared advance logic for the current authing phase, called once the gate
  *  (cookie event accepted, page settled, or USER_DONE) has passed. */
-function advanceAuth(state: FlowState, deps: FlowDeps): { state: FlowState; effects: FlowEffect[] } {
+function advanceAuth(
+  state: FlowState,
+  deps: FlowDeps,
+): { state: FlowState; effects: FlowEffect[] } {
   const { flags } = deps;
   const svc = state.service;
-  if (svc === 'sso') {
+  if (svc === "sso") {
     if (!flags.hasSso) return { state, effects: [] };
     return {
-      state: { ...state, service: 'kulon', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
+      state: {
+        ...state,
+        service: "kulon",
+        deadline: deadline(deps),
+        settledAt: 0,
+        recentSessionChange: false,
+      },
       effects: [
-        { kind: 'navigateTab', url: deps.loginUrl('kulon') },
-        { kind: 'scheduleTimers', deadline: deadline(deps) },
+        { kind: "navigateTab", url: deps.loginUrl("kulon") },
+        { kind: "scheduleTimers", deadline: deadline(deps) },
       ],
     };
   }
-  if (svc === 'kulon') {
+  if (svc === "kulon") {
     if (!flags.hasKulon) return { state, effects: [] };
     if (!flags.hasSiap) {
       return {
-        state: { ...state, service: 'siap', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
+        state: {
+          ...state,
+          service: "siap",
+          deadline: deadline(deps),
+          settledAt: 0,
+          recentSessionChange: false,
+        },
         effects: [
-          { kind: 'navigateTab', url: deps.loginUrl('siap') },
-          { kind: 'scheduleTimers', deadline: deadline(deps) },
+          { kind: "navigateTab", url: deps.loginUrl("siap") },
+          { kind: "scheduleTimers", deadline: deadline(deps) },
         ],
       };
     }
-    return { state: { ...state, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
+    return {
+      state: { ...state, core: "handoff" },
+      effects: [{ kind: "postHandoff" }],
+    };
   }
   // svc === 'siap'
   if (!flags.hasSiap) return { state, effects: [] };
-  return { state: { ...state, core: 'handoff' }, effects: [{ kind: 'postHandoff' }] };
+  return {
+    state: { ...state, core: "handoff" },
+    effects: [{ kind: "postHandoff" }],
+  };
 }
 
 export function advance(
@@ -242,17 +309,27 @@ export function advance(
 ): { state: FlowState; effects: FlowEffect[] } {
   const { flags } = deps;
 
-  if (event.type === 'CLOSE_ALL' || event.type === 'LOGOUT') {
-    return { state: initialState(state.mode), effects: [{ kind: 'clearTimers' }, { kind: 'closeAllTabs' }] };
+  if (event.type === "CLOSE_ALL" || event.type === "LOGOUT") {
+    return {
+      state: initialState(state.mode),
+      effects: [{ kind: "clearTimers" }, { kind: "closeAllTabs" }],
+    };
   }
 
   // REQUEST is an explicit "start a fresh login" command: it restarts from ANY
   // terminal state (idle/done/error) — a stale persisted `core:'error'` from a
   // previous failed flow must not block the next login. It is a no-op only
   // while a flow is already active (prevents a second login tab).
-  if (event.type === 'REQUEST' && state.core !== 'authing' && state.core !== 'handoff') {
+  if (
+    event.type === "REQUEST" &&
+    state.core !== "authing" &&
+    state.core !== "handoff"
+  ) {
     // Fresh flow base preserves the SPA tab id so results can be delivered.
-    const base: FlowState = { ...initialState(event.mode), appTabId: state.appTabId ?? null };
+    const base: FlowState = {
+      ...initialState(event.mode),
+      appTabId: state.appTabId ?? null,
+    };
     if (!flags.hasKulon) {
       // Always start at SSO (deterministic). We deliberately DON'T skip straight
       // to Kulon based on ambient `hasSso` cookie presence: a stale/guest
@@ -262,53 +339,85 @@ export function advance(
       // or the SSO cookie gate, so a genuinely valid session still fast-passes
       // without re-prompting. No clearFor('sso') — keep a valid session.
       return {
-        state: { ...base, core: 'authing', service: 'sso', deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
+        state: {
+          ...base,
+          core: "authing",
+          service: "sso",
+          deadline: deadline(deps),
+          settledAt: 0,
+          recentSessionChange: false,
+        },
         effects: [
-          { kind: 'openTab', url: deps.loginUrl('sso') },
-          { kind: 'scheduleTimers', deadline: deadline(deps) },
+          { kind: "openTab", url: deps.loginUrl("sso") },
+          { kind: "scheduleTimers", deadline: deadline(deps) },
         ],
       };
     }
-    return { state: { ...base, core: 'handoff', deadline: deadline(deps) }, effects: [{ kind: 'postHandoff' }] };
+    return {
+      state: { ...base, core: "handoff", deadline: deadline(deps) },
+      effects: [{ kind: "postHandoff" }],
+    };
   }
 
-  if (event.type === 'TIMEOUT' && (state.core === 'authing' || state.core === 'handoff')) {
+  if (
+    event.type === "TIMEOUT" &&
+    (state.core === "authing" || state.core === "handoff")
+  ) {
     return {
-      state: { ...state, core: 'error' },
+      state: { ...state, core: "error" },
       effects: [
-        { kind: 'clearTimers' },
-        { kind: 'closeAllTabs' },
-        { kind: 'sendResult', payload: { status: 'error', message: 'Login belum selesai dalam batas waktu. Silakan klik "Login via Extension" lagi.' } },
+        { kind: "clearTimers" },
+        { kind: "closeAllTabs" },
+        {
+          kind: "sendResult",
+          payload: {
+            status: "error",
+            message:
+              'Login belum selesai dalam batas waktu. Silakan klik "Login via Extension" lagi.',
+          },
+        },
       ],
     };
   }
 
-  if (state.core === 'authing' && (event.type === 'COOKIE_SET' || event.type === 'USER_DONE' || event.type === 'TAB_LOADED')) {
+  if (
+    state.core === "authing" &&
+    (event.type === "COOKIE_SET" ||
+      event.type === "USER_DONE" ||
+      event.type === "TAB_LOADED")
+  ) {
     // Tab finished loading. Mark settled; in auto mode, fast-path advance when
     // the target session cookie is already present (redirect ASAP after load).
-    if (event.type === 'TAB_LOADED') {
+    if (event.type === "TAB_LOADED") {
       const settled = { ...state, settledAt: deps.now() };
-      if (state.mode === 'auto') {
+      if (state.mode === "auto") {
         const svc = state.service;
         // SSO: a logged-in page URL is the POSITIVE signal — NOT a cookie change
         // (which never fires for an already-established session). Handles both
         // "already logged in" (fast-pass) and "manual login completed" (page left
         // the form), without trusting ambient cookie presence.
-        if (svc === 'sso' && isSsoLoggedInUrl(event.url) && flags.hasSso) {
+        if (svc === "sso" && isSsoLoggedInUrl(event.url) && flags.hasSso) {
           return advanceAuth({ ...settled, recentSessionChange: false }, deps);
         }
-        if (state.recentSessionChange && ((svc === 'kulon' && flags.hasKulon) || (svc === 'siap' && flags.hasSiap))) {
+        if (
+          state.recentSessionChange &&
+          ((svc === "kulon" && flags.hasKulon) ||
+            (svc === "siap" && flags.hasSiap))
+        ) {
           return advanceAuth({ ...settled, recentSessionChange: false }, deps);
         }
       }
       return { state: settled, effects: [] };
     }
 
-    const triggered = state.mode === 'semi' ? event.type === 'USER_DONE' : event.type === 'COOKIE_SET';
+    const triggered =
+      state.mode === "semi"
+        ? event.type === "USER_DONE"
+        : event.type === "COOKIE_SET";
     if (!triggered) return { state, effects: [] };
 
     // USER_DONE (human) is NEVER gated by the page-load state.
-    if (event.type === 'USER_DONE') {
+    if (event.type === "USER_DONE") {
       return advanceAuth(state, deps);
     }
 
@@ -322,39 +431,52 @@ export function advance(
       else return { state, effects: [] };
     }
     // SSO guard: skip the guest `ci_session_sso` dropped right after settle.
-    if (base.service === 'sso' && deps.now() < base.settledAt + deps.SSO_GUARD_MS) {
+    if (
+      base.service === "sso" &&
+      deps.now() < base.settledAt + deps.SSO_GUARD_MS
+    ) {
       return { state: base, effects: [] };
     }
     // Auto mode: only a change of the CURRENT phase's real session cookie is
     // allowed to advance — csrf/guest/LB cookie events must not.
-    if (state.mode === 'auto' && !sessionCookieChanged(event, base.service)) {
+    if (state.mode === "auto" && !sessionCookieChanged(event, base.service)) {
       return { state: base, effects: [] };
     }
     return advanceAuth({ ...base, recentSessionChange: true }, deps);
   }
 
-  if (state.core === 'handoff') {
+  if (state.core === "handoff") {
     switch (event.type) {
-      case 'HANDOFF_OK':
+      case "HANDOFF_OK":
         return {
-          state: { ...state, core: 'done' },
+          state: { ...state, core: "done" },
           effects: [
-            { kind: 'clearTimers' },
-            { kind: 'sendResult', payload: { status: 'ok', accessToken: event.token } },
-            { kind: 'closeAllTabs' },
-            { kind: 'focusAppTab' },
+            { kind: "clearTimers" },
+            {
+              kind: "sendResult",
+              payload: { status: "ok", accessToken: event.token },
+            },
+            { kind: "closeAllTabs" },
+            { kind: "focusAppTab" },
           ],
         };
-      case 'HANDOFF_NEEDS_SERVICE':
+      case "HANDOFF_NEEDS_SERVICE":
         return {
-          state: { ...state, core: 'authing', service: event.service, deadline: deadline(deps), settledAt: 0, recentSessionChange: false },
+          state: {
+            ...state,
+            core: "authing",
+            service: event.service,
+            deadline: deadline(deps),
+            settledAt: 0,
+            recentSessionChange: false,
+          },
           effects: [
             ...clearFor(event.service),
-            { kind: 'navigateTab', url: deps.loginUrl(event.service) },
-            { kind: 'scheduleTimers', deadline: deadline(deps) },
+            { kind: "navigateTab", url: deps.loginUrl(event.service) },
+            { kind: "scheduleTimers", deadline: deadline(deps) },
           ],
         };
-      case 'HANDOFF_STALE': {
+      case "HANDOFF_STALE": {
         if (state.reloginCount < deps.MAX_RELOGIN) {
           // Backend said a session is stale. `event.service` tells WHICH one
           // (e.g. KULON_STALE → 'kulon'), so we re-auth that service (clearing
@@ -366,13 +488,13 @@ export function advance(
           // Reuse the SAME login tab (navigate, not closeAllTabs+openTab).
           const target: Service = event.service;
           const nav: FlowEffect =
-            state.tabId != null
-              ? { kind: 'navigateTab', url: deps.loginUrl(target) }
-              : { kind: 'openTab', url: deps.loginUrl(target) };
+            state.tabId == null
+              ? { kind: "openTab", url: deps.loginUrl(target) }
+              : { kind: "navigateTab", url: deps.loginUrl(target) };
           return {
             state: {
               ...state,
-              core: 'authing',
+              core: "authing",
               service: target,
               reloginCount: state.reloginCount + 1,
               deadline: deadline(deps),
@@ -382,26 +504,35 @@ export function advance(
             effects: [
               ...clearFor(target),
               nav,
-              { kind: 'scheduleTimers', deadline: deadline(deps) },
+              { kind: "scheduleTimers", deadline: deadline(deps) },
             ],
           };
         }
         return {
-          state: { ...state, core: 'error' },
+          state: { ...state, core: "error" },
           effects: [
-            { kind: 'clearTimers' },
-            { kind: 'closeAllTabs' },
-            { kind: 'sendResult', payload: { status: 'error', message: 'Sesi layanan gagal diperbarui. Silakan coba lagi.' } },
+            { kind: "clearTimers" },
+            { kind: "closeAllTabs" },
+            {
+              kind: "sendResult",
+              payload: {
+                status: "error",
+                message: "Sesi layanan gagal diperbarui. Silakan coba lagi.",
+              },
+            },
           ],
         };
       }
-      case 'HANDOFF_ERROR':
+      case "HANDOFF_ERROR":
         return {
-          state: { ...state, core: 'error' },
+          state: { ...state, core: "error" },
           effects: [
-            { kind: 'clearTimers' },
-            { kind: 'closeAllTabs' },
-            { kind: 'sendResult', payload: { status: 'error', message: event.message } },
+            { kind: "clearTimers" },
+            { kind: "closeAllTabs" },
+            {
+              kind: "sendResult",
+              payload: { status: "error", message: event.message },
+            },
           ],
         };
       default:
