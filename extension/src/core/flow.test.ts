@@ -256,6 +256,33 @@ describe("COOKIE_SET cascade (mode auto)", () => {
     });
     expect(r.state.core).toBe("authing");
   });
+  it("remembers a real session-cookie change that arrives BEFORE settle so TAB_LOADED fast-paths instead of waiting for the poll", () => {
+    // Kulon auto-auth sets MoodleSession early in page load, before the tab
+    // reports `complete`. The COOKIE_SET below must set recentSessionChange
+    // (not drop) so the subsequent TAB_LOADED advances without the 30s POLL.
+    const pre = advance(auth("kulon"), COOKIE_SET(["MoodleSession"]), {
+      ...D,
+      flags: { hasSso: true, hasKulon: true, hasSiap: true },
+    });
+    expect(pre.state.recentSessionChange).toBe(true);
+    expect(pre.state.core).toBe("authing");
+    expect(pre.effects).toEqual([]);
+    const r = advance(
+      pre.state as FlowState,
+      { type: "TAB_LOADED" },
+      { ...D, flags: { hasSso: true, hasKulon: true, hasSiap: true } },
+    );
+    expect(r.state.core).toBe("handoff"); // advanced immediately, no poll
+  });
+  it("drops a pre-settle transient/LB change (does not fast-path prematurely)", () => {
+    const r = advance(auth("kulon"), COOKIE_SET(["cookiesession1"]), {
+      ...D,
+      flags: { hasSso: true, hasKulon: true, hasSiap: true },
+    });
+    expect(r.state.recentSessionChange).toBe(false);
+    expect(r.state.core).toBe("authing");
+    expect(r.effects).toEqual([]);
+  });
   it("a navigation hop resets settledAt to 0 (re-arms transient suppression)", () => {
     const settledSso = {
       ...auth("sso"),

@@ -1,8 +1,8 @@
-import type { CookieFlags, Service } from './contract.js';
+import type { CookieFlags, Service } from "./contract.js";
 
-export const SSO_SESSION_COOKIE = 'ci_session_sso';
+export const SSO_SESSION_COOKIE = "ci_session_sso";
 export const SIAP_SESSION_COOKIE_RE = /^(?:sia_|sipp|siapp|ciapp_)/i;
-export const PHASE_CHAIN: Service[] = ['sso', 'kulon', 'siap'];
+export const PHASE_CHAIN: Service[] = ["sso", "kulon", "siap"];
 
 export interface CookieP {
   name: string | RegExp;
@@ -10,19 +10,19 @@ export interface CookieP {
 }
 
 export function cookiePatternsForPhase(phase: Service): CookieP[] {
-  if (phase === 'sso') {
+  if (phase === "sso") {
     return [
-      { domain: 'sso.undip.ac.id', name: SSO_SESSION_COOKIE },
-      { domain: 'undip.ac.id', name: SSO_SESSION_COOKIE },
+      { domain: "sso.undip.ac.id", name: SSO_SESSION_COOKIE },
+      { domain: "undip.ac.id", name: SSO_SESSION_COOKIE },
     ];
   }
-  if (phase === 'kulon') {
-    return [{ domain: 'kulon2.undip.ac.id', name: /^MoodleSession/ }];
+  if (phase === "kulon") {
+    return [{ domain: "kulon2.undip.ac.id", name: /^MoodleSession/ }];
   }
   // 'siap'
   return [
-    { domain: 'siap.undip.ac.id', name: SIAP_SESSION_COOKIE_RE },
-    { domain: 'undip.ac.id', name: SIAP_SESSION_COOKIE_RE },
+    { domain: "siap.undip.ac.id", name: SIAP_SESSION_COOKIE_RE },
+    { domain: "undip.ac.id", name: SIAP_SESSION_COOKIE_RE },
   ];
 }
 
@@ -32,7 +32,7 @@ export function phasesToClear(phase: Service): Service[] {
 }
 
 function isUndipParent(d: string): boolean {
-  return d === 'undip.ac.id' || d.endsWith('.undip.ac.id');
+  return d === "undip.ac.id" || d.endsWith(".undip.ac.id");
 }
 
 /** True only for a SIAP *session* cookie (name-precise). The bare domain is
@@ -41,7 +41,10 @@ function isUndipParent(d: string): boolean {
  *  read as evidence of a logged-in SIAP session (it caused an endless
  *  KULON_STALE loop: hasSiap stayed true pre-login). */
 function isSiapCookie(c: { name: string; domain: string }): boolean {
-  return (c.domain.includes('siap.undip.ac.id') || isUndipParent(c.domain)) && SIAP_SESSION_COOKIE_RE.test(c.name);
+  return (
+    (c.domain.includes("siap.undip.ac.id") || isUndipParent(c.domain)) &&
+    SIAP_SESSION_COOKIE_RE.test(c.name)
+  );
 }
 
 export interface CookieLite {
@@ -50,15 +53,44 @@ export interface CookieLite {
   value?: string;
 }
 
+export interface CookieStoreLite {
+  id: string;
+  tabIds: number[];
+}
+
+/**
+ * Pick the cookie store backing the current login flow. An incognito window
+ * uses a SEPARATE cookie store from a regular window, and the background's
+ * bare `chrome.cookies.getAll({})` reads ONLY the default (regular) store — so
+ * an incognito login's SSO/Kulon/SIAP session cookies were never seen, flags
+ * stayed false, and the flow sat on the `sso` phase until TIMEOUT. Resolve the
+ * store that owns the login tab (its `tabIds` includes `tabId`); without one,
+ * fall back to the default (non-empty-tabIds or first) store.
+ */
+export function cookieStoreForTab(
+  stores: CookieStoreLite[],
+  tabId: number | null,
+): string | undefined {
+  if (stores.length === 0) return undefined;
+  if (tabId != null) {
+    const owned = stores.find((s) => s.tabIds.includes(tabId));
+    if (owned) return owned.id;
+  }
+  const defaultStore = stores.find((s) => s.tabIds.length === 0) ?? stores[0];
+  return defaultStore?.id;
+}
+
 export function evaluateCookies(cookies: CookieLite[]): CookieFlags {
   return {
     hasSso: cookies.some(
       (c) =>
         c.name === SSO_SESSION_COOKIE &&
-        (c.domain.includes('sso.undip.ac.id') || isUndipParent(c.domain)),
+        (c.domain.includes("sso.undip.ac.id") || isUndipParent(c.domain)),
     ),
     hasKulon: cookies.some(
-      (c) => c.domain.includes('kulon2.undip.ac.id') && /^MoodleSession/.test(c.name),
+      (c) =>
+        c.domain.includes("kulon2.undip.ac.id") &&
+        /^MoodleSession/.test(c.name),
     ),
     hasSiap: cookies.some(isSiapCookie),
   };
@@ -71,21 +103,25 @@ export function cookiesToStr<T extends CookieLite>(
   return cookies
     .filter(pred)
     .map((c) => `${c.name}=${c.value}`)
-    .join('; ');
+    .join("; ");
 }
 
 export function buildHandoffBody(cookies: CookieLite[]) {
   return {
-    kulonCookie: cookiesToStr(cookies, (c) => c.domain.includes('kulon2.undip.ac.id')),
+    kulonCookie: cookiesToStr(cookies, (c) =>
+      c.domain.includes("kulon2.undip.ac.id"),
+    ),
     ssoCookie: cookiesToStr(
       cookies,
       (c) =>
-        c.domain.includes('sso.undip.ac.id') ||
+        c.domain.includes("sso.undip.ac.id") ||
         (isUndipParent(c.domain) && c.name === SSO_SESSION_COOKIE),
     ),
     microsoftCookie: cookiesToStr(
       cookies,
-      (c) => c.domain.includes('microsoftonline.com') || c.domain.includes('login.live.com'),
+      (c) =>
+        c.domain.includes("microsoftonline.com") ||
+        c.domain.includes("login.live.com"),
     ),
     siapCookie: cookiesToStr(cookies, isSiapCookie),
   };

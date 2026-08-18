@@ -19,6 +19,7 @@ import {
   evaluateCookies,
   buildHandoffBody,
   cookiePatternsForPhase,
+  cookieStoreForTab,
 } from "./core/cookies.js";
 import { interpretHandoff, summarizeHandoff } from "./core/handoff.js";
 import {
@@ -74,6 +75,28 @@ async function tabAlive(tabId: number | null): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Read cookies from the cookie store that owns the login tab. An incarnation
+ * of the bug report: incognito login stuck at `sso`. The background reads
+ * cookies with bare `chrome.cookies.getAll({})`, which returns ONLY the
+ * default (regular) cookie store. When the login tab lives in an incognito
+ * window, its session cookies are in the incognito store — so the SSO flag
+ * never turned on and the flow could never advance (it timed out instead).
+ * Resolving the store from the tab's owns-store fixes cookie detection,
+ * handoff body, and cookie clearing for incognito logins.
+ */
+async function getFlowCookies(
+  tabId: number | null,
+): Promise<chrome.cookies.Cookie[]> {
+  try {
+    const stores = await chrome.cookies.getAllCookieStores();
+    const storeId = cookieStoreForTab(stores, tabId);
+    return await chrome.cookies.getAll(storeId ? { storeId } : {});
+  } catch {
+    return [];
+  }
+}
 async function getServerUrl(): Promise<string> {
   const res = await chrome.storage.sync.get(SERVER_KEY);
   return (res[SERVER_KEY] as string) || DEFAULT_SERVER_URL;
@@ -89,22 +112,38 @@ async function fetchHandoff(url: string, body: unknown): Promise<HandoffRaw> {
 }
 
 async function clearCookies(service: Service): Promise<void> {
-  for (const p of cookiePatternsForPhase(service)) {
-    try {
-      const cookies = await chrome.cookies.getAll({ domain: p.domain });
-      for (const c of cookies) {
-        const match =
-          typeof p.name === "string" ? c.name === p.name : p.name.test(c.name);
-        if (!match) continue;
-        await chrome.cookies
-          .remove({
-            name: c.name,
-            url: `https://${c.domain.replace(/^\./, "")}/`,
-          })
-          .catch(() => {});
+  let stores: { id: string; tabIds: number[] }[] = [];
+  try {
+    stores = await chrome.cookies.getAllCookieStores();
+  } catch {
+    stores = [];
+  }
+  // Clear from EVERY cookie store (regular + each incognito store): a logout
+  // or stale re-auth must not leave an incognito session cookie behind.
+  const storeIds = stores.length ? stores.map((s) => s.id) : [undefined];
+  for (const storeId of storeIds) {
+    for (const p of cookiePatternsForPhase(service)) {
+      try {
+        const cookies = await chrome.cookies.getAll(
+          storeId ? { domain: p.domain, storeId } : { domain: p.domain },
+        );
+        for (const c of cookies) {
+          const match =
+            typeof p.name === "string"
+              ? c.name === p.name
+              : p.name.test(c.name);
+          if (!match) continue;
+          await chrome.cookies
+            .remove({
+              name: c.name,
+              url: `https://${c.domain.replace(/^\./, "")}/`,
+              ...(storeId ? { storeId } : {}),
+            })
+            .catch(() => {});
+        }
+      } catch {
+        /* best-effort */
       }
-    } catch {
-      /* best-effort */
     }
   }
 }
@@ -170,7 +209,7 @@ function cookieNamesDiag(cookies: { name: string; domain: string }[]) {
  * loop with this event to keep everything within a single lock pass.
  */
 async function postHandoffDecision(_state: FlowState): Promise<FlowEvent> {
-  const cookies = await chrome.cookies.getAll({});
+  const cookies = await getFlowCookies(_state.tabId);
   console.info(
     "[Undip SSO] handoff cookie names",
     JSON.stringify(cookieNamesDiag(cookies)),
@@ -275,7 +314,7 @@ async function runFlow(initialEvent: FlowEvent): Promise<void> {
       const ev: FlowEvent = event ?? (pendingEvent as FlowEvent);
       pendingEvent = null; // consumed below (fresh ones re-arrive via listeners)
       const state = await getState();
-      const cookies = await chrome.cookies.getAll({});
+      const cookies = await getFlowCookies(state.tabId);
       const flags = evaluateCookies(cookies);
       const deps = {
         flags,
@@ -372,7 +411,7 @@ chrome.runtime.onMessageExternal.addListener(
               active &&
               isPhaseSatisfied(
                 state,
-                evaluateCookies(await chrome.cookies.getAll({})),
+                evaluateCookies(await getFlowCookies(state.tabId)),
               )
             ) {
               // A running flow wedged in a phase the live cookies already satisfy

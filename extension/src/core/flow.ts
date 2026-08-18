@@ -423,12 +423,26 @@ export function advance(
 
     // COOKIE_SET: page-load gate. Real cookie events are only judged once the
     // page has settled; the poll (changed:undefined) forces settle as a bounded
-    // fallback so a missed TAB_LOADED can't hang the flow.
+    // fallback so a missed TAB_LOADED can't hang the flow. NOTE: the Kulon/SIAP
+    // auto-auth ticket sets its session cookie EARLY in the page load, often
+    // before the tab reports `complete`. We must NOT drop that genuinely-meant
+    // session cookie change (else the hop waits ~POLL for the alarm) — instead
+    // record it so the imminent TAB_LOADED fast-path can advance immediately.
     const isPoll = !event.changed || event.changed.length === 0;
     let base = state;
     if (state.settledAt === 0) {
       if (isPoll) base = { ...state, settledAt: deps.now() };
-      else return { state, effects: [] };
+      else if (
+        state.mode === "auto" &&
+        sessionCookieChanged(event, state.service)
+      ) {
+        // A real change of the CURRENT phase's session cookie arrived before
+        // the page settled. Don't advance yet (page load isn't stable) but keep
+        // the flag so TAB_LOADED (which sets settledAt) fast-paths right after.
+        return { state: { ...state, recentSessionChange: true }, effects: [] };
+      } else {
+        return { state, effects: [] };
+      }
     }
     // SSO guard: skip the guest `ci_session_sso` dropped right after settle.
     if (
