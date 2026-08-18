@@ -7,14 +7,24 @@
   "host_permissions": [
     "http://localhost:3000/*",
     "http://127.0.0.1:3000/*",
+    "https://backend.crunchy.my.id/*",
+    "https://sso.crunchy.my.id/*",
     "*://*.undip.ac.id/*"
   ],
   "externally_connectable": {
-    "matches": ["http://localhost:5173/*", "http://127.0.0.1:5173/*"]
+    "matches": [
+      "http://localhost:5173/*",
+      "http://127.0.0.1:5173/*",
+      "https://sso.crunchy.my.id/*"
+    ]
   },
   "content_scripts": [
     {
-      "matches": ["http://localhost:5173/*", "http://127.0.0.1:5173/*"],
+      "matches": [
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*",
+        "https://sso.crunchy.my.id/*"
+      ],
       "js": ["dist/content-bridge.js"],
       "run_at": "document_idle"
     }
