@@ -459,6 +459,45 @@ describe('SiapService', () => {
     });
   });
 
+  describe('getAbsen', () => {
+    it('parses hadir percent + idjadwal per row from the jadwal index page', async () => {
+      mockFetchRouting([
+        {
+          match: '/jadwal_mahasiswa/mhs/jadwal/',
+          body: fixture('absen_index.html'),
+        },
+      ]);
+      const res = await svc.getAbsen('sia_app_session=K');
+      expect(res.length).toBe(2);
+      expect(res[0]).toMatchObject({
+        idJadwal: '216328',
+        nama: 'Sistem Informasi',
+        hadirPct: 0,
+      });
+      expect(res[1]).toMatchObject({
+        idJadwal: '216387',
+        nama: 'Komputasi Tersebar dan Pararel',
+        hadirPct: 7.1,
+      });
+    });
+
+    it('gets the jadwal index page with the session cookie', async () => {
+      const fetched: string[] = [];
+      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
+        fetched.push(typeof input === 'string' ? input : input.url);
+        return {
+          ok: true,
+          headers: { get: () => 'text/html' },
+          text: async () => fixture('absen_index.html'),
+        };
+      });
+      await svc.getAbsen('sia_app_session=COOKIE');
+      expect(
+        fetched.some((u) => u.includes('/jadwal_mahasiswa/mhs/jadwal/')),
+      ).toBe(true);
+    });
+  });
+
   describe('getKehadiran', () => {
     it('parses the absen table from the real get_absen fixture (non-empty, snapshot values)', async () => {
       mockFetchRouting([

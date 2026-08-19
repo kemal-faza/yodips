@@ -110,6 +110,13 @@ interface SiapJadwalUpstream {
   uuid_pertemuan?: string;
 }
 
+/** Ringkasan kehadiran (%) per matakuliah dari halaman index jadwal SIAP. */
+export interface SiapAbsenItem {
+  idJadwal: string;
+  nama: string;
+  hadirPct: number;
+}
+
 /** Satu baris catatan kehadiran per pertemuan (di-parse dari `get_absen.html`). */
 export interface SiapKehadiranRow {
   pertemuanKe: string; // kolom "Pertemuan ke-"
@@ -827,6 +834,69 @@ export class SiapService {
     }
     if (userSub && this.cache) {
       await this.cache.set(`${userSub}:siap:jadwal`, out);
+    }
+    return out;
+  }
+
+  /**
+   * Ringkasan hadir (%) per matakuliah dari halaman index jadwal
+   * (`GET /jadwal_mahasiswa/mhs/jadwal/`). Tabel index punya kolom "Hadir"
+   * berupa progress-bar (aria-valuenow = % kehadiran) per baris + tombol
+   * "Lihat Absen" ber `data-id` = idjadwal. Ini murah (1 GET) untuk progres
+   * ringkas; detail per pertemuan ada di [getKehadiran].
+   */
+  async getAbsen(
+    siapCookie: string,
+    userSub?: string,
+  ): Promise<SiapAbsenItem[]> {
+    if (userSub && this.cache) {
+      const hit = await this.cache.get<SiapAbsenItem[]>(
+        `${userSub}:siap:absen`,
+      );
+      if (hit) return hit;
+    }
+    const html = await this.siapFetch(
+      `${this.baseUrl}/jadwal_mahasiswa/mhs/jadwal/`,
+      {
+        headers: { Cookie: siapCookie },
+        redirect: 'follow',
+      },
+    );
+    const items = this.parseAbsenSummary(html);
+    if (userSub && this.cache) {
+      await this.cache.set(`${userSub}:siap:absen`, items);
+    }
+    return items;
+  }
+
+  /** Parse ringkasan hadir dari tabel index jadwal (baris dengan progress-bar). */
+  private parseAbsenSummary(html: string): SiapAbsenItem[] {
+    const out: SiapAbsenItem[] = [];
+    const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let rm: RegExpExecArray | null;
+    while ((rm = rowRe.exec(html)) !== null) {
+      const tr = rm[1];
+      if (
+        !/<div\b[^>]*progress-bar/i.test(tr) &&
+        !/progress-bar[^"]*"/i.test(tr)
+      )
+        continue;
+      const tds: string[] = [];
+      const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+      let td: RegExpExecArray | null;
+      while ((td = tdRe.exec(tr)) !== null) tds.push(td[1]);
+      if (tds.length < 7) continue;
+      const clean = (c: string) =>
+        c
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      const nama = clean(tds[2]);
+      const pctRaw = tr.match(/aria-valuenow="([0-9.]+)"/i)?.[1];
+      const idJadwal = tr.match(/data-id="([0-9]+)"/i)?.[1] ?? '';
+      if (!nama || pctRaw === undefined) continue;
+      const pct = Number(pctRaw.replace(',', '.'));
+      out.push({ idJadwal, nama, hadirPct: Number.isFinite(pct) ? pct : 0 });
     }
     return out;
   }
