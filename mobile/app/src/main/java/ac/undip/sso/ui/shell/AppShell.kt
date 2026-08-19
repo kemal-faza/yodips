@@ -9,26 +9,12 @@ import ac.undip.sso.ui.feature.ProfileScreen
 import ac.undip.sso.ui.feature.ScanScreen
 import ac.undip.sso.ui.feature.ScheduleScreen
 import ac.undip.sso.ui.feature.TasksScreen
-import ac.undip.sso.ui.theme.Primary
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.SpaceDashboard
-import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -38,12 +24,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -51,20 +35,18 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 
-/** Horizontal gutter so the outer nav items clear the screen edges. */
-private val BarHorizontalPadding = 12.dp
-
 /** 5 destinations matching the design spec ("Dashboard, Tugas, Scan, Jadwal, Profile"). */
+internal const val BottomBarLabelSizeSp = 10
+
 enum class Tab(
     val route: String,
     val label: String,
-    val icon: ImageVector,
 ) {
-    Dashboard("dashboard", "Dashboard", Icons.Filled.SpaceDashboard),
-    Tasks("tasks", "Tugas", Icons.Filled.Checklist),
-    Scan("scan", "Scan", Icons.Filled.QrCodeScanner),
-    Schedule("schedule", "Jadwal", Icons.Filled.DateRange),
-    Profile("profile", "Profile", Icons.Filled.Person),
+    Dashboard("dashboard", "Dashboard"),
+    Tasks("tasks", "Tugas"),
+    Scan("scan", "Scan"),
+    Schedule("schedule", "Jadwal"),
+    Profile("profile", "Profile"),
 }
 
 @Composable
@@ -80,15 +62,12 @@ fun AppShell(
 
     Scaffold(
         bottomBar = { ShellBottomBar(currentRoute) { route -> navigate(navController, route) } },
-        // Don't consume the top inset: FeatureScreen headers bleed under the status
-        // bar and Dashboard adds its own statusBarsPadding. Only the bottom nav inset
-        // is applied via the contentPadding below.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { pad ->
         NavHost(
             navController = navController,
             startDestination = Tab.Dashboard.route,
-            modifier = Modifier.fillMaxSize().padding(pad),
+            modifier = Modifier.fillMaxSize().padding(pad).statusBarsPadding(),
         ) {
             composable(Tab.Dashboard.route) {
                 DashboardScreen(
@@ -112,68 +91,43 @@ private fun navigate(
     route: String,
 ) {
     controller.navigate(route) {
-        // Keep a single sane back stack; the center Scan FAB is a top-level tab.
+        // Keep a single sane back stack; Scan is a top-level tab.
         popUpTo(controller.graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
         restoreState = true
     }
 }
 
-/** Bottom bar where the center (Scan) item is a raised round FAB. */
+/** Compact text-only bottom navigation; labels remain accessible and tappable. */
 @Composable
 fun ShellBottomBar(
     currentRoute: String?,
     onSelect: (String) -> Unit,
 ) {
     NavigationBar(
-            containerColor = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.padding(horizontal = BarHorizontalPadding),
-        ) {
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
         Tab.entries.forEach { tab ->
-            if (tab == Tab.Scan) {
-                // Center slot: raised teal FAB — the big green circle. Enlarged
-                // (84dp vs ~24dp nav icons) so it clearly reads bigger; protrudes
-                // above the bar via natural overflow (no fill* modifier: a fill
-                // here inflated the M3 NavigationBar height and blanked content).
-                Box(
-                    modifier =
-                        Modifier
-                            .navigationBarsPadding()
-                            .padding(vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier =
-                            Modifier
-                                .size(78.dp)
-                                .clip(CircleShape)
-                                .background(Primary)
-                                .border(6.dp, MaterialTheme.colorScheme.surface, CircleShape)
-                                .clickable { onSelect(tab.route) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Filled.QrCodeScanner,
-                            contentDescription = "Scan",
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(54.dp),
-                        )
-                    }
-                }
-            } else {
-                NavigationBarItem(
-                    selected = currentRoute == tab.route,
-                    onClick = { onSelect(tab.route) },
-                    icon = { Icon(tab.icon, contentDescription = tab.label) },
-                    label = { Text(tab.label) },
-                    colors =
-                        NavigationBarItemDefaults.colors(
-                            selectedIconColor = accentForeground(),
-                            selectedTextColor = accentForeground(),
-                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant,
-                        ),
-                )
-            }
+            NavigationBarItem(
+                selected = currentRoute == tab.route,
+                onClick = { onSelect(tab.route) },
+                icon = {},
+                label = {
+                    Text(
+                        tab.label,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = BottomBarLabelSizeSp.sp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                alwaysShowLabel = true,
+                colors =
+                    NavigationBarItemDefaults.colors(
+                        selectedTextColor = accentForeground(),
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        indicatorColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+            )
         }
     }
 }

@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -24,11 +23,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /**
- * Shared per-screen shell: a full-bleed compact header (surface color running
- * to the very top, title just under the status bar) + slot content on the page
- * background. A plain Column (not Scaffold) so the header owns the whole top —
- * Scaffold was offsetting the topBar below the status inset AND statusBarsPadding
- * double-counted, pushing the title ~290px down ("header too tall").
+ * Shared per-screen shell: a compact header followed by the page content.
  */
 @Composable
 fun FeatureScreen(
@@ -48,9 +43,7 @@ fun FeatureScreen(
     }
 }
 
-/** Slim header bar: surface background bleeds to the very top (AppShell no longer
- *  consumes the top inset), statusBarsPadding drops content below the status icons,
- *  and the title is centered horizontally (back button pinned to the start). */
+/** Slim header bar. The activity window reserves the system-bar area. */
 @Composable
 private fun CompactFeatureBar(
     title: String,
@@ -61,7 +54,6 @@ private fun CompactFeatureBar(
         Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
-            .statusBarsPadding()
             .heightIn(min = 52.dp),
     ) {
         if (onBack != null) {
