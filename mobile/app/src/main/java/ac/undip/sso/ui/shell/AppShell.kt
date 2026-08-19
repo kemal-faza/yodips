@@ -51,6 +51,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 
+/** Horizontal gutter so the outer nav items clear the screen edges. */
+private val BarHorizontalPadding = 12.dp
+
 /** 5 destinations matching the design spec ("Dashboard, Tugas, Scan, Jadwal, Profile"). */
 enum class Tab(
     val route: String,
@@ -122,7 +125,10 @@ fun ShellBottomBar(
     currentRoute: String?,
     onSelect: (String) -> Unit,
 ) {
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+    NavigationBar(
+            containerColor = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.padding(horizontal = BarHorizontalPadding),
+        ) {
         Tab.entries.forEach { tab ->
             if (tab == Tab.Scan) {
                 // Center slot: raised teal FAB — the big green circle. Enlarged

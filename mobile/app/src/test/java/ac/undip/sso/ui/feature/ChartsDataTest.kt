@@ -65,4 +65,33 @@ class ChartsDataTest {
         assertEquals(0, gradeRows(SiapKhs()).size)
         assertEquals(0, sksCumulative(SiapKhs()).size)
     }
+
+    // ---- touch hit-testing (mobile substitute for the web hover) ----
+
+    @Test
+    fun `lineSlot divides plot space evenly across n points`() {
+        assertEquals(0f, lineSlot(100f, 300f, 1))
+        assertEquals(100f, lineSlot(100f, 300f, 3)) // 2 gaps of 100
+    }
+
+    @Test
+    fun `nearestLineIndex snaps tap x to the closest point and clamps`() {
+        // plot 100..300, n=3 → slots of 100; points at x=100,200,300.
+        assertEquals(0, nearestLineIndex(140f, 100f, 100f, 3))
+        assertEquals(1, nearestLineIndex(160f, 100f, 100f, 3))
+        assertEquals(2, nearestLineIndex(250f, 100f, 100f, 3))
+        // Taps left/right of the plot clamp to the first/last point.
+        assertEquals(0, nearestLineIndex(0f, 100f, 100f, 3))
+        assertEquals(2, nearestLineIndex(999f, 100f, 100f, 3))
+    }
+
+    @Test
+    fun `barIndex maps x to the stacked-bar slot and clamps`() {
+        // plot 100..300, n=3 → slots of 66.67; slots start at x=100.
+        assertEquals(0, barIndex(110f, 100f, 66.67f, 3))
+        assertEquals(1, barIndex(170f, 100f, 66.67f, 3))
+        assertEquals(2, barIndex(240f, 100f, 66.67f, 3))
+        assertEquals(2, barIndex(999f, 100f, 66.67f, 3)) // clamp to last bar
+        assertEquals(0, barIndex(50f, 100f, 66.67f, 3)) // clamp to first bar
+    }
 }

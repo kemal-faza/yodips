@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.SiapJadwal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,7 +33,7 @@ class DashboardHelpersTest {
                 row("jumat", "Basis Data", "13:00:00 s/d 15:30:00", "B201"),
             )
 
-        val out = upcomingLessons(source)
+        val out = upcomingLessons(source, nowDayRank = 0, nowMinutes = 0)
 
         // one card per course (dup Kewirausahaan collapsed), senin first then by time
         assertEquals(3, out.size)
@@ -43,20 +44,81 @@ class DashboardHelpersTest {
     fun `upcomingLessons orders by weekday (senin first) then time, capped at limit`() {
         val source =
             listOf(
-                row("jumat", "F", "08:00"),
-                row("kamis", "E", "08:00"),
-                row("senin", "A", "08:00"),
-                row("selasa", "B", "08:00"),
-                row("rabu", "C", "12:00"),
-                row("sabtu", "D", "08:00"),
+                row("jumat", "F", "08:00:00 s/d 09:00:00"),
+                row("kamis", "E", "08:00:00 s/d 09:00:00"),
+                row("senin", "A", "08:00:00 s/d 09:00:00"),
+                row("selasa", "B", "08:00:00 s/d 09:00:00"),
+                row("rabu", "C", "12:00:00 s/d 13:00:00"),
+                row("sabtu", "D", "08:00:00 s/d 09:00:00"),
             )
-        assertEquals(4, upcomingLessons(source).size)
-        assertEquals(listOf("A", "B", "C", "E"), upcomingLessons(source).map { it.matakuliah })
+        assertEquals(4, upcomingLessons(source, nowDayRank = 0, nowMinutes = 0).size)
+        assertEquals(listOf("A", "B", "C", "E"), upcomingLessons(source, nowDayRank = 0, nowMinutes = 0).map { it.matakuliah })
     }
 
     @Test
     fun `upcomingLessons empty input yields empty`() {
-        assertTrue(upcomingLessons(emptyList()).isEmpty())
+        assertTrue(upcomingLessons(emptyList(), nowDayRank = 0, nowMinutes = 0).isEmpty())
+    }
+
+    @Test
+    fun `upcomingLessons puts the ongoing class first`() {
+        // Now: Senin 10:00. Kelas "A" (09:40-12:10) lagi berlangsung → harus pertama,
+        // sebelum kelas berikutnya hari ini maupun besok.
+        val source =
+            listOf(
+                row("senin", "Genap B", "13:00:00 s/d 15:30:00", "B201"),
+                row("selasa", "Genap C", "08:00:00 s/d 10:00:00", "C301"),
+                row("senin", "Ongoing A", "09:40:00 s/d 12:10:00", "A301"),
+            )
+        val out = upcomingLessons(source, nowDayRank = 0, nowMinutes = 10 * 60)
+        assertEquals(listOf("Ongoing A", "Genap B", "Genap C"), out.map { it.matakuliah })
+    }
+
+    @Test
+    fun `upcomingLessons hides a same-day class that already ended`() {
+        // Now: Senin 13:00. Kelas "A" berakhir 12:10 (sudah lewat) → di-skip ke minggu
+        // depan, jadi yang muncul berikutnya "Genap B" (Selasa) bukan "A" (yang sudah usai).
+        val source =
+            listOf(
+                row("senin", "Past A", "09:40:00 s/d 12:10:00", "A301"),
+                row("selasa", "Next B", "08:00:00 s/d 10:00:00", "B201"),
+            )
+        val out = upcomingLessons(source, nowDayRank = 0, nowMinutes = 13 * 60)
+        assertEquals(listOf("Next B"), out.map { it.matakuliah })
+    }
+
+    @Test
+    fun `upcomingLessons drops rows without a parseable time range`() {
+        val source =
+            listOf(
+                row("senin", "NoTime", ""),
+                row("senin", "Broken", "partial"),
+                row("selasa", "Fresh", "09:00:00 s/d 11:00:00"),
+            )
+        val out = upcomingLessons(source, nowDayRank = 0, nowMinutes = 0)
+        assertEquals(listOf("Fresh"), out.map { it.matakuliah })
+    }
+
+    @Test
+    fun `minutesUntil ongoing is negative, future positive, ended-day wraps to next week`() {
+        // Ongoing: 10:00 within [09:40, 12:10).
+        assertTrue(minutesUntil(0, 10 * 60, 0, 9 * 60 + 40, 12 * 60 + 10) < 0)
+        // Future same day.
+        assertEquals(3 * 60, minutesUntil(0, 10 * 60, 0, 13 * 60, 15 * 60))
+        // Ended earlier today → next occurrence is next Senin morning.
+        assertEquals(7 * 1440 + (9 * 60 - 13 * 60), minutesUntil(0, 13 * 60, 0, 9 * 60, 10 * 60))
+        // Tomorrow 08:00 measured from today 17:00.
+        assertEquals(1440 + (8 * 60 - 17 * 60), minutesUntil(0, 17 * 60, 1, 8 * 60, 10 * 60))
+    }
+
+    @Test
+    fun `parseWaktu parses SIAP range into start and end minutes`() {
+        assertEquals(9 * 60 + 40 to 12 * 60 + 10, parseWaktu("09:40:00 s/d 12:10:00"))
+        assertEquals(13 * 60 to (15 * 60 + 30), parseWaktu("13:00:00 s/d 15:30:00"))
+        assertNull(parseWaktu(""))
+        assertNull(parseWaktu("09:00 saja"))
+        assertNull(parseWaktu("25:00:00 s/d 26:00:00"))
+        assertNull(parseWaktu("14:00:00 s/d 13:00:00"))
     }
 
     @Test
