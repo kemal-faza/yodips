@@ -1,5 +1,6 @@
 package ac.undip.sso.ui.shell
 
+import android.os.SystemClock
 import ac.undip.sso.core.data.PrefsPersistentCache
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.ui.feature.DashboardScreen
@@ -44,7 +45,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +65,11 @@ import androidx.navigation.compose.rememberNavController
 
 /** 5 destinations matching the design spec ("Dashboard, Tugas, Scan, Jadwal, Profile"). */
 internal const val BottomBarLabelSizeSp = 10
+
+/** Min gap (ms) between two accepted bottom-tab taps. Collapses machine-gun taps
+ *  (esp. onto the heavy Scan/QR camera screen) into one navigation per window,
+ *  so the camera is not torn down & re-bound in a tight loop that janks the UI. */
+internal const val TabTapDebounceMs = 250L
 
 enum class Tab(
     val route: String,
@@ -142,6 +150,16 @@ fun ShellBottomBar(
     currentRoute: String?,
     onSelect: (String) -> Unit,
 ) {
+    // Last accepted tap timestamp; throttles bottom-tab spam so the heavy
+    // Scan/QR camera is not torn down & re-bound on every rapid tap.
+    var lastTapAt by remember { mutableStateOf(Long.MIN_VALUE) }
+    fun throttled(route: String) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastTapAt >= TabTapDebounceMs) {
+            lastTapAt = now
+            onSelect(route)
+        }
+    }
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
@@ -174,7 +192,7 @@ fun ShellBottomBar(
                                 .clip(CircleShape)
                                 .background(Primary)
                                 .border(6.dp, MaterialTheme.colorScheme.surface, CircleShape)
-                                .clickable { onSelect(tab.route) },
+                                .clickable { throttled(tab.route) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -188,7 +206,7 @@ fun ShellBottomBar(
             } else {
                 NavigationBarItem(
                     selected = currentRoute == tab.route,
-                    onClick = { onSelect(tab.route) },
+                    onClick = { throttled(tab.route) },
                     modifier = Modifier.weight(1f),
                     icon = { Icon(tab.icon, contentDescription = tab.label) },
                     label = {

@@ -23,4 +23,14 @@ class AppShellLayoutTest {
         assertTrue(DashboardContentBottomPadding >= 16)
     }
 
+    @Test
+    fun `bottom tab taps are debounced to prevent spam jank on heavy tabs`() {
+        // Policy: machine-gun taps (esp. onto the heavy Scan/QR camera) are
+        // collapsed into a single navigation per window, so the camera is not
+        // repeatedly torn down & re-bound. The window must be wide enough to
+        // matter but short enough to stay responsive.
+        assertTrue(TabTapDebounceMs >= 200L)
+        assertTrue(TabTapDebounceMs <= 2000L)
+    }
+
 }
