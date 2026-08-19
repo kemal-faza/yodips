@@ -1,10 +1,10 @@
 # Instalasi (tanpa clone repo)
 
 Semua artefak rilis di-host sebagai **GitHub Release** di tab *Releases* repo ini
-(`https://github.com/kemal-faza/sso/releases`). User cukup download file dari
+(`https://github.com/kemal-faza/yodips/releases`). User cukup download file dari
 sana — tidak perlu `git clone`.
 
-## Android — App `Undip SSO`
+## Android — App `YoDips`
 
 1. Buka tab **Releases**, pilih versi terbaru (tag `vX.Y.Z`).
 2. Download file **`undip-sso-v<X.Y.Z>.apk`**.
@@ -20,7 +20,7 @@ release yang konsisten).
 > di Release:
 > `sha256sum undip-sso-vX.Y.Z.apk`
 
-## Extension Chrome/Edge — `Undip SSO Login`
+## Extension Chrome/Edge — `YoDips`
 
 Untuk install manual dari source (atau saat extension belum terpublish di
 Chrome Web Store):

@@ -162,12 +162,12 @@ async function handleExtensionDone() {
     <Card class="animate-fade-in-up w-full max-w-md border-border/20 shadow-2xl">
       <CardHeader class="flex flex-col items-center gap-3 px-6 pt-8 text-center">
         <img
-          src="/undip-logo.png"
+          src="/yodips-logo.png"
           alt="Logo Undip"
           class="h-20 w-auto shrink-0"
           aria-hidden="true"
         />
-        <h1 class="text-2xl font-bold">SSO</h1>
+        <h1 class="text-2xl font-bold">YoDips</h1>
         <p class="mt-2 text-sm text-muted-foreground">
           Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.
         </p>
@@ -215,13 +215,13 @@ async function handleExtensionDone() {
         <Alert v-else-if="!extInstalled && isMobile" class="mt-6 border-primary/30 bg-primary/5 p-3">
           <AlertDescription class="text-center text-sm text-foreground">
             Login lewat web di perangkat seluler belum tersedia. Gunakan aplikasi
-            Undip SSO dari Play Store / App Store untuk login yang aman.
+            YoDips dari Play Store / App Store untuk login yang aman.
           </AlertDescription>
         </Alert>
         <!-- Desktop tanpa extension & tanpa jalur capture (produksi): beri panduan. -->
         <Alert v-else-if="!extInstalled && !ssoCaptureEnabled" class="mt-6 border-warn/40 bg-warn/10 p-3">
           <AlertDescription class="text-sm text-foreground">
-            Login via web membutuhkan extension <strong>Undip SSO Login</strong>.
+            Login via web membutuhkan extension <strong>YoDips</strong>.
             Pasang di Chrome/Edge lalu kembali ke halaman ini. (Jalur login
             interaktif hanya aktif di lingkungan pengembangan.)
           </AlertDescription>

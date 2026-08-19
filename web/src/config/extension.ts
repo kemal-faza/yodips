@@ -1,4 +1,4 @@
-/** ID extension "Undip SSO Login". Untuk dev load-unpacked, isi dari chrome://extensions
+/** ID extension "YoDips". Untuk dev load-unpacked, isi dari chrome://extensions
  *  ke web/.env sebagai ViteExtensionId (menggantikan placeholder). */
 export const EXTENSION_ID: string = import.meta.env.VITE_EXTENSION_ID ?? "";
 

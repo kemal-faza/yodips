@@ -71,13 +71,13 @@ function logout() {
           @click="emit('close-mobile')"
         >
           <img
-            src="/undip-logo.png"
+            src="/yodips-logo.png"
             alt="Logo Undip"
             class="h-9 w-auto shrink-0"
             aria-hidden="true"
           />
           <div class="flex flex-col">
-            <span class="text-sm font-extrabold leading-tight tracking-tight">Undip SSO</span>
+            <span class="text-sm font-extrabold leading-tight tracking-tight">YoDips</span>
             <span class="text-[10px] font-medium text-muted-foreground">Academic Portal</span>
           </div>
         </router-link>

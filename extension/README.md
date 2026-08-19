@@ -1,4 +1,4 @@
-# Extension — Undip SSO Login (MV3)
+# Extension — YoDips (MV3)
 
 Login SSO Undip tanpa kredensial: membaca cookie SSO/Kulon/SIAP dari browser user,
 mengirimnya ke `POST /api/auth/session/handoff`, lalu menyerahkan JWT kembali ke

@@ -26,7 +26,7 @@ There are two ways in:
 1. **Browser extension (recommended).** The MV3 extension reads the SSO, Kulon, and SIAP cookies straight from your everyday browser via `chrome.cookies`. It opens a single tab to any missing service (Kulon first, then SIAP), waits for the login to finish, closes the tab, and sends the captured session to `POST /api/auth/session/handoff`. The backend verifies the Kulon session, derives your identity (your NIM), and returns a JWT that comes back to the web app. When the extension is installed, the web app hides the older login button.
 2. **Interactive login (deprecated fallback).** For development and testing only. The backend opens a *visible* browser window through Playwright so you can log in yourself, then captures the session. It always uses an isolated fresh profile (`CHROME_PROFILE_DIR`), never your private browser. This path is superseded by the extension.
 
-Microsoft/Entra is a separate case since Kulon uses Microsoft OIDC rather than the Undip SSO page, so it gets its own callback flow: `/api/auth/microsoft/login` → `/api/auth/microsoft/callback`.
+Microsoft/Entra is a separate case since Kulon uses Microsoft OIDC rather than the YoDips page, so it gets its own callback flow: `/api/auth/microsoft/login` → `/api/auth/microsoft/callback`.
 
 ## What you get
 
@@ -87,7 +87,7 @@ cp web/.env.example web/.env
 
 | Variable | Meaning |
 | --- | --- |
-| `SSO_BASE_URL` / `SSO_LOGIN_PATH` | Undip SSO endpoints |
+| `SSO_BASE_URL` / `SSO_LOGIN_PATH` | YoDips endpoints |
 | `JWT_SECRET` / `JWT_EXPIRES_IN` | Token signing secret (generate with `openssl rand -hex 32`) and lifetime |
 | `CORS_ORIGIN` | Allowed frontend origin(s), comma‑separated |
 | `MS_*` | Microsoft Entra app credentials for Kulon OIDC |

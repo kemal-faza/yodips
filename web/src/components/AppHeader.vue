@@ -37,9 +37,9 @@ function goToProfile() {
           <ArrowLeft class="size-4" aria-hidden="true" />
         </Button>
         <router-link to="/" class="flex items-center gap-2 text-primary-foreground no-underline hover:opacity-90">
-          <img src="/undip-logo.png" alt="Logo Undip" class="h-8 w-auto shrink-0" aria-hidden="true" />
+          <img src="/yodips-logo.png" alt="Logo Undip" class="h-8 w-auto shrink-0" aria-hidden="true" />
           <div>
-            <h1 class="text-lg font-bold leading-tight">SSO</h1>
+            <h1 class="text-lg font-bold leading-tight">YoDips</h1>
             <p v-if="breadcrumb" class="text-xs text-primary-foreground/70">{{ breadcrumb }}</p>
           </div>
         </router-link>
