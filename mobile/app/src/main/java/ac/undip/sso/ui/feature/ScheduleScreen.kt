@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,9 +27,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 /**
  * Groups jadwal by day (ordered Monday-first) assigning a globally unique, stable
@@ -55,8 +59,9 @@ private fun scheduleRowKey(
 @Composable
 fun ScheduleScreen(repo: SsoRepository) {
     var lecturerByKode by remember { mutableStateOf(emptyMap<String, String>()) }
+    var hadirByNama by remember { mutableStateOf(emptyMap<String, Double>()) }
     FeatureScreen("Jadwal") {
-        suspend fun loadLecturers(force: Boolean) {
+        suspend fun loadLookups(force: Boolean) {
             // Dosen di-join dari SIAP `get_irs` (kode MIK), bukan dari Kulon, karena
             // matkul semester berjalan tak selalu ada di daftar kursus Kulon.
             when (val r = repo.lecturers(force)) {
@@ -68,14 +73,24 @@ fun ScheduleScreen(repo: SsoRepository) {
                     Unit
                 }
             }
+            // Ringkasan kehadiran (%) per matkul dari endpoint SIAP absen.
+            when (val r = repo.absen(force)) {
+                is ApiResult.Success -> {
+                    hadirByNama = r.data.associate { it.nama.trim().lowercase() to it.hadirPct }
+                }
+
+                is ApiResult.Error -> {
+                    Unit
+                }
+            }
         }
         RefreshableLoadableData(
             load = {
-                loadLecturers(false)
+                loadLookups(false)
                 repo.jadwal()
             },
             onRefresh = {
-                loadLecturers(true)
+                loadLookups(true)
                 repo.jadwal(force = true)
             },
             emptyMessage = "Belum ada jadwal.",
@@ -85,7 +100,13 @@ fun ScheduleScreen(repo: SsoRepository) {
                 sections.forEach { (day, rows) ->
                     item { SectionHeader(capitalizeDay(day)) }
                     rows.forEach { (key, e) ->
-                        item(key) { ScheduleCard(e, lecturerByKode[e.kode.orEmpty()]) }
+                        item(key) {
+                            ScheduleCard(
+                                j = e,
+                                lecturer = lecturerByKode[e.kode.orEmpty()],
+                                hadirPct = hadirByNama[e.matakuliah.trim().lowercase()],
+                            )
+                        }
                     }
                 }
             }
@@ -97,6 +118,7 @@ fun ScheduleScreen(repo: SsoRepository) {
 private fun ScheduleCard(
     j: SiapJadwal,
     lecturer: String?,
+    hadirPct: Double? = null,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -128,6 +150,30 @@ private fun ScheduleCard(
             if (!lecturer.isNullOrBlank()) {
                 Text("Dosen: $lecturer", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (hadirPct != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Kehadiran ${formatPct(hadirPct)}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = { (hadirPct / 100.0).coerceIn(0.0, 1.0).toFloat() },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                )
+            }
         }
     }
+}
+
+/** Format a percentage for display: trim trailing zeros, fall back to 0 for NaN. */
+private fun formatPct(pct: Double): String {
+    if (!pct.isFinite()) return "0"
+    val rounded = (pct * 10).roundToInt() / 10.0
+    return if (rounded == rounded.toLong().toDouble()) rounded.toLong().toString() else rounded.toString()
 }

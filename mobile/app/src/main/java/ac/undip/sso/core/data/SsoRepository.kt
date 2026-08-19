@@ -7,6 +7,7 @@ import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonCourse
+import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapKhs
@@ -88,6 +89,11 @@ class SsoRepository(
     suspend fun lecturers(force: Boolean = false): ApiResult<List<SiapLecturer>> =
         cached("lecturers", ListSerializer(SiapLecturer.serializer()), force) {
             safe { api.lecturers() }
+        }
+
+    suspend fun absen(force: Boolean = false): ApiResult<List<SiapAbsen>> =
+        cached("absen", ListSerializer(SiapAbsen.serializer()), force) {
+            safe { api.absen() }
         }
 
     suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> = safe { api.markKehadiran(KehadiranRequest(token)) }

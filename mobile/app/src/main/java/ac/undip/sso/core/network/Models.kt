@@ -52,6 +52,14 @@ data class SiapLecturer(
     val dosen: String = "",
 )
 
+/** Ringkasan kehadiran (%) per matkul dari halaman index jadwal SIAP (kolom Hadir). */
+@Serializable
+data class SiapAbsen(
+    val idJadwal: String = "",
+    val nama: String = "",
+    val hadirPct: Double = 0.0,
+)
+
 @Serializable
 data class SiapNilai(
     val mataKuliah: String = "",

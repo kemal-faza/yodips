@@ -34,6 +34,9 @@ interface SsoApi {
     @GET("api/siap/lecturers")
     suspend fun lecturers(): List<SiapLecturer>
 
+    @GET("api/siap/absen")
+    suspend fun absen(): List<SiapAbsen>
+
     /** Proxy a QR-scan token to SIAP presence processing. */
     @POST("api/siap/kehadiran")
     suspend fun markKehadiran(

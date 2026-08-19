@@ -20,8 +20,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -29,12 +29,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 /**
  * Ordinal semester from the profile's starting year + current term label.
@@ -84,68 +84,68 @@ fun IrsScreen(
             },
             modifier = Modifier.fillMaxSize(),
         ) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // Semester — derived from the profile (the IRS payload itself carries no label).
-            LoadableData(load = { repo.profile() }, emptyMessage = "", refreshTrigger = refreshTick) { profile ->
-                val ordinal = semesterOrdinal(profile.angkatan, profile.semesterBerjalan)
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        Text(
-                            if (ordinal != null) "Semester $ordinal" else "Semester",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        if (!profile.semesterBerjalan.isNullOrBlank()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // Semester — derived from the profile (the IRS payload itself carries no label).
+                LoadableData(load = { repo.profile() }, emptyMessage = "", refreshTrigger = refreshTick) { profile ->
+                    val ordinal = semesterOrdinal(profile.angkatan, profile.semesterBerjalan)
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp)) {
                             Text(
-                                profile.semesterBerjalan!!,
+                                if (ordinal != null) "Semester $ordinal" else "Semester",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            if (!profile.semesterBerjalan.isNullOrBlank()) {
+                                Text(
+                                    profile.semesterBerjalan!!,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                LoadableData(
+                    load = {
+                        when (val r = repo.lecturers()) {
+                            is ApiResult.Success -> {
+                                lecturerByKode =
+                                    r.data.filter { it.dosen.isNotBlank() }.associate { it.kode to it.dosen }
+                            }
+
+                            is ApiResult.Error -> {
+                                Unit
+                            }
+                        }
+                        repo.irs()
+                    },
+                    emptyMessage = "Belum ada IRS",
+                    refreshTrigger = refreshTick,
+                ) { irs ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("${irs.mataKuliah.size} mata kuliah", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Total SKS ${formatSks(irs.totalSks)}",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Medium,
                             )
                         }
                     }
-                }
-            }
-
-            LoadableData(
-                load = {
-                    when (val r = repo.lecturers()) {
-                        is ApiResult.Success -> {
-                            lecturerByKode =
-                                r.data.filter { it.dosen.isNotBlank() }.associate { it.kode to it.dosen }
-                        }
-
-                        is ApiResult.Error -> {
-                            Unit
-                        }
-                    }
-                    repo.irs()
-                },
-                emptyMessage = "Belum ada IRS",
-                refreshTrigger = refreshTick,
-            ) { irs ->
-                Card(Modifier.fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("${irs.mataKuliah.size} mata kuliah", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Total SKS ${formatSks(irs.totalSks)}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                        )
+                    Spacer(Modifier.height(4.dp))
+                    irs.mataKuliah.forEach { mk ->
+                        MkCard(mk = mk, dosen = lecturerByKode[mk.kode] ?: mk.dosen)
+                        Spacer(Modifier.height(12.dp))
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                irs.mataKuliah.forEach { mk ->
-                    MkCard(mk = mk, dosen = lecturerByKode[mk.kode] ?: mk.dosen)
-                    Spacer(Modifier.height(12.dp))
-                }
             }
-        }
         }
     }
 }

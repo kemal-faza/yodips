@@ -6,6 +6,7 @@ import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonCourse
+import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapKhs
@@ -39,6 +40,8 @@ private class FakeApi : SsoApi {
     override suspend fun courses(): List<KulonCourse> = throw UnsupportedOperationException()
 
     override suspend fun lecturers(): List<SiapLecturer> = throw UnsupportedOperationException()
+
+    override suspend fun absen(): List<SiapAbsen> = throw UnsupportedOperationException()
 
     override suspend fun markKehadiran(body: KehadiranRequest): KehadiranResponse = throw UnsupportedOperationException()
 }
