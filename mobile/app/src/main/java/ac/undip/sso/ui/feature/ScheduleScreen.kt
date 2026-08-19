@@ -270,6 +270,7 @@ private fun KomoCalendarCard(
                             primary = primary,
                             surfaceVariant = surfaceVariant,
                             onSurface = onSurface,
+                            onClick = { date?.let(onSelect) },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -300,12 +301,14 @@ private fun DayCell(
     primary: Color,
     surfaceVariant: Color,
     onSurface: Color,
+    onClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // 7 cells per week; each gets an equal share of the row (caller passes weight).
     Box(
         modifier
-            .height(44.dp),
+            .height(44.dp)
+            .clickable(enabled = day != null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         val circleModifier =
