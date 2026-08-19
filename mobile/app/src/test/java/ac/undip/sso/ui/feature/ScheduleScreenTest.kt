@@ -4,6 +4,7 @@ import ac.undip.sso.core.network.SiapJadwal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 
 /**
  * Regression: a real SIAP schedule contains duplicate (hari, matakuliah, waktu)
@@ -111,14 +112,29 @@ class ScheduleScreenTest {
     }
 
     @Test
-    fun `monthGrid lays out Monday-first with leading blanks and 42 cells`() {
-        // 2026-08-01 is a Saturday; Monday-first means first cell is blank.
+    fun `monthGrid lays out Sunday-first with leading blanks and 42 cells`() {
+        // 2026-08-01 is a Saturday; Sunday-first means the first cell is blank
+        // and day 1 lands on cell 6 (Sat).
         val grid = monthGrid(2026, 8)
         assertEquals(42, grid.size)
-        assertTrue(grid.indexOf(1) in 0..6)
+        assertEquals(6, grid.indexOf(1))
         assertTrue(grid.all { it == null || it in 1..31 })
         // Sum of non-null cells = number of days in August.
         assertEquals(31, grid.count { it != null })
+        // Leading blanks all fall before day 1.
+        assertTrue(grid.subList(0, grid.indexOf(1)).all { it == null })
+    }
+
+    @Test
+    fun `monthGrid Sunday-first offsets by weekday`() {
+        // 2026-08-16 is a Sunday → day 16 is the first cell of its week.
+        val grid16 = monthGrid(2026, 8)
+        val aug16 = LocalDate.of(2026, 8, 16)
+        assertEquals(0, (aug16.dayOfWeek.value) % 7)
+        assertEquals(16, grid16[grid16.indexOf(16)])
+        // Month whose day 1 is a Sunday (e.g. 2026-02-01) starts at cell 0.
+        val feb = monthGrid(2026, 2)
+        assertEquals(0, feb.indexOf(1))
     }
 
     @Test
