@@ -2,6 +2,7 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
@@ -59,7 +60,7 @@ private fun scheduleRowKey(
 @Composable
 fun ScheduleScreen(repo: SsoRepository) {
     var lecturerByKode by remember { mutableStateOf(emptyMap<String, String>()) }
-    var hadirByNama by remember { mutableStateOf(emptyMap<String, Double>()) }
+    var absenByNama by remember { mutableStateOf(emptyMap<String, SiapAbsen>()) }
     FeatureScreen("Jadwal") {
         suspend fun loadLookups(force: Boolean) {
             // Dosen di-join dari SIAP `get_irs` (kode MIK), bukan dari Kulon, karena
@@ -73,10 +74,10 @@ fun ScheduleScreen(repo: SsoRepository) {
                     Unit
                 }
             }
-            // Ringkasan kehadiran (%) per matkul dari endpoint SIAP absen.
+            // Ringkasan kehadiran per matkul dari endpoint SIAP absen.
             when (val r = repo.absen(force)) {
                 is ApiResult.Success -> {
-                    hadirByNama = r.data.associate { it.nama.trim().lowercase() to it.hadirPct }
+                    absenByNama = r.data.associate { it.nama.trim().lowercase() to it }
                 }
 
                 is ApiResult.Error -> {
@@ -104,7 +105,7 @@ fun ScheduleScreen(repo: SsoRepository) {
                             ScheduleCard(
                                 j = e,
                                 lecturer = lecturerByKode[e.kode.orEmpty()],
-                                hadirPct = hadirByNama[e.matakuliah.trim().lowercase()],
+                                absen = absenByNama[e.matakuliah.trim().lowercase()],
                             )
                         }
                     }
@@ -118,7 +119,7 @@ fun ScheduleScreen(repo: SsoRepository) {
 private fun ScheduleCard(
     j: SiapJadwal,
     lecturer: String?,
-    hadirPct: Double? = null,
+    absen: SiapAbsen? = null,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -138,37 +139,52 @@ private fun ScheduleCard(
                 )
             }
             Text(
-                j.waktu,
+                formatWaktu(j.waktu),
                 style = MaterialTheme.typography.bodyMedium,
                 color = accentForeground(),
                 fontWeight = FontWeight.Medium,
             )
             Spacer(Modifier.height(2.dp))
             if (!j.ruang.isNullOrBlank()) {
-                Text("Ruang: ${j.ruang}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(j.ruang, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (!lecturer.isNullOrBlank()) {
-                Text("Dosen: $lecturer", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(lecturer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (hadirPct != null) {
+            val hadir = absen?.hadir ?: 0
+            val total = absen?.total ?: 0
+            if (absen != null && total > 0) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Kehadiran ${formatPct(hadirPct)}%",
+                    "Kehadiran: $hadir/$total (${formatPct(absen.hadirPct)}%)",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(4.dp))
                 LinearProgressIndicator(
-                    progress = { (hadirPct / 100.0).coerceIn(0.0, 1.0).toFloat() },
+                    progress = { (absen.hadirPct / 100.0).coerceIn(0.0, 1.0).toFloat() },
                     modifier =
                         Modifier
                             .fillMaxWidth()
                             .height(6.dp)
                             .clip(RoundedCornerShape(3.dp)),
+                    // Hapus stop-indicator (bulatan kecil) di ujung kanan bar.
+                    drawStopIndicator = {},
                 )
             }
         }
     }
+}
+
+/**
+ * Format the SIAP raw time (`09:40:00 s/d 12:10:00`) into a compact `09:40 — 12:10`
+ * (jam:menit, en-dash). Falls back to the raw value if the pattern does not match.
+ */
+internal fun formatWaktu(raw: String): String {
+    if (raw.isBlank()) return raw
+    val m = Regex("""(\d{1,2}:\d{2}):\d{2}\s*s/d\s*(\d{1,2}:\d{2}):\d{2}""").find(raw)
+    if (m != null) return "${m.groupValues[1]} — ${m.groupValues[2]}"
+    return raw
 }
 
 /** Format a percentage for display: trim trailing zeros, fall back to 0 for NaN. */

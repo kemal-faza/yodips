@@ -60,4 +60,27 @@ class ScheduleScreenTest {
     fun `empty list yields no sections`() {
         assertTrue(scheduleSections(emptyList()).isEmpty())
     }
+
+    @Test
+    fun `formatWaktu trims seconds and uses em-dash`() {
+        assertEquals(
+            "09:40 — 12:10",
+            formatWaktu("09:40:00 s/d 12:10:00"),
+        )
+    }
+
+    @Test
+    fun `formatWaktu keeps single-digit hour and raw values as-is`() {
+        assertEquals("07:00 — 09:30", formatWaktu("07:00:00 s/d 09:30:00"))
+        assertEquals("alias", formatWaktu("alias"))
+        assertEquals("", formatWaktu(""))
+    }
+
+    @Test
+    fun `formatWaktu tolerates whitespace around the separator`() {
+        assertEquals(
+            "16:30 — 18:10",
+            formatWaktu("16:30:00  s/d  18:10:00"),
+        )
+    }
 }
