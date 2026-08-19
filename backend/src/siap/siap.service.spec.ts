@@ -496,6 +496,29 @@ describe('SiapService', () => {
         fetched.some((u) => u.includes('/jadwal_mahasiswa/mhs/jadwal/')),
       ).toBe(true);
     });
+
+    it('enriches hadir/total per matkul from the get_absen detail feed', async () => {
+      mockFetchRouting([
+        {
+          // Exact index page (trailing slash). Must precede any /get_absen route
+          // since "/jadwal_mahasiswa/mhs/jadwal" is a prefix of it too.
+          match: /\/jadwal_mahasiswa\/mhs\/jadwal\/$/,
+          body: fixture('absen_index.html'),
+        },
+        {
+          match: /get_absen/,
+          body: fixture('get_absen_3.html'),
+        },
+      ]);
+      const res = await svc.getAbsen('sia_app_session=K');
+      // idjadwal dari index (216328/216387) langsung dipakai ke get_absen;
+      // fixture get_absen_3 = 2 Hadir + 1 Alpa -> hadir 2, total 3.
+      expect(res.length).toBe(2);
+      for (const r of res) {
+        expect(r.hadir).toBe(2);
+        expect(r.total).toBe(3);
+      }
+    });
   });
 
   describe('getKehadiran', () => {

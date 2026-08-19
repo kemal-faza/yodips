@@ -110,11 +110,15 @@ interface SiapJadwalUpstream {
   uuid_pertemuan?: string;
 }
 
-/** Ringkasan kehadiran (%) per matakuliah dari halaman index jadwal SIAP. */
+/** Ringkasan kehadiran per matakuliah dari halaman index jadwal SIAP. */
 export interface SiapAbsenItem {
   idJadwal: string;
   nama: string;
   hadirPct: number;
+  /** Jumlah pertemuan yang tercatat hadir (dari detil get_absen per matkul). */
+  hadir: number;
+  /** Total pertemuan yang tercatat (dari detil get_absen per matkul). */
+  total: number;
 }
 
 /** Satu baris catatan kehadiran per pertemuan (di-parse dari `get_absen.html`). */
@@ -863,10 +867,45 @@ export class SiapService {
       },
     );
     const items = this.parseAbsenSummary(html);
+    await this.enrichAbsenCounts(items, siapCookie);
     if (userSub && this.cache) {
       await this.cache.set(`${userSub}:siap:absen`, items);
     }
     return items;
+  }
+
+  /**
+   * Lengkapi ringkasan index (hanya hadirPct) dengan hitungan hadir/total per
+   * matakuliah dari detil `get_absen`. Verified live 2026-08-19: SIAP `get_absen`
+   * menerima `idjadwal` (data-id dari halaman index) — BUKAN `id_trx_pertemuan`
+   * dari get_jadwal (yang menjawab "Specified schedule cannot be found").
+   * Karena index page sudah mengekstrak idjadwal per baris, tidak perlu fetch
+   * get_jadwal sama sekali (1 GET index + N GET detil, semuanya di-cache).
+   * Best-effort: matkul yang gagal di-fetch tetap di-return (hadir/total = 0).
+   */
+  private async enrichAbsenCounts(
+    items: SiapAbsenItem[],
+    siapCookie: string,
+  ): Promise<void> {
+    if (items.length === 0) return;
+    // Per matkul: 1 GET get_absen(idjadwal) utk hitung hadir/total.
+    for (const item of items) {
+      const id = item.idJadwal;
+      if (!id) continue;
+      try {
+        const det = await this.getKehadiran(siapCookie, id);
+        item.hadir = 0;
+        item.total = 0;
+        for (const sec of det.sections) {
+          for (const row of sec.rows) {
+            item.total += 1;
+            if (row.kehadiran.trim().toLowerCase() === 'hadir') item.hadir += 1;
+          }
+        }
+      } catch {
+        // Biarkan hadir/total default 0 untuk matkul ini.
+      }
+    }
   }
 
   /** Parse ringkasan hadir dari tabel index jadwal (baris dengan progress-bar). */
@@ -896,7 +935,13 @@ export class SiapService {
       const idJadwal = tr.match(/data-id="([0-9]+)"/i)?.[1] ?? '';
       if (!nama || pctRaw === undefined) continue;
       const pct = Number(pctRaw.replace(',', '.'));
-      out.push({ idJadwal, nama, hadirPct: Number.isFinite(pct) ? pct : 0 });
+      out.push({
+        idJadwal,
+        nama,
+        hadirPct: Number.isFinite(pct) ? pct : 0,
+        hadir: 0,
+        total: 0,
+      });
     }
     return out;
   }
@@ -905,9 +950,11 @@ export class SiapService {
    * Proxy per-pertemuan attendance (kehadiran) untuk satu matakuliah.
    * Discovered live 2026-08-14 (spike jadwal/kehadiran/QR): `POST
    * /jadwal_mahasiswa/mhs/jadwal/get_absen` body
-   * `id=<id_trx_pertemuan>&tipe_mk=mata+kuliah` mengembalikan HTML table
+   * `id=<idjadwal>&tipe_mk=mata+kuliah` mengembalikan HTML table
    * dikelompokkan per section (Absensi Kuliah / Absensi Ujian). `id` =
-   * `id_trx_pertemuan` dari `get_jadwal`. Di-parse ke SiapKehadiran.
+   * **idjadwal** dari halaman index (data-id tombol "Lihat Absen") — verified
+   * live 2026-08-19: `id_trx_pertemuan` dari get_jadwal mengembalikan
+   * "Specified schedule cannot be found". Di-parse ke SiapKehadiran.
    */
   async getKehadiran(
     siapCookie: string,
