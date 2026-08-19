@@ -11,21 +11,32 @@ import ac.undip.sso.ui.feature.ScheduleScreen
 import ac.undip.sso.ui.feature.TasksScreen
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.SpaceDashboard
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -41,12 +52,13 @@ internal const val BottomBarLabelSizeSp = 10
 enum class Tab(
     val route: String,
     val label: String,
+    val icon: ImageVector,
 ) {
-    Dashboard("dashboard", "Dashboard"),
-    Tasks("tasks", "Tugas"),
-    Scan("scan", "Scan"),
-    Schedule("schedule", "Jadwal"),
-    Profile("profile", "Profile"),
+    Dashboard("dashboard", "Dashboard", Icons.Filled.SpaceDashboard),
+    Tasks("tasks", "Tugas", Icons.Filled.Checklist),
+    Scan("scan", "Scan", Icons.Filled.QrCodeScanner),
+    Schedule("schedule", "Jadwal", Icons.Filled.DateRange),
+    Profile("profile", "Profile", Icons.Filled.Person),
 }
 
 @Composable
@@ -67,7 +79,14 @@ fun AppShell(
         NavHost(
             navController = navController,
             startDestination = Tab.Dashboard.route,
-            modifier = Modifier.fillMaxSize().padding(pad).statusBarsPadding(),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(pad)
+                    // The emulator has a 145px display-cutout inset but only an
+                    // 84px status-bar inset. safeDrawing uses the larger bound,
+                    // preventing content from entering the cutout area.
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
         ) {
             composable(Tab.Dashboard.route) {
                 DashboardScreen(
@@ -111,7 +130,7 @@ fun ShellBottomBar(
             NavigationBarItem(
                 selected = currentRoute == tab.route,
                 onClick = { onSelect(tab.route) },
-                icon = {},
+                icon = { Icon(tab.icon, contentDescription = tab.label) },
                 label = {
                     Text(
                         tab.label,
