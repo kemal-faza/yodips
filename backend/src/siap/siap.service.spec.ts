@@ -411,6 +411,8 @@ describe('SiapService', () => {
       expect(first.ruang).toBeTruthy();
       expect(first.waktu).toContain('09:40:00');
       expect(first.sks).toBe(3);
+      // Per-pertemuan date (yyyy-MM-dd) is carried through for the mobile calendar.
+      expect(first.tanggal).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       // Every entry has the required SiapJadwal fields.
       for (const j of res) {
         expect(j.hari).toBeTruthy();

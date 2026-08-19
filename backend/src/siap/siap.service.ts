@@ -92,6 +92,8 @@ export interface SiapJadwal {
   ruang?: string;
   waktu: string;
   sks: number;
+  /** Per-pertemuan date `yyyy-MM-dd` from `tanggal_pertemuan` (calendar source; also covers rescheduled meetings). */
+  tanggal?: string;
 }
 
 /** Raw entry from SIAP's `get_jadwal` feed (keyed by uuid_pertemuan). */
@@ -834,6 +836,7 @@ export class SiapService {
         ruang: e.nama_ruang || undefined,
         waktu: `${e.waktu_mulai ?? ''} s/d ${e.waktu_selesai ?? ''}`.trim(),
         sks,
+        tanggal: e.tanggal_pertemuan || undefined,
       });
     }
     if (userSub && this.cache) {
