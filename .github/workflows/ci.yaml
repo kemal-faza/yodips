@@ -15,7 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # gitleaks-action butuh full history (diff dari base commit). Default
+      # checkout adalah shallow (fetch-depth: 1) yang membuat git log pada
+      # base ^..head gagal "unknown revision" di repo baru/renamed.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: gitleaks (secret scan)
         uses: gitleaks/gitleaks-action@v2
