@@ -55,7 +55,7 @@ await mkdir(outDir, { recursive: true })
 const zipName = `undip-sso-ext-v${next}.zip`
 const zipPath = join(outDir, zipName)
 try {
-  execFileSync('zip', ['-r', '-9', zipPath, 'manifest.json', 'icon128.png', 'dist'], { cwd: root, stdio: 'inherit' })
+  execFileSync('zip', ['-r', '-9', zipPath, 'manifest.json', 'icon16.png', 'icon32.png', 'icon48.png', 'icon128.png', 'dist'], { cwd: root, stdio: 'inherit' })
 } catch (e) {
   console.error('zip command gagal. Install `zip` (apt install zip) lalu ulangi.')
   process.exit(1)

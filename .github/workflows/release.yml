@@ -51,7 +51,7 @@ jobs:
           set -euo pipefail
           cd extension
           NAME="undip-sso-ext-${GITHUB_REF_NAME}.zip"
-          zip -r -9 "${NAME}" manifest.json icon128.png dist
+          zip -r -9 "${NAME}" manifest.json icon16.png icon32.png icon48.png icon128.png dist
           echo "ZIP=${NAME}" >> "$GITHUB_ENV"
           ls -la "${NAME}"
       - name: Upload artifact extension
@@ -72,7 +72,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: reubenmiller/setup-android@v2
+      - uses: android-actions/setup-android@v3
         with:
           sdk-version: 35
       - name: Restore keystore + keystore.properties dari secrets
