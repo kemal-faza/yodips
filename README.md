@@ -1,12 +1,12 @@
-# SSO
+# YoDips
 
 A small aggregator for Universitas Diponegoro's single sign‑on. Instead of hopping between SSO, Kulon, and SIAP every time you need something, this sits in the middle: sign in once, and it holds your session and hands the apps on top a clean REST API.
 
-Three pieces work together:
+The pieces work together:
 
 - **`backend/`** — NestJS + TypeScript API. Owns the sign‑in logic and turns Undip's web‑only services into simple endpoints.
 - **`web/`** — Vue 3 + Vite single‑page app. The face you talk to: dashboard, Kulon courses, akademik profile.
-- **`mobile/`** — Kotlin (Jetpack Compose), wired to the same API. Planned; the directory is scaffolding for now.
+- **`mobile/`** — Kotlin (Jetpack Compose) Android app wired to the same API: dashboard, IRS, KHS, jadwal, dan pemindai QR presensi.
 - **`extension/`** — a Chrome/Edge MV3 extension. The recommended way to log in (details below).
 
 ---
@@ -26,7 +26,7 @@ There are two ways in:
 1. **Browser extension (recommended).** The MV3 extension reads the SSO, Kulon, and SIAP cookies straight from your everyday browser via `chrome.cookies`. It opens a single tab to any missing service (Kulon first, then SIAP), waits for the login to finish, closes the tab, and sends the captured session to `POST /api/auth/session/handoff`. The backend verifies the Kulon session, derives your identity (your NIM), and returns a JWT that comes back to the web app. When the extension is installed, the web app hides the older login button.
 2. **Interactive login (deprecated fallback).** For development and testing only. The backend opens a *visible* browser window through Playwright so you can log in yourself, then captures the session. It always uses an isolated fresh profile (`CHROME_PROFILE_DIR`), never your private browser. This path is superseded by the extension.
 
-Microsoft/Entra is a separate case since Kulon uses Microsoft OIDC rather than the YoDips page, so it gets its own callback flow: `/api/auth/microsoft/login` → `/api/auth/microsoft/callback`.
+Microsoft/Entra is a separate case since Kulon uses Microsoft OIDC rather than the SSO login page, so it gets its own callback flow: `/api/auth/microsoft/login` → `/api/auth/microsoft/callback`.
 
 ## What you get
 
@@ -87,7 +87,7 @@ cp web/.env.example web/.env
 
 | Variable | Meaning |
 | --- | --- |
-| `SSO_BASE_URL` / `SSO_LOGIN_PATH` | YoDips endpoints |
+| `SSO_BASE_URL` / `SSO_LOGIN_PATH` | SSO login endpoints |
 | `JWT_SECRET` / `JWT_EXPIRES_IN` | Token signing secret (generate with `openssl rand -hex 32`) and lifetime |
 | `CORS_ORIGIN` | Allowed frontend origin(s), comma‑separated |
 | `MS_*` | Microsoft Entra app credentials for Kulon OIDC |
@@ -135,11 +135,26 @@ Sessions sit behind a small interface so you can swap the implementation without
 
 Each subproject runs independently (no root task runner). Test counts as of 2026‑08‑13:
 
-- **backend** 195 tests (Jest) — `cd backend && npm test`
-- **web** 267 tests (Vitest + jsdom) — `cd web && npm test`
-- **extension** 64 tests (Vitest) — `cd extension && npm test`
+- **backend** ~227 tests (Jest) — `cd backend && npm test`
+- **web** ~267 tests (Vitest + jsdom) — `cd web && npm test`
+- **extension** ~109 tests (Vitest) — `cd extension && npm test`
+- **mobile** (Jetpack Compose) — `cd mobile && ./gradlew :app:testDebugUnitTest`
 
 The backend also ships `npm run build` (nest build) and `npm run start:prod` (runs `node dist/main`; build first). The web app builds with `npm run build` (`vue-tsc -b && vite build`).
+
+## Releasing & publishing
+
+- **Extension** → Chrome Web Store. Sekali jalan lewat `cd extension && npm run release <patch|minor|major>`
+  (`extension/scripts/release.mjs`): naikkan versi semver di `manifest.json`+`package.json`, build, test, lalu buat
+  `build/undip-sso-ext-v<X.Y.Z>.zip` (berisi `manifest.json` + `icon16/32/48/128.png` + `dist/`). Upload zip itu
+  ke Chrome Web Store Developer Dashboard (ikut sertakan screenshot 1280×800/640×400 + icon 128px); setelah versi
+  terpublish, Chrome auto-update ke pengguna.
+- **Mobile** → GitHub Releases. `node mobile/scripts/bump.mjs <X.Y.Z>` menaikkan `versionCode`/`versionName`.
+- **Alur rilis otomatis**: push tag `v*` → `.github/workflows/release.yml` menjalankan test + build APK **signed**
+  (butuh `KEYSTORE_*` repo secrets) + zip extension, lalu membuat GitHub Release berisi
+  `undip-sso-v<tag>.apk`, `undip-sso-ext-v<tag>.zip`, dan `SHA256SUMS.txt`. User bisa download & install APK
+  langsung dari tab Re unless/clone.
+- Panduan install APK (sideload) + load extension ada di `INSTALL.md`.
 
 ## Security notes
 
