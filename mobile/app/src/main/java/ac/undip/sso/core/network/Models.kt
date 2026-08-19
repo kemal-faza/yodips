@@ -115,6 +115,8 @@ data class SiapJadwal(
     val ruang: String? = null,
     val waktu: String = "",
     val sks: Double = 0.0,
+    /** Per-pertemuan date `yyyy-MM-dd` (calendar source; also covers rescheduled meetings). */
+    val tanggal: String = "",
 )
 
 @Serializable

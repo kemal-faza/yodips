@@ -2,10 +2,11 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapIrsMataKuliah
+import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.REFRESH_COOLDOWN_MS
-import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,10 +30,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -53,6 +52,23 @@ internal fun semesterOrdinal(
     return (tahunMulai - ak) * 2 + withinYear
 }
 
+/**
+ * Build the jadwal view-model for one IRS course. The IRS payload only carries
+ * kode/nama/sks/kelas/status — ruang & waktu di-join dari `repo.jadwal()`
+ * (SIAP `get_jadwal` feed, match by nama matkul) supaya kartu IRS setara dengan
+ * kartu Jadwal; absen (kehadiran) di-join dari `repo.absen()`.
+ */
+internal fun irsJadwal(mk: SiapIrsMataKuliah, jadwalByNama: Map<String, SiapJadwal>): SiapJadwal {
+    val joined = jadwalByNama[mk.nama.trim().lowercase()]
+    return SiapJadwal(
+        kode = joined?.kode ?: mk.kode,
+        matakuliah = mk.nama,
+        ruang = joined?.ruang ?: mk.ruang,
+        waktu = joined?.waktu ?: mk.jadwal.orEmpty(),
+        sks = mk.sks,
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IrsScreen(
@@ -62,6 +78,8 @@ fun IrsScreen(
     // Nama dosen per matkul di-join dari GET /api/siap/lecturers (parse get_irs,
     // key = kode MIK); endpoint /api/siap/irs tidak menyertakan kolom dosen.
     var lecturerByKode by remember { mutableStateOf(emptyMap<String, String>()) }
+    var jadwalByNama by remember { mutableStateOf(emptyMap<String, SiapJadwal>()) }
+    var absenByNama by remember { mutableStateOf(emptyMap<String, SiapAbsen>()) }
     FeatureScreen("IRS", onBack = onBack) {
         var refreshTick by remember { mutableIntStateOf(0) }
         var isRefreshing by remember { mutableStateOf(false) }
@@ -77,6 +95,8 @@ fun IrsScreen(
                 scope.launch {
                     repo.profile(force = true)
                     repo.lecturers(force = true)
+                    repo.jadwal(force = true)
+                    repo.absen(force = true)
                     repo.irs(force = true)
                     refreshTick++
                     isRefreshing = false
@@ -124,6 +144,27 @@ fun IrsScreen(
                                 Unit
                             }
                         }
+                        when (val r = repo.jadwal()) {
+                            is ApiResult.Success -> {
+                                jadwalByNama = r.data
+                                    .filter { it.matakuliah.isNotBlank() && it.tanggal.isNotBlank() }
+                                    .distinctBy { it.matakuliah.trim().lowercase() }
+                                    .associate { it.matakuliah.trim().lowercase() to it }
+                            }
+
+                            is ApiResult.Error -> {
+                                Unit
+                            }
+                        }
+                        when (val r = repo.absen()) {
+                            is ApiResult.Success -> {
+                                absenByNama = r.data.associate { it.nama.trim().lowercase() to it }
+                            }
+
+                            is ApiResult.Error -> {
+                                Unit
+                            }
+                        }
                         repo.irs()
                     },
                     emptyMessage = "Belum ada IRS",
@@ -141,55 +182,15 @@ fun IrsScreen(
                     }
                     Spacer(Modifier.height(4.dp))
                     irs.mataKuliah.forEach { mk ->
-                        MkCard(mk = mk, dosen = lecturerByKode[mk.kode] ?: mk.dosen)
+                        ScheduleCard(
+                            j = irsJadwal(mk, jadwalByNama),
+                            lecturer = lecturerByKode[mk.kode] ?: mk.dosen,
+                            absen = absenByNama[mk.nama.trim().lowercase()],
+                            kode = mk.kode,
+                        )
                         Spacer(Modifier.height(12.dp))
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MkCard(
-    mk: SiapIrsMataKuliah,
-    dosen: String?,
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                Text(
-                    mk.nama,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    // SKS mata kuliah itu sendiri (mk.sks), bukan semester.
-                    "SKS ${formatSks(mk.sks)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(mk.kode, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(6.dp))
-            if (!mk.kelas.isNullOrBlank()) {
-                Text("Kelas ${mk.kelas}", style = MaterialTheme.typography.bodySmall, color = accentForeground())
-            }
-            if (!dosen.isNullOrBlank()) {
-                Text("Dosen: $dosen", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            if (!mk.jadwal.isNullOrBlank()) {
-                Text(
-                    mk.jadwal!!,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
         }
     }

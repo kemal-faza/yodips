@@ -83,4 +83,47 @@ class ScheduleScreenTest {
             formatWaktu("16:30:00  s/d  18:10:00"),
         )
     }
+
+    private fun datedRow(
+        tanggal: String,
+        matakuliah: String,
+        waktu: String = "09:40:00 s/d 12:10:00",
+    ) = SiapJadwal(hari = "senin", matakuliah = matakuliah, waktu = waktu, tanggal = tanggal)
+
+    @Test
+    fun `eventsByTanggal groups by per-meeting date`() {
+        val grouped = eventsByTanggal(
+            listOf(
+                datedRow("2026-08-17", "Sistem Informasi"),
+                datedRow("2026-08-17", "Sistem Informasi"), // same course, same day still maps
+                datedRow("2026-08-18", "Basis Data"),
+            ),
+        )
+        assertEquals(2, grouped.keys.size)
+        assertEquals(2, grouped["2026-08-17"]!!.size)
+        assertEquals(1, grouped["2026-08-18"]!!.size)
+    }
+
+    @Test
+    fun `eventsByTanggal skips rows without a date`() {
+        val grouped = eventsByTanggal(listOf(datedRow("", "Tanpa Tanggal")))
+        assertTrue(grouped.isEmpty())
+    }
+
+    @Test
+    fun `monthGrid lays out Monday-first with leading blanks and 42 cells`() {
+        // 2026-08-01 is a Saturday; Monday-first means first cell is blank.
+        val grid = monthGrid(2026, 8)
+        assertEquals(42, grid.size)
+        assertTrue(grid.indexOf(1) in 0..6)
+        assertTrue(grid.all { it == null || it in 1..31 })
+        // Sum of non-null cells = number of days in August.
+        assertEquals(31, grid.count { it != null })
+    }
+
+    @Test
+    fun `monthTitle uses Indonesian month name`() {
+        assertEquals("Agustus 2026", monthTitle(2026, 8))
+        assertEquals("Januari 2026", monthTitle(2026, 1))
+    }
 }
