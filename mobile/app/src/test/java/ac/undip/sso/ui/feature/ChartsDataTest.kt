@@ -94,4 +94,27 @@ class ChartsDataTest {
         assertEquals(2, barIndex(999f, 100f, 66.67f, 3)) // clamp to last bar
         assertEquals(0, barIndex(50f, 100f, 66.67f, 3)) // clamp to first bar
     }
+
+    @Test
+    fun `line tooltip mirrors web semester header and labeled value`() {
+        val tooltip = lineTooltipModel(semester = 2, value = 3.65f, label = "IP Semester")
+
+        assertEquals("Semester 2", tooltip.title)
+        assertEquals(listOf(TooltipRow("IP Semester", "3.65")), tooltip.rows)
+    }
+
+    @Test
+    fun `grade tooltip keeps only nonzero grades in web order`() {
+        val tooltip =
+            gradeTooltipModel(
+                semester = 4,
+                counts = mapOf("A" to 5, "AB" to 0, "C" to 1, "E" to 0),
+            )
+
+        assertEquals("Semester 4", tooltip.title)
+        assertEquals(
+            listOf(TooltipRow("A", "5"), TooltipRow("C", "1")),
+            tooltip.rows,
+        )
+    }
 }

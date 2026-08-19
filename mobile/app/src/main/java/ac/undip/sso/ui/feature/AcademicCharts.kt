@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.util.Locale
 import kotlin.math.roundToInt
 
 // ===== Pure data helpers (mirror web src/utils/dashboard.ts) =====
@@ -56,6 +58,43 @@ private fun graded(s: SiapKhsSemester): Boolean = s.nilai.any { it.nilaiHuruf.tr
 internal fun ipTrend(khs: SiapKhs): List<Pair<Int, Double>> = khs.semesters.filter { graded(it) }.mapIndexed { i, s -> (i + 1) to s.ip }
 
 internal val GRADE_KEYS = listOf("A", "AB", "B", "BC", "C", "D", "E")
+
+internal data class TooltipRow(
+    val label: String,
+    val value: String,
+)
+
+internal data class ChartTooltipModel(
+    val title: String,
+    val rows: List<TooltipRow>,
+)
+
+internal fun lineTooltipModel(
+    semester: Int,
+    value: Float,
+    label: String,
+): ChartTooltipModel =
+    ChartTooltipModel(
+        title = "Semester $semester",
+        rows = listOf(TooltipRow(label, formatTooltipValue(value.toDouble()))),
+    )
+
+internal fun gradeTooltipModel(
+    semester: Int,
+    counts: Map<String, Int>,
+): ChartTooltipModel =
+    ChartTooltipModel(
+        title = "Semester $semester",
+        rows = GRADE_KEYS.mapNotNull { grade ->
+            val count = counts[grade] ?: 0
+            if (count > 0) TooltipRow(grade, count.toString()) else null
+        },
+    )
+
+private fun formatTooltipValue(value: Double): String {
+    if (value == value.toLong().toDouble()) return value.toLong().toString()
+    return String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+}
 
 private val GRADE_COLORS =
     mapOf(
@@ -206,8 +245,9 @@ private fun AreaLineChart(
     val errorColor = MaterialTheme.colorScheme.error
     var hoverIndex by remember { mutableStateOf<Int?>(null) }
     val density = LocalDensity.current
-    val tooltipBg = MaterialTheme.colorScheme.inverseSurface
-    val tooltipFg = MaterialTheme.colorScheme.inverseOnSurface
+    val tooltipBg = MaterialTheme.colorScheme.background
+    val tooltipFg = MaterialTheme.colorScheme.onBackground
+    val tooltipBorder = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
 
     BoxWithConstraints(Modifier.fillMaxWidth().height(200.dp)) {
         val n = values.size
@@ -301,7 +341,15 @@ private fun AreaLineChart(
                 drawLine(lineColor.copy(alpha = 0.35f), Offset(cx, plotTop), Offset(cx, plotBottom), strokeWidth = 1.5f)
                 drawCircle(lineColor, radius = 8f, center = Offset(cx, cy))
                 drawCircle(Color.White, radius = 3f, center = Offset(cx, cy))
-                drawTooltip(listOf("Semester ${hi + 1} · ${fmtValue(values[hi])}"), cx, cy - with(density) { 20.dp.toPx() }, tooltipBg, tooltipFg)
+                drawTooltip(
+                    model = lineTooltipModel(hi + 1, values[hi], if (yMax <= 4f) "IP Semester" else "SKS Kumulatif"),
+                    anchorX = cx,
+                    anchorY = cy - with(density) { 20.dp.toPx() },
+                    background = tooltipBg,
+                    textColor = tooltipFg,
+                    borderColor = tooltipBorder,
+                    indicatorColor = { lineColor },
+                )
             }
         }
     }
@@ -319,8 +367,9 @@ private fun GradeChartCard(khs: SiapKhs) {
             var hoverIndex by remember { mutableStateOf<Int?>(null) }
             val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
             val density = LocalDensity.current
-            val tooltipBg = MaterialTheme.colorScheme.inverseSurface
-            val tooltipFg = MaterialTheme.colorScheme.inverseOnSurface
+            val tooltipBg = MaterialTheme.colorScheme.background
+            val tooltipFg = MaterialTheme.colorScheme.onBackground
+            val tooltipBorder = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
             BoxWithConstraints(Modifier.fillMaxWidth().height(170.dp)) {
                 val n = rows.size
                 val side = with(density) { 26.dp.toPx() }
@@ -384,15 +433,15 @@ private fun GradeChartCard(khs: SiapKhs) {
                         val (_, counts) = rows[hi]
                         val cx = barCenter(hi)
                         drawLine(gridColor.copy(alpha = 0.7f), Offset(cx, plotTop), Offset(cx, plotBottom), strokeWidth = 1.5f)
-                        val lines =
-                            buildList {
-                                add("Semester ${hi + 1}")
-                                counts.entries.sortedBy { GRADE_KEYS.indexOf(it.key) }.forEach { (k, c) ->
-                                    if (c > 0) add("$k : $c")
-                                }
-                                if (size == 1) add("Tidak ada data")
-                            }
-                        drawTooltip(lines, cx, plotBottom, tooltipBg, tooltipFg)
+                        drawTooltip(
+                            model = gradeTooltipModel(hi + 1, counts),
+                            anchorX = cx,
+                            anchorY = plotBottom,
+                            background = tooltipBg,
+                            textColor = tooltipFg,
+                            borderColor = tooltipBorder,
+                            indicatorColor = { grade -> GRADE_COLORS[grade] ?: tooltipFg },
+                        )
                     }
                     }
                 }
@@ -439,32 +488,66 @@ private fun DrawScope.drawScaledText(
  * Clamped left/right/top so it never falls outside the canvas.
  */
 private fun DrawScope.drawTooltip(
-    lines: List<String>,
+    model: ChartTooltipModel,
     anchorX: Float,
     anchorY: Float,
     background: Color,
     textColor: Color,
+    borderColor: Color,
+    indicatorColor: (String) -> Color,
 ) {
-    if (lines.isEmpty()) return
-    val paint =
-        Paint().apply {
-            textSize = 22.dp.toPx()
-            isAntiAlias = true
-            typeface = Typeface.DEFAULT_BOLD
-        }
+    val titlePaint = Paint().apply {
+        textSize = 12.sp.toPx()
+        isAntiAlias = true
+        typeface = Typeface.DEFAULT_BOLD
+        color = textColor.toArgb()
+    }
+    val rowPaint = Paint().apply {
+        textSize = 12.sp.toPx()
+        isAntiAlias = true
+        color = textColor.toArgb()
+    }
+    val valuePaint = Paint().apply {
+        textSize = 12.sp.toPx()
+        isAntiAlias = true
+        typeface = Typeface.MONOSPACE
+        color = textColor.toArgb()
+        textAlign = Paint.Align.RIGHT
+    }
     val padX = 8.dp.toPx()
     val padY = 5.dp.toPx()
-    val lineH = 25.dp.toPx()
-    val boxW = lines.maxOf { paint.measureText(it) } + padX * 2
-    val boxH = lines.size * lineH + padY * 2
+    val lineH = 17.sp.toPx()
+    val indicatorGap = 6.dp.toPx()
+    val valueGap = 12.dp.toPx()
+    val labelWidth = model.rows.maxOfOrNull { rowPaint.measureText(it.label) } ?: 0f
+    val valueWidth = model.rows.maxOfOrNull { valuePaint.measureText(it.value) } ?: 0f
+    val titleWidth = titlePaint.measureText(model.title)
+    val contentWidth = maxOf(titleWidth, indicatorGap + 10.dp.toPx() + labelWidth + valueGap + valueWidth)
+    val boxW = contentWidth + padX * 2
+    val titleH = lineH
+    val dividerGap = 4.dp.toPx()
+    val boxH = padY * 2 + titleH + dividerGap + if (model.rows.isEmpty()) lineH else model.rows.size * lineH
     val left = (anchorX - boxW / 2).coerceIn(2.dp.toPx(), size.width - boxW - 2.dp.toPx())
     val top = (anchorY - boxH - 6.dp.toPx()).coerceAtLeast(2.dp.toPx())
-    drawRoundRect(background, topLeft = Offset(left, top), size = Size(boxW, boxH), cornerRadius = CornerRadius(6.dp.toPx()))
-    paint.color = textColor.toArgb()
-    paint.textAlign = Paint.Align.LEFT
-    lines.forEachIndexed { i, t ->
-        val lineCenter = top + padY + lineH * i + lineH / 2
-        val baseline = lineCenter - (paint.descent() + paint.ascent()) / 2
-        drawContext.canvas.nativeCanvas.drawText(t, left + padX, baseline, paint)
+    drawRoundRect(background, topLeft = Offset(left, top), size = Size(boxW, boxH), cornerRadius = CornerRadius(8.dp.toPx()))
+    drawRoundRect(borderColor, topLeft = Offset(left, top), size = Size(boxW, boxH), cornerRadius = CornerRadius(8.dp.toPx()), style = Stroke(width = 1.dp.toPx()))
+
+    val titleBaseline = top + padY + lineH - titlePaint.descent()
+    drawContext.canvas.nativeCanvas.drawText(model.title, left + padX, titleBaseline, titlePaint)
+    val dividerY = top + padY + titleH + dividerGap / 2
+    drawLine(borderColor, Offset(left + padX, dividerY), Offset(left + boxW - padX, dividerY), 1.dp.toPx())
+
+    if (model.rows.isEmpty()) {
+        val emptyBaseline = top + padY + titleH + dividerGap + lineH - rowPaint.descent()
+        drawContext.canvas.nativeCanvas.drawText("Tidak ada data", left + padX, emptyBaseline, rowPaint)
+        return
+    }
+
+    model.rows.forEachIndexed { index, row ->
+        val centerY = top + padY + titleH + dividerGap + lineH * index + lineH / 2
+        val baseline = centerY - (rowPaint.ascent() + rowPaint.descent()) / 2
+        drawCircle(indicatorColor(row.label), radius = 3.dp.toPx(), center = Offset(left + padX + 3.dp.toPx(), centerY))
+        drawContext.canvas.nativeCanvas.drawText(row.label, left + padX + 10.dp.toPx(), baseline, rowPaint)
+        drawContext.canvas.nativeCanvas.drawText(row.value, left + boxW - padX, baseline, valuePaint)
     }
 }
