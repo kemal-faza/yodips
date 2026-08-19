@@ -1,0 +1,142 @@
+# GitHub Release: build artefak rilis (APK Android + extension zip) dan
+# melampirkan ke Release ketika tag `vX.Y.Z` di-push / manual.
+#
+# Secrets yang WAJIB di-set (Settings -> Secrets and variables -> Actions):
+#   KEYSTORE_BASE64            - base64 dari keystore release (mobile/keystore/undip-sso.jks)
+#   KEYSTORE_STORE_PASSWORD    - storePassword keystore
+#   KEYSTORE_KEY_ALIAS         - keyAlias keystore
+#   KEYSTORE_KEY_PASSWORD      - keyPassword keystore
+#
+# Cara membuat keystore (sekali saja, keep rahasia):
+#   cd mobile && keytool -genkey -v -keystore keystore/undip-sso.jks -alias undip-sso
+#            -keyalg RSA -keysize 2048 -validity 10000
+#   base64 -w0 mobile/keystore/undip-sso.jks   # -> isi ke secret KEYSTORE_BASE64
+# (jangan commit mobile/keystore/ atau mobile/keystore.properties)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  extension-artifact:
+    name: Build extension zip
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - name: Install + test + build
+        working-directory: extension
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Paket ZIP (manifest + icon + dist)
+        run: |
+          set -euo pipefail
+          cd extension
+          NAME="undip-sso-ext-${GITHUB_REF_NAME}.zip"
+          zip -r -9 "${NAME}" manifest.json icon128.png dist
+          echo "ZIP=${NAME}" >> "$GITHUB_ENV"
+          ls -la "${NAME}"
+      - name: Upload artifact extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: extension/${{ env.ZIP }}
+
+  mobile-apk:
+    name: Build signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: reubenmiller/setup-android@v2
+        with:
+          sdk-version: 35
+      - name: Restore keystore + keystore.properties dari secrets
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64" || { echo "secret KEYSTORE_BASE64 kosong"; exit 1; }
+          mkdir -p mobile/keystore
+          echo "$KEYSTORE_BASE64" | base64 -d > mobile/keystore/undip-sso.jks
+          cat > mobile/keystore.properties <<'EOF'
+          storeFile=keystore/undip-sso.jks
+          storePassword=${{ secrets.KEYSTORE_STORE_PASSWORD }}
+          keyAlias=${{ secrets.KEYSTORE_KEY_ALIAS }}
+          keyPassword=${{ secrets.KEYSTORE_KEY_PASSWORD }}
+          EOF
+      - name: Test + build release APK
+        working-directory: mobile
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest :app:assembleRelease
+      - name: Namai APK + checksum
+        run: |
+          set -euo pipefail
+          cd mobile/app/build/outputs/apk/release
+          test -f app-release.apk || { echo "app-release.apk tidak ada"; exit 1; }
+          NAME="undip-sso-${GITHUB_REF_NAME}.apk"
+          mv app-release.apk "${NAME}"
+          sha256sum "${NAME}" > SHA256SUMS-apk.txt
+          echo "APK=${NAME}" >> "$GITHUB_ENV"
+          ls -la "${NAME}"
+      - name: Upload artifact APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-release
+          path: mobile/app/build/outputs/apk/release/${{ env.APK }}
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [mobile-apk, extension-artifact]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download semua artefak
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Checksum gabungan
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Buat GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            Artefak rilis **${{ github.ref_name }}** (monorepo `sso`).
+
+            ### Install
+            - **Android:** download `undip-sso-<tag>.apk`, izinkan "instal dari sumber tidak dikenal", lalu instal. Update berikutnya cukup instal APK versi lebih baru (data tetap).
+            - **Extension:** `undip-sso-ext-<tag>.zip` untuk load manual, atau pasang dari Chrome Web Store kalau sudah terpublish.
+
+            Instruksi lengkap: lihat `INSTALL.md`.
+          files: release-assets/*
+          fail_on_unmatched_files: true
