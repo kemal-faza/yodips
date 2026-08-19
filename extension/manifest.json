@@ -1,10 +1,20 @@
 {
   "manifest_version": 3,
   "name": "YoDips",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Login SSO Undip via browser tanpa kredensial: baca cookie Kazan SSO/Kulon/SIAP dan hubungkan ke dashboard.",
-  "icons": { "16": "icon16.png", "32": "icon32.png", "48": "icon48.png", "128": "icon128.png" },
-  "permissions": ["cookies", "storage", "tabs", "alarms"],
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "permissions": [
+    "cookies",
+    "storage",
+    "tabs",
+    "alarms"
+  ],
   "host_permissions": [
     "http://localhost:3000/*",
     "http://127.0.0.1:3000/*",
@@ -26,7 +36,9 @@
         "http://127.0.0.1:5173/*",
         "https://sso.crunchy.my.id/*"
       ],
-      "js": ["dist/content-bridge.js"],
+      "js": [
+        "dist/content-bridge.js"
+      ],
       "run_at": "document_idle"
     }
   ],
