@@ -9,6 +9,7 @@ import ac.undip.sso.ui.feature.ProfileScreen
 import ac.undip.sso.ui.feature.ScanScreen
 import ac.undip.sso.ui.feature.ScheduleScreen
 import ac.undip.sso.ui.feature.TasksScreen
+import ac.undip.sso.ui.theme.Primary
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.material.icons.Icons
@@ -17,13 +18,23 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.SpaceDashboard
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -34,10 +45,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -117,7 +131,12 @@ private fun navigate(
     }
 }
 
-/** Compact text-only bottom navigation; labels remain accessible and tappable. */
+/** Horizontal gutter so the outer nav items clear the screen edges. */
+private val BarHorizontalPadding = 12.dp
+
+/** Bottom bar per reference design: 4 icon+label items + a raised round Scan FAB.
+ *  The bar's background spans the full viewport width; only the content inside is
+ *  inset by [BarHorizontalPadding] so the outer icons clear the screen edges. */
 @Composable
 fun ShellBottomBar(
     currentRoute: String?,
@@ -126,27 +145,70 @@ fun ShellBottomBar(
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
-        Tab.entries.forEach { tab ->
-            NavigationBarItem(
-                selected = currentRoute == tab.route,
-                onClick = { onSelect(tab.route) },
-                icon = { Icon(tab.icon, contentDescription = tab.label) },
-                label = {
-                    Text(
-                        tab.label,
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = BottomBarLabelSizeSp.sp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                alwaysShowLabel = true,
-                colors =
-                    NavigationBarItemDefaults.colors(
-                        selectedTextColor = accentForeground(),
-                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        indicatorColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-            )
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = BarHorizontalPadding),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Tab.entries.forEach { tab ->
+                if (tab == Tab.Scan) {
+                    // Center slot: raised dark-teal FAB — the big circle. Enlarged so it
+                    // clearly reads bigger; protrudes above the bar via natural overflow
+                    // (no fill* modifier: a fill inflated the M3 NavigationBar height and
+                    // blanked content). No label (the reference shows only 4 labels).
+                    Box(
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .navigationBarsPadding()
+                                .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(78.dp)
+                                .clip(CircleShape)
+                                .background(Primary)
+                                .border(6.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                                .clickable { onSelect(tab.route) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.QrCodeScanner,
+                            contentDescription = tab.label,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(54.dp),
+                        )
+                    }
+                }
+            } else {
+                NavigationBarItem(
+                    selected = currentRoute == tab.route,
+                    onClick = { onSelect(tab.route) },
+                    modifier = Modifier.weight(1f),
+                    icon = { Icon(tab.icon, contentDescription = tab.label) },
+                    label = {
+                        Text(
+                            tab.label,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = BottomBarLabelSizeSp.sp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    alwaysShowLabel = true,
+                    colors =
+                        NavigationBarItemDefaults.colors(
+                            selectedIconColor = accentForeground(),
+                            selectedTextColor = accentForeground(),
+                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                )
+            }
+        }
         }
     }
 }
