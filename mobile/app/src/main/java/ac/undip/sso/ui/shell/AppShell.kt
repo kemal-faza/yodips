@@ -155,7 +155,11 @@ fun ShellBottomBar(
     var lastTapAt by remember { mutableStateOf(Long.MIN_VALUE) }
     fun throttled(route: String) {
         val now = SystemClock.uptimeMillis()
-        if (now - lastTapAt >= TabTapDebounceMs) {
+        // Guard the very first tap: Long.MIN_VALUE is the "never tapped yet"
+        // sentinel; subtracting it from a real uptime overflows (which would
+        // block every tap), so treat it as always allowed.
+        val isFirst = lastTapAt == Long.MIN_VALUE
+        if (isFirst || now - lastTapAt >= TabTapDebounceMs) {
             lastTapAt = now
             onSelect(route)
         }
