@@ -4,6 +4,17 @@ on:
   push:
     branches:
       - main
+    # Perubahan dokumen/non-fungsional tdk perlu menjalankan CI (dan otomatis
+    # memicu-skip deploy backend/web yg bergantung pada hasil CI). Untuk
+    # perubahan KODE kecil yg tak butuh dipush/test, gunakan "[skip ci]" di
+    # pesan commit.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "**/.gitignore"
+      - "**/README.md"
   pull_request:
 
 permissions:
