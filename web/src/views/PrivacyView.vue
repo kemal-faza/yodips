@@ -10,8 +10,7 @@ import { computed } from 'vue';
 import { useAuthStore } from '../stores/auth';
 
 // Email kontak untuk pertanyaan/hak penghapusan data.
-// GANTI dengan email publik penayang sebelum dipakai di listing store.
-const CONTACT_EMAIL = 'privasi@yodips.id';
+const CONTACT_EMAIL = 'anonim.pribadi@contoh.test';
 const LAST_UPDATED = '20 Agustus 2026';
 
 const auth = useAuthStore();
@@ -41,10 +40,10 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
           Terakhir diperbarui: {{ LAST_UPDATED }}.
         </p>
         <p class="mt-4 leading-relaxed text-muted-foreground">
-          YoDips adalah dasbor untuk mahasiswa Universitas Diponegoro (Undip)
-          yang menampilkan akademik (Kulon/Moodle) dan kemahasiswaan (SIAP)
-          dalam satu tempat. Kebijakan ini menjelaskan data apa saja yang
-          kami sentuh, untuk apa, dan bagaimana data tersebut diperlakukan.
+          YoDips adalah dasbor untuk mahasiswa Universitas Diponegoro (Undip).
+          Di sini ada akademik (Kulon/Moodle) dan kemahasiswaan (SIAP) dalam
+          satu tempat. Kebijakan ini menjelaskan data apa yang kami pegang,
+          untuk apa, dan bagaimana kami memperlakukannya.
         </p>
       </header>
 
@@ -60,14 +59,14 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
           <ul class="mt-3 list-disc space-y-2 pl-6 text-foreground/90">
             <li>
               <strong>Cookie sesi Undip</strong> (SSO, Kulon/Moodle, SIAP).
-              Cookie ini <em>tidak pernah disimpan secara permanen</em> — hanya
-              dipakai sementara untuk mengautentikasi sesi dan mengambil data
-              akademik yang tampil di dasbor.
+              Cookie ini <em>tidak pernah disimpan secara permanen</em>. Kami
+              hanya memakainya sementara untuk mengautentikasi sesi dan
+              mengambil data akademik agar bisa tampil di dasbor.
             </li>
             <li>
-              <strong>Identitas turunan (NIM)</strong>. NIM diturunkan dari sesi
-              Undip dan dipakai sebagai subjek (sub) JWT Anda. Kelengkapan
-              kursus/penilaian ditampilkan dari layanan akademik atas sesi Anda.
+              <strong>Identitas turunan (NIM)</strong>. NIM kami turunkan dari
+              sesi Undip dan jadikan subjek (sub) JWT Anda. Kursus dan penilaian
+              diambil langsung dari layanan akademik atas sesi Anda.
             </li>
             <li>
               Data akademik yang Anda lihat (kursus, jadwal, tugas, IRS, KHS)
@@ -84,8 +83,8 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
           <p class="mt-3 leading-relaxed">
             Data di atas kami gunakan <strong>semata untuk autentikasi ke dasbor
             YoDips</strong> dan menampilkan data akademik Anda. Kami tidak
-            menggunakan data untuk iklan, profiling, atau tujuan lain di luar
-            menyediakan layanan yang Anda minta.
+            memakai data untuk iklan, profiling, atau tujuan lain di luar
+            layanan yang memang Anda minta.
           </p>
         </li>
 
@@ -95,7 +94,7 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
             <span class="mr-2 text-primary">3.</span>Kemana data dikirim
           </h2>
           <p class="mt-3 leading-relaxed">
-            Data dikirim ke <strong>backend YoDips</strong> melalui koneksi
+            Semua data dikirim ke <strong>backend YoDips</strong> lewat koneksi
             <strong>HTTPS</strong> yang terenkripsi. Kami
             <strong>tidak menjual, menyewakan, atau membagikan</strong> data
             Anda kepada pihak ketiga mana pun untuk kepentingan komersial.
@@ -109,17 +108,17 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
             backend
           </h2>
           <p class="mt-3 leading-relaxed">
-            Login dilakukan tanpa kredensial: Anda masuk sendiri di browser, dan
+            Anda login tanpa kredensial, cukup masuk sendiri di browser, dan
             <strong>backend tidak pernah melihat atau menyimpan kata
             sandi</strong>. Sesi disimpan:
           </p>
           <ul class="mt-3 list-disc space-y-2 pl-6 text-foreground/90">
             <li>
-              <strong>InMemory (pengembangan)</strong> — sesi hilang saat
-              backend dimulai ulang, sehingga Anda perlu login ulang.
+              <strong>InMemory (pengembangan)</strong>. Sesi hilang saat
+              backend dimulai ulang, jadi Anda perlu login ulang.
             </li>
             <li>
-              <strong>Redis (produksi)</strong> — disimpan terenkripsi
+              <strong>Redis (produksi)</strong>. Sesi disimpan terenkripsi
               (AES-256-GCM) dengan <strong>masa aktif geser (sliding TTL)
               selama 7 hari</strong>.
             </li>
@@ -152,10 +151,11 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
             diperlukan (least privilege)
           </h2>
           <p class="mt-3 leading-relaxed">
-            Kami menganut prinsip <strong>"Only purposeful data"</strong>:
-            hanya data yang dibutuhkan untuk satu fungsi — autentikasi dan
-            menampilkan data akademik Anda — yang kami proses, seefisien dan
-            sesedikit mungkin, dan hanya selama dibutuhkan.
+            Kami hanya memproses data yang benar-benar dibutuhkan
+            <strong>("Only purposeful data")</strong>, dalam arti data yang
+            dipakai untuk satu fungsi, yaitu autentikasi dan menampilkan data
+            akademik Anda. Kami memprosesnya seefisien dan sesedikit mungkin,
+            dan hanya selama masih dibutuhkan.
           </p>
         </li>
       </ol>
