@@ -13,6 +13,7 @@ import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.SiapLecturer
 import ac.undip.sso.core.network.SiapProfile
+import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.network.SsoApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,12 +43,19 @@ private const val DEFAULT_DISK_MAX_AGE_MS = 12 * 60 * 60 * 1000L // 12h
  *  - on-disk [PersistentCache] (DataStore) restored on a cold memory miss so the
  *    screen still opens instantly after a process restart / app relaunch, and
  *    written back whenever a fresh result arrives.
+ *
+ * Every 401 (expired JWT or backend lost the upstream session) additionally
+ * fires [onSessionExpired] — wired to [SessionExpiredEvents] so AppRoot can show
+ * a universal re-login dialog. This also catches 401s from background refreshes
+ * which the UI never surfaces, killing the "stale cache keeps showing while the
+ * session is dead" trap.
  */
 class SsoRepository(
     private val api: SsoApi = ApiClient.api,
     private val cache: DataCache = InMemoryDataCache(),
     private val persistent: PersistentCache = NoOpPersistentCache,
     private val diskMaxAgeMs: Long = DEFAULT_DISK_MAX_AGE_MS,
+    private val onSessionExpired: () -> Unit = SessionExpiredEvents::notifySessionExpired,
 ) {
     // Stale-while-revalidate: stale data is served instantly and re-fetched in
     // the background so a tab revisit never blocks on the slow backend scrape.
@@ -194,20 +202,28 @@ class SsoRepository(
             runCatching { persistent.save(key, payload, System.currentTimeMillis()) }
         }
     }
-}
 
-private suspend fun <T> safe(block: suspend () -> T): ApiResult<T> =
-    try {
-        ApiResult.Success(block())
-    } catch (e: HttpException) {
-        ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", typeForHttp(e.code()))
-    } catch (e: IOException) {
-        ApiResult.Error(null, "Tidak dapat terhubung ke server: ${e.message}", ErrorType.NETWORK)
-    } catch (e: SerializationException) {
-        ApiResult.Error(null, "Respons tidak dapat dibaca", ErrorType.SERVER)
-    } catch (e: Exception) {
-        ApiResult.Error(null, e.message ?: "Terjadi kesalahan", ErrorType.SERVER)
-    }
+    /**
+     * Maps every backend call into [ApiResult] (see [ErrorType]). A 401 is both
+     * surfaced as [ErrorType.UNAUTHORIZED] AND pushed to [onSessionExpired] so
+     * the app-wide re-login dialog appears even when the failing call came from
+     * a background refresh the screen never surfaces.
+     */
+    private suspend fun <T> safe(block: suspend () -> T): ApiResult<T> =
+        try {
+            ApiResult.Success(block())
+        } catch (e: HttpException) {
+            val type = typeForHttp(e.code())
+            if (type == ErrorType.UNAUTHORIZED) onSessionExpired()
+            ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", type)
+        } catch (e: IOException) {
+            ApiResult.Error(null, "Tidak dapat terhubung ke server: ${e.message}", ErrorType.NETWORK)
+        } catch (e: SerializationException) {
+            ApiResult.Error(null, "Respons tidak dapat dibaca", ErrorType.SERVER)
+        } catch (e: Exception) {
+            ApiResult.Error(null, e.message ?: "Terjadi kesalahan", ErrorType.SERVER)
+        }
+}
 
 private fun typeForHttp(code: Int): ErrorType =
     when (code) {

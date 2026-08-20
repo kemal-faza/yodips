@@ -105,6 +105,34 @@ class SsoRepositoryTest {
     }
 
     @Test
+    fun `auth 401 notifies the session-expired listener so the app shows re-login`() {
+        // The universal dialog is driven by this signal: ANY authenticated call
+        // hitting a 401 (expired JWT or backend lost the upstream session) must
+        // fire it, even from a background refresh the screen never surfaces.
+        var notified = 0
+        val error = HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
+        val repo = SsoRepository(FakeApi().apply { profileStub = { throw error } }, onSessionExpired = { notified++ })
+
+        val r = runBlocking { repo.profile() }
+
+        assertTrue(r is ApiResult.Error)
+        assertEquals(ErrorType.UNAUTHORIZED, (r as ApiResult.Error).type)
+        assertEquals(1, notified)
+    }
+
+    @Test
+    fun `non-auth errors do not notify the session-expired listener`() {
+        var notified = 0
+        val error = HttpException(Response.error<Any>(429, "rate".toResponseBody(null)))
+        val repo = SsoRepository(FakeApi().apply { profileStub = { throw error } }, onSessionExpired = { notified++ })
+
+        val r = runBlocking { repo.profile() }
+
+        assertTrue(r is ApiResult.Error)
+        assertEquals(0, notified)
+    }
+
+    @Test
     fun `stale cache serves stale data immediately (stale-while-revalidate)`() {
         // The network stub is never awaited: a stale hit must return the cached
         // value now and refresh in the background, not block on the slow scrape.
