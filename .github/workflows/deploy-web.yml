@@ -102,15 +102,18 @@ jobs:
           # ARAHKAN custom domain ke deployment TERBARU.
           # (Tanpa langkah ini, domain tetap tertaut (pinned) ke deployment lama
           # padahal deploy baru sudah ada — lihat docs/CHECKPOINT.md.)
+          # Catatan: `vercel alias set` dan `vercel promote` TIDAK mendukung
+          # --project, dan butuh project ter-link — jadi cd ke web/ (tempat
+          # .vercel/project.json berada). Command ini tidak baca filesystem
+          # build, jadi rootDirectory "web" tidak menimbulkan "web/web".
+          cd web
           npx vercel alias set "$DEPLOY_URL" "$VERCEL_WEB_DOMAIN" \
-            --project "$VERCEL_PROJECT_ID" \
             --token "$VERCEL_TOKEN" \
             --scope "$VERCEL_ORG_ID" \
             --yes
 
           # Juga promosikan sbg production utk semua alias project (jaga).
           npx vercel promote "$DEPLOY_URL" \
-            --project "$VERCEL_PROJECT_ID" \
             --token "$VERCEL_TOKEN" \
             --scope "$VERCEL_ORG_ID" \
             --yes
