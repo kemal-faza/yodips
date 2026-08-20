@@ -102,19 +102,23 @@ jobs:
           # ARAHKAN custom domain ke deployment TERBARU.
           # (Tanpa langkah ini, domain tetap tertaut (pinned) ke deployment lama
           # padahal deploy baru sudah ada — lihat docs/CHECKPOINT.md.)
-          # Catatan: `vercel alias set` dan `vercel promote` TIDAK mendukung
-          # --project, dan butuh project ter-link. Karena web/.vercel/ gitignored
-          # (tidak ikut checkout CI), kita buat link proyek sendiri dari secret.
+          # Per docs CLI: `vercel alias set` hanya menerima global options
+          # (--token, --scope, ...) — TIDAK ada --yes / --project. Karena
+          # web/.vercel/ gitignored (tidak ikut checkout CI), kita buat link
+          # proyek sendiri dari secret agar CLI tahu project target.
           mkdir -p web/.vercel
           printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > web/.vercel/project.json
           cd web
           npx vercel alias set "$DEPLOY_URL" "$VERCEL_WEB_DOMAIN" \
             --token "$VERCEL_TOKEN" \
-            --scope "$VERCEL_ORG_ID" \
-            --yes
+            --scope "$VERCEL_ORG_ID"
 
-          # Juga promosikan sbg production utk semua alias project (jaga).
+          # `vercel promote` (opsi --yes hanya untuk skip konfirmasi link proyek).
+          # Deployment --prod sudah "current production", jd promote bis redundan
+          # & error "already promoted" → jalankan best-effort agar tak menggagalkan
+          # job bila alias set (langkah inti) sudah berhasil.
           npx vercel promote "$DEPLOY_URL" \
             --token "$VERCEL_TOKEN" \
             --scope "$VERCEL_ORG_ID" \
-            --yes
+            --yes \
+            || echo "promote skipped: deployment sudah current"
