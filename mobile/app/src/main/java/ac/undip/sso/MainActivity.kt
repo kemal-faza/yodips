@@ -1,6 +1,8 @@
 package ac.undip.sso
 
+import ac.undip.sso.core.session.KeystoreTokenCipher
 import ac.undip.sso.core.session.TokenStore
+import ac.undip.sso.core.session.tokenDataStore
 import ac.undip.sso.ui.AppRoot
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.UndipSSOTheme
@@ -33,7 +35,11 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    val tokenStore = remember { TokenStore(applicationContext) }
+                    val tokenStore = remember {
+                        // Token data is encrypted at rest with an Android-KeyStore-backed
+                        // AES key (KeystoreTokenCipher) — never stored as plaintext.
+                        TokenStore(applicationContext.tokenDataStore, KeystoreTokenCipher(applicationContext))
+                    }
                     AppRoot(tokenStore, themeController)
                 }
             }
