@@ -103,9 +103,10 @@ jobs:
           # (Tanpa langkah ini, domain tetap tertaut (pinned) ke deployment lama
           # padahal deploy baru sudah ada — lihat docs/CHECKPOINT.md.)
           # Catatan: `vercel alias set` dan `vercel promote` TIDAK mendukung
-          # --project, dan butuh project ter-link — jadi cd ke web/ (tempat
-          # .vercel/project.json berada). Command ini tidak baca filesystem
-          # build, jadi rootDirectory "web" tidak menimbulkan "web/web".
+          # --project, dan butuh project ter-link. Karena web/.vercel/ gitignored
+          # (tidak ikut checkout CI), kita buat link proyek sendiri dari secret.
+          mkdir -p web/.vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > web/.vercel/project.json
           cd web
           npx vercel alias set "$DEPLOY_URL" "$VERCEL_WEB_DOMAIN" \
             --token "$VERCEL_TOKEN" \
