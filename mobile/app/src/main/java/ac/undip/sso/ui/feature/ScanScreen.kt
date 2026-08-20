@@ -102,8 +102,19 @@ fun scanOutcome(
 ): ScanOutcome =
     when (result) {
         is ApiResult.Success -> {
-            val ok = result.data.status == "success" || result.data.status.isBlank()
-            ScanOutcome(success = ok, message = if (ok) "Berhasil Absen" else "QR Code Invalid")
+            // SIAP's success `status` is not a stable literal (observed "", "success",
+            // "Sukses", "OK", "Berhasil", ...). Default to SUCCESS and only report a
+            // failure when the response explicitly flags an error, so a genuinely
+            // recorded absence is never shown as a failed scan.
+            val status = result.data.status.trim().lowercase()
+            val message = result.data.message.orEmpty()
+            val explicitFailure =
+                status in setOf("error", "gagal", "false", "0") ||
+                    message.contains("tidak valid", ignoreCase = true) ||
+                    message.contains("expired", ignoreCase = true) ||
+                    message.contains("kedaluwarsa", ignoreCase = true) ||
+                    message.contains("gagal", ignoreCase = true)
+            ScanOutcome(success = !explicitFailure, message = if (explicitFailure) "QR Code Invalid" else "Berhasil Absen")
         }
 
         is ApiResult.Error -> {
