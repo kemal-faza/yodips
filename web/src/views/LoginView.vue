@@ -273,5 +273,11 @@ async function handleExtensionDone() {
       </Alert>
       </CardContent>
     </Card>
+    <p class="mt-4 text-center text-xs text-muted-foreground">
+      Dengan melanjutkan, kamu menyetujui
+      <a href="/privacy" class="font-medium text-primary hover:underline">
+        Kebijakan Privasi
+      </a>.
+    </p>
   </AuroraBackground>
 </template>

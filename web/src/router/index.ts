@@ -6,6 +6,8 @@ export function buildRouter(history: RouterHistory): Router {
     history,
     routes: [
       { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
+      // Halaman kebijakan privasi bersifat publik (URL dipakai di listing store).
+      { path: '/privacy', name: 'privacy', component: () => import('../views/PrivacyView.vue') },
       {
         path: '/',
         component: () => import('../layouts/AppLayout.vue'),
@@ -23,7 +25,7 @@ export function buildRouter(history: RouterHistory): Router {
 
   router.beforeEach(async (to) => {
     const store = useAuthStore();
-    if (to.name !== 'login' && !store.isAuthenticated) {
+    if (to.name !== 'login' && to.name !== 'privacy' && !store.isAuthenticated) {
       return { name: 'login' };
     }
     if (to.name === 'login' && store.isAuthenticated) {
@@ -38,7 +40,7 @@ export function buildRouter(history: RouterHistory): Router {
   let verified = false;
   router.afterEach(async (to) => {
     if (verified) return;
-    if (to.name === 'login' || to.name === undefined) return;
+    if (to.name === 'login' || to.name === 'privacy' || to.name === undefined) return;
     const store = useAuthStore();
     if (!store.isAuthenticated) return;
     verified = true;

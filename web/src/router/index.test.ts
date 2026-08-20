@@ -27,6 +27,15 @@ describe('router guard', () => {
     expect(router.currentRoute.value.path).toBe('/login');
   });
 
+  it('serves the public privacy route without authentication', async () => {
+    const store = { isAuthenticated: false, fetchMe: vi.fn(), attemptReauth: vi.fn() };
+    (useAuthStore as any).mockReturnValue(store);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/privacy');
+    expect(router.currentRoute.value.path).toBe('/privacy');
+    expect(router.currentRoute.value.name).toBe('privacy');
+  });
+
   it('proceeds immediately (non-blocking) and reauths on incomplete', async () => {
     const store = {
       isAuthenticated: true,
