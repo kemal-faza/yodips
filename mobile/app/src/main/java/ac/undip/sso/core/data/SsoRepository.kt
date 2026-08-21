@@ -16,8 +16,10 @@ import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.network.SsoApi
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -73,6 +75,7 @@ class SsoRepository(
     // the background so a tab revisit never blocks on the slow backend scrape.
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val refreshing = ConcurrentHashMap.newKeySet<String>()
+    private var inflightRefresh: Deferred<RefreshResult>? = null
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -217,18 +220,44 @@ class SsoRepository(
     }
 
     /**
-     * Maps every backend call into [ApiResult] (see [ErrorType]). A 401 is both
-     * surfaced as [ErrorType.UNAUTHORIZED] AND pushed to [onSessionExpired] so
-     * the app-wide re-login dialog appears even when the failing call came from
-     * a background refresh the screen never surfaces.
+     * Maps every backend call into [ApiResult] (see [ErrorType]). On 401:
+     * - If !retryable (POST path like markKehadiran): fires onSessionExpired
+     *   immediately, no refresh attempted.
+     * - If retryable: triggers a single-flight refresh (shared Deferred so N
+     *   concurrent 401s issue exactly one refresh POST). On success retries
+     *   block() once. On dead session fires onSessionExpired + returns
+     *   UNAUTHORIZED. On network failure returns NETWORK (no dialog).
      */
-    private suspend fun <T> safe(retryable: Boolean = true, block: suspend () -> T): ApiResult<T> =
-        try {
+    private suspend fun <T> safe(retryable: Boolean = true, block: suspend () -> T): ApiResult<T> {
+        return try {
             ApiResult.Success(block())
         } catch (e: HttpException) {
-            val type = typeForHttp(e.code())
-            if (type == ErrorType.UNAUTHORIZED) onSessionExpired()
-            ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", type)
+            if (e.code() == 401) {
+                if (!retryable) {
+                    onSessionExpired()
+                    return ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", ErrorType.UNAUTHORIZED)
+                }
+                when (tryRefresh()) {
+                    RefreshResult.SUCCESS -> {
+                        try {
+                            ApiResult.Success(block())
+                        } catch (e2: HttpException) {
+                            val t = typeForHttp(e2.code())
+                            if (t == ErrorType.UNAUTHORIZED) onSessionExpired()
+                            ApiResult.Error(e2.code(), e2.message() ?: "HTTP ${e2.code()}", t)
+                        }
+                    }
+                    RefreshResult.DEAD_SESSION -> {
+                        onSessionExpired()
+                        ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", ErrorType.UNAUTHORIZED)
+                    }
+                    RefreshResult.NETWORK_FAILURE -> {
+                        ApiResult.Error(null, "Tidak dapat terhubung ke server", ErrorType.NETWORK)
+                    }
+                }
+            } else {
+                ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", typeForHttp(e.code()))
+            }
         } catch (e: IOException) {
             ApiResult.Error(null, "Tidak dapat terhubung ke server: ${e.message}", ErrorType.NETWORK)
         } catch (e: SerializationException) {
@@ -236,6 +265,39 @@ class SsoRepository(
         } catch (e: Exception) {
             ApiResult.Error(null, e.message ?: "Terjadi kesalahan", ErrorType.SERVER)
         }
+    }
+
+    private enum class RefreshResult { SUCCESS, DEAD_SESSION, NETWORK_FAILURE }
+
+    /**
+     * Single-flight refresh: concurrent 401s share one in-flight refresh (a shared
+     * Deferred), so N parallel 401s issue exactly ONE refresh POST. Returns the
+     * outcome so the caller can distinguish a genuinely dead session (dialog)
+     * from a network blip (no dialog).
+     */
+    private suspend fun tryRefresh(): RefreshResult {
+        inflightRefresh?.let { return it.await() }
+        val deferred = refreshScope.async {
+            try {
+                val newJwt = refreshToken()
+                ApiClient.authToken = newJwt
+                val siap = tokenStore?.let { runCatching { it.siapCookie.first() }.getOrNull() }
+                val kulon = tokenStore?.let { runCatching { it.kulonCookie.first() }.getOrNull() }
+                tokenStore?.save(newJwt, siap, kulon)
+                RefreshResult.SUCCESS
+            } catch (e: HttpException) {
+                RefreshResult.DEAD_SESSION // 401 SESSION_DEAD / INVALID_TOKEN
+            } catch (e: IOException) {
+                RefreshResult.NETWORK_FAILURE // do NOT fire the dialog
+            }
+        }
+        inflightRefresh = deferred
+        return try {
+            deferred.await()
+        } finally {
+            if (inflightRefresh === deferred) inflightRefresh = null
+        }
+    }
 }
 
 private fun typeForHttp(code: Int): ErrorType =

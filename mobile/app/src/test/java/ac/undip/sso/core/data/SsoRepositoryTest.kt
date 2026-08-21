@@ -13,6 +13,11 @@ import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.SiapLecturer
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SsoApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerializationException
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -23,9 +28,24 @@ import retrofit2.HttpException
 import retrofit2.Response
 import java.io.IOException
 
+/** Fake TokenStoreLike so refresh + cookie persistence is unit-testable. */
+private class FakeTokenStore(
+    var siap: String? = null,
+    var kulon: String? = null,
+) : TokenStoreLike {
+    var saved: Triple<String, String?, String?>? = null
+    override val siapCookie: Flow<String?> = flowOf(siap)
+    override val kulonCookie: Flow<String?> = flowOf(kulon)
+    override suspend fun save(token: String, siap: String?, kulon: String?) {
+        saved = Triple(token, siap, kulon)
+    }
+    override suspend fun currentToken(): String? = saved?.first
+}
+
 /** Stub-able SsoApi fake so the repository's error mapping is unit-testable. */
 private class FakeApi : SsoApi {
     var profileStub: suspend () -> SiapProfile = { throw UnsupportedOperationException("profile not stubbed") }
+    var markKehadiranStub: suspend (KehadiranRequest) -> KehadiranResponse = { throw UnsupportedOperationException("markKehadiran not stubbed") }
 
     override suspend fun profile(): SiapProfile = profileStub()
 
@@ -43,7 +63,7 @@ private class FakeApi : SsoApi {
 
     override suspend fun absen(): List<SiapAbsen> = throw UnsupportedOperationException()
 
-    override suspend fun markKehadiran(body: KehadiranRequest): KehadiranResponse = throw UnsupportedOperationException()
+    override suspend fun markKehadiran(body: KehadiranRequest): KehadiranResponse = markKehadiranStub(body)
 }
 
 class SsoRepositoryTest {
@@ -160,6 +180,118 @@ class SsoRepositoryTest {
         val r = runBlocking { SsoRepository(api, inMemory, disk).profile() }
 
         assertEquals("FROM-DISK", (r as ApiResult.Success).data.nama)
+    }
+
+    // ────────────── Silent refresh tests (Task 5) ──────────────
+
+    @Test
+    fun `401 triggers refresh then retry succeeds`() = runBlocking {
+        var calls = 0
+        val api = FakeApi().apply {
+            profileStub = {
+                calls++
+                if (calls == 1) throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
+                SiapProfile(nama = "OK", nim = "2404")
+            }
+        }
+        val store = FakeTokenStore()
+        var refreshCalls = 0
+        val repo = SsoRepository(
+            api,
+            tokenStore = store,
+            refreshToken = { refreshCalls++; "new-jwt" },
+        )
+        val r = repo.profile(force = true)
+        assertTrue(r is ApiResult.Success)
+        assertEquals(2, calls)          // original + retry
+        assertEquals(1, refreshCalls)   // exactly one refresh
+        assertEquals("new-jwt", store.saved?.first)
+    }
+
+    @Test
+    fun `401 refresh fails 401 signals onSessionExpired, no retry`() = runBlocking {
+        var notified = 0
+        val api = FakeApi().apply {
+            profileStub = { throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null))) }
+        }
+        val repo = SsoRepository(
+            api,
+            onSessionExpired = { notified++ },
+            tokenStore = FakeTokenStore(),
+            refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
+        )
+        val r = repo.profile(force = true)
+        assertEquals(1, notified)
+        assertTrue(r is ApiResult.Error && r.type == ErrorType.UNAUTHORIZED)
+    }
+
+    @Test
+    fun `401 refresh network failure returns NETWORK error, no dialog`() = runBlocking {
+        var notified = 0
+        val api = FakeApi().apply {
+            profileStub = { throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null))) }
+        }
+        val repo = SsoRepository(
+            api,
+            onSessionExpired = { notified++ },
+            tokenStore = FakeTokenStore(),
+            refreshToken = { throw IOException("network down") },
+        )
+        val r = repo.profile(force = true)
+        assertEquals(0, notified) // DO NOT fire the re-login dialog on a network blip
+        assertTrue(r is ApiResult.Error && r.type == ErrorType.NETWORK)
+    }
+
+    @Test
+    fun `non-retryable 401 does not refresh`() = runBlocking {
+        var notified = 0
+        var refreshAttempts = 0
+        val api = FakeApi().apply {
+            markKehadiranStub = { throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null))) }
+        }
+        val repo = SsoRepository(
+            api,
+            onSessionExpired = { notified++ },
+            tokenStore = FakeTokenStore(),
+            refreshToken = { refreshAttempts++; "new-jwt" },
+        )
+        val r = repo.markKehadiran("qr") // uses safe(retryable = false)
+        assertEquals(1, notified)
+        assertEquals(0, refreshAttempts) // POST never refreshes
+        assertTrue(r is ApiResult.Error && r.type == ErrorType.UNAUTHORIZED)
+    }
+
+    @Test
+    fun `concurrent 401s trigger only one refresh POST`() = runBlocking {
+        var refreshCalls = 0
+        var calls = 0
+        val api = FakeApi().apply {
+            profileStub = {
+                calls++
+                if (calls == 1) throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
+                SiapProfile(nama = "OK", nim = "2404")
+            }
+        }
+        val store = FakeTokenStore()
+        val repo = SsoRepository(
+            api,
+            tokenStore = store,
+            refreshToken = {
+                refreshCalls++
+                delay(50) // make concurrent callers overlap on the shared refresh
+                "new-jwt"
+            },
+        )
+        // Fire two independent data calls concurrently (both 401 on first attempt).
+        // They share one single-flight refresh, so refreshCalls must be exactly 1.
+        val (r1, r2) =
+            coroutineScope {
+                val a = async { repo.profile(force = true) }
+                val b = async { repo.profile(force = true) }
+                a.await() to b.await()
+            }
+        assertTrue(r1 is ApiResult.Success || r2 is ApiResult.Success)
+        assertEquals(1, refreshCalls)
     }
 }
 
