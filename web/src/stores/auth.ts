@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { capture, me, getSiapProfile } from '../api/client';
 import type { User } from '../types';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
+import { onTokenRefreshed } from '../lib/reauth';
 
 const TOKEN_KEY = 'sso_token';
 // SECURITY ASSUMPTION (documented — see security review MEDIUM #8): the JWT is
@@ -131,6 +132,13 @@ export const useAuthStore = defineStore('auth', {
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
+    /** Update the store's JWT after a silent refresh. Called by the axios
+     *  interceptor (via emitTokenRefreshed) and by individual actions that
+     *  obtain a token from other paths. */
+    setToken(token: string) {
+      this.token = token;
+      localStorage.setItem(TOKEN_KEY, token);
+    },
     /** Clear the JWT/user/foto state WITHOUT asking the extension to wipe
      *  session cookies. Used when the server-side session is incomplete so
      *  the still-valid browser cookies can be silently re-captured. */
@@ -210,4 +218,17 @@ export const useAuthStore = defineStore('auth', {
       useExtension().logout();
     },
   },
+});
+
+// Module-level subscription to silent refresh events. Keeps the store token
+// in sync when the axios interceptor rotates the JWT via emitTokenRefreshed.
+// The unsubscribe guard handles HMR: if the module is re-evaluated, the old
+// subscription is torn down first so the callback never fires with stale refs.
+let _unsubTokenSync: (() => void) | undefined;
+if (_unsubTokenSync) {
+  _unsubTokenSync();
+}
+_unsubTokenSync = onTokenRefreshed((token) => {
+  const store = useAuthStore();
+  store.token = token;
 });

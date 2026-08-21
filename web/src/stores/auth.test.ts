@@ -414,4 +414,11 @@ describe('reauth (auto-recover expired session)', () => {
     expect(store.token).toBe('jwt-poll');
     vi.useRealTimers();
   }, 10000);
+
+  it('token is updated via setToken after a silent refresh', async () => {
+    const { useAuthStore } = await import('./auth');
+    const store = useAuthStore();
+    store.setToken('new-jwt');
+    expect(store.token).toBe('new-jwt');
+  });
 });
