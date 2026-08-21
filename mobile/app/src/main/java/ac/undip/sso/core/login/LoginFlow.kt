@@ -59,8 +59,9 @@ private val MS_HOSTS =
  * else (arbitrary external sites) is blocked so the flow stays on the login.
  */
 fun isAllowedLoginHost(host: String): Boolean {
-    if (host.endsWith("undip.ac.id")) return true
     val h = host.lowercase()
+    // exact host or proper subdomain boundary — `evilundip.ac.id` must NOT match
+    if (h == "undip.ac.id" || h.endsWith(".undip.ac.id")) return true
     return MS_HOSTS.any { h == it || h.endsWith(".$it") }
 }
 

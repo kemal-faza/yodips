@@ -17,6 +17,12 @@ export class JwtAuthGuard implements CanActivate {
     try {
       req.user = await this.jwt.verifyAsync(token, {
         secret: this.config.get<string>('JWT_SECRET'),
+        // Pin the algorithm and require issuer/audience so a forged/mismatched
+        // token (e.g. one signed with a different alg or for another audience)
+        // is rejected outright rather than relying on default verification.
+        algorithms: ['HS256'],
+        issuer: 'yodips',
+        audience: 'yodips-web',
       });
       return true;
     } catch {

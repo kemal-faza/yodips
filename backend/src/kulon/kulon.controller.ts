@@ -3,6 +3,7 @@ import {
   Get,
   HttpException,
   HttpStatus,
+  Logger,
   Param,
   Query,
   Req,
@@ -15,6 +16,8 @@ import { SessionStore } from '../session/session-store';
 @UseGuards(JwtAuthGuard)
 @Controller('api/kulon')
 export class KulonController {
+  private readonly logger = new Logger(KulonController.name);
+
   constructor(
     private readonly kulonService: KulonService,
     private readonly sessionStore: SessionStore,
@@ -171,14 +174,20 @@ export class KulonController {
           HttpStatus.UNAUTHORIZED,
         );
       }
+      // Log the raw upstream detail server-side; expose only a generic message
+      // so no internal host/URL/undici internals leak to the client.
+      this.logger.error(
+        `Kulon connection failed: ${(e as Error)?.message}`,
+        (e as Error)?.stack,
+      );
       throw new HttpException(
-        `Gagal terhubung ke Kulon: ${(e as Error).message}`,
+        { message: 'Gagal terhubung ke Kulon', detail: 'BAD_GATEWAY' },
         HttpStatus.BAD_GATEWAY,
       );
     }
     if (!res.ok) {
       throw new HttpException(
-        `Kulon merespons ${res.status}. Silakan login ulang via SSO`,
+        { message: 'Kulon mengalami gangguan. Silakan login ulang via SSO' },
         HttpStatus.UNAUTHORIZED,
       );
     }

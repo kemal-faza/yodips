@@ -48,17 +48,24 @@ describe('useExtension', () => {
     const cb = vi.fn();
     const off = ext.onResult(cb);
     const payload = { status: 'ok', accessToken: 'jwt' };
-    window.dispatchEvent(new MessageEvent('message', { data: { source: 'undip-sso-extension', payload } }));
+    window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data: { source: 'undip-sso-extension', payload } }));
     expect(cb).toHaveBeenCalledWith(payload);
     off();
-    window.dispatchEvent(new MessageEvent('message', { data: { source: 'undip-sso-extension', payload } }));
+    window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data: { source: 'undip-sso-extension', payload } }));
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
   it('onResult ignores messages from other sources', async () => {
     const cb = vi.fn();
     useExtension().onResult(cb);
-    window.dispatchEvent(new MessageEvent('message', { data: { source: 'someone-else', payload: {} } }));
+    window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data: { source: 'someone-else', payload: {} } }));
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it('onResult ignores messages from a different (cross-origin) origin', async () => {
+    const cb = vi.fn();
+    useExtension().onResult(cb);
+    window.dispatchEvent(new MessageEvent('message', { origin: 'https://evil.example', data: { source: 'undip-sso-extension', payload: { status: 'ok', accessToken: 'forged' } } }));
     expect(cb).not.toHaveBeenCalled();
   });
 });

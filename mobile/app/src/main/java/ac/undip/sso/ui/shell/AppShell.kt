@@ -1,8 +1,10 @@
 package ac.undip.sso.ui.shell
 
 import android.os.SystemClock
+import ac.undip.sso.core.data.EncryptedPersistentCache
 import ac.undip.sso.core.data.PrefsPersistentCache
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.core.session.KeystoreTokenCipher
 import ac.undip.sso.ui.feature.DashboardScreen
 import ac.undip.sso.ui.feature.IrsScreen
 import ac.undip.sso.ui.feature.KhsScreen
@@ -92,7 +94,18 @@ fun AppShell(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val context = LocalContext.current.applicationContext
-    val repo = remember { SsoRepository(persistent = PrefsPersistentCache(context)) }
+    // Encrypt cache payloads (incl. the PII-bearing profile) at rest via the same
+    // Android-KeyStore-backed cipher as the token store — never plaintext on disk.
+    val repo =
+        remember {
+            SsoRepository(
+                persistent =
+                    EncryptedPersistentCache(
+                        KeystoreTokenCipher(context),
+                        PrefsPersistentCache(context),
+                    ),
+            )
+        }
 
     Scaffold(
         bottomBar = { ShellBottomBar(currentRoute) { route -> navigate(navController, route) } },

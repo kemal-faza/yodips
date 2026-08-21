@@ -4,6 +4,7 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.CertificatePinner
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -42,6 +43,19 @@ object ApiClient {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            // Certificate pinning: the backend host is fixed, so a CA compromise
+            // cannot MITM the JWT handoff. Pins are the SPKI SHA-256 of the leaf
+            // (crunchy.my.id) and its GTS WE1 intermediate (the resilient backup
+            // that survives a leaf rotation without an app update).
+            .certificatePinner(
+                CertificatePinner
+                    .Builder()
+                    .add(
+                        "backend.crunchy.my.id",
+                        "sha256/kQsdoAmDUNHVpLtovFJwVA6FYPpS1/IdstEYLYBX5+U=",
+                        "sha256/kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=",
+                    ).build(),
+            )
             .build()
 
     /**

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DEBUG-ONLY override of res/xml/network_security_config.xml (this source set
+     wins over src/main during debug builds). Allows cleartext HTTP ONLY to the
+     emulator loopback (http://10.0.2.2:3000) for a local backend. Production
+     hosts (siap/kulon/sso) are NOT cleared, and release builds never see this. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

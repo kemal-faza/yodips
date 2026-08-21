@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import ac.undip.sso.core.session.TokenCipher
 import kotlinx.coroutines.flow.first
 
 /**
@@ -71,5 +72,32 @@ class PrefsPersistentCache(
             it[stringPreferencesKey(jsonKey(key))] = json
             it[longPreferencesKey(timeKey(key))] = fetchedAt
         }
+    }
+}
+
+/**
+ * Decorator that encrypts every cache value at rest before handing it to the
+ * wrapped [PersistentCache], and decrypts on read. The on-disk profile (PII —
+ * NIK, phone, DOB, etc.) must never survive as plaintext, matching the already-
+ * encrypted [ac.undip.sso.core.session.TokenStore]. Fail-closed: a value that
+ * cannot be decrypted (tampered / wrong key / legacy plaintext) is treated as a
+ * cache miss (null) so the screen re-fetches instead of trusting unverifiable data.
+ */
+class EncryptedPersistentCache(
+    private val cipher: TokenCipher,
+    private val delegate: PersistentCache,
+) : PersistentCache {
+    override suspend fun load(key: String): PersistentCache.Entry? {
+        val entry = delegate.load(key) ?: return null
+        val plain = cipher.decrypt(entry.json) ?: return null
+        return PersistentCache.Entry(plain, entry.fetchedAt)
+    }
+
+    override suspend fun save(
+        key: String,
+        json: String,
+        fetchedAt: Long,
+    ) {
+        delegate.save(key, cipher.encrypt(json), fetchedAt)
     }
 }

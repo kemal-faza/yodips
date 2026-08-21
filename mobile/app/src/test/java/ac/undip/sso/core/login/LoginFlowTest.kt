@@ -30,6 +30,16 @@ class LoginFlowTest {
         assertFalse(isAllowedLoginHost("undip.ac.id.evil.com"))
     }
 
+    @Test
+    fun `suffix lookalike undip domain is blocked`() {
+        // "evilundip.ac.id" ends with "undip.ac.id" but is NOT a legal subdomain
+        // — must be rejected (exact-match or proper `.` boundary only).
+        assertFalse(isAllowedLoginHost("evilundip.ac.id"))
+        assertFalse(isAllowedLoginHost("undip.ac.id.evil.com"))
+        assertTrue(isAllowedLoginHost("sso.undip.ac.id"))
+        assertTrue(isAllowedLoginHost("undip.ac.id"))
+    }
+
     // --- isSsoHost / isMicrosoftAuthorize ---
     @Test
     fun `host predicates classify urls correctly`() {

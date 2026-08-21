@@ -66,7 +66,15 @@ export class AuthService {
    */
   async captureSsoSession() {
     // 1) Try smart reuse of a stored, still-valid session — no browser window.
-    const existing = await this.findReusableSession();
+    //    SECURITY: this path uses access to ONE user's stored session to issue
+    //    a JWT to an unauthenticated caller (a namespace cross-boundary leak in
+    //    a shared deployment), so it is HARD-GATED behind CAPTURE_REUSE_ENABLED
+    //    (default OFF). Do NOT enable except in a single-admin private dev env.
+    const reuseEnabled =
+      this.config.get<string>('CAPTURE_REUSE_ENABLED') === 'true';
+    const existing = reuseEnabled
+      ? await this.findReusableSession()
+      : await this.preventReuse();
     if (existing) {
       this.logger.log('Reusing stored SSO session — no browser window needed');
       const payload = { sub: existing.identity, via: 'reuse' };
@@ -132,6 +140,16 @@ export class AuthService {
   /** A session is reusable if captured within the TTL window. */
   private isFresh(session: { capturedAt: number }): boolean {
     return Date.now() - session.capturedAt < this.SESSION_TTL_MS;
+  }
+
+  /**
+   * Explicit no-reuse gate: always returns null so `/sso/capture` falls through
+   * to the interactive (headed-browser) flow and NEVER hands an existing stored
+   * session to an unauthenticated caller. Replaces `findReusableSession` when
+   * the CAPTURE_REUSE_ENABLED flag is unset (the security-safe default).
+   */
+  private async preventReuse(): Promise<null> {
+    return null;
   }
 
   /** A session is reusable only if its Kulon cookie is still VERIFIED valid. */

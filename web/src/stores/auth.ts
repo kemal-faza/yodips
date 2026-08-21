@@ -4,6 +4,14 @@ import type { User } from '../types';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 
 const TOKEN_KEY = 'sso_token';
+// SECURITY ASSUMPTION (documented — see security review MEDIUM #8): the JWT is
+// stored in localStorage, so any script running in the page context can read it.
+// This is accepted because (a) the stored-XSS vector that would exfiltrate it is
+// neutralized server-side (Kulon descriptionHtml is sanitized before it reaches
+// v-html), and (b) migrating to an httpOnly SameSite cookie or a memory-only +
+// refresh flow is a cross-cutting architectural change tracked separately. The
+// web origin is restricted to script we ship and CSP further raises the exploit
+// bar. Revisit before shipping an untrusted-content rendering path.
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({

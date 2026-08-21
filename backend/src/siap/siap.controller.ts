@@ -71,6 +71,12 @@ export class SiapController {
   @Get('kehadiran/:id')
   async getKehadiran(@Param('id') id: string, @Req() req: AuthedRequest) {
     const cookie = await this.requireSiapCookie(req);
+    if (!/^\d+$/.test(id)) {
+      throw new HttpException(
+        { message: 'ID kehadiran tidak valid' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     return this.siapService.getKehadiran(cookie, id);
   }
 
@@ -92,6 +98,12 @@ export class SiapController {
   @Post('notifications/:id/unread')
   async markNotification(@Param('id') id: string, @Req() req: AuthedRequest) {
     const cookie = await this.requireSiapCookie(req);
+    if (!/^\d+$/.test(id)) {
+      throw new HttpException(
+        { message: 'ID notifikasi tidak valid' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     return this.siapService.markNotification(cookie, id);
   }
 

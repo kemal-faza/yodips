@@ -25,6 +25,9 @@ import { JwtAuthGuard } from './jwt-auth.guard';
         secret: c.get<string>('JWT_SECRET')!,
         signOptions: {
           expiresIn: c.get<string>('JWT_EXPIRES_IN')! as never,
+          algorithm: 'HS256',
+          issuer: 'yodips',
+          audience: 'yodips-web',
         },
       }),
     }),

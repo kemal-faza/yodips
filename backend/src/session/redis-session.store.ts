@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import Redis from 'ioredis';
 import { CapturedSession } from '../playwright/playwright-auth.service';
 import { SessionStore } from './session-store';
@@ -26,7 +26,11 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     encKey: string,
   ) {
     super();
-    this.key = createHash('sha256').update(encKey).digest();
+    // Derive the AES-256 key from the config secret with scrypt (a memory-hard
+    // KDF) rather than a single SHA-256 — resists offline brute force if the
+    // secret is weak. 32-byte salt + 256-bit output; same salt per key is fine
+    // here because the SESSION_ENC_KEY is a deployment secret, not per-user.
+    this.key = scryptSync(encKey, 'yodips-session', 32);
   }
 
   async set(identity: string, session: CapturedSession): Promise<void> {

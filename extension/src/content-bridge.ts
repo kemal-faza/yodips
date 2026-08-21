@@ -4,7 +4,10 @@
 // worker suspends during a slow login).
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.action === 'handoff-result') {
-    window.postMessage({ source: 'undip-sso-extension', payload: msg }, '*');
+    // Target ONLY same-origin windows: the content script runs inside the web
+    // app's page, so posting to window.location.origin means a cross-origin
+    // subframe/third-party page cannot eavesdrop on the JWT in the payload.
+    window.postMessage({ source: 'undip-sso-extension', payload: msg }, window.location.origin);
     sendResponse({ ok: true });
   }
 });

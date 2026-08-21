@@ -1,12 +1,14 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
+  IsBoolean,
   IsEnum,
   IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
   Min,
+  MinLength,
 } from 'class-validator';
 
 export enum Env {
@@ -29,6 +31,7 @@ export class EnvConfig {
 
   @IsString()
   @IsNotEmpty()
+  @MinLength(32)
   JWT_SECRET: string;
 
   @IsString()
@@ -84,6 +87,13 @@ export class EnvConfig {
   @Min(1000)
   SSO_CAPTURE_TIMEOUT_MS: number = 180000;
 
+  @IsOptional()
+  @IsBoolean()
+  /** Allow the deprecated single-session auto-reuse path in POST /api/auth/sso/capture.
+   *  Default OFF — do NOT enable in production (an unauthenticated caller with a
+   *  single-session store could otherwise receive another user's session+JWT). */
+  CAPTURE_REUSE_ENABLED?: boolean;
+
   // Session store persistence
   @IsIn(['memory', 'redis'])
   SESSION_BACKEND: 'memory' | 'redis' = 'memory';
@@ -102,6 +112,7 @@ export class EnvConfig {
 
   @IsOptional()
   @IsString()
+  @MinLength(32)
   SESSION_ENC_KEY?: string;
 
   // CORS origins (comma-separated) for the frontend

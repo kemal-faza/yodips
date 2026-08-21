@@ -59,7 +59,12 @@ export function useExtension() {
 
   /** Subscribe to the final result posted to the window by the content bridge. */
   function onResult(cb: (p: ExtOutboundStatus) => void): () => void {
+    const appOrigin = window.location.origin;
     const handler = (ev: MessageEvent) => {
+      // Only trust a message that both (a) claims the ext source AND (b) comes
+      // from THIS page's own origin. A malicious cross-origin iframe could
+      // forge {source:'undip-sso-extension', ...}; ev.origin blocks it.
+      if (ev.origin !== appOrigin) return;
       const d = ev.data as { source?: string; payload?: ExtOutboundStatus } | undefined;
       if (d?.source === BRIDGE_SOURCE && d.payload) cb(d.payload);
     };

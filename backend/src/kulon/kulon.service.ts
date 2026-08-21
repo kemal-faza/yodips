@@ -1,4 +1,5 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
+import { sanitizeDescriptionHtml } from './sanitize-description';
 import { DataCache } from '../cache/data-cache';
 import { SiapService } from '../siap/siap.service';
 
@@ -923,7 +924,11 @@ export class KulonService {
     const match = html.match(
       /id="intro"[\s\S]*?<div class="no-overflow">([\s\S]*?)<\/div>/,
     );
-    return match ? match[1].trim() : '';
+    if (!match) return '';
+    // Sanitize the extracted HTML server-side with a strict allowlist:
+    // instructor-authored assignment content is untrusted, and it flows into
+    // v-html on the client. See sanitize-description.ts for the allowlist.
+    return sanitizeDescriptionHtml(match[1].trim());
   }
 
   private extractName(html: string): string {

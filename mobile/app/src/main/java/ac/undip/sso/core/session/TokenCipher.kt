@@ -1,6 +1,7 @@
 package ac.undip.sso.core.session
 
 import android.content.Context
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
@@ -85,7 +86,7 @@ class KeystoreTokenCipher(
             (keyStore.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
 
             val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-            generator.init(
+            val specBuilder =
                 KeyGenParameterSpec.Builder(
                     alias,
                     KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
@@ -93,8 +94,12 @@ class KeystoreTokenCipher(
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .setKeySize(256)
-                    .build(),
-            )
+            // API 30+: bind the key to the device-unlocked state so it is unusable
+            // while the device is locked (zero UX cost, reduces cold-boot exposure).
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                specBuilder.setUnlockedDeviceRequired(true)
+            }
+            generator.init(specBuilder.build())
             return generator.generateKey()
         }
     }

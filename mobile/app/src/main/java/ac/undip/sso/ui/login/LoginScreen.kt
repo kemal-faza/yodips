@@ -182,6 +182,9 @@ fun LoginScreen(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.loadsImagesAutomatically = true
+                        // No local files ever need to load; blocking file access
+                        // closes a file:// exfiltration/JS vector in the WebView.
+                        settings.setAllowFileAccess(false)
                         webViewClient =
                             object : WebViewClient() {
                                 override fun onPageStarted(

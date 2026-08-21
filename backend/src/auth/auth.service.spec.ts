@@ -45,6 +45,7 @@ const mockConfig = {
       SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
       CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
       HANDOFF_KULON_RETRY_DELAY_MS: '1',
+      CAPTURE_REUSE_ENABLED: 'true',
     };
     return map[k];
   }),
@@ -111,6 +112,53 @@ describe('AuthService.captureSsoSession', () => {
 
     expect(res.reused).toBe(true);
     expect(mockPlaywright.launchAndCaptureSession).not.toHaveBeenCalled();
+  });
+
+  it('never auto-reuses a stored session when CAPTURE_REUSE_ENABLED is off', async () => {
+    // Default (flag absent): an unauthenticated /sso/capture caller must NOT be
+    // handed another user's stored session+JWT (the HIGH #1 leak).
+    const map: Record<string, string> = {
+      SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+      SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
+      CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
+      HANDOFF_KULON_RETRY_DELAY_MS: '1',
+      // note: no CAPTURE_REUSE_ENABLED key
+    };
+    mockConfig.get = jest.fn((k: string) => map[k]);
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: 'ESTSAUTH=MS',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+    });
+    const fullCookies = {
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: 'ESTSAUTH=MS',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: 'cookiesession1=SIAP',
+      capturedAt: Date.now(),
+    };
+    mockPlaywright.launchAndCaptureSession.mockResolvedValue(fullCookies);
+    await okFetch();
+
+    const svc = makeService();
+    const res = await svc.captureSsoSession();
+
+    expect(res.reused).toBe(false);
+    expect(mockPlaywright.launchAndCaptureSession).toHaveBeenCalled();
+    // restore default config for later tests
+    mockConfig.get = jest.fn((k: string) => {
+      const map2: Record<string, string> = {
+        SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+        SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
+        CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
+        HANDOFF_KULON_RETRY_DELAY_MS: '1',
+        CAPTURE_REUSE_ENABLED: 'true',
+      };
+      return map2[k];
+    });
   });
 
   it('opens interactive browser window when no stored session', async () => {

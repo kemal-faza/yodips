@@ -259,9 +259,11 @@ describe('extension login', () => {
     const store = useAuthStore();
     const handler = vi.fn();
     const cleanup = store.onExtensionResult(handler);
-    window.postMessage(
-      { source: 'undip-sso-extension', payload: { status: 'ok', accessToken: 'jwt-msg' } },
-      '*',
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { source: 'undip-sso-extension', payload: { status: 'ok', accessToken: 'jwt-msg' } },
+      }),
     );
     await new Promise((r) => setTimeout(r, 0));
     expect(handler).toHaveBeenCalledWith({ status: 'ok', accessToken: 'jwt-msg' });
@@ -272,7 +274,12 @@ describe('extension login', () => {
     const store = useAuthStore();
     const handler = vi.fn();
     const cleanup = store.onExtensionResult(handler);
-    window.postMessage({ source: 'other-app', payload: { status: 'ok', accessToken: 'x' } }, '*');
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { source: 'other-app', payload: { status: 'ok', accessToken: 'x' } },
+      }),
+    );
     await new Promise((r) => setTimeout(r, 0));
     expect(handler).not.toHaveBeenCalled();
     cleanup();
