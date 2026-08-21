@@ -5,6 +5,7 @@ import ac.undip.sso.core.data.EncryptedPersistentCache
 import ac.undip.sso.core.data.PrefsPersistentCache
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.session.KeystoreTokenCipher
+import ac.undip.sso.core.session.TokenStore
 import ac.undip.sso.ui.feature.DashboardScreen
 import ac.undip.sso.ui.feature.IrsScreen
 import ac.undip.sso.ui.feature.KhsScreen
@@ -87,6 +88,7 @@ enum class Tab(
 
 @Composable
 fun AppShell(
+    tokenStore: TokenStore,
     themeController: ThemeController,
     onLogout: () -> Unit = {},
 ) {
@@ -104,6 +106,7 @@ fun AppShell(
                         KeystoreTokenCipher(context),
                         PrefsPersistentCache(context),
                     ),
+                tokenStore = tokenStore,
             )
         }
 

@@ -18,6 +18,8 @@ import ac.undip.sso.core.network.SsoApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
@@ -31,6 +33,14 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Oldest on-disk entry we will serve before falling back to the network. */
 private const val DEFAULT_DISK_MAX_AGE_MS = 12 * 60 * 60 * 1000L // 12h
+
+/** Minimal seam so tests can fake the token store without a real DataStore. */
+interface TokenStoreLike {
+    val siapCookie: Flow<String?>
+    val kulonCookie: Flow<String?>
+    suspend fun save(token: String, siap: String?, kulon: String?)
+    suspend fun currentToken(): String?
+}
 
 /**
  * Repository: maps every Retrofit call into [ApiResult] with a coarse error
@@ -56,6 +66,8 @@ class SsoRepository(
     private val persistent: PersistentCache = NoOpPersistentCache,
     private val diskMaxAgeMs: Long = DEFAULT_DISK_MAX_AGE_MS,
     private val onSessionExpired: () -> Unit = SessionExpiredEvents::notifySessionExpired,
+    private val tokenStore: TokenStoreLike? = null,
+    private val refreshToken: suspend () -> String = { ApiClient.refresh() },
 ) {
     // Stale-while-revalidate: stale data is served instantly and re-fetched in
     // the background so a tab revisit never blocks on the slow backend scrape.
@@ -104,7 +116,8 @@ class SsoRepository(
             safe { api.absen() }
         }
 
-    suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> = safe { api.markKehadiran(KehadiranRequest(token)) }
+    suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> =
+        safe(retryable = false) { api.markKehadiran(KehadiranRequest(token)) }
 
     /**
      * Fresh cache → serve instantly, never hitting the network.
@@ -209,7 +222,7 @@ class SsoRepository(
      * the app-wide re-login dialog appears even when the failing call came from
      * a background refresh the screen never surfaces.
      */
-    private suspend fun <T> safe(block: suspend () -> T): ApiResult<T> =
+    private suspend fun <T> safe(retryable: Boolean = true, block: suspend () -> T): ApiResult<T> =
         try {
             ApiResult.Success(block())
         } catch (e: HttpException) {

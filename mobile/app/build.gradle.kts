@@ -108,6 +108,7 @@ dependencies {
     implementation(libs.mlkit.barcode)
 
     testImplementation(libs.junit)
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
     debugImplementation(libs.androidx.ui.tooling)
 }

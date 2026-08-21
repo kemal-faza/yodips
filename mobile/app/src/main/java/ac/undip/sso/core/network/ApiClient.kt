@@ -9,6 +9,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.ResponseBody.Companion.toResponseBody
+import retrofit2.HttpException
+import retrofit2.Response
 import retrofit2.Retrofit
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -100,6 +103,31 @@ object ApiClient {
     }
 
     /**
+     * POST /api/auth/refresh with the current (possibly expired) JWT. Returns
+     * the new JWT. Throws [retrofit2.HttpException] on 401 (SESSION_DEAD /
+     * INVALID_TOKEN) and [java.io.IOException] on network failure.
+     */
+    suspend fun refresh(baseUrl: String = BASE_URL): String {
+        val req =
+            Request
+                .Builder()
+                .url("$baseUrl/api/auth/refresh")
+                .post(ByteArray(0).toRequestBody(null))
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .build()
+        client.newCall(req).execute().use { res ->
+            if (!res.isSuccessful) {
+                throw HttpException(
+                    Response.error<Any>(res.code, res.body ?: "".toResponseBody(null)),
+                )
+            }
+            val body = res.body?.string().orEmpty()
+            val parsed = apiJson.decodeFromString<RefreshResponse>(body)
+            return parsed.accessToken
+        }
+    }
+
+    /**
      * Retrofit-backed client for the JWT-guarded data routes. The OkHttp
      * interceptor injects `Authorization: Bearer <authToken>` so callers do not
      * attach the header themselves.
@@ -131,3 +159,6 @@ object ApiClient {
             .create(SsoApi::class.java)
     }
 }
+
+@kotlinx.serialization.Serializable
+internal data class RefreshResponse(val accessToken: String)

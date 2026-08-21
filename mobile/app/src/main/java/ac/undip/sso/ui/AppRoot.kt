@@ -60,6 +60,7 @@ fun AppRoot(
 
     if (hasToken) {
         AppShell(
+            tokenStore = tokenStore,
             themeController = themeController,
             onLogout = onLogout,
         )

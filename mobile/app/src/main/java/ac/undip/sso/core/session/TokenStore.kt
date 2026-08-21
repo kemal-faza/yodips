@@ -1,5 +1,6 @@
 package ac.undip.sso.core.session
 
+import ac.undip.sso.core.data.TokenStoreLike
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -27,7 +28,7 @@ internal val Context.tokenDataStore: DataStore<Preferences> by preferencesDataSt
 class TokenStore(
     private val dataStore: DataStore<Preferences>,
     private val cipher: TokenCipher,
-) {
+) : TokenStoreLike {
     private object Keys {
         val JWT = stringPreferencesKey("jwt")
         val SIAP_COOKIE = stringPreferencesKey("siap_cookie")
@@ -35,14 +36,14 @@ class TokenStore(
     }
 
     val jwt: Flow<String?> = dataStore.data.map { decryptOrNull(it[Keys.JWT]) }
-    val siapCookie: Flow<String?> = dataStore.data.map { decryptOrNull(it[Keys.SIAP_COOKIE]) }
-    val kulonCookie: Flow<String?> = dataStore.data.map { decryptOrNull(it[Keys.KULON_COOKIE]) }
+    override val siapCookie: Flow<String?> = dataStore.data.map { decryptOrNull(it[Keys.SIAP_COOKIE]) }
+    override val kulonCookie: Flow<String?> = dataStore.data.map { decryptOrNull(it[Keys.KULON_COOKIE]) }
 
     /**
      * Encrypts and persists the token + optional cookies. A failure to encrypt
      * (throws) aborts the write — fail-closed, never persist plaintext.
      */
-    suspend fun save(token: String, siap: String?, kulon: String?) {
+    override suspend fun save(token: String, siap: String?, kulon: String?) {
         dataStore.edit {
             it[Keys.JWT] = cipher.encrypt(token)
             if (siap != null) it[Keys.SIAP_COOKIE] = cipher.encrypt(siap)
@@ -50,7 +51,7 @@ class TokenStore(
         }
     }
 
-    suspend fun currentToken(): String? = jwt.first()
+    override suspend fun currentToken(): String? = jwt.first()
 
     suspend fun clear() {
         dataStore.edit { it.clear() }
