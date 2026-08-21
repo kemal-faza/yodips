@@ -37,6 +37,11 @@ const mockJwt = {
     void p;
     return 'jwt-token';
   }),
+  verifyAsync: jest.fn(async (token: string, opts: any) => {
+    if (token === 'expired-but-valid') return { sub: '24060121130000', via: 'handoff' };
+    if (token === 'forged') throw new Error('invalid signature');
+    throw new Error('unknown token');
+  }),
 };
 const mockConfig = {
   get: jest.fn((k: string) => {
@@ -337,6 +342,48 @@ describe('AuthService.captureSsoSession', () => {
     expect(mockSessionStore.get('24060121130000').kulonCookie).toContain(
       'MoodleSession=K',
     );
+  });
+});
+
+describe('AuthService.refresh', () => {
+  it('mints a new JWT when signature is valid and the session is alive', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+    });
+    const svc = makeService();
+    const out = await svc.refresh('expired-but-valid');
+    expect(out.accessToken).toBe('jwt-token');
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({ sub: '24060121130000', via: 'handoff' });
+  });
+
+  it('preserves the via claim', async () => {
+    mockJwt.verifyAsync.mockResolvedValueOnce({ sub: '24060121130000', via: 'oidc' });
+    mockSessionStore._map.set('24060121130000', { identity: '24060121130000', kulonCookie: 'K', siapCookie: '', capturedAt: Date.now() });
+    const svc = makeService();
+    await svc.refresh('expired-but-valid');
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({ sub: '24060121130000', via: 'oidc' });
+  });
+
+  it('rejects a forged token with INVALID_TOKEN', async () => {
+    const svc = makeService();
+    await expect(svc.refresh('forged')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+  });
+
+  it('returns SESSION_DEAD when the session store has no record', async () => {
+    // mockSessionStore._map is empty
+    const svc = makeService();
+    await expect(svc.refresh('expired-but-valid')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
   });
 });
 

@@ -6,7 +6,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 
 describe('AuthController', () => {
   let controller: AuthController;
-  const authService = { login: jest.fn(), me: jest.fn(), getMicrosoftAuthUrl: jest.fn(), handleMicrosoftCallback: jest.fn(), captureSsoSession: jest.fn() };
+  const authService = { login: jest.fn(), me: jest.fn(), getMicrosoftAuthUrl: jest.fn(), handleMicrosoftCallback: jest.fn(), captureSsoSession: jest.fn(), refresh: jest.fn() };
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -64,5 +64,21 @@ describe('AuthController', () => {
     const res = await controller.sessionHandoff({ kulonCookie: 'MoodleSession=K' } as any);
     expect(res.accessToken).toBe('jwt4');
     expect(authService.handleSessionHandoff).toHaveBeenCalled();
+  });
+
+  it('refresh extracts the Bearer token and delegates to the service', async () => {
+    authService.refresh.mockResolvedValue({ accessToken: 'new-jwt' });
+    const res = await controller.refresh({
+      headers: { authorization: 'Bearer abc.def.ghi' },
+    } as any);
+    expect(res.accessToken).toBe('new-jwt');
+    expect(authService.refresh).toHaveBeenCalledWith('abc.def.ghi');
+  });
+
+  it('refresh rejects a missing Authorization header', async () => {
+    await expect(controller.refresh({ headers: {} } as any)).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
   });
 });

@@ -287,6 +287,49 @@ export class AuthService {
     };
   }
 
+  /**
+   * Silent JWT rotation. The incoming token may be expired (JWT_EXPIRES_IN=12h
+   * is far shorter than the 7d sliding session), so verify the SIGNATURE only
+   * (ignoreExpiration) and mint a fresh JWT iff the backend session record is
+   * still alive. A dead record means the user must re-login (SESSION_DEAD).
+   */
+  async refresh(token: string) {
+    let payload: { sub?: string; via?: string };
+    try {
+      payload = await this.jwt.verifyAsync(token, {
+        secret: this.config.get<string>('JWT_SECRET'),
+        ignoreExpiration: true,
+        algorithms: ['HS256'],
+        issuer: 'yodips',
+        audience: 'yodips-web',
+      });
+    } catch {
+      throw new HttpException(
+        { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const sub = payload?.sub;
+    if (!sub) {
+      throw new HttpException(
+        { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const session = await this.sessionStore.get(sub);
+    if (!session) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const accessToken = await this.jwt.signAsync({
+      sub,
+      via: typeof payload.via === 'string' ? payload.via : 'handoff',
+    });
+    return { accessToken };
+  }
+
   async me(user: any) {
     const session = await this.sessionStore.get(user?.sub);
     const present = !!session;

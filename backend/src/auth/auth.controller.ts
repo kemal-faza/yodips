@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpException, HttpStatus, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -42,6 +42,22 @@ export class AuthController {
   @Post('session/handoff')
   sessionHandoff(@Body() dto: HandoffDto) {
     return this.authService.handleSessionHandoff(dto);
+  }
+
+  // Silent JWT rotation. Public like handoff (the token may already be expired,
+  // so it cannot pass JwtAuthGuard). Throttled hard: it is a token-minting oracle.
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('refresh')
+  async refresh(@Req() req: any) {
+    const auth = req.headers?.authorization ?? '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!token) {
+      throw new HttpException(
+        { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return this.authService.refresh(token);
   }
 
   @UseGuards(JwtAuthGuard)
