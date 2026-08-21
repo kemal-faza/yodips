@@ -12,7 +12,7 @@ import type {
   SiapProfile,
   User,
 } from '../types';
-import { emitReauthRequested } from '../lib/reauth';
+import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
 
 const TOKEN_KEY = 'sso_token';
 
@@ -30,25 +30,49 @@ apiClient.interceptors.request.use((config) => {
 
 apiClient.interceptors.response.use(
   (res) => res,
-  (error) => {
+  async (error) => {
     const status = error?.response?.status;
     const url: string = error?.config?.url ?? '';
+    const method: string = (error?.config?.method ?? 'get').toLowerCase();
     if (status === 401) {
       // A backend session can report 401 even when the JWT is still valid
       // (Kulon/SIAP cookies expired server-side). For those routes keep the
       // token — the view shows a re-login card. Only a genuine auth-token 401
       // (invalid/expired JWT) is a full logout + redirect.
       const isServiceSession = url.startsWith('/api/kulon') || url.startsWith('/api/siap');
-      if (!isServiceSession) {
-        // Auth-token 401 (invalid/expired JWT): clear the token and ask the app
-        // to silently re-auth via the extension (if present). We do NOT hard-
-        // redirect here — a ReauthOverlay handles recovery, and falls back to
-        // /login only if re-auth fails.
-        localStorage.removeItem(TOKEN_KEY);
-        emitReauthRequested();
+      // The refresh endpoint's OWN 401 must be terminal — never re-refresh (loop).
+      if (isServiceSession || url.startsWith('/api/auth/refresh')) {
+        return Promise.reject(error);
       }
-      // Service 401 (Kulon/SIAP back-end session expired); JWT is still valid.
-      // Keep the token so the user can re-capture without losing auth state.
+      // Auth-token 401: try silent refresh first. Only if that fails do we
+      // clear the token and ask the app to re-auth.
+      const alreadyRetried = (error.config as { _retried?: boolean } | undefined)?._retried;
+      if (!alreadyRetried) {
+        let newToken: string;
+        try {
+          newToken = await refreshToken();
+        } catch (refreshErr) {
+          const refreshStatus = (refreshErr as any)?.response?.status;
+          if (refreshStatus === 401) {
+            // Genuinely dead session (SESSION_DEAD / INVALID_TOKEN).
+            localStorage.removeItem(TOKEN_KEY);
+            emitReauthRequested();
+          }
+          // Network/5xx: keep the token; server down != dead session.
+          return Promise.reject(error);
+        }
+        localStorage.setItem(TOKEN_KEY, newToken);
+        emitTokenRefreshed(newToken); // keep auth store in sync
+        // Only retry idempotent requests; a POST must not be re-sent.
+        // The retry propagates as-is: a 401 here carries `_retried`, so a
+        // re-entry into this interceptor goes straight to the re-login path.
+        if (method === 'get' || method === 'head') {
+          return apiClient.request({ ...error.config, _retried: true });
+        }
+        return Promise.reject(error);
+      }
+      localStorage.removeItem(TOKEN_KEY);
+      emitReauthRequested();
     }
     return Promise.reject(error);
   },
@@ -62,6 +86,12 @@ export async function capture(): Promise<CaptureResult> {
 export async function me(): Promise<User> {
   const { data } = await apiClient.get<User>('/api/auth/me');
   return data;
+}
+
+/** POST /api/auth/refresh with the current (possibly expired) JWT. Throws on failure. */
+export async function refreshToken(): Promise<string> {
+  const { data } = await apiClient.post<{ accessToken: string }>('/api/auth/refresh');
+  return data.accessToken;
 }
 
 export async function getAssignments(): Promise<Assignment[]> {

@@ -18,3 +18,23 @@ export function onReauthRequested(cb: ReauthListener): () => void {
   listeners.add(cb);
   return () => listeners.delete(cb);
 }
+
+type TokenListener = (token: string) => void;
+const tokenListeners = new Set<TokenListener>();
+
+/** Notify subscribers (e.g. the auth store) that the JWT was silently rotated. */
+export function emitTokenRefreshed(token: string) {
+  for (const cb of [...tokenListeners]) {
+    try {
+      cb(token);
+    } catch {
+      // Never let one handler's failure break the others.
+    }
+  }
+}
+
+/** Subscribe to silent JWT rotations. Returns an unsubscribe function. */
+export function onTokenRefreshed(cb: TokenListener): () => void {
+  tokenListeners.add(cb);
+  return () => tokenListeners.delete(cb);
+}

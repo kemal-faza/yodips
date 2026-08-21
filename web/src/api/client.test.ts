@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAssignments, getCourses, capture } from './client';
 import { emitReauthRequested } from '../lib/reauth';
 
-vi.mock('../lib/reauth', () => ({ emitReauthRequested: vi.fn() }));
+vi.mock('../lib/reauth', () => ({
+  emitReauthRequested: vi.fn(),
+  emitTokenRefreshed: vi.fn(),
+}));
 
 // Mock axios so the instance's get/post/request are controllable and we don't
 // hit the real backend. axios binds instance methods at construction time, so
@@ -104,10 +107,12 @@ describe('api client', () => {
     expect(localStorage.getItem('sso_token')).toBe('keep-me');
   });
 
-  it('auth 401 clears token and requests re-auth (no hard redirect)', async () => {
+  it('auth 401 with a dead refresh session clears token and requests re-auth (no hard redirect)', async () => {
     localStorage.setItem('sso_token', 'drop-me');
     (emitReauthRequested as any).mockClear();
     await vi.resetModules();
+    // Silently attempt refresh first; it fails with a genuine 401 (dead session).
+    mockRequest.mockRejectedValueOnce({ response: { status: 401, data: { code: 'SESSION_DEAD' } } });
     const { apiClient } = await import('./client');
     const onRejected = responseHandlers.onRejected!;
     const error = { response: { status: 401 }, config: { url: '/api/auth/me' } };
@@ -166,5 +171,93 @@ describe('api client', () => {
     expect(call.url).toBe('/api/kulon/assignments/42/detail');
     expect(call.params).toEqual({ cmid: 777 });
     expect(result.assignmentId).toBe(42);
+  });
+
+  describe('silent refresh', () => {
+    beforeEach(() => {
+      // emitReauthRequested is a module-level vi.mock shared across tests; reset
+      // it so per-test "not.toHaveBeenCalled" assertions are isolated.
+      (emitReauthRequested as any).mockClear();
+    });
+
+    it('auth-401: refresh ok -> retries GET once with the new token', async () => {
+      const newToken = 'new-jwt';
+      // call (1) refresh success; call (2) retried GET success
+      mockRequest
+        .mockResolvedValueOnce({ data: { accessToken: newToken } })
+        .mockResolvedValueOnce({ data: { id: 1 } });
+      localStorage.setItem('sso_token', 'old-jwt');
+
+      const err = {
+        response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+        config: { method: 'get', url: '/api/auth/me' },
+      };
+      const result = await responseHandlers.onRejected!(err);
+      expect(result.data).toEqual({ id: 1 });
+      expect(localStorage.getItem('sso_token')).toBe(newToken);
+    });
+
+    it('auth-401: refresh 401 -> clears token and emits reauth', async () => {
+      // call (1) refresh fails with 401 (SESSION_DEAD) — axios rejects
+      mockRequest.mockRejectedValueOnce({
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+      });
+      localStorage.setItem('sso_token', 'old-jwt');
+
+      const err = {
+        response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+        config: { method: 'get', url: '/api/auth/me' },
+      };
+      await expect(responseHandlers.onRejected!(err)).rejects.toBeTruthy();
+      expect(localStorage.getItem('sso_token')).toBeNull();
+      expect(emitReauthRequested).toHaveBeenCalled();
+    });
+
+    it('auth-401: refresh network/5xx -> keeps token, propagates, no reauth', async () => {
+      // call (1) refresh fails with a network error (no response.status)
+      mockRequest.mockRejectedValueOnce(new Error('network down'));
+      localStorage.setItem('sso_token', 'old-jwt');
+
+      const err = {
+        response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+        config: { method: 'get', url: '/api/auth/me' },
+      };
+      await expect(responseHandlers.onRejected!(err)).rejects.toBeTruthy();
+      expect(localStorage.getItem('sso_token')).toBe('old-jwt');
+      expect(emitReauthRequested).not.toHaveBeenCalled();
+    });
+
+    it('non-GET auth-401: refresh ok but does NOT retry (avoids double-POST)', async () => {
+      // call (1) refresh success; but method is POST so no retry
+      mockRequest.mockResolvedValueOnce({ data: { accessToken: 'new-jwt' } });
+      localStorage.setItem('sso_token', 'old-jwt');
+
+      // Non-service endpoint so the refresh path (not the service-401 short-circuit)
+      // is exercised; the point is that a POST is refreshed but never re-sent.
+      const err = {
+        response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+        config: { method: 'post', url: '/api/auth/sso/capture' },
+      };
+      await expect(responseHandlers.onRejected!(err)).rejects.toBeTruthy();
+      // only the refresh POST happened; no retry
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('anti-loop: a 401 on /api/auth/refresh is terminal (never re-refreshed)', async () => {
+      // The refresh endpoint's own response passes through the SAME interceptor.
+      // If the refresh route 401s, it must reject and NOT trigger another refresh.
+      mockRequest.mockRejectedValueOnce({
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+      });
+      localStorage.setItem('sso_token', 'old-jwt');
+
+      const err = {
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+        config: { method: 'get', url: '/api/auth/refresh' },
+      };
+      await expect(responseHandlers.onRejected!(err)).rejects.toBeTruthy();
+      expect(mockRequest).toHaveBeenCalledTimes(0); // no refresh POST, no retry
+      expect(localStorage.getItem('sso_token')).toBe('old-jwt');
+    });
   });
 });
