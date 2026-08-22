@@ -73,8 +73,6 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: android-actions/setup-android@v3
-        with:
-          sdk-version: 35
       - name: Restore keystore + keystore.properties dari secrets
         run: |
           set -euo pipefail
