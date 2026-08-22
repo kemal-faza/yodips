@@ -117,6 +117,8 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Matches the coroutines version Gradle resolves (BOM 1.8.1) — needed for runTest.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 
     debugImplementation(libs.androidx.ui.tooling)
 }

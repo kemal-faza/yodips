@@ -7,6 +7,8 @@ import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonCourse
+import ac.undip.sso.core.network.PushDeviceRequest
+import ac.undip.sso.core.network.PushDeviceResponse
 import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapJadwal
@@ -121,6 +123,13 @@ class SsoRepository(
 
     suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> =
         safe(retryable = false) { api.markKehadiran(KehadiranRequest(token)) }
+
+    /** Registrasi token push ke backend (idempotent di server -> retryable). */
+    suspend fun registerPushDevice(token: String): ApiResult<PushDeviceResponse> =
+        safe(retryable = true) { api.registerPushDevice(PushDeviceRequest(token)) }
+
+    suspend fun unregisterPushDevice(token: String): ApiResult<PushDeviceResponse> =
+        safe(retryable = false) { api.unregisterPushDevice(PushDeviceRequest(token)) }
 
     /**
      * Fresh cache → serve instantly, never hitting the network.

@@ -145,3 +145,10 @@ data class KehadiranResponse(
     val status: String = "",
     val message: String? = null,
 )
+
+/** Body POST/DELETE /api/notifications/device (spec §5). */
+@Serializable
+data class PushDeviceRequest(val token: String)
+
+@Serializable
+data class PushDeviceResponse(val ok: Boolean = true)
