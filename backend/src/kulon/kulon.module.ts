@@ -6,6 +6,7 @@ import { SiapModule } from '../siap/siap.module';
 import { CacheModule } from '../cache/cache.module';
 import { KulonController } from './kulon.controller';
 import { KulonService } from './kulon.service';
+import { KulonSessionProbe } from './kulon-session-probe';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Module({
@@ -22,7 +23,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
     }),
   ],
   controllers: [KulonController],
-  providers: [KulonService, JwtAuthGuard],
-  exports: [KulonService],
+  providers: [KulonService, KulonSessionProbe, JwtAuthGuard],
+  exports: [KulonService, KulonSessionProbe],
 })
 export class KulonModule {}

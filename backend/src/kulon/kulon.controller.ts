@@ -3,24 +3,23 @@ import {
   Get,
   HttpException,
   HttpStatus,
-  Logger,
   Param,
   Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { KulonService } from './kulon.service';
+import { KulonSessionProbe } from './kulon-session-probe';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
 
 @UseGuards(JwtAuthGuard)
 @Controller('api/kulon')
 export class KulonController {
-  private readonly logger = new Logger(KulonController.name);
-
   constructor(
     private readonly kulonService: KulonService,
     private readonly sessionStore: SessionStore,
+    private readonly probe: KulonSessionProbe,
   ) {}
 
   @Get('courses')
@@ -32,7 +31,7 @@ export class KulonController {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const sesskey = await this.getSesskey(session.kulonCookie);
+    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
     const courses = await this.kulonService.getCourses(
       session.kulonCookie,
       sesskey,
@@ -51,7 +50,7 @@ export class KulonController {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const sesskey = await this.getSesskey(session.kulonCookie);
+    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
     return this.kulonService.getAllAssignments(
       session.kulonCookie,
       sesskey,
@@ -68,7 +67,7 @@ export class KulonController {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const sesskey = await this.getSesskey(session.kulonCookie);
+    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
     return this.kulonService.getAssignments(session.kulonCookie, sesskey);
   }
 
@@ -98,7 +97,7 @@ export class KulonController {
         HttpStatus.NOT_FOUND,
       );
     }
-    await this.getSesskey(session.kulonCookie);
+    await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
     try {
       return await this.kulonService.getAssignmentDetail(
         session.kulonCookie,
@@ -132,7 +131,7 @@ export class KulonController {
         HttpStatus.NOT_FOUND,
       );
     }
-    const sesskey = await this.getSesskey(session.kulonCookie);
+    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
     try {
       return await this.kulonService.getCourseContent(
         session.kulonCookie,
@@ -149,74 +148,5 @@ export class KulonController {
       }
       throw e;
     }
-  }
-
-  /**
-   * Fetch the Moodle sesskey from the Kulon page. A stale/expired kulon cookie
-   * makes Kulon redirect-loop (Moodle `/my/` <-> `/login/`), which surfaces as
-   * `fetch failed: redirect count exceeded`. Map that to a clear 401 so the
-   * frontend can prompt a re-login instead of showing a raw 500.
-   */
-  private async getSesskey(kulonCookie: string): Promise<string> {
-    let res: Response;
-    try {
-      res = await fetch('https://kulon2.undip.ac.id/my/', {
-        headers: { Cookie: kulonCookie },
-        redirect: 'follow',
-      });
-    } catch (e) {
-      if (
-        (e as Error)?.cause &&
-        /redirect count exceeded/i.test(String((e as Error).cause))
-      ) {
-        throw new HttpException(
-          { message: 'Session Kulon expired. Silakan login ulang via SSO' },
-          HttpStatus.UNAUTHORIZED,
-        );
-      }
-      // Log the raw upstream detail server-side; expose only a generic message
-      // so no internal host/URL/undici internals leak to the client.
-      this.logger.error(
-        `Kulon connection failed: ${(e as Error)?.message}`,
-        (e as Error)?.stack,
-      );
-      throw new HttpException(
-        { message: 'Gagal terhubung ke Kulon', detail: 'BAD_GATEWAY' },
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
-    if (!res.ok) {
-      throw new HttpException(
-        { message: 'Kulon mengalami gangguan. Silakan login ulang via SSO' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    const html = await res.text();
-    try {
-      return this.kulonService.parseSesskey(html);
-    } catch (e) {
-      // No sesskey means the page is a login page — either Moodle's own
-      // (kulon2.undip.ac.id/login/index.php) or a Microsoft OIDC redirect
-      // landing (login.microsoftonline.com) after the stale MoodleSession.
-      // Surface as a clean 401 so the frontend prompts re-login instead of a
-      // raw 500.
-      if (this.isLoginPage(res.url, html)) {
-        throw new HttpException(
-          { message: 'Session Kulon expired. Silakan login ulang via SSO' },
-          HttpStatus.UNAUTHORIZED,
-        );
-      }
-      throw e;
-    }
-  }
-
-  /**
-   * A page that reached getSesskey without a parseable sesskey is a login
-   * page (Moodle login or Microsoft OIDC redirect). Detect via the final URL
-   * or by the absence of the sesskey input.
-   */
-  private isLoginPage(finalUrl: string, html: string): boolean {
-    if (/(login\.microsoftonline\.com|\/login\/)/i.test(finalUrl)) return true;
-    return !/name="sesskey"/.test(html);
   }
 }
