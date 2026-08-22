@@ -5,6 +5,7 @@ import { KulonController } from './kulon.controller';
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
+import { KulonSessionProbe } from './kulon-session-probe';
 
 describe('KulonController', () => {
   let controller: KulonController;
@@ -30,6 +31,7 @@ describe('KulonController', () => {
       providers: [
         { provide: KulonService, useValue: service },
         { provide: SessionStore, useValue: sessionStore },
+        KulonSessionProbe,
       ],
     })
       .overrideGuard(JwtAuthGuard)
