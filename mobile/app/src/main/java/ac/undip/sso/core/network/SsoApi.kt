@@ -2,6 +2,7 @@ package ac.undip.sso.core.network
 
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.HTTP
 import retrofit2.http.POST
 
 /**
@@ -36,6 +37,17 @@ interface SsoApi {
 
     @GET("api/siap/absen")
     suspend fun absen(): List<SiapAbsen>
+
+    /** Registrasi token FCM untuk push notification (spec §5). */
+    @POST("api/notifications/device")
+    suspend fun registerPushDevice(
+        @Body body: PushDeviceRequest,
+    ): PushDeviceResponse
+
+    @HTTP(method = "DELETE", path = "api/notifications/device", hasBody = true)
+    suspend fun unregisterPushDevice(
+        @Body body: PushDeviceRequest,
+    ): PushDeviceResponse
 
     /** Proxy a QR-scan token to SIAP presence processing. */
     @POST("api/siap/kehadiran")
