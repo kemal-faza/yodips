@@ -2,11 +2,16 @@ package ac.undip.sso.ui
 
 import ac.undip.sso.core.network.ApiClient
 import ac.undip.sso.core.network.SessionExpiredEvents
+import ac.undip.sso.core.push.PushGraph
+import ac.undip.sso.core.push.normalizeNavTarget
 import ac.undip.sso.core.session.TokenStore
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
 import ac.undip.sso.ui.theme.ThemeController
+import android.os.Build
 import android.webkit.CookieManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -18,7 +23,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Top-level: no-token → Login (WebView handoff); token → AppShell (5-tab).
@@ -27,6 +35,8 @@ import kotlinx.coroutines.launch
 fun AppRoot(
     tokenStore: TokenStore,
     themeController: ThemeController,
+    pendingNavTarget: String? = null,
+    onNavConsumed: () -> Unit = {},
 ) {
     var hasToken by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(false) }
@@ -34,6 +44,25 @@ fun AppRoot(
     // branch is disposed — otherwise tokenStore.clear() gets cancelled mid-write
     // on logout and the persisted session survives a process restart.
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // Android 13+: POST_NOTIFICATIONS harus diminta runtime. Setelah login,
+    // bukan saat splash — user baru peduli notifikasi setelah masuk app.
+    val notifPermLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(hasToken) {
+        if (hasToken && Build.VERSION.SDK_INT >= 33) {
+            notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    // Sesi hidup → daftarkan/refresh token FCM ke registry backend (retry via
+    // stash-pending di dalam PushRegistration bila offline).
+    LaunchedEffect(hasToken) {
+        if (hasToken) {
+            PushGraph.install(context.applicationContext)
+            withContext(Dispatchers.IO) { PushGraph.onLogin() }
+        }
+    }
 
     // Read the stored JWT once on startup and reattach it to the HTTP client
     // so Retrofit sends `Authorization: Bearer` on every data call.
@@ -47,15 +76,24 @@ fun AppRoot(
     if (!checked) return
 
     // Hoisted so both AppShell and the session-expired dialog can trigger it.
-    // Clears persisted session, HTTP bearer, any WebView session cookies, and
-    // the session-expired signal so the next login starts fresh (not
-    // auto-attached to the old part).
+    // Clears the push-device registration, persisted session, HTTP bearer, any
+    // WebView session cookies, and the session-expired signal so the next login
+    // starts fresh (not auto-attached to the old part).
+    //
+    // ORDERING INVARIANT: PushGraph.onLogout() MUST run while ApiClient.authToken
+    // is still set — DELETE /api/notifications/device needs the bearer, and the
+    // OkHttp interceptor reads authToken when the request is BUILT. Nulling the
+    // token first would send the request without auth → 401 → the device token
+    // is never pruned in the backend registry.
     val onLogout: () -> Unit = {
-        ApiClient.authToken = null
-        scope.launch { tokenStore.clear() }
-        runCatching { CookieManager.getInstance().removeAllCookies(null) }
-        SessionExpiredEvents.consume()
-        hasToken = false
+        scope.launch {
+            runCatching { PushGraph.onLogout() } // DELETE pakai JWT yang masih ada
+            ApiClient.authToken = null
+            scope.launch { tokenStore.clear() }
+            runCatching { CookieManager.getInstance().removeAllCookies(null) }
+            SessionExpiredEvents.consume()
+            hasToken = false
+        }
     }
 
     if (hasToken) {
@@ -63,6 +101,8 @@ fun AppRoot(
             tokenStore = tokenStore,
             themeController = themeController,
             onLogout = onLogout,
+            initialNavTarget = normalizeNavTarget(pendingNavTarget),
+            onNavConsumed = onNavConsumed,
         )
     } else {
         LoginScreen(

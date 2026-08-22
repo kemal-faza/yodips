@@ -122,3 +122,13 @@ dependencies {
 
     debugImplementation(libs.androidx.ui.tooling)
 }
+
+// Firebase hanya saat config ada — CI / fresh clone tidak membawa
+// google-services.json sehingga apply tanpa syarat MEMECAHKAN build.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
+dependencies {
+    implementation("com.google.firebase:firebase-messaging:24.1.1")
+}

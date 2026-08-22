@@ -4,6 +4,7 @@ import android.os.SystemClock
 import ac.undip.sso.core.data.EncryptedPersistentCache
 import ac.undip.sso.core.data.PrefsPersistentCache
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.core.push.PushTargets
 import ac.undip.sso.core.session.KeystoreTokenCipher
 import ac.undip.sso.core.session.TokenStore
 import ac.undip.sso.ui.feature.DashboardScreen
@@ -47,6 +48,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,6 +93,8 @@ fun AppShell(
     tokenStore: TokenStore,
     themeController: ThemeController,
     onLogout: () -> Unit = {},
+    initialNavTarget: String? = null,
+    onNavConsumed: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -139,6 +143,20 @@ fun AppShell(
             composable(Tab.Profile.route) { ProfileScreen(repo, themeController, onLogout = onLogout) }
             composable("khs") { KhsScreen(repo, onBack = { navController.popBackStack() }) }
             composable("irs") { IrsScreen(repo, onBack = { navController.popBackStack() }) }
+        }
+
+        // Push tap-navigation: FCM data.target -> tab route. Runs after the
+        // NavHost is composed so the graph exists; consumed exactly once per
+        // delivered target (MainActivity nulls it back via onNavConsumed).
+        LaunchedEffect(initialNavTarget) {
+            val route =
+                when (initialNavTarget) {
+                    PushTargets.TASKS -> Tab.Tasks.route
+                    PushTargets.SCHEDULE -> Tab.Schedule.route
+                    else -> null
+                } ?: return@LaunchedEffect
+            navigate(navController, route)
+            onNavConsumed()
         }
     }
 }
