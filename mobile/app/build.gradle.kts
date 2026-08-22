@@ -36,8 +36,8 @@ android {
         applicationId = "ac.undip.sso"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.1"
+        versionCode = 4
+        versionName = "0.3.2"
     }
 
     signingConfigs {
@@ -52,12 +52,20 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Emulator loopback → local backend (`npm run start:dev` di backend/).
+            // Host ini satu-satunya yang boleh cleartext (src/debug/res/xml/
+            // network_security_config.xml); jangan isi URL produksi di sini.
+            buildConfigField("String", "BASE_URL", "\"http://10.0.2.2:3000\"")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Produksi (Heroku di balik Cloudflare) — cert pin-nya ada di ApiClient.
+            buildConfigField("String", "BASE_URL", "\"https://backend.crunchy.my.id\"")
             val storeFile = releaseStoreFile()
             if (storeFile != null && storeFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")

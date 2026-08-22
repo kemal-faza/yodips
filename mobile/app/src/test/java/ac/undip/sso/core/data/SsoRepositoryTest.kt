@@ -78,7 +78,13 @@ class SsoRepositoryTest {
     @Test
     fun `auth 401 maps to UNAUTHORIZED`() {
         val error = HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
-        val repo = SsoRepository(FakeApi().apply { profileStub = { throw error } })
+        // Refresh must be faked: the default refreshToken() hits the real
+        // network, which made this test depend on a live backend.
+        val repo =
+            SsoRepository(
+                FakeApi().apply { profileStub = { throw error } },
+                refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
+            )
         val r = runBlocking { repo.profile() }
         assertTrue(r is ApiResult.Error)
         assertEquals(ErrorType.UNAUTHORIZED, (r as ApiResult.Error).type)
@@ -131,7 +137,14 @@ class SsoRepositoryTest {
         // fire it, even from a background refresh the screen never surfaces.
         var notified = 0
         val error = HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
-        val repo = SsoRepository(FakeApi().apply { profileStub = { throw error } }, onSessionExpired = { notified++ })
+        // Refresh faked dead (same reason as `auth 401 maps to UNAUTHORIZED`):
+        // no live-network dependency in a unit test.
+        val repo =
+            SsoRepository(
+                FakeApi().apply { profileStub = { throw error } },
+                onSessionExpired = { notified++ },
+                refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
+            )
 
         val r = runBlocking { repo.profile() }
 

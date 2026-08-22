@@ -1,5 +1,6 @@
 package ac.undip.sso.core.network
 
+import ac.undip.sso.BuildConfig
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,14 +18,13 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Backend base URL. Production points at the shared HTTPS backend (Caddy/
- * reverse-proxy in front of Heroku) so build runs on any device. For local
- * emulator dev against a local backend, temporarily use
- * `http://10.0.2.2:3000` (requires cleartext in network_security_config).
+ * Backend base URL, baked per buildType in app/build.gradle.kts:
+ * debug → emulator loopback (local backend, cleartext via the debug
+ * network_security_config); release → production HTTPS backend.
  */
 object ApiClient {
-    const val BASE_URL = "https://backend.crunchy.my.id"
-    private const val API_BASE = "$BASE_URL/"
+    val BASE_URL = BuildConfig.BASE_URL
+    private val API_BASE = "$BASE_URL/"
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
