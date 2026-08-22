@@ -119,6 +119,23 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   CORS_ORIGIN?: string;
+
+  // ---- Push notifications (FCM) -------------------------------------------
+  // Scheduler hanya hidup bila enabled DAN kredensial Firebase ada;
+  // endpoint registrasi device tetap hidup walau scheduler off.
+  @IsOptional()
+  @IsBoolean()
+  NOTIFICATIONS_ENABLED?: boolean;
+
+  /** Service-account key JSON, base64-encoded (ramah config-var Heroku). */
+  @IsOptional()
+  @IsString()
+  FIREBASE_SERVICE_ACCOUNT_JSON?: string;
+
+  /** Ekspresi cron polling notifikasi. */
+  @IsOptional()
+  @IsString()
+  NOTIF_POLL_CRON?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvConfig {
