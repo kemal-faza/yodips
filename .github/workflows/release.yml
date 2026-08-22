@@ -72,7 +72,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Restore keystore + keystore.properties dari secrets
         run: |
           set -euo pipefail
@@ -124,7 +124,7 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Buat GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
