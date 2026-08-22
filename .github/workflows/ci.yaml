@@ -29,7 +29,7 @@ jobs:
       # gitleaks-action butuh full history (diff dari base commit). Default
       # checkout adalah shallow (fetch-depth: 1) yang membuat git log pada
       # base ^..head gagal "unknown revision" di repo baru/renamed.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -70,7 +70,7 @@ jobs:
           - name: extension
             dir: extension
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -106,7 +106,7 @@ jobs:
             dir: extension
             cmd: npm run build && test -d dist
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
