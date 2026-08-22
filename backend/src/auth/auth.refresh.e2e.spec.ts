@@ -1,4 +1,7 @@
 import 'reflect-metadata';
+// MUST be imported before AppModule: ConfigModule.forRoot() validates env at
+// import time (see auth.refresh.e2e.env.ts).
+import './auth.refresh.e2e.env';
 import { Test } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';

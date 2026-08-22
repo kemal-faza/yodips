@@ -1,11 +1,15 @@
 import 'reflect-metadata';
 import { validateEnv } from './env.validation';
 
+// Test fixture only — never a real credential. The inline allow keeps gitleaks
+// from flagging the literal (same convention as SESSION_ENC_KEY below).
+const TEST_JWT_SECRET = '0123456789abcdef0123456789abcdef'; // gitleaks:allow
+
 describe('validateEnv', () => {
   it('returns validated config when all required vars present', () => {
     const cfg = validateEnv({
       SSO_BASE_URL: 'https://sso.undip.ac.id',
-      JWT_SECRET: '0123456789abcdef0123456789abcdef',
+      JWT_SECRET: TEST_JWT_SECRET,
       MS_TENANT_ID: 'tenant',
       MS_CLIENT_ID: 'client',
       MS_CLIENT_SECRET: 'secret',
@@ -23,7 +27,7 @@ describe('validateEnv', () => {
   it('applies defaults for optional fields', () => {
     const cfg = validateEnv({
       SSO_BASE_URL: 'https://sso.undip.ac.id',
-      JWT_SECRET: '0123456789abcdef0123456789abcdef',
+      JWT_SECRET: TEST_JWT_SECRET,
       MS_TENANT_ID: 'tenant',
       MS_CLIENT_ID: 'client',
       MS_CLIENT_SECRET: 'secret',
@@ -41,7 +45,7 @@ describe('validateEnv', () => {
   it('defaults SSO_CAPTURE_TIMEOUT_MS to 180000 when absent', () => {
     const cfg = validateEnv({
       SSO_BASE_URL: 'https://sso.undip.ac.id',
-      JWT_SECRET: '0123456789abcdef0123456789abcdef',
+      JWT_SECRET: TEST_JWT_SECRET,
       MS_TENANT_ID: 'tenant',
       MS_CLIENT_ID: 'client',
       MS_CLIENT_SECRET: 'secret',
@@ -65,7 +69,7 @@ describe('validateEnv', () => {
   it('defaults SESSION_BACKEND to memory and SESSION_TTL_MS to 604800000', () => {
     const cfg = validateEnv({
       SSO_BASE_URL: 'https://sso.undip.ac.id',
-      JWT_SECRET: '0123456789abcdef0123456789abcdef',
+      JWT_SECRET: TEST_JWT_SECRET,
       MS_TENANT_ID: 'tenant',
       MS_CLIENT_ID: 'client',
       MS_CLIENT_SECRET: 'secret',
@@ -82,7 +86,7 @@ describe('validateEnv', () => {
   it('accepts SESSION_BACKEND=redis with optional prod vars', () => {
     const cfg = validateEnv({
       SSO_BASE_URL: 'https://sso.undip.ac.id',
-      JWT_SECRET: '0123456789abcdef0123456789abcdef',
+      JWT_SECRET: TEST_JWT_SECRET,
       MS_TENANT_ID: 'tenant',
       MS_CLIENT_ID: 'client',
       MS_CLIENT_SECRET: 'secret',
@@ -104,7 +108,7 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv({
         SSO_BASE_URL: 'https://sso.undip.ac.id',
-        JWT_SECRET: '0123456789abcdef0123456789abcdef',
+        JWT_SECRET: TEST_JWT_SECRET,
         MS_TENANT_ID: 'tenant',
         MS_CLIENT_ID: 'client',
         MS_CLIENT_SECRET: 'secret',
