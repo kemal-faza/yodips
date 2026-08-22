@@ -22,3 +22,5 @@ CLAUDE.md
 .claude
 memory/
 .vercel
+# Firebase config (M0, per-project) — never commit
+mobile/app/google-services.json
