@@ -10,6 +10,7 @@ import { CacheModule } from './cache/cache.module';
 import { AuthModule } from './auth/auth.module';
 import { KulonModule } from './kulon/kulon.module';
 import { SiapModule } from './siap/siap.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { SiapModule } from './siap/siap.module';
     AuthModule,
     KulonModule,
     SiapModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [

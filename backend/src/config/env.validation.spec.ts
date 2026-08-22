@@ -122,3 +122,37 @@ describe('validateEnv', () => {
     ).toThrow();
   });
 });
+
+describe('validateEnv - notification vars', () => {
+  const base = {
+    SSO_BASE_URL: 'https://sso.undip.ac.id',
+    JWT_SECRET: TEST_JWT_SECRET,
+    MS_TENANT_ID: 't',
+    MS_CLIENT_ID: 'c',
+    MS_CLIENT_SECRET: 's',
+    MS_REDIRECT_URI: 'https://r',
+    CDP_URL: 'http://127.0.0.1:9999',
+    SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/',
+    SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+    CHROME_PROFILE_DIR: '/tmp/chrome-sso-profile',
+  };
+
+  it('default: notifikasi off, tanpa kredensial', () => {
+    const cfg = validateEnv(base);
+    expect(cfg.NOTIFICATIONS_ENABLED).toBeFalsy();
+    expect(cfg.FIREBASE_SERVICE_ACCOUNT_JSON).toBeUndefined();
+    expect(cfg.NOTIF_POLL_CRON).toBeUndefined();
+  });
+
+  it('menerima nilai eksplisit', () => {
+    const cfg = validateEnv({
+      ...base,
+      NOTIFICATIONS_ENABLED: 'true',
+      NOTIF_POLL_CRON: '*/5 * * * *',
+      FIREBASE_SERVICE_ACCOUNT_JSON: 'e30=',
+    });
+    expect(cfg.NOTIFICATIONS_ENABLED).toBe(true);
+    expect(cfg.NOTIF_POLL_CRON).toBe('*/5 * * * *');
+    expect(cfg.FIREBASE_SERVICE_ACCOUNT_JSON).toBe('e30=');
+  });
+});
