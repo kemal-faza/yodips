@@ -6,12 +6,17 @@
 #   KEYSTORE_STORE_PASSWORD    - storePassword keystore
 #   KEYSTORE_KEY_ALIAS         - keyAlias keystore
 #   KEYSTORE_KEY_PASSWORD      - keyPassword keystore
+#   GOOGLE_SERVICES_JSON_BASE64 - base64 dari mobile/app/google-services.json (Firebase push;
+#     TANPA ini plugin google-services tidak aktif -> APK rilisan gagal init Firebase ->
+#     push mati di APK publik. Step restore di bawah FAIL-LOUD kalau kosong.)
 #
 # Cara membuat keystore (sekali saja, keep rahasia):
 #   cd mobile && keytool -genkey -v -keystore keystore/undip-sso.jks -alias undip-sso
 #            -keyalg RSA -keysize 2048 -validity 10000
 #   base64 -w0 mobile/keystore/undip-sso.jks   # -> isi ke secret KEYSTORE_BASE64
-# (jangan commit mobile/keystore/ atau mobile/keystore.properties)
+# Cara isi secret Firebase (setiap ganti project Firebase):
+#   base64 -w0 mobile/app/google-services.json # -> isi ke secret GOOGLE_SERVICES_JSON_BASE64
+# (jangan commit mobile/keystore/, mobile/keystore.properties, atau mobile/app/google-services.json)
 
 name: Release
 
@@ -66,6 +71,7 @@ jobs:
     timeout-minutes: 30
     env:
       KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -85,6 +91,13 @@ jobs:
           keyAlias=${{ secrets.KEYSTORE_KEY_ALIAS }}
           keyPassword=${{ secrets.KEYSTORE_KEY_PASSWORD }}
           EOF
+      - name: Restore google-services.json (Firebase push)
+        run: |
+          set -euo pipefail
+          # Fail-loud: APK rilis tanpa file ini = Firebase gagal init = push mati
+          # di APK publik. Lebih baik rilis gagal terlihat daripada diam-diam.
+          test -n "$GOOGLE_SERVICES_JSON_BASE64" || { echo "secret GOOGLE_SERVICES_JSON_BASE64 kosong — lihat header release.yml"; exit 1; }
+          echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > mobile/app/google-services.json
       - name: Test + build release APK
         working-directory: mobile
         run: |
