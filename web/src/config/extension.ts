@@ -20,5 +20,16 @@ export const SSO_CAPTURE_ENABLED: boolean =
  * menyembunyikan tombol interactive capture di layar kecil.
  */
 export function isMobileUserAgent(ua: string = navigator.userAgent): boolean {
- return /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua);
+	return /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua);
+}
+
+/**
+ * Predikat permukaan mobile utk AdaptiveRoute (spec §7): UA mobile ATAU PWA
+ * standalone. OR sengaja — iPadOS 13+ melaporkan UA "Macintosh", jadi PWA
+ * iPad ter-install hanya tertangkap kondisi standalone.
+ */
+export function isMobileDevice(): boolean {
+  if (isMobileUserAgent()) return true;
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(display-mode: standalone)').matches;
 }
