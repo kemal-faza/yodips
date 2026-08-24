@@ -1,5 +1,10 @@
 import { createRouter, createWebHistory, type RouterHistory, type Router } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { adaptiveRoute } from '../mobile/adaptive-route';
+import { isMobileDevice } from '../config/extension';
+
+// Layar mobile-only (spec §9): versi desktop YAGNI → redirect '/'.
+const MOBILE_ONLY_PATHS = new Set(['/scan', '/jadwal', '/khs', '/irs', '/presensi']);
 
 export function buildRouter(history: RouterHistory): Router {
   const router = createRouter({
@@ -10,20 +15,32 @@ export function buildRouter(history: RouterHistory): Router {
       { path: '/privacy', name: 'privacy', component: () => import('../views/PrivacyView.vue') },
       {
         path: '/',
-        component: () => import('../layouts/AppLayout.vue'),
+        // Permukaan desktop (AppLayout) vs mobile (MobileShell) — resolve
+        // sekali-per-mount lewat isMobileDevice (spec §7).
+        component: adaptiveRoute(
+          () => import('../layouts/AppLayout.vue'),
+          () => import('../mobile/MobileShell.vue'),
+        ),
         children: [
-          { path: '', name: 'dashboard', component: () => import('../views/DashboardView.vue') },
-          { path: 'profile', name: 'profile', component: () => import('../views/ProfileView.vue') },
+          { path: '', name: 'dashboard', component: adaptiveRoute(() => import('../views/DashboardView.vue'), () => import('../mobile/screens/DashboardMobile.vue')) },
+          { path: 'profile', name: 'profile', component: adaptiveRoute(() => import('../views/ProfileView.vue'), () => import('../mobile/screens/ProfileMobile.vue')) },
           { path: 'kulon', redirect: { name: 'kulon-dashboard' } },
-          { path: 'kulon/dashboard', name: 'kulon-dashboard', component: () => import('../views/KulonDashboardView.vue') },
+          { path: 'kulon/dashboard', name: 'kulon-dashboard', component: adaptiveRoute(() => import('../views/KulonDashboardView.vue'), () => import('../mobile/screens/TasksMobile.vue')) },
           { path: 'kulon/matakuliah', name: 'kulon-courses', component: () => import('../views/KulonCoursesView.vue') },
           { path: 'kulon/matakuliah/:courseId', name: 'kulon-course-detail', component: () => import('../views/KulonCourseDetailView.vue') },
+          // Mobile-only (spec §9); desktop dialihkan oleh guard di bawah.
+          { path: 'scan', name: 'scan', component: () => import('../mobile/screens/ScanMobile.vue') },
+          { path: 'jadwal', name: 'jadwal', component: () => import('../mobile/screens/ScheduleMobile.vue') },
+          { path: 'khs', name: 'khs', component: () => import('../mobile/screens/KhsMobile.vue') },
+          { path: 'irs', name: 'irs', component: () => import('../mobile/screens/IrsMobile.vue') },
+          { path: 'presensi', name: 'presensi', component: () => import('../mobile/screens/PresensiMobile.vue') },
         ],
       },
     ],
   });
 
   router.beforeEach(async (to) => {
+    if (!isMobileDevice() && MOBILE_ONLY_PATHS.has(to.path)) return '/';
     const store = useAuthStore();
     if (to.name !== 'login' && to.name !== 'privacy' && !store.isAuthenticated) {
       return { name: 'login' };
