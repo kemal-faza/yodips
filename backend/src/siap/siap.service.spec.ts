@@ -1,13 +1,25 @@
 import 'reflect-metadata';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { HttpException } from '@nestjs/common';
 import { SiapService } from './siap.service';
+import { StaleUpstreamError } from '../upstream/upstream-fetch';
 
 function fixture(name: string): string {
   return readFileSync(
     join(__dirname, '..', '..', 'test', 'fixtures', 'siap', name),
     'utf8',
   );
+}
+
+/**
+ * Service whose endpoint API resolves `sub` via a fixed session store fake
+ * (cookie value is irrelevant to the routing-based fetch mocks below).
+ */
+function makeAuthedSiapSvc(cache?: any): SiapService {
+  return new SiapService(cache, undefined, {
+    get: async () => ({ siapCookie: 'sia_app_session=TEST' }),
+  } as any);
 }
 
 // Inline minimal profile used by multi-semester tests (getKhs, getLecturers)
@@ -55,8 +67,62 @@ describe('SiapService', () => {
   const PROBE_URL = 'https://siap.undip.ac.id/pages/mhs/dashboard'; // exact from spike doc §2
 
   beforeEach(() => {
-    svc = new SiapService();
+    svc = makeAuthedSiapSvc();
     (global.fetch as jest.Mock) = jest.fn();
+  });
+
+  describe('sub-based session resolution (endpoint API)', () => {
+    const sessionStore = { get: jest.fn() };
+    const authedDashboard =
+      '<html><div id="tabmhs_profile"><b>Nama Lengkap</b>:</div>' +
+      '<div class="col-sm-9">Budi</div></html>';
+
+    beforeEach(() => {
+      sessionStore.get.mockReset();
+    });
+
+    function svcWith(cookie: string | undefined): SiapService {
+      return new SiapService(
+        undefined,
+        undefined,
+        { get: jest.fn().mockResolvedValue(cookie ? { siapCookie: cookie } : null) } as any,
+      );
+    }
+
+    it('resolves the SIAP cookie from SessionStore by sub and forwards it', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: PROBE_URL,
+        text: async () => authedDashboard,
+      });
+      const out = await svcWith('ci_session_x=K').getProfile('u1');
+      expect(out.nama).toBe('Budi');
+      const [, init] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(init.headers.Cookie).toBe('ci_session_x=K');
+      expect(sessionStore.get).not.toHaveBeenCalled(); // svc owns its own store
+    });
+
+    it('throws a typed stale 401 when no SIAP session exists for sub', async () => {
+      const promise = svcWith(undefined).getProfile('u1');
+      await expect(promise).rejects.toBeInstanceOf(StaleUpstreamError);
+      await expect(svcWith(null as any).getProfile('u1')).rejects.toMatchObject({
+        status: 401,
+      });
+      await expect(
+        svcWith(undefined).getProfile('u1'),
+      ).rejects.toThrow('SIAP session belum ada. Silakan login ulang via SSO');
+    });
+
+    it('propagates a stale upstream session as StaleUpstreamError (401)', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/login',
+        text: async () => '<html>login</html>',
+      });
+      await expect(svcWith('ci_session_x=OLD').getProfile('u1')).rejects.toBeInstanceOf(
+        StaleUpstreamError,
+      );
+    });
   });
 
   describe('checkSessionValid', () => {
@@ -101,8 +167,7 @@ describe('SiapService', () => {
   describe('getProfile', () => {
     it('getProfile caches and returns cached value on hit per user', async () => {
       const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
-      const svc = new SiapService();
-      (svc as any).cache = cache;
+      const svc = makeAuthedSiapSvc(cache);
       cache.get.mockResolvedValue({
         nama: 'Budi',
         nim: '1',
@@ -111,7 +176,7 @@ describe('SiapService', () => {
         angkatan: '2024',
         status: 'aktif',
       });
-      const out = await svc.getProfile('cookie', 'u1');
+      const out = await svc.getProfile('u1');
       expect(cache.get).toHaveBeenCalledWith('u1:siap:profile');
       expect(out.nama).toBe('Budi');
     });
@@ -120,7 +185,7 @@ describe('SiapService', () => {
       mockFetchRouting([
         { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
       ]);
-      const profile = await svc.getProfile('sia_app_session=K');
+      const profile = await svc.getProfile('u1');
       expect(profile.nama).toBe('NAMA UJI ANONIM');
       expect(profile.nim).toBe('20999999999999');
       expect(profile.fakultas).toBe('FAKULTAS UJI');
@@ -148,7 +213,7 @@ describe('SiapService', () => {
       mockFetchRouting([
         { match: '/irs/mhs/irs/ajax_irs_diambil', body: fixture('irs.json') },
       ]);
-      const irs = await svc.getIrs('sia_app_session=K');
+      const irs = await svc.getIrs('u1');
       expect(irs.totalSks).toBe(23);
       expect(irs.mataKuliah.length).toBe(8);
       expect(irs.mataKuliah[0].kode).toBe('MIK1624503');
@@ -169,7 +234,7 @@ describe('SiapService', () => {
         url: 'https://siap.undip.ac.id/login',
         text: async () => '<html>login</html>',
       });
-      await expect(svc.getIrs('sia_app_session=K')).rejects.toMatchObject({
+      await expect(svc.getIrs('u1')).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -189,7 +254,7 @@ describe('SiapService', () => {
           throw new SyntaxError("Unexpected token '<'");
         },
       });
-      await expect(svc.getIrs('sia_app_session=K')).rejects.toMatchObject({
+      await expect(svc.getIrs('u1')).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -204,7 +269,7 @@ describe('SiapService', () => {
           throw new SyntaxError("Unexpected token '<'");
         },
       });
-      await expect(svc.getIrs('sia_app_session=K')).rejects.toMatchObject({
+      await expect(svc.getIrs('u1')).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -221,7 +286,7 @@ describe('SiapService', () => {
         },
         json: async () => ({ total_sks: 23, html: '' }),
       });
-      const irs = await svc.getIrs('sia_app_session=K');
+      const irs = await svc.getIrs('u1');
       expect(irs.totalSks).toBe(23);
     });
 
@@ -241,7 +306,7 @@ describe('SiapService', () => {
         text: async () => '{"total_sks":23,"html":""}',
         json: async () => ({ total_sks: 23, html: '' }),
       });
-      const irs = await svc.getIrs('sia_app_session=K');
+      const irs = await svc.getIrs('u1');
       expect(irs.totalSks).toBe(23);
     });
   });
@@ -254,7 +319,7 @@ describe('SiapService', () => {
         { match: '/pages/mhs/dashboard', body: PROFILE_2024_5_SEM },
         { match: GET_IRS, body: '<html>belum disetujui</html>' },
       ]);
-      expect(await svc.getLecturers('sia_app_session=K')).toEqual([]);
+      expect(await svc.getLecturers('u1')).toEqual([]);
     });
 
     it('POSTs get_irs per semester and parses kode + dosen from the 8-column table (deduped)', async () => {
@@ -262,7 +327,7 @@ describe('SiapService', () => {
         { match: '/pages/mhs/dashboard', body: PROFILE_2024_5_SEM },
         { match: GET_IRS, body: fixture('irs_get.html') },
       ]);
-      const result = await svc.getLecturers('sia_app_session=K');
+      const result = await svc.getLecturers('u1');
 
       // angkatan 2024 + "2026/2027 Ganjil" => 5 semesters; the fixture table is
       // returned for each, so results must be deduped by kode.
@@ -305,7 +370,7 @@ describe('SiapService', () => {
           throw new Error(`unmocked fetch: ${url}`);
         },
       );
-      await svc.getLecturers('sia_app_session=K');
+      await svc.getLecturers('u1');
       // 5 semesters for angkatan 2024: smt 1..5, within-year smt toggles 1/2.
       expect(seen).toEqual([
         'ta=2024&smt_ambil=1&smt=1',
@@ -325,7 +390,7 @@ describe('SiapService', () => {
           body: fixture('notifications.json'),
         },
       ]);
-      const res = await svc.getNotifications('cookie');
+      const res = await svc.getNotifications('u1');
       expect(Array.isArray(res.items)).toBe(true);
       expect(res.count).toBeGreaterThanOrEqual(0);
     });
@@ -340,7 +405,7 @@ describe('SiapService', () => {
         text: async () => '{"status":"ok","data":{"count":"0"}}',
         json: async () => ({ status: 'ok', data: { count: '0' } }),
       });
-      await svc.getNotifications('cookie');
+      await svc.getNotifications('u1');
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('/ajax/notifications'),
         expect.objectContaining({
@@ -361,7 +426,7 @@ describe('SiapService', () => {
           throw new Error('no json');
         },
       });
-      await expect(svc.getNotifications('cookie')).rejects.toMatchObject({
+      await expect(svc.getNotifications('u1')).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -378,7 +443,7 @@ describe('SiapService', () => {
         text: async () => '{"status":"ok","message":"ok"}',
         json: async () => ({ status: 'ok', message: 'ok' }),
       });
-      const res = await svc.markNotification('cookie', '76927');
+      const res = await svc.markNotification('u1', '76927');
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('/ajax/unread'),
         expect.objectContaining({
@@ -401,7 +466,7 @@ describe('SiapService', () => {
           body: fixture('get_jadwal.json'),
         },
       ]);
-      const res = await svc.getJadwal('sia_app_session=K');
+      const res = await svc.getJadwal('u1');
       expect(Array.isArray(res)).toBe(true);
       expect(res.length).toBeGreaterThan(0);
       // Fixture sample (real 2026-08-17 semester-1 data): Sistem Informasi, senin, A301.
@@ -432,14 +497,14 @@ describe('SiapService', () => {
         text: async () => '{}',
         json: async () => ({}),
       });
-      await svc.getJadwal('sia_app_session=COOKIE');
+      await svc.getJadwal('u1');
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('/jadwal_mahasiswa/mhs/jadwal/get_jadwal'),
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
             'X-Requested-With': 'XMLHttpRequest',
-            Cookie: 'sia_app_session=COOKIE',
+            Cookie: 'sia_app_session=TEST',
           }),
         }),
       );
@@ -455,7 +520,7 @@ describe('SiapService', () => {
           throw new Error('no json');
         },
       });
-      await expect(svc.getJadwal('cookie')).rejects.toMatchObject({
+      await expect(svc.getJadwal('u1')).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -469,7 +534,7 @@ describe('SiapService', () => {
           body: fixture('absen_index.html'),
         },
       ]);
-      const res = await svc.getAbsen('sia_app_session=K');
+      const res = await svc.getAbsen('u1');
       expect(res.length).toBe(2);
       expect(res[0]).toMatchObject({
         idJadwal: '216328',
@@ -493,7 +558,7 @@ describe('SiapService', () => {
           text: async () => fixture('absen_index.html'),
         };
       });
-      await svc.getAbsen('sia_app_session=COOKIE');
+      await svc.getAbsen('u1');
       expect(
         fetched.some((u) => u.includes('/jadwal_mahasiswa/mhs/jadwal/')),
       ).toBe(true);
@@ -512,7 +577,7 @@ describe('SiapService', () => {
           body: fixture('get_absen_3.html'),
         },
       ]);
-      const res = await svc.getAbsen('sia_app_session=K');
+      const res = await svc.getAbsen('u1');
       // idjadwal dari index (216328/216387) langsung dipakai ke get_absen;
       // fixture get_absen_3 = 2 Hadir + 1 Alpa -> hadir 2, total 3.
       expect(res.length).toBe(2);
@@ -531,7 +596,7 @@ describe('SiapService', () => {
           body: fixture('get_absen.html'),
         },
       ]);
-      const res = await svc.getKehadiran('sia_app_session=K', '3747941');
+      const res = await svc.getKehadiran('u1', '3747941');
       expect(res.pertemuanId).toBe('3747941');
       expect(Array.isArray(res.sections)).toBe(true);
       expect(res.sections.length).toBeGreaterThan(0);
@@ -564,7 +629,7 @@ describe('SiapService', () => {
           throw new Error('no json');
         },
       });
-      await svc.getKehadiran('sia_app_session=COOKIE', '3747941');
+      await svc.getKehadiran('u1', '3747941');
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('/jadwal_mahasiswa/mhs/jadwal/get_absen'),
         expect.objectContaining({
@@ -572,7 +637,7 @@ describe('SiapService', () => {
           headers: expect.objectContaining({
             'X-Requested-With': 'XMLHttpRequest',
             'Content-Type': 'application/x-www-form-urlencoded',
-            Cookie: 'sia_app_session=COOKIE',
+            Cookie: 'sia_app_session=TEST',
           }),
           body: expect.stringContaining('id=3747941'),
         }),
@@ -592,7 +657,7 @@ describe('SiapService', () => {
           throw new Error('no json');
         },
       });
-      await expect(svc.getKehadiran('cookie', '1')).rejects.toMatchObject({
+      await expect(svc.getKehadiran('u1', '1')).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -611,7 +676,7 @@ describe('SiapService', () => {
         json: async () => ({ status: 'success', message: 'ok' }),
       });
       const res = await svc.markKehadiran(
-        'sia_app_session=COOKIE',
+        'u1',
         'qrcodetoken123',
       );
       expect(fetchMock).toHaveBeenCalledWith(
@@ -642,7 +707,7 @@ describe('SiapService', () => {
           message: 'Gagal: QRcode tidak valid atau sudah expired.',
         }),
       });
-      const res = await svc.markKehadiran('cookie', 'dummy');
+      const res = await svc.markKehadiran('u1', 'dummy');
       expect(res.status).toBe('error');
       expect(res.message).toContain('tidak valid');
     });
@@ -657,7 +722,7 @@ describe('SiapService', () => {
           throw new Error('no json');
         },
       });
-      await expect(svc.markKehadiran('cookie', 'x')).rejects.toMatchObject({
+      await expect(svc.markKehadiran('u1', 'x')).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -682,7 +747,7 @@ describe('SiapService', () => {
           body: fixture('khs_total_sks.json'),
         },
       ]);
-      const khs = await svc.getKhs('sia_app_session=K');
+      const khs = await svc.getKhs('u1');
       // angkatan 2024 + semesterBerjalan "2026/2027 Ganjil" => 5 semesters.
       expect(khs.semesters.length).toBe(5);
       expect(khs.semesters[0].semester).toBe('2024/2025 Ganjil');
@@ -760,7 +825,7 @@ describe('SiapService', () => {
         throw new Error('unmocked: ' + url);
       });
 
-      const khs = await svc.getKhs('sia_app_session=K');
+      const khs = await svc.getKhs('u1');
       expect(khs.semesters.length).toBe(2);
       expect(khs.semesters[0].ip).toBe(3.67); // display uses rounded per-semester IP
       // IPK from RAW sums: Σ(b·sks)=1100+1200=2300, Σsks=600 => 2300/600 = 3.8333 => 3.83.
@@ -816,7 +881,7 @@ describe('SiapService', () => {
         },
       );
 
-      await svc.getKhs('sia_app_session=K');
+      await svc.getKhs('u1');
       // smt_ambil stays cumulative; smt must be the within-year index (1 Ganjil / 2 Genap).
       expect(bodies).toEqual([
         'ta=2024&smt_ambil=1&smt=1',
@@ -887,7 +952,7 @@ describe('SiapService', () => {
         throw new Error('unmocked: ' + url);
       });
 
-      const khs = await svc.getKhs('sia_app_session=K');
+      const khs = await svc.getKhs('u1');
       expect(khs.semesters.length).toBe(5);
       // 4 graded semesters each: rawIp = (4·3 + 4·3)/(3+3) = 4.0, semesterSks 3.
       // IPK = Σ(4.0·3)/Σ(3) over the GRADED terms = 48/12 = 4.0. Ungraded sem 5 excluded.
@@ -946,7 +1011,7 @@ describe('SiapService', () => {
         throw new Error('unmocked: ' + url);
       });
 
-      const khs = await svc.getKhs('sia_app_session=K');
+      const khs = await svc.getKhs('u1');
       expect(khs.ipk).toBe(3.65); // official value from the footer, comma→dot
     });
 
@@ -994,7 +1059,7 @@ describe('SiapService', () => {
         throw new Error('unmocked: ' + url);
       });
 
-      const khs = await svc.getKhs('sia_app_session=K');
+      const khs = await svc.getKhs('u1');
       expect(khs.ipk).toBe(4.0); // manual fallback: rawIp=4.0 over the (2) graded semesters
     });
   });

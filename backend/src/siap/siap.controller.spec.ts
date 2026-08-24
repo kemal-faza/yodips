@@ -1,11 +1,14 @@
 import 'reflect-metadata';
 import { Test } from '@nestjs/testing';
-import { HttpException } from '@nestjs/common';
 import { SiapController } from './siap.controller';
 import { SiapService } from './siap.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { SessionStore } from '../session/session-store';
 
+/**
+ * After the upstream-session consolidation the controller is a thin router:
+ * it resolves nothing but `sub`, validates input, and delegates. Session
+ * resolution + stale behaviour live in siap.service / siap-upstream specs.
+ */
 describe('SiapController', () => {
   let controller: SiapController;
   const mockSiap = {
@@ -16,16 +19,12 @@ describe('SiapController', () => {
     getKehadiran: jest.fn(),
     markKehadiran: jest.fn(),
   };
-  const mockStore = { get: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
       controllers: [SiapController],
-      providers: [
-        { provide: SiapService, useValue: mockSiap },
-        { provide: SessionStore, useValue: mockStore },
-      ],
+      providers: [{ provide: SiapService, useValue: mockSiap }],
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
@@ -33,47 +32,24 @@ describe('SiapController', () => {
     controller = moduleRef.get(SiapController);
   });
 
-  it('throws 401 when no siapCookie', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: '' });
-    await expect(
-      controller.getProfile({ user: { sub: 'n' } }),
-    ).rejects.toBeInstanceOf(HttpException);
-  });
-
-  it('returns profile when siapCookie present', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
+  it('routes profile by sub only', async () => {
     mockSiap.getProfile.mockResolvedValue({ nama: 'Budi' });
     await expect(
-      controller.getProfile({ user: { sub: 'n' } }),
+      controller.getProfile({ user: { sub: 'u1' } }),
     ).resolves.toEqual({ nama: 'Budi' });
+    expect(mockSiap.getProfile).toHaveBeenCalledWith('u1');
   });
 
-  it('throws 401 when no siapCookie for lecturers', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: '' });
-    await expect(
-      controller.getLecturers({ user: { sub: 'n' } }),
-    ).rejects.toBeInstanceOf(HttpException);
-  });
-
-  it('returns lecturer list when siapCookie present', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
+  it('routes lecturers by sub only', async () => {
     mockSiap.getLecturers.mockResolvedValue([
       { kode: 'MIK1624105', dosen: 'Dr. X' },
     ]);
     await expect(
-      controller.getLecturers({ user: { sub: 'n' } }),
+      controller.getLecturers({ user: { sub: 'u1' } }),
     ).resolves.toEqual([{ kode: 'MIK1624105', dosen: 'Dr. X' }]);
   });
 
-  it('throws 401 when no siapCookie for jadwal', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: '' });
-    await expect(
-      controller.getJadwal({ user: { sub: 'n' } }),
-    ).rejects.toBeInstanceOf(HttpException);
-  });
-
-  it('returns jadwal when siapCookie present', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
+  it('routes jadwal by sub only', async () => {
     mockSiap.getJadwal.mockResolvedValue([
       {
         kode: 'MIK1624503',
@@ -85,66 +61,35 @@ describe('SiapController', () => {
       },
     ]);
     await expect(
-      controller.getJadwal({ user: { sub: 'n' } }),
+      controller.getJadwal({ user: { sub: 'u1' } }),
     ).resolves.toHaveLength(1);
   });
 
-  it('throws 401 when no siapCookie for kehadiran', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: '' });
+  it('validates kehadiran id (numeric only) and routes by sub', async () => {
     await expect(
-      controller.getKehadiran('3747941', { user: { sub: 'n' } }),
-    ).rejects.toBeInstanceOf(HttpException);
-  });
-
-  it('returns kehadiran when siapCookie present', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
-    mockSiap.getKehadiran.mockResolvedValue({
-      pertemuanId: '3747941',
-      sections: [
-        {
-          label: 'Absensi Kuliah',
-          rows: [
-            {
-              pertemuanKe: '1',
-              tanggal: 'Senin, 17 Agustus 2026',
-              waktu: '09:40 - 12:10',
-              kelas: 'C (17-08-2026 09:40-12:10)',
-              kehadiran: '',
-              waktuAbsen: '-',
-              aktor: '',
-            },
-          ],
-        },
-      ],
-    });
+      controller.getKehadiran('bukan-angka', { user: { sub: 'u1' } }),
+    ).rejects.toMatchObject({ status: 400 });
+    mockSiap.getKehadiran.mockResolvedValue({ pertemuanId: '3747941' });
     await expect(
-      controller.getKehadiran('3747941', { user: { sub: 'n' } }),
+      controller.getKehadiran('3747941', { user: { sub: 'u1' } }),
     ).resolves.toMatchObject({ pertemuanId: '3747941' });
-    expect(mockSiap.getKehadiran).toHaveBeenCalledWith(
-      'ci_session_x=K',
-      '3747941',
-    );
+    expect(mockSiap.getKehadiran).toHaveBeenCalledWith('u1', '3747941');
   });
 
   it('proxies a QR token to markKehadiran when present', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
     mockSiap.markKehadiran.mockResolvedValue({
       status: 'success',
       message: 'ok',
     });
     await expect(
-      controller.markKehadiran({ user: { sub: 'n' } }, { token: 'qrcode123' }),
+      controller.markKehadiran({ user: { sub: 'u1' } }, { token: 'qrcode123' }),
     ).resolves.toEqual({ status: 'success', message: 'ok' });
-    expect(mockSiap.markKehadiran).toHaveBeenCalledWith(
-      'ci_session_x=K',
-      'qrcode123',
-    );
+    expect(mockSiap.markKehadiran).toHaveBeenCalledWith('u1', 'qrcode123');
   });
 
   it('throws 400 when token QR missing', async () => {
-    mockStore.get.mockResolvedValue({ siapCookie: 'ci_session_x=K' });
     await expect(
-      controller.markKehadiran({ user: { sub: 'n' } }, {}),
+      controller.markKehadiran({ user: { sub: 'u1' } }, {}),
     ).rejects.toMatchObject({ status: 400 });
   });
 });
