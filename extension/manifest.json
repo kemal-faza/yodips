@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YoDips",
-  "version": "0.3.1",
-  "description": "Login SSO Undip via browser tanpa kredensial: baca cookie Kazan SSO/Kulon/SIAP dan hubungkan ke dashboard.",
+  "version": "0.3.2",
+  "description": "YoDips SSO Undip browser extension untuk mahasiswa Universitas Diponegoro. Integrasi login Kulon, SIAP, IRS, KHS tanpa kredensial.",
   "icons": {
     "16": "icon16.png",
     "32": "icon32.png",
