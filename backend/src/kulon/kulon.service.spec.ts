@@ -9,6 +9,13 @@ import {
   extractCourseCode,
   parseSectionProgress,
 } from './kulon.service';
+import { StaleUpstreamError } from '../upstream/upstream-fetch';
+import { KulonUpstreamSession } from './kulon-upstream.session';
+import {
+  parseAssignmentIndex,
+  parseMoodleDate,
+  parseQuizIndex,
+} from './kulon-parse';
 
 describe('parseSemester', () => {
   it('extracts semester from fullname', () => {
@@ -123,9 +130,102 @@ describe('parseSectionProgress', () => {
 
 
 
+describe('sub-based session resolution (endpoint API)', () => {
+  const SESSKEY_PAGE =
+    '<html><input type="hidden" name="sesskey" value="sk123"></html>';
+  const LOGIN_PAGE = '<html><head><title>Login</title></head></html>';
+
+  function svcWith(session?: {
+    kulonCookie?: string;
+    siapCookie?: string;
+  }): KulonService {
+    return new KulonService(
+      undefined,
+      undefined,
+      undefined,
+      { get: jest.fn().mockResolvedValue(session ?? null) } as any,
+    );
+  }
+
+  const ok = (body: string, url: string) => ({
+    ok: true,
+    status: 200,
+    url,
+    text: async () => body,
+    json: async () => JSON.parse(body),
+  });
+
+  it('getCourseContent resolves cookie + sesskey from SessionStore by sub', async () => {
+    const stateBody = JSON.stringify([
+      { error: false, data: { course: {}, section: [], cm: [] } },
+    ]);
+    global.fetch = jest.fn(async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.includes('/my/')) return ok(SESSKEY_PAGE, url);
+      if (url.includes('/lib/ajax/service.php')) {
+        expect(init?.headers?.Cookie).toBe('MoodleSession=K');
+        return ok(stateBody, url);
+      }
+      throw new Error(`unmocked fetch: ${url}`);
+    }) as any;
+    const content = await svcWith({ kulonCookie: 'MoodleSession=K' }).getCourseContent('u1', 77);
+    expect(content.courseId).toBe(77);
+  });
+
+  it('throws a typed stale 401 when no Kulon session exists for sub', async () => {
+    global.fetch = jest.fn();
+    await expect(
+      svcWith(undefined).getCourses('u1'),
+    ).rejects.toBeInstanceOf(StaleUpstreamError);
+    await expect(svcWith(undefined).getCourses('u1')).rejects.toMatchObject({
+      status: 401,
+    });
+    await expect(svcWith({ kulonCookie: '' }).getAssignments('u1')).rejects.toThrow(
+      'Kulon session belum ada. Silakan login ulang via SSO',
+    );
+  });
+
+  it('propagates the probe stale 401 (login page) instead of a raw fetch error', async () => {
+    global.fetch = jest.fn(async (input: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.includes('/my/')) return ok(LOGIN_PAGE, url);
+      throw new Error(`unmocked fetch: ${url}`);
+    }) as any;
+    await expect(
+      svcWith({ kulonCookie: 'MoodleSession=OLD' }).getCourseContent('u1', 77),
+    ).rejects.toBeInstanceOf(StaleUpstreamError);
+  });
+});
+
+/**
+ * Service whose endpoint API resolves `sub` via a fixed session; the sesskey
+ * probe is stubbed (probe behaviour is covered by kulon-upstream + sub-based
+ * specs) while AJAX transport stays real against the mocked global.fetch.
+ */
+function makeAuthedKulonSvc(opts: { cache?: any; siap?: any } = {}): KulonService {
+  const real = new KulonUpstreamSession();
+  const upstream = {
+    fetchSesskeyOrThrow: async () => 'sesskey123',
+    ajax: (...args: Parameters<KulonUpstreamSession['ajax']>) =>
+      real.ajax(...args),
+    checkSessionValid: (cookie: string) => real.checkSessionValid(cookie),
+  };
+  return new KulonService(
+    opts.cache,
+    opts.siap,
+    upstream as any,
+    {
+      get: async () => ({
+        kulonCookie: 'session-cookie',
+        siapCookie: 'siap-cookie',
+      }),
+    } as any,
+  );
+}
+
 describe('getCourseContent (HTML fixture)', () => {
   it('parses real Kulon HTML into sections/items', async () => {
-    const svc = new KulonService();
+    const svc = makeAuthedKulonSvc();
     const html = fs.readFileSync(
       path.join(__dirname, '../../test/fixtures/kulon/course-content-html.html'),
       'utf8',
@@ -136,7 +236,7 @@ describe('getCourseContent (HTML fixture)', () => {
       url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
       text: async () => html,
     }) as any;
-    const content = await svc.getCourseContent('cookie', 'sk', 16294);
+    const content = await svc.getCourseContent('u1', 16294);
     expect(content.courseId).toBe(16294);
     // Section 0 = General (forum Announcements).
     const gen = content.sections.find((s) => s.id === 0);
@@ -161,7 +261,7 @@ describe('getCourseContent (HTML fixture)', () => {
   });
 
   it('captures items whose description contains nested divs before the link (B12)', async () => {
-    const svc = new KulonService();
+    const svc = makeAuthedKulonSvc();
     // An activity-item whose intro has nested <div>s (HTML rich description)
     // BEFORE the <a> link. The old div-pairing regex (`</div></div>`) would
     // truncate the wrapper at the inner `</div></div>` and drop the link.
@@ -184,7 +284,7 @@ describe('getCourseContent (HTML fixture)', () => {
       text: async () => html,
     }) as any;
 
-    const content = await svc.getCourseContent('cookie', 'sk', 77);
+    const content = await svc.getCourseContent('u1', 77);
     const s2 = content.sections.find((s) => s.id === 2);
     const item = s2?.items[0];
     expect(item?.kind).toBe('assign');
@@ -193,7 +293,7 @@ describe('getCourseContent (HTML fixture)', () => {
   });
 
   it('skips activity items that carry no module link (Moodle labels)', async () => {
-    const svc = new KulonService();
+    const svc = makeAuthedKulonSvc();
     const html =
       '<li id="section-1" data-sectionname="Pertemuan 1">' +
       '<ul class="section ">' +
@@ -210,13 +310,13 @@ describe('getCourseContent (HTML fixture)', () => {
       url: 'https://kulon2.undip.ac.id/course/view.php?id=77',
       text: async () => html,
     }) as any;
-    const content = await svc.getCourseContent('cookie', 'sk', 77);
+    const content = await svc.getCourseContent('u1', 77);
     const s1 = content.sections.find((s) => s.id === 1);
     expect(s1?.items).toEqual([]);
   });
 
   it('falls back to HTML when the JSON endpoint is unavailable (no json() on response)', async () => {
-    const svc = new KulonService();
+    const svc = makeAuthedKulonSvc();
     const html = fs.readFileSync(
       path.join(__dirname, '../../test/fixtures/kulon/course-content-html.html'),
       'utf8',
@@ -236,14 +336,14 @@ describe('getCourseContent (HTML fixture)', () => {
         url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
         text: async () => html,
       });
-    const content = await svc.getCourseContent('cookie', 'sk', 16294);
+    const content = await svc.getCourseContent('u1', 16294);
     expect(content.courseId).toBe(16294);
     const gen = content.sections.find((s) => s.id === 0);
     expect(gen?.label).toBe('General');
   });
 
   it('falls back to HTML when the JSON endpoint returns 200 but no section array (malformed state)', async () => {
-    const svc = new KulonService();
+    const svc = makeAuthedKulonSvc();
     const html = fs.readFileSync(
       path.join(__dirname, '../../test/fixtures/kulon/course-content-html.html'),
       'utf8',
@@ -264,7 +364,7 @@ describe('getCourseContent (HTML fixture)', () => {
         url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
         text: async () => html,
       });
-    const content = await svc.getCourseContent('cookie', 'sk', 16294);
+    const content = await svc.getCourseContent('u1', 16294);
     expect(content.courseId).toBe(16294);
     const gen = content.sections.find((s) => s.id === 0);
     expect(gen?.label).toBe('General');
@@ -274,7 +374,7 @@ describe('getCourseContent (HTML fixture)', () => {
 describe('KulonService', () => {
   let svc: KulonService;
   beforeEach(() => {
-    svc = new KulonService();
+    svc = makeAuthedKulonSvc();
     global.fetch = jest.fn();
   });
 
@@ -331,7 +431,7 @@ describe('KulonService', () => {
       .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' })
       .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' });
 
-    const courses = await svc.getCourses('session-cookie', 'sesskey');
+    const courses = await svc.getCourses('u1');
 
     // merge + dedupe: A and B visible, C hidden
     expect(courses.map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
@@ -369,7 +469,7 @@ describe('KulonService', () => {
       // (no json() -> TypeError -> HTML fallback), the second is the /course/view.php scrape.
       .mockResolvedValueOnce({ ok: true, text: async () => '' })
       .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' });
-    const courses = await svc.getCourses('session-cookie', 'sesskey');
+    const courses = await svc.getCourses('u1');
     expect(courses[0].semester).toBe('2025/2026 Genap');
     // not present in the 'inprogress' bucket -> past
     expect(courses[0].timelineStatus).toBe('past');
@@ -413,7 +513,7 @@ describe('KulonService', () => {
           '<li id="section-1" data-sectionname="1 November - 8 November"></li>' +
           '<li id="section-2" data-sectionname="15 November - 22 November"></li>',
       });
-    const courses = await svc.getCourses('session-cookie', 'sesskey');
+    const courses = await svc.getCourses('u1');
     expect(courses.find((c) => c.id === 1)?.progress).toBe(0);
   });
 
@@ -439,7 +539,7 @@ describe('KulonService', () => {
         },
       ],
     });
-    const assignments = await svc.getAssignments('session-cookie', 'sesskey');
+    const assignments = await svc.getAssignments('u1');
     expect(assignments[0].name).toBe('Tugas Kelompok I');
     expect(assignments[0].duedate).toBe(1742230800);
     expect(assignments[0].course).toBe('Metode Numerik D');
@@ -476,7 +576,7 @@ describe('KulonService', () => {
         },
       ],
     });
-    const assignments = await svc.getAssignments('session-cookie', 'sesskey');
+    const assignments = await svc.getAssignments('u1');
     expect(assignments[0].assignmentId).toBe(42);
     expect(assignments[0].courseModuleId).toBe(777);
   });
@@ -506,7 +606,7 @@ describe('KulonService', () => {
         },
       ],
     });
-    const assignments = await svc.getAssignments('session-cookie', 'sesskey');
+    const assignments = await svc.getAssignments('u1');
     expect(assignments[0].courseModuleId).toBe(3335);
     // Exactly one fetch: the calendar AJAX. No course-module lookup call.
     expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
@@ -536,7 +636,7 @@ describe('KulonService', () => {
         },
       ],
     });
-    const assignments = await svc.getAssignments('session-cookie', 'sesskey');
+    const assignments = await svc.getAssignments('u1');
     expect(assignments[0].courseModuleId).toBe(0);
   });
 
@@ -555,7 +655,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
+    const detail = await svc.getAssignmentDetail('u1', 42, 777);
     expect(detail.assignmentId).toBe(42);
     expect(detail.name).toBe('Tugas Kelompok I');
     expect(detail.descriptionHtml).toContain('Kerjakan laporan kelompok.');
@@ -580,7 +680,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
+    const detail = await svc.getAssignmentDetail('u1', 42, 777);
     expect(detail.submission.status).toBe('submitted');
     expect(detail.submission.grade).toBeNull();
     expect(detail.submission.maxGrade).toBeNull();
@@ -601,7 +701,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
+    const detail = await svc.getAssignmentDetail('u1', 42, 777);
     expect(detail.name).toBe('Task');
     expect(detail.descriptionHtml).toBe('');
     expect(detail.submission.status).toBe('not_submitted');
@@ -625,7 +725,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
+    const detail = await svc.getAssignmentDetail('u1', 42, 777);
     expect(detail.submission.status).toBe('not_submitted');
     expect(detail.submission.grade).toBeNull();
     expect(detail.submission.maxGrade).toBeNull();
@@ -639,7 +739,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('session-cookie', 42, 777);
+    const detail = await svc.getAssignmentDetail('u1', 42, 777);
     expect(detail.submission.status).toBe('unknown');
     expect(detail.submission.grade).toBeNull();
     expect(detail.submission.maxGrade).toBeNull();
@@ -651,7 +751,7 @@ describe('KulonService', () => {
       status: 404,
     });
     await expect(
-      svc.getAssignmentDetail('session-cookie', 42, 777),
+      svc.getAssignmentDetail('u1', 42, 777),
     ).rejects.toThrow('ASSIGNMENT_NOT_FOUND');
   });
 
@@ -664,7 +764,7 @@ describe('KulonService', () => {
       '</tbody></table>';
 
     it('parses each row into a KulonAssignment with submission status', () => {
-      const rows = (svc as any).parseAssignmentIndex(indexHtml, 9371, 'Struktur Diskret D');
+      const rows = parseAssignmentIndex(indexHtml, 9371, 'Struktur Diskret D');
       expect(rows).toHaveLength(3);
 
       const [notSub, submitted, graded] = rows;
@@ -684,7 +784,7 @@ describe('KulonService', () => {
     });
 
     it('returns empty when page has no mod-index table', () => {
-      const rows = (svc as any).parseAssignmentIndex('<html>no table</html>', 1, 'C');
+      const rows = parseAssignmentIndex('<html>no table</html>', 1, 'C');
       expect(rows).toEqual([]);
     });
   });
@@ -700,7 +800,7 @@ describe('KulonService', () => {
       '</table>';
 
     it('parses quiz rows from relative links (module: quiz, closes from c2)', () => {
-      const rows = (svc as any).parseQuizIndex(quizHtml, 15452, 'Analisis dan Strategi Algoritma E');
+      const rows = parseQuizIndex(quizHtml, 15452, 'Analisis dan Strategi Algoritma E');
       expect(rows).toHaveLength(3);
       const [noLimit, past, future] = rows;
       expect(noLimit.name).toBe('quis 4');
@@ -718,7 +818,7 @@ describe('KulonService', () => {
     });
 
     it('returns empty when page has no quiz table', () => {
-      const rows = (svc as any).parseQuizIndex('<html>no table</html>', 1, 'C');
+      const rows = parseQuizIndex('<html>no table</html>', 1, 'C');
       expect(rows).toEqual([]);
     });
   });
@@ -885,28 +985,27 @@ describe('KulonService', () => {
 
   it('getCourses caches and reuses cached output per user, including lecturer merge', async () => {
     const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
-    const svcNew = new KulonService();
-    (svcNew as any).cache = cache;
+    const svcNew = makeAuthedKulonSvc({ cache });
     cache.get.mockResolvedValue([{ id: 1, fullname: 'X', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress' }]);
-    const out = await svcNew.getCourses('session-cookie', 'sesskey', 'u1');
+    const out = await svcNew.getCourses('u1');
     expect(cache.get).toHaveBeenCalledWith('u1:kulon:courses');
     expect(out).toHaveLength(1);
   });
 
   it('getCourses on cache miss scrapes, merges lecturers, and caches the merged list', async () => {
+    global.fetch = jest.fn();
     const cache = { get: jest.fn().mockResolvedValue(null), set: jest.fn(), del: jest.fn() };
-    const svcNew = new KulonService();
-    (svcNew as any).cache = cache;
-    (svcNew as any).siap = { getLecturers: jest.fn().mockResolvedValue([{ kode: 'MIK1624105', dosen: 'Dr. X' }]) };
+    const siapFake = { getLecturers: jest.fn().mockResolvedValue([{ kode: 'MIK1624105', dosen: 'Dr. X' }]) };
+    const svcNew = makeAuthedKulonSvc({ cache, siap: siapFake });
     svcNew.fetchTimelineCourses = jest.fn().mockResolvedValue([
       { id: 1, fullname: 'Matkul', shortname: 'MIK1624105', idnumber: '', timelineStatus: 'inprogress' },
     ]) as any;
-    svcNew.getCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
-    const out = await svcNew.getCourses('session-cookie', 'sesskey', 'u1', 'siap-cookie');
+    (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
+    const out = await svcNew.getCourses('u1');
     expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.arrayContaining([
       expect.objectContaining({ lecturer: 'Dr. X' }),
     ]));
-    expect((svcNew as any).siap.getLecturers).toHaveBeenCalledWith('siap-cookie');
+    expect(siapFake.getLecturers).toHaveBeenCalledWith('u1');
   });
 });
 
@@ -920,18 +1019,18 @@ describe('parseMoodleDate (B8 - WIB timezone)', () => {
     // "Thursday, 7 May 2026, 11:50 PM" rendered by Moodle in WIB (UTC+7).
     // WIB-23:50 == UTC-16:50 on the same day. Expected epoch (seconds):
     // Date.UTC(2026,4,7,16,50) = 1778172600.
-    const parsed = (svc as any).parseMoodleDate(
+    const parsed = parseMoodleDate(
       'Thursday, 7 May 2026, 11:50 PM',
     );
     expect(parsed).toBe(1778172600);
   });
 
   it('returns null for an empty value', () => {
-    expect((svc as any).parseMoodleDate('')).toBe(null);
+    expect(parseMoodleDate('')).toBe(null);
   });
 
   it('returns null for a malformed value', () => {
-    expect((svc as any).parseMoodleDate('nonsense')).toBe(null);
+    expect(parseMoodleDate('nonsense')).toBe(null);
   });
 });
 

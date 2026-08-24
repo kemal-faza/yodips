@@ -31,12 +31,8 @@ const J = (tanggal: string): SiapJadwal => ({
 
 function makeFakes() {
   const store = new InMemoryNotificationStore(() => NOW);
-  const session = {
-    get: async () => ({ identity: 'u1', ssoCookie: 's', microsoftCookie: '', kulonCookie: 'k', siapCookie: 'si', capturedAt: 0 }),
-  };
   const kulon = { getAllAssignments: async (): Promise<KulonAssignment[]> => [] };
   const siap = { getJadwal: async (): Promise<SiapJadwal[]> => [] };
-  const probe = { fetchSesskeyOrThrow: async () => 'sesskey' };
   const sent: Array<{ tokens: string[]; title: string }> = [];
   const fcm = {
     configured: true,
@@ -47,15 +43,13 @@ function makeFakes() {
   };
   const poller = new NotificationsPoller(
     store,
-    session as any,
     kulon as any,
     siap as any,
-    probe as any,
     fcm as any,
     { get: () => undefined } as any, // ConfigService — tak dipakai runCycle
     {} as any,                       // SchedulerRegistry — tak dipakai runCycle
   );
-  return { store, session, kulon, siap, probe, sent, fcm, poller };
+  return { store, kulon, siap, sent, fcm, poller };
 }
 
 describe('NotificationsPoller.runCycle', () => {
@@ -98,7 +92,7 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('sesi stale -> push re-login SEKALI; siklus berikut tidak dobel', async () => {
     const f = makeFakes();
-    f.probe.fetchSesskeyOrThrow = async () => {
+    f.kulon.getAllAssignments = async () => {
       throw new HttpException({ message: 'expired' }, HttpStatus.UNAUTHORIZED);
     };
     await f.store.addDeviceToken('u1', 'tok');
@@ -114,13 +108,12 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('sesi pulih -> flag direset', async () => {
     const f = makeFakes();
-    f.probe.fetchSesskeyOrThrow = async () => {
+    f.kulon.getAllAssignments = async () => {
       throw new HttpException({ message: 'expired' }, HttpStatus.UNAUTHORIZED);
     };
     await f.store.addDeviceToken('u1', 'tok');
     await f.poller.runCycle(NOW);
 
-    f.probe.fetchSesskeyOrThrow = async () => 'sesskey';
     f.kulon.getAllAssignments = async () => [A(1)];
     await f.poller.runCycle(NOW);
 

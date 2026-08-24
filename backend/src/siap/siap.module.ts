@@ -5,6 +5,7 @@ import { SessionModule } from '../session/session.module';
 import { CacheModule } from '../cache/cache.module';
 import { SiapController } from './siap.controller';
 import { SiapService } from './siap.service';
+import { SiapUpstreamSession } from './siap-upstream.session';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Module({
@@ -20,7 +21,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
     }),
   ],
   controllers: [SiapController],
-  providers: [SiapService, JwtAuthGuard],
-  exports: [SiapService],
+  providers: [SiapUpstreamSession, SiapService, JwtAuthGuard],
+  exports: [SiapService, SiapUpstreamSession],
 })
 export class SiapModule {}

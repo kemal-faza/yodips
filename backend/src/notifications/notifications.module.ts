@@ -22,7 +22,7 @@ import { NotificationsPoller } from './poller.service';
 @Module({
   imports: [
     AuthModule,
-    KulonModule,   // KulonService + KulonSessionProbe (exports)
+    KulonModule,   // KulonService + KulonUpstreamSession (exports)
     SiapModule,    // SiapService
     SessionModule, // SessionStore
     ScheduleModule.forRoot(),

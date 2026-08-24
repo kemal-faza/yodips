@@ -11,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { SiapService } from './siap.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { SessionStore } from '../session/session-store';
 
 /** Express-style request once JwtAuthGuard has attached the parsed JWT claims. */
 interface AuthedRequest {
@@ -21,100 +20,73 @@ interface AuthedRequest {
 @UseGuards(JwtAuthGuard)
 @Controller('api/siap')
 export class SiapController {
-  constructor(
-    private readonly siapService: SiapService,
-    private readonly sessionStore: SessionStore,
-  ) {}
+  constructor(private readonly siapService: SiapService) {}
 
   @Get('profile')
-  async getProfile(@Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getProfile(cookie, req.user?.sub);
+  getProfile(@Req() req: AuthedRequest) {
+    return this.siapService.getProfile(req.user?.sub);
   }
 
   @Get('irs')
-  async getIrs(@Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getIrs(cookie, req.user?.sub);
+  getIrs(@Req() req: AuthedRequest) {
+    return this.siapService.getIrs(req.user?.sub);
   }
 
   @Get('khs')
-  async getKhs(@Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getKhs(cookie, req.user?.sub);
+  getKhs(@Req() req: AuthedRequest) {
+    return this.siapService.getKhs(req.user?.sub);
   }
 
   @Get('lecturers')
-  async getLecturers(@Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getLecturers(cookie);
+  getLecturers(@Req() req: AuthedRequest) {
+    return this.siapService.getLecturers(req.user?.sub);
   }
 
   @Get('notifications')
-  async getNotifications(@Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getNotifications(cookie);
+  getNotifications(@Req() req: AuthedRequest) {
+    return this.siapService.getNotifications(req.user?.sub);
   }
 
   @Get('jadwal')
-  async getJadwal(@Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getJadwal(cookie, req.user?.sub);
+  getJadwal(@Req() req: AuthedRequest) {
+    return this.siapService.getJadwal(req.user?.sub);
   }
 
   @Get('absen')
-  async getAbsen(@Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
-    return this.siapService.getAbsen(cookie, req.user?.sub);
+  getAbsen(@Req() req: AuthedRequest) {
+    return this.siapService.getAbsen(req.user?.sub);
   }
 
   @Get('kehadiran/:id')
   async getKehadiran(@Param('id') id: string, @Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
     if (!/^\d+$/.test(id)) {
       throw new HttpException(
         { message: 'ID kehadiran tidak valid' },
         HttpStatus.BAD_REQUEST,
       );
     }
-    return this.siapService.getKehadiran(cookie, id);
+    return await this.siapService.getKehadiran(req.user?.sub, id);
   }
 
   @Post('kehadiran')
-  async markKehadiran(
-    @Req() req: AuthedRequest,
-    @Body() body: { token?: string },
-  ) {
-    const cookie = await this.requireSiapCookie(req);
+  async markKehadiran(@Req() req: AuthedRequest, @Body() body: { token?: string }) {
     if (!body?.token) {
       throw new HttpException(
         { message: 'token QR wajib diisi' },
         HttpStatus.BAD_REQUEST,
       );
     }
-    return this.siapService.markKehadiran(cookie, body.token);
+    return await this.siapService.markKehadiran(req.user?.sub, body.token);
   }
 
   @Post('notifications/:id/unread')
-  async markNotification(@Param('id') id: string, @Req() req: AuthedRequest) {
-    const cookie = await this.requireSiapCookie(req);
+  markNotification(@Param('id') id: string, @Req() req: AuthedRequest) {
     if (!/^\d+$/.test(id)) {
       throw new HttpException(
         { message: 'ID notifikasi tidak valid' },
         HttpStatus.BAD_REQUEST,
       );
     }
-    return this.siapService.markNotification(cookie, id);
-  }
-
-  private async requireSiapCookie(req: AuthedRequest): Promise<string> {
-    const session = await this.sessionStore.get(req.user?.sub ?? '');
-    if (!session?.siapCookie) {
-      throw new HttpException(
-        { message: 'SIAP session belum ada. Silakan login ulang via SSO' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    return session.siapCookie;
+    return this.siapService.markNotification(req.user?.sub, id);
   }
 }

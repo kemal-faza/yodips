@@ -1,6 +1,4 @@
 import {
-  HttpException,
-  HttpStatus,
   Injectable,
   Logger,
   OnApplicationBootstrap,
@@ -14,14 +12,12 @@ import {
   findDueSoon,
   NotifEvent,
 } from './detector';
-import { isStaleUpstreamError, KulonSessionProbe } from '../kulon/kulon-session-probe';
+import { isStaleUpstreamError } from '../upstream/upstream-fetch';
 import { KulonService } from '../kulon/kulon.service';
 import { eventToPush, PushCopy } from './push-copy';
 import { NotificationStore } from './notification-store';
-import { SessionStore } from '../session/session-store';
 import { SiapService } from '../siap/siap.service';
 import { FcmService } from './fcm.service';
-import { CapturedSession } from '../playwright/playwright-auth.service';
 import { KulonAssignment } from '../kulon/kulon.service';
 import { SiapJadwal } from '../siap/siap.service';
 
@@ -45,10 +41,8 @@ export class NotificationsPoller implements OnApplicationBootstrap {
 
   constructor(
     private readonly store: NotificationStore,
-    private readonly sessionStore: SessionStore,
     private readonly kulon: KulonService,
     private readonly siap: SiapService,
-    private readonly probe: KulonSessionProbe,
     private readonly fcm: FcmService,
     private readonly config: ConfigService,
     private readonly schedulerRegistry: SchedulerRegistry,
@@ -120,22 +114,11 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     const tokens = await this.store.getDeviceTokens(sub);
     if (tokens.length === 0) return;
 
-    const session: CapturedSession | null = await this.sessionStore.get(sub);
-    if (!session?.kulonCookie || !session?.siapCookie) {
-      // Sesi hilang = episode expired → jalur re-login push via catch di runCycle.
-      throw new HttpException(
-        { message: 'Sesi belum ada' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-
-    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
-    const assignments: KulonAssignment[] = await this.kulon.getAllAssignments(
-      session.kulonCookie,
-      sesskey,
-      sub,
-    );
-    const jadwal: SiapJadwal[] = await this.siap.getJadwal(session.siapCookie, sub);
+    // Services resolve their own upstream sessions from `sub`; a missing or
+    // expired session surfaces as a typed stale 401 -> re-login push (catch
+    // di runCycle).
+    const assignments: KulonAssignment[] = await this.kulon.getAllAssignments(sub);
+    const jadwal: SiapJadwal[] = await this.siap.getJadwal(sub);
 
     // Sesi valid -> episode expired usai; reset agar episode BERIKUTNYA boleh push lagi.
     if (await this.store.getReloginFlagged(sub)) {

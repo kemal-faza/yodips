@@ -9,81 +9,38 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { KulonService } from './kulon.service';
-import { KulonSessionProbe } from './kulon-session-probe';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { SessionStore } from '../session/session-store';
+
+interface AuthedRequest {
+  user?: { sub?: string; [k: string]: unknown };
+}
 
 @UseGuards(JwtAuthGuard)
 @Controller('api/kulon')
 export class KulonController {
-  constructor(
-    private readonly kulonService: KulonService,
-    private readonly sessionStore: SessionStore,
-    private readonly probe: KulonSessionProbe,
-  ) {}
+  constructor(private readonly kulonService: KulonService) {}
 
   @Get('courses')
-  async getCourses(@Req() req: any) {
-    const session = await this.sessionStore.get(req.user?.sub);
-    if (!session?.kulonCookie) {
-      throw new HttpException(
-        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
-    const courses = await this.kulonService.getCourses(
-      session.kulonCookie,
-      sesskey,
-      req.user?.sub,
-      session.siapCookie,
-    );
-    return courses;
+  getCourses(@Req() req: AuthedRequest) {
+    return this.kulonService.getCourses(req.user?.sub);
   }
 
   @Get('assignments/all')
-  async getAllAssignments(@Req() req: any) {
-    const session = await this.sessionStore.get(req.user?.sub);
-    if (!session?.kulonCookie) {
-      throw new HttpException(
-        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
-    return this.kulonService.getAllAssignments(
-      session.kulonCookie,
-      sesskey,
-      req.user?.sub,
-    );
+  getAllAssignments(@Req() req: AuthedRequest) {
+    return this.kulonService.getAllAssignments(req.user?.sub);
   }
 
   @Get('assignments')
-  async getAssignments(@Req() req: any) {
-    const session = await this.sessionStore.get(req.user?.sub);
-    if (!session?.kulonCookie) {
-      throw new HttpException(
-        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
-    return this.kulonService.getAssignments(session.kulonCookie, sesskey);
+  getAssignments(@Req() req: AuthedRequest) {
+    return this.kulonService.getAssignments(req.user?.sub);
   }
 
   @Get('assignments/:id/detail')
   async getAssignmentDetail(
     @Param('id') id: string,
     @Query('cmid') cmid: string,
-    @Req() req: any,
+    @Req() req: AuthedRequest,
   ) {
-    const session = await this.sessionStore.get(req.user?.sub);
-    if (!session?.kulonCookie) {
-      throw new HttpException(
-        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
     const assignmentId = Number(id);
     const courseModuleId = Number(cmid);
     if (
@@ -97,10 +54,9 @@ export class KulonController {
         HttpStatus.NOT_FOUND,
       );
     }
-    await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
     try {
       return await this.kulonService.getAssignmentDetail(
-        session.kulonCookie,
+        req.user?.sub,
         assignmentId,
         courseModuleId,
       );
@@ -116,14 +72,7 @@ export class KulonController {
   }
 
   @Get('courses/:id/content')
-  async getCourseContent(@Param('id') id: string, @Req() req: any) {
-    const session = await this.sessionStore.get(req.user?.sub);
-    if (!session?.kulonCookie) {
-      throw new HttpException(
-        { message: 'Kulon session belum ada. Silakan login ulang via SSO' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
+  async getCourseContent(@Param('id') id: string, @Req() req: AuthedRequest) {
     const courseId = Number(id);
     if (!Number.isInteger(courseId) || courseId <= 0) {
       throw new HttpException(
@@ -131,14 +80,8 @@ export class KulonController {
         HttpStatus.NOT_FOUND,
       );
     }
-    const sesskey = await this.probe.fetchSesskeyOrThrow(session.kulonCookie);
     try {
-      return await this.kulonService.getCourseContent(
-        session.kulonCookie,
-        sesskey,
-        courseId,
-        req.user?.sub,
-      );
+      return await this.kulonService.getCourseContent(req.user?.sub, courseId);
     } catch (e) {
       if ((e as Error).message === 'COURSE_NOT_FOUND') {
         throw new HttpException(
