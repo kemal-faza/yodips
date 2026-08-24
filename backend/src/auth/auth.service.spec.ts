@@ -714,4 +714,32 @@ describe('AuthService.me', () => {
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(1);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(1);
   });
+
+  // Sesi Android pairing tidak pernah punya ssoCookie (handoffBody tanpa ssoCookie).
+  const PAIR_SESSION = {
+    identity: 'NIMPAIR',
+    ssoCookie: '',
+    microsoftCookie: '',
+    kulonCookie: 'MoodleSession=k',
+    siapCookie: 'sia_app_session=s',
+    capturedAt: Date.now(),
+  };
+
+  it('me(): via=pair menganggap complete walau ssoCookie kosong, bila Kulon+SIAP valid', async () => {
+    mockSessionStore._map.set('NIMPAIR', PAIR_SESSION);
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true });
+    mockSiap.checkSessionValid.mockResolvedValue({ valid: true });
+    const svc = makeService();
+    const res = await svc.me({ sub: 'NIMPAIR', via: 'pair' });
+    expect(res.complete).toBe(true);
+  });
+
+  it('me(): token non-pair tetap mensyaratkan ssoCookie utk complete', async () => {
+    mockSessionStore._map.set('NIMPAIR2', { ...PAIR_SESSION, identity: 'NIMPAIR2' });
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true });
+    mockSiap.checkSessionValid.mockResolvedValue({ valid: true });
+    const svc = makeService();
+    const res = await svc.me({ sub: 'NIMPAIR2', via: 'handoff' });
+    expect(res.complete).toBe(false);
+  });
 });

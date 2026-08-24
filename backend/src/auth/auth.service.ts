@@ -348,6 +348,11 @@ export class AuthService {
             this.siap.checkSessionValid(session.siapCookie),
           )
         : false;
+    // Token via='pair' (perangkat pairing) tidak mensyaratkan presence
+    // ssoCookie: sesi sumber Android tidak pernah mengirimnya
+    // (HandoffModels.handoffBody hanya siap+kulon) — syarat lama membuat
+    // perangkat paired bounce balik ke login selamanya.
+    const requireSsoCookie = user?.via !== 'pair';
     return {
       sub: user?.sub,
       authenticated: present,
@@ -355,7 +360,11 @@ export class AuthService {
       hasMicrosoft: present ? !!session.microsoftCookie : false,
       hasKulon: kulonValid,
       hasSiap: siapValid,
-      complete: present && !!session.ssoCookie && kulonValid && siapValid,
+      complete:
+        present &&
+        (!requireSsoCookie || !!session.ssoCookie) &&
+        kulonValid &&
+        siapValid,
     };
   }
 
