@@ -12,3 +12,16 @@ export function pageWindow(current: number, total: number, side = 1): (number | 
   out.push(total);
   return out;
 }
+
+/** Ukuran halaman daftar tugas mobile (mirror TASK_PAGE_SIZE TasksScreen.kt). */
+export const TASK_PAGE_SIZE = 15;
+
+/**
+ * Slice satu halaman dari list TERURUT; `remaining` untuk footer
+ * "Muat lebih banyak". Murni agar paginasi mudah dites (paritas Kotlin).
+ */
+export function pagedTasks<T>(list: T[], showCount: number): { page: T[]; remaining: number } {
+  const safe = Math.max(0, Math.floor(showCount));
+  const page = list.slice(0, safe);
+  return { page, remaining: list.length - page.length };
+}
