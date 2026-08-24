@@ -51,6 +51,7 @@ export const API = {
     profile: '/api/siap/profile',
     irs: '/api/siap/irs',
     khs: '/api/siap/khs',
+    lecturers: '/api/siap/lecturers',
     jadwal: '/api/siap/jadwal',
     absen: '/api/siap/absen',
     notifications: '/api/siap/notifications',

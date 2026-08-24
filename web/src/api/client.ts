@@ -4,12 +4,16 @@ import type {
   AssignmentDetail,
   CaptureResult,
   Course,
+  KehadiranResult,
   KulonCourseContent,
   PairConsumeResult,
   PairRequestResult,
+  SiapAbsenItem,
   SiapIrs,
   SiapJadwal,
+  SiapKehadiran,
   SiapKhs,
+  SiapLecturer,
   SiapNotifications,
   SiapProfile,
   User,
@@ -180,5 +184,26 @@ export async function pairRequest(): Promise<PairRequestResult> {
 /** Tukar kode pairing dengan JWT sesi yang sama. */
 export async function pairConsume(code: string): Promise<PairConsumeResult> {
   const { data } = await apiClient.post<PairConsumeResult>(API.auth.pairConsume, { code });
+  return data;
+}
+
+export async function getSiapLecturers(): Promise<SiapLecturer[]> {
+  const { data } = await apiClient.get<SiapLecturer[]>(API.siap.lecturers);
+  return data;
+}
+
+export async function getSiapAbsen(): Promise<SiapAbsenItem[]> {
+  const { data } = await apiClient.get<SiapAbsenItem[]>(API.siap.absen);
+  return data;
+}
+
+export async function getSiapKehadiran(idJadwal: string): Promise<SiapKehadiran> {
+  const { data } = await apiClient.get<SiapKehadiran>(API.siap.kehadiran(idJadwal));
+  return data;
+}
+
+/** Proxy token hasil scan QR absensi ke SIAP (anti-replay milik SIAP). */
+export async function postKehadiranToken(token: string): Promise<KehadiranResult> {
+  const { data } = await apiClient.post<KehadiranResult>(API.siap.markKehadiran, { token });
   return data;
 }
