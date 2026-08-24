@@ -1,4 +1,5 @@
 import type { HandoffRaw, Service } from './contract.js';
+import { BACKEND_CODES } from './contract.js';
 
 export type HandoffDecision =
   | { action: 'ok'; token: string }
@@ -8,7 +9,7 @@ export type HandoffDecision =
 
 export function interpretHandoff(raw: HandoffRaw): HandoffDecision {
   if (!raw.ok) {
-    if (raw.code === 'KULON_STALE') return { action: 'stale', service: 'kulon' };
+    if (raw.code === BACKEND_CODES.KULON_STALE) return { action: 'stale', service: 'kulon' };
     return { action: 'error', message: raw.message ?? `Handoff gagal (${raw.status})`, code: raw.code };
   }
   if (raw.hasSso && raw.hasKulon && raw.hasSiap) {
