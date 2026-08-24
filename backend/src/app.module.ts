@@ -11,6 +11,7 @@ import { AuthModule } from './auth/auth.module';
 import { KulonModule } from './kulon/kulon.module';
 import { SiapModule } from './siap/siap.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { PairingModule } from './pairing/pairing.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     KulonModule,
     SiapModule,
     NotificationsModule,
+    PairingModule,
   ],
   controllers: [AppController],
   providers: [
