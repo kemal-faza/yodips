@@ -243,6 +243,28 @@ describe('api client', () => {
       expect(mockRequest).toHaveBeenCalledTimes(1);
     });
 
+    it('concurrent auth-401s share ONE refresh POST (single-flight)', async () => {
+      // call (1) shared refresh success; calls (2)+(3) the two retried GETs.
+      mockRequest
+        .mockResolvedValueOnce({ data: { accessToken: 'new-jwt' } })
+        .mockResolvedValue({ data: { id: 1 } });
+      localStorage.setItem('sso_token', 'old-jwt');
+
+      const err = (url: string) => ({
+        response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+        config: { method: 'get', url },
+      });
+      const { apiClient } = await import('./client');
+      const onRejected = responseHandlers.onRejected!;
+      await Promise.all([
+        onRejected(err('/api/auth/me')),
+        onRejected(err('/api/auth/me')),
+      ]);
+      // Without single-flight this would be 4: one refresh PER 401 + retries.
+      expect(mockRequest).toHaveBeenCalledTimes(3);
+      expect(mockRequest.mock.calls[0][0].url).toBe('/api/auth/refresh');
+    });
+
     it('anti-loop: a 401 on /api/auth/refresh is terminal (never re-refreshed)', async () => {
       // The refresh endpoint's own response passes through the SAME interceptor.
       // If the refresh route 401s, it must reject and NOT trigger another refresh.
