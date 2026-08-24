@@ -16,6 +16,9 @@ vi.mock("./config/extension", () => ({
     return true;
   },
   isMobileUserAgent: () => false,
+  // Router kini resolve permukaan via adaptiveRoute (Fase 4) yang membaca
+  // isMobileDevice saat buildRouter — mock ini mengunci permukaan desktop.
+  isMobileDevice: () => false,
 }));
 
 vi.mock("./api/client", () => ({
