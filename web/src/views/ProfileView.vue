@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { getSiapProfile } from '../api/client';
 import type { SiapProfile } from '../types';
+import { useProfileGroups } from '../composables/useProfileGroups';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,43 +12,12 @@ import PairingCard from '../components/PairingCard.vue';
 const profile = ref<SiapProfile | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
-const showNamaIbu = ref(false);
-
-interface Row { label: string; value?: string; group: string; masked?: boolean }
+const { groups, showNamaIbu, toggleNamaIbu } = useProfileGroups(profile);
 
 function initial(name?: string): string {
   if (!name) return '?';
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
 }
-
-const groups = computed<Array<{ name: string; rows: Row[] }>>(() => {
-  const p = profile.value;
-  if (!p) return [];
-  const rows: Row[] = [
-    { label: 'NIM', value: p.nim, group: 'Data Diri' },
-    { label: 'Nama Lengkap', value: p.nama, group: 'Data Diri' },
-    { label: 'Fakultas', value: p.fakultas, group: 'Data Diri' },
-    { label: 'Prodi', value: p.prodi, group: 'Data Diri' },
-    { label: 'Angkatan', value: p.angkatan, group: 'Data Diri' },
-    { label: 'Tempat lahir', value: p.tempatLahir, group: 'Kependudukan' },
-    { label: 'Tanggal lahir', value: p.tanggalLahir, group: 'Kependudukan' },
-    { label: 'NIK', value: p.nik, group: 'Kependudukan' },
-    { label: 'Nama Ibu', value: p.namaIbu, group: 'Kependudukan', masked: true },
-    { label: 'Kode kewarganegaraan', value: p.kodeKewarganegaraan, group: 'Kependudukan' },
-    { label: 'Nomor HP', value: p.nomorHp, group: 'Kontak' },
-    { label: 'Email SSO', value: p.emailSso, group: 'Kontak' },
-    { label: 'Email pribadi', value: p.emailPribadi, group: 'Kontak' },
-    { label: 'Alamat Asal', value: p.alamatAsal, group: 'Alamat' },
-    { label: 'Alamat Sekarang', value: p.alamatSekarang, group: 'Alamat' },
-  ].filter((r) => r.value != null && r.value !== '');
-  const out: Array<{ name: string; rows: Row[] }> = [];
-  for (const r of rows) {
-    let g = out.find((x) => x.name === r.group);
-    if (!g) { g = { name: r.group, rows: [] }; out.push(g); }
-    g.rows.push(r);
-  }
-  return out;
-});
 
 onMounted(async () => {
   loading.value = true;
@@ -91,7 +61,7 @@ onMounted(async () => {
                 <dd class="text-foreground">
                   <template v-if="r.masked">
                     <span>{{ showNamaIbu ? (r.value ?? '—') : '********' }}</span>
-                    <Button variant="link" class="ml-2" @click="showNamaIbu = !showNamaIbu">
+                    <Button variant="link" class="ml-2" @click="toggleNamaIbu">
                       {{ showNamaIbu ? 'Sembunyikan' : 'Tampilkan' }}
                     </Button>
                   </template>
