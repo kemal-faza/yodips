@@ -7,6 +7,8 @@ import {
   pollStatus,
   isPhaseSatisfied,
   isSsoLoggedInUrl,
+  decideHandoffRequest,
+  handoffSyncResponse,
   type FlowState,
   type FlowDeps,
 } from "./flow.js";
@@ -861,5 +863,95 @@ describe("LOGOUT (reset the flow so the next login starts fresh)", () => {
     expect(r.state).toEqual(st());
     // still emits cleanup effects so the adapter clears timers/results
     expect(r.effects).toContainEqual({ kind: "clearTimers" });
+  });
+});
+
+
+/**
+ * The external "handoff" message used to make these decisions inline in
+ * background.ts — the one file with no tests. They now live in core so the
+ * adapter only reads chrome.* inputs and executes effects.
+ */
+describe("decideHandoffRequest", () => {
+  it("idle flow -> request a fresh run", () => {
+    expect(decideHandoffRequest({ state: st(), tabAlive: false, phaseSatisfied: false })).toEqual({
+      kind: "request",
+    });
+  });
+
+  it("terminal state is not active -> request a fresh run", () => {
+    for (const core of ["done", "error"] as const) {
+      const state = { ...st(), core };
+      expect(
+        decideHandoffRequest({ state, tabAlive: true, phaseSatisfied: true }),
+      ).toEqual({ kind: "request" });
+    }
+  });
+
+  it("zombie recovery: active flow whose login tab is gone -> reset", () => {
+    const decision = decideHandoffRequest({
+      state: auth("sso"),
+      tabAlive: false,
+      phaseSatisfied: false,
+    });
+    expect(decision).toEqual({ kind: "reset", reason: "zombie-tab" });
+  });
+
+  it("wedged-phase recovery: active flow waiting on an already-satisfied phase -> reset", () => {
+    // SSO cookie already present while the flow waits on the sso phase.
+    const decision = decideHandoffRequest({
+      state: auth("sso"),
+      tabAlive: true,
+      phaseSatisfied: true,
+    });
+    expect(decision).toEqual({ kind: "reset", reason: "satisfied-phase" });
+  });
+
+  it("a live, unsatisfied active flow answers already-started (no new run)", () => {
+    const state = auth("kulon", "semi");
+    expect(
+      decideHandoffRequest({ state, tabAlive: true, phaseSatisfied: false }),
+    ).toEqual({ kind: "already-started", mode: "semi" });
+  });
+});
+
+describe("handoffSyncResponse", () => {
+  it("done within this pass -> replay the cached REAL token", () => {
+    const cached = { status: "ok" as const, accessToken: "JWT" };
+    expect(handoffSyncResponse({ core: "done", mode: "auto" }, cached)).toEqual({
+      status: "ok",
+      accessToken: "JWT",
+    });
+  });
+
+  it("done without a usable cached token -> explicit error, never a placeholder", () => {
+    expect(
+      handoffSyncResponse({ core: "done", mode: "auto" }, undefined),
+    ).toEqual({ status: "error", message: "Sesi login selesai tanpa token. Coba lagi." });
+    expect(
+      handoffSyncResponse(
+        { core: "done", mode: "auto" },
+        { status: "started", mode: "auto" },
+      ),
+    ).toEqual({ status: "error", message: "Sesi login selesai tanpa token. Coba lagi." });
+  });
+
+  it("error within this pass -> prefer the cached error message", () => {
+    const cached = { status: "error" as const, message: "KULON_STALE" };
+    expect(handoffSyncResponse({ core: "error", mode: "auto" }, cached)).toEqual({
+      status: "error",
+      message: "KULON_STALE",
+    });
+    expect(handoffSyncResponse({ core: "error", mode: "auto" }, undefined)).toEqual({
+      status: "error",
+      message: "Sesi layanan gagal diperbarui. Silakan coba lagi.",
+    });
+  });
+
+  it("still running -> started with the flow's mode", () => {
+    expect(handoffSyncResponse({ core: "authing", mode: "semi" }, undefined)).toEqual({
+      status: "started",
+      mode: "semi",
+    });
   });
 });

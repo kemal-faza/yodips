@@ -207,6 +207,79 @@ export function pollStatus(
   };
 }
 
+/** Adapter-gathered inputs for an external handoff request (chrome.* I/O). */
+export interface HandoffRequestInputs {
+  state: FlowState;
+  /** Does the flow's login tab still exist? (user may have closed it.) */
+  tabAlive: boolean;
+  /**
+   * Live-cookie evaluation of the running flow's current phase
+   * (`isPhaseSatisfied(state, evaluateCookies(...))`). False when not active.
+   */
+  phaseSatisfied: boolean;
+}
+
+export type HandoffDecision =
+  | { kind: "request" }
+  | { kind: "reset"; reason: "zombie-tab" | "satisfied-phase" }
+  | { kind: "already-started"; mode: FlowMode };
+
+/**
+ * Decide what an external "handoff" request must do about any PRE-EXISTING
+ * flow before starting a new one. Three situations need policy:
+ *  - Zombie recovery: an "active" flow whose login tab no longer exists (user
+ *    closed it, or the SW was killed mid-flow) can never finish — its deadline
+ *    hasn't passed, so getState() keeps it alive. Reset to idle so the REQUEST
+ *    opens a fresh tab instead of answering "started" forever.
+ *  - Wedged-phase recovery: a running flow wedged in a phase the live cookies
+ *    already satisfy (e.g. waiting on SSO while already logged into SSO) only
+ *    advances on a session-cookie CHANGE, which an established session never
+ *    emits. Reset so the REQUEST fast-paths past the satisfied phase.
+ *  - A live, unsatisfied active flow must NOT be double-started: answer
+ *    "started" and leave it alone.
+ */
+export function decideHandoffRequest(
+  inputs: HandoffRequestInputs,
+): HandoffDecision {
+  const { state } = inputs;
+  const active = state.core === "authing" || state.core === "handoff";
+  if (!active) return { kind: "request" };
+  if (!inputs.tabAlive) return { kind: "reset", reason: "zombie-tab" };
+  if (inputs.phaseSatisfied)
+    return { kind: "reset", reason: "satisfied-phase" };
+  return { kind: "already-started", mode: state.mode };
+}
+
+/**
+ * Interpret the flow state AFTER a synchronous REQUEST pass and shape the
+ * immediate response to the external handoff message. The sendResult effect
+ * caches the real token; when the flow finished within this pass we replay
+ * that cache (never a placeholder) and surface in-pass failures instead of
+ * answering "started" on a tab that will never open.
+ */
+export function handoffSyncResponse(
+  after: Pick<FlowState, "core" | "mode">,
+  cached: OutboundStatus | undefined,
+): OutboundStatus {
+  if (after.core === "done") {
+    if (cached?.status === "ok" && cached.accessToken) {
+      return { status: "ok", accessToken: cached.accessToken };
+    }
+    return {
+      status: "error",
+      message: "Sesi login selesai tanpa token. Coba lagi.",
+    };
+  }
+  if (after.core === "error") {
+    const msg = cached?.status === "error" ? cached.message : undefined;
+    return {
+      status: "error",
+      message: msg ?? "Sesi layanan gagal diperbarui. Silakan coba lagi.",
+    };
+  }
+  return { status: "started", mode: after.mode };
+}
+
 function deadline(deps: FlowDeps): number {
   return deps.now() + deps.PHASE_TIMEOUT_MS;
 }

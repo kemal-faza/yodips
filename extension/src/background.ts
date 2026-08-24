@@ -11,6 +11,8 @@ import {
   normalizeState,
   pollStatus,
   isPhaseSatisfied,
+  decideHandoffRequest,
+  handoffSyncResponse,
   type FlowState,
   type FlowEvent,
   type FlowEffect,
@@ -395,83 +397,41 @@ chrome.runtime.onMessageExternal.addListener(
             await chrome.storage.session
               .remove(LAST_RESULT_KEY)
               .catch(() => {});
-            // Zombie recovery: an "active" flow whose login tab no longer exists
-            // (user closed the tab, or the SW was killed mid-flow) can never
-            // finish — its deadline hasn't passed yet, so getState() keeps it
-            // alive. Reset to idle so the REQUEST below opens a fresh tab
-            // instead of answering "started" forever with no tab ever opening.
-            const active = state.core === "authing" || state.core === "handoff";
-            if (active && !(await tabAlive(state.tabId))) {
-              console.info(
-                "[Undip SSO] zombie flow: login tab gone — resetting",
-                { core: state.core, tabId: state.tabId },
-              );
-              state = initialState(state.mode);
-            } else if (
-              active &&
-              isPhaseSatisfied(
+            // Pre-run policy (zombie recovery, wedged-phase reset, double-start
+            // guard) is decided in core/flow.ts; the adapter gathers the
+            // chrome.* inputs and executes the returned decision.
+            const decision = decideHandoffRequest({
+              state,
+              tabAlive: await tabAlive(state.tabId),
+              phaseSatisfied: isPhaseSatisfied(
                 state,
                 evaluateCookies(await getFlowCookies(state.tabId)),
-              )
-            ) {
-              // A running flow wedged in a phase the live cookies already satisfy
-              // (e.g. waiting on the SSO phase while already logged into SSO) can
-              // never advance on its own — it only moves on a session-cookie
-              // CHANGE, which an established session never emits. Reset so the
-              // REQUEST below re-evaluates cookies and fast-paths past the
-              // satisfied phase, instead of answering "started" forever (stuck)
-              // until the user manually closes the login tab.
+              ),
+            });
+            if (decision.kind === "reset") {
               console.info(
-                "[Undip SSO] wedged in a satisfied phase — resetting",
-                { core: state.core, service: state.service },
+                decision.reason === "zombie-tab"
+                  ? "[Undip SSO] zombie flow: login tab gone — resetting"
+                  : "[Undip SSO] wedged in a satisfied phase — resetting",
+                { core: state.core, tabId: state.tabId, service: state.service },
               );
               state = initialState(state.mode);
-            }
-            const stillActive =
-              state.core === "authing" || state.core === "handoff";
-            if (stillActive) {
+            } else if (decision.kind === "already-started") {
               return void sendResponse({
                 status: "started",
-                mode: state.mode,
+                mode: decision.mode,
                 message: "Login sedang berjalan.",
               });
             }
             await setState({ ...state, appTabId });
             await runFlow({ type: "REQUEST", mode: "auto" });
             const after = await getState();
-            if (after.core === "done") {
-              // The flow finished within this pass — return the REAL token (the
-              // sendResult effect cached it), never a placeholder.
-              const cached = (
-                await chrome.storage.session.get(LAST_RESULT_KEY)
-              )[LAST_RESULT_KEY] as OutboundStatus | undefined;
-              if (cached?.status === "ok" && cached.accessToken) {
-                return void sendResponse({
-                  status: "ok",
-                  accessToken: cached.accessToken,
-                });
-              }
-              return void sendResponse({
-                status: "error",
-                message: "Sesi login selesai tanpa token. Coba lagi.",
-              });
-            }
-            if (after.core === "error") {
-              // The flow failed within this pass (e.g. KULON_STALE maxed out) —
-              // surface the error immediately instead of answering "started",
-              // which left the SPA waiting on a tab that will never open.
-              const cached = (
-                await chrome.storage.session.get(LAST_RESULT_KEY)
-              )[LAST_RESULT_KEY] as OutboundStatus | undefined;
-              const msg =
-                cached?.status === "error" ? cached.message : undefined;
-              return void sendResponse({
-                status: "error",
-                message:
-                  msg ?? "Sesi layanan gagal diperbarui. Silakan coba lagi.",
-              });
-            }
-            return void sendResponse({ status: "started", mode: after.mode });
+            // In-pass finish/failure interpretation + cached-result replay:
+            // decided in core, executed here.
+            const cached = (
+              await chrome.storage.session.get(LAST_RESULT_KEY)
+            )[LAST_RESULT_KEY] as OutboundStatus | undefined;
+            return void sendResponse(handoffSyncResponse(after, cached));
           }
           default:
             return void sendResponse({
