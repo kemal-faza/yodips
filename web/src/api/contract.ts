@@ -15,6 +15,8 @@ export const BACKEND_ERROR_CODES = {
   INVALID_TOKEN: 'INVALID_TOKEN',
   /** Server-side session record is gone — silent refresh impossible. */
   SESSION_DEAD: 'SESSION_DEAD',
+  /** Kode pairing salah / kedaluwarsa (POST /api/auth/pair/consume). */
+  INVALID_CODE: 'INVALID_CODE',
 } as const;
 
 export type BackendErrorCode = keyof typeof BACKEND_ERROR_CODES;
@@ -35,6 +37,8 @@ export const API = {
     microsoftLogin: '/api/auth/microsoft/login',
     handoff: '/api/auth/session/handoff',
     logout: '/api/auth/logout',
+    pairRequest: '/api/auth/pair/request',
+    pairConsume: '/api/auth/pair/consume',
   },
   kulon: {
     courses: '/api/kulon/courses',
