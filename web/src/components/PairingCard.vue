@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import QRCode from 'qrcode';
 import { pairRequest } from '../api/client';
 import type { PairRequestResult } from '../types';
@@ -49,6 +49,9 @@ async function requestCode() {
     const res = await pairRequest();
     data.value = res;
     startTimer(res.expiresAt);
+    // v-if canvas baru ter-mount setelah flush render Vue — tunggu dulu, kalau
+    // tidak getElementById('pair-qr') balik null dan QR diam-diam tak digambar.
+    await nextTick();
     await renderQr(res.qrUrl);
   } catch (e: any) {
     error.value =
