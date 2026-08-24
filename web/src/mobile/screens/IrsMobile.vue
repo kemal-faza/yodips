@@ -31,7 +31,7 @@ const cards = computed(() =>
       vm,
       // Dosen di-join by kode MIK hasil join jadwal (kode kartu yang tampil),
       // fallback ke dosen baris IRS bila jadwal/dosen tidak ketemu.
-      lecturer: lecturerByKode.value.get(vm.kode) ?? mk.dosen ?? null,
+      lecturer: lecturerByKode.value.get(vm.kode ?? '') ?? mk.dosen ?? null,
       absen: absenMap.value.get(mk.nama.trim().toLowerCase()) ?? null,
     };
   }),
