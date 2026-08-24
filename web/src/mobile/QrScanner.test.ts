@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mount } from '@vue/test-utils';
 
-const jsQR = vi.hoisted(() => vi.fn(() => null));
+const jsQR = vi.hoisted(() => vi.fn((): { data: string } | null => null));
 vi.mock('jsqr', () => ({ default: jsQR }));
 
 import QrScanner from './QrScanner.vue';
