@@ -69,7 +69,7 @@ fun <T> LoadableData(
         }
 
         is ApiResult.Error -> {
-            ErrorState(modifier, r.message, onRetry = { attempt++ }, isUnauthorized = r.type == ErrorType.UNAUTHORIZED)
+            ErrorState(modifier, r.message, onRetry = { attempt++ }, isUnauthorized = r.type == ErrorType.UNAUTHORIZED || r.type == ErrorType.STALE_SESSION)
         }
     }
 }
@@ -147,7 +147,7 @@ fun <T> RefreshableLoadableData(
             }
 
             is ApiResult.Error -> {
-                ErrorState(modifier, r.message, onRetry = { attempt++ }, isUnauthorized = r.type == ErrorType.UNAUTHORIZED)
+                ErrorState(modifier, r.message, onRetry = { attempt++ }, isUnauthorized = r.type == ErrorType.UNAUTHORIZED || r.type == ErrorType.STALE_SESSION)
             }
         }
     }
