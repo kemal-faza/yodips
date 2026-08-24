@@ -60,3 +60,9 @@ describe('buildSsoTicket', () => {
     expect(buildSsoTicket(1_756_000_000)).toBe('MTc1NjAwMDAwMA==');
   });
 });
+
+describe('API.siap lecturers path (kontrak layar mobile)', () => {
+  it('mendaftarkan /api/siap/lecturers', () => {
+    expect(API.siap.lecturers).toBe('/api/siap/lecturers');
+  });
+});

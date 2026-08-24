@@ -282,4 +282,44 @@ describe('api client', () => {
       expect(localStorage.getItem('sso_token')).toBe('old-jwt');
     });
   });
+
+  it('getSiapLecturers GET /api/siap/lecturers', async () => {
+    mockRequest.mockResolvedValue({ data: [{ kode: 'MIK16245xx', dosen: 'Dosen A' }] });
+    const { getSiapLecturers } = await import('./client');
+    const r = await getSiapLecturers();
+    expect(mockRequest.mock.calls[0][0]).toMatchObject({ method: 'get', url: '/api/siap/lecturers' });
+    expect(r[0].dosen).toBe('Dosen A');
+  });
+
+  it('getSiapAbsen GET /api/siap/absen', async () => {
+    mockRequest.mockResolvedValue({
+      data: [{ idJadwal: '77', nama: 'Matkul A', hadirPct: 85.7, hadir: 12, total: 14 }],
+    });
+    const { getSiapAbsen } = await import('./client');
+    const r = await getSiapAbsen();
+    expect(mockRequest.mock.calls[0][0]).toMatchObject({ method: 'get', url: '/api/siap/absen' });
+    expect(r[0].idJadwal).toBe('77');
+  });
+
+  it('getSiapKehadiran GET /api/siap/kehadiran/:idJadwal', async () => {
+    mockRequest.mockResolvedValue({
+      data: { pertemuanId: '77', sections: [{ label: 'Absensi Kuliah', rows: [] }] },
+    });
+    const { getSiapKehadiran } = await import('./client');
+    const r = await getSiapKehadiran('77');
+    expect(mockRequest.mock.calls[0][0]).toMatchObject({ method: 'get', url: '/api/siap/kehadiran/77' });
+    expect(r.pertemuanId).toBe('77');
+  });
+
+  it('postKehadiranToken POST /api/siap/kehadiran body {token}', async () => {
+    mockRequest.mockResolvedValue({ data: { status: 'success', message: 'Absensi tercatat' } });
+    const { postKehadiranToken } = await import('./client');
+    const r = await postKehadiranToken('TOKEN-QR');
+    expect(mockRequest.mock.calls[0][0]).toMatchObject({
+      method: 'post',
+      url: '/api/siap/kehadiran',
+      data: { token: 'TOKEN-QR' },
+    });
+    expect(r.status).toBe('success');
+  });
 });

@@ -169,6 +169,7 @@ export interface SiapJadwal {
   ruang?: string;
   waktu: string;
   sks: number;
+  tanggal?: string;
 }
 
 export interface SiapNotification {
@@ -183,4 +184,49 @@ export interface SiapNotification {
 export interface SiapNotifications {
   count: number;
   items: SiapNotification[];
+}
+
+/** Dosen per matkul dari GET /api/siap/lecturers (join by kode MIK). */
+export interface SiapLecturer {
+  kode: string;
+  dosen: string;
+}
+
+/** Ringkasan kehadiran per matkul dari GET /api/siap/absen (mirror backend SiapAbsenItem). */
+export interface SiapAbsenItem {
+  idJadwal: string;
+  nama: string;
+  hadirPct: number;
+  hadir: number;
+  total: number;
+}
+
+/** Satu baris pertemuan pada tabel absensi (mirror backend). */
+export interface SiapKehadiranRow {
+  pertemuanKe: string;
+  tanggal: string;
+  waktu: string;
+  kelas: string;
+  kehadiran: string;
+  waktuAbsen: string;
+  aktor: string;
+}
+
+/** Satu section tabel absensi ("Absensi Kuliah" / "Absensi Ujian"). */
+export interface SiapKehadiranSection {
+  label: string;
+  rows: SiapKehadiranRow[];
+  message?: string;
+}
+
+/** Kehadiran satu matkul per pertemuan (GET /api/siap/kehadiran/:idJadwal). */
+export interface SiapKehadiran {
+  pertemuanId: string;
+  sections: SiapKehadiranSection[];
+}
+
+/** Respons POST /api/siap/kehadiran (passthrough JSON SIAP). */
+export interface KehadiranResult {
+  status?: string;
+  message?: string;
 }
