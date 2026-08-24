@@ -48,6 +48,7 @@ private class FakeTokenStore(
 private class FakeApi : SsoApi {
     var profileStub: suspend () -> SiapProfile = { throw UnsupportedOperationException("profile not stubbed") }
     var markKehadiranStub: suspend (KehadiranRequest) -> KehadiranResponse = { throw UnsupportedOperationException("markKehadiran not stubbed") }
+    var registerPushDeviceStub: suspend (PushDeviceRequest) -> PushDeviceResponse = { throw UnsupportedOperationException("registerPushDevice not stubbed") }
 
     override suspend fun profile(): SiapProfile = profileStub()
 
@@ -68,7 +69,7 @@ private class FakeApi : SsoApi {
     override suspend fun markKehadiran(body: KehadiranRequest): KehadiranResponse = markKehadiranStub(body)
 
     override suspend fun registerPushDevice(body: PushDeviceRequest): PushDeviceResponse =
-        throw UnsupportedOperationException()
+        registerPushDeviceStub(body)
 
     override suspend fun unregisterPushDevice(body: PushDeviceRequest): PushDeviceResponse =
         throw UnsupportedOperationException()
@@ -84,16 +85,33 @@ class SsoRepositoryTest {
     }
 
     @Test
-    fun `auth 401 maps to UNAUTHORIZED`() {
-        val error = HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
-        // Refresh must be faked: the default refreshToken() hits the real
-        // network, which made this test depend on a live backend.
+    fun `upstream-scraped 401 maps to STALE_SESSION`() {
+        // Kulon/SIAP data comes from scraping with stored cookies: a 401 here
+        // means the UPSTREAM session died while the JWT may still be fine —
+        // the precise taxonomy the UI already messages for.
+        val error = HttpException(Response.error<Any>(401, "Session SIAP expired".toResponseBody(null)))
         val repo =
             SsoRepository(
                 FakeApi().apply { profileStub = { throw error } },
                 refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
             )
         val r = runBlocking { repo.profile() }
+        assertTrue(r is ApiResult.Error)
+        assertEquals(ErrorType.STALE_SESSION, (r as ApiResult.Error).type)
+        assertEquals(401, r.code)
+    }
+
+    @Test
+    fun `auth-level 401 on non-upstream route maps to UNAUTHORIZED`() {
+        val error = HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
+        val repo =
+            SsoRepository(
+                FakeApi().apply {
+                    registerPushDeviceStub = { throw error }
+                },
+                refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
+            )
+        val r = runBlocking { repo.registerPushDevice("tok") }
         assertTrue(r is ApiResult.Error)
         assertEquals(ErrorType.UNAUTHORIZED, (r as ApiResult.Error).type)
         assertEquals(401, r.code)
@@ -157,7 +175,7 @@ class SsoRepositoryTest {
         val r = runBlocking { repo.profile() }
 
         assertTrue(r is ApiResult.Error)
-        assertEquals(ErrorType.UNAUTHORIZED, (r as ApiResult.Error).type)
+        assertEquals(ErrorType.STALE_SESSION, (r as ApiResult.Error).type)
         assertEquals(1, notified)
     }
 
@@ -243,7 +261,7 @@ class SsoRepositoryTest {
         )
         val r = repo.profile(force = true)
         assertEquals(1, notified)
-        assertTrue(r is ApiResult.Error && r.type == ErrorType.UNAUTHORIZED)
+        assertTrue(r is ApiResult.Error && r.type == ErrorType.STALE_SESSION)
     }
 
     @Test
@@ -276,10 +294,10 @@ class SsoRepositoryTest {
             tokenStore = FakeTokenStore(),
             refreshToken = { refreshAttempts++; "new-jwt" },
         )
-        val r = repo.markKehadiran("qr") // uses safe(retryable = false)
+        val r = repo.markKehadiran("qr") // upstream-scraped POST: stale, not dead-JWT
         assertEquals(1, notified)
         assertEquals(0, refreshAttempts) // POST never refreshes
-        assertTrue(r is ApiResult.Error && r.type == ErrorType.UNAUTHORIZED)
+        assertTrue(r is ApiResult.Error && r.type == ErrorType.STALE_SESSION)
     }
 
     @Test
