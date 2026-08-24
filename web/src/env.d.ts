@@ -1,3 +1,4 @@
+/// <reference types="vite-plugin-pwa/client" />
 /// <reference types="vite/client" />
 
 // Shim untuk editor/LSP berbasis `tsc` polos (tanpa plugin Vue). `vue-tsc`

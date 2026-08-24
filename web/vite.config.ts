@@ -2,9 +2,36 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss()],
+  plugins: [
+    vue(),
+    tailwindcss(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'favicon-192.png', 'yodips-logo-512.png'],
+      manifest: {
+        name: 'YoDips',
+        short_name: 'YoDips',
+        description: 'Gabungkan tugas, materi, dan notifikasi dari layanan akademik Undip.',
+        theme_color: '#01637E',
+        background_color: '#F7F7F7',
+        display: 'standalone',
+        start_url: '/',
+        icons: [
+          { src: 'favicon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'yodips-logo-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'yodips-logo-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        navigateFallback: '/',
+        // Halaman navigasi /api/* tidak pernah difallback ke shell SPA.
+        navigateFallbackDenylist: [/^\/api\//],
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
