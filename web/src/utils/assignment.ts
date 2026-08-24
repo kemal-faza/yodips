@@ -79,3 +79,16 @@ export function matchesKulonFilter(
   // 'need' = active-semester course, not done, not past deadline
   return !done && !a.overdue && courseActive(a, courses);
 }
+
+/** Tugas BELUM selesai ber-deadline positif, terdekat dulu, dibatasi `limit`. */
+export function upcomingTasks(
+  assignments: Assignment[],
+  _courses: Course[],
+  limit: number,
+): Assignment[] {
+  void _courses;
+  return assignments
+    .filter((a) => !isDone(a) && a.duedate > 0)
+    .sort((a, b) => a.duedate - b.duedate)
+    .slice(0, Math.max(0, limit));
+}

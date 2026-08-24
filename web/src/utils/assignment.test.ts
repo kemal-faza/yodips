@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignStatus, assignmentDisplayStatus, deadlineStatus, isDone, courseActive, matchesKulonFilter } from './assignment';
+import { assignStatus, assignmentDisplayStatus, deadlineStatus, isDone, courseActive, matchesKulonFilter, upcomingTasks } from './assignment';
 import type { Assignment, Course } from '../types';
 
 const now = Date.now();
@@ -112,5 +112,23 @@ describe('matchesKulonFilter', () => {
     expect(matchesKulonFilter('need', mk({ courseId: 1, overdue: false, submissionStatus: 'not_submitted' }), courses)).toBe(true);
     expect(matchesKulonFilter('need', mk({ courseId: 2, overdue: false, submissionStatus: 'not_submitted' }), courses)).toBe(false); // past course
     expect(matchesKulonFilter('need', mk({ overdue: true, submissionStatus: 'not_submitted' }), courses)).toBe(false); // late
+  });
+});
+
+describe('upcomingTasks', () => {
+  const mk = (id: number, over: Partial<Assignment>): Assignment => ({
+    id, name: 'N' + id, module: 'assign', eventType: 'due', duedate: 100, overdue: false,
+    course: 'C', courseId: 1, ...over,
+  });
+
+  it('buang selesai & tanpa deadline, urut deadline naik, batasi limit', () => {
+    const rows = [
+      mk(1, { duedate: 300 }),
+      mk(2, { duedate: 100 }),
+      mk(3, { duedate: 200, submissionStatus: 'submitted' }), // done → dibuang
+      mk(4, { duedate: 50, overdue: true }), // telat tapi belum selesai → tetap upcoming
+      mk(5, { duedate: 0 }),
+    ];
+    expect(upcomingTasks(rows, [], 2).map((a) => a.id)).toEqual([4, 2]);
   });
 });
