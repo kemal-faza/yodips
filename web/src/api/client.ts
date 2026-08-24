@@ -5,6 +5,8 @@ import type {
   CaptureResult,
   Course,
   KulonCourseContent,
+  PairConsumeResult,
+  PairRequestResult,
   SiapIrs,
   SiapJadwal,
   SiapKhs,
@@ -167,4 +169,16 @@ export async function getNotifications(): Promise<SiapNotifications> {
 
 export async function markNotificationRead(id: string): Promise<void> {
   await apiClient.post(API.siap.markNotification(id));
+}
+
+/** Minta kode pairing (JWT-guarded; axios interceptor menyuntik Bearer). */
+export async function pairRequest(): Promise<PairRequestResult> {
+  const { data } = await apiClient.post<PairRequestResult>(API.auth.pairRequest);
+  return data;
+}
+
+/** Tukar kode pairing dengan JWT sesi yang sama. */
+export async function pairConsume(code: string): Promise<PairConsumeResult> {
+  const { data } = await apiClient.post<PairConsumeResult>(API.auth.pairConsume, { code });
+  return data;
 }

@@ -15,6 +15,12 @@ describe('API paths', () => {
     expect(API.kulon.assignmentDetail(42)).toBe('/api/kulon/assignments/42/detail');
     expect(API.siap.kehadiran('37')).toBe('/api/siap/kehadiran/37');
   });
+
+  it('mendaftarkan route pairing + kode INVALID_CODE', () => {
+    expect(API.auth.pairRequest).toBe('/api/auth/pair/request');
+    expect(API.auth.pairConsume).toBe('/api/auth/pair/consume');
+    expect(BACKEND_ERROR_CODES.INVALID_CODE).toBe('INVALID_CODE');
+  });
 });
 
 describe('parseErrorEnvelope', () => {

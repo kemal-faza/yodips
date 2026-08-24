@@ -93,6 +93,20 @@ export interface CaptureResult {
   reused?: boolean;
 }
 
+/** POST /api/auth/pair/request response: kode + URL QR + epoch ms kedaluwarsa. */
+export interface PairRequestResult {
+  code: string;
+  qrUrl: string;
+  expiresAt: number;
+}
+
+/** POST /api/auth/pair/consume: JWT utk sesi server yang sama. */
+export interface PairConsumeResult {
+  accessToken: string;
+  hasKulon?: boolean;
+  hasSiap?: boolean;
+}
+
 export type AssignmentStatus = 'overdue' | 'dueSoon' | 'onTrack';
 
 export interface SiapProfile {
