@@ -5,6 +5,9 @@ import * as api from '../api/client';
 
 vi.mock('../api/client', () => ({
   getSiapProfile: vi.fn(),
+  // PairingCard (dirender ProfileView) memakai dua fungsi ini:
+  pairRequest: vi.fn(),
+  pairConsume: vi.fn(),
 }));
 
 describe('ProfileView', () => {
