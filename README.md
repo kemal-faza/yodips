@@ -1,168 +1,143 @@
 # YoDips
 
-A small aggregator for Universitas Diponegoro's single sign‑on. Instead of hopping between SSO, Kulon, and SIAP every time you need something, this sits in the middle: sign in once, and it holds your session and hands the apps on top a clean REST API.
+One sign-in for all of your Undip accounts. SSO, Kulon, and SIAP share a single door but split your data across three places, and none of them offer an API. YoDips takes your session once and turns everything into one dashboard and one REST API: Kulon assignments, SIAP grades and IRS, class schedules, even QR attendance scanning.
 
-The pieces work together:
-
-- **`backend/`** — NestJS + TypeScript API. Owns the sign‑in logic and turns Undip's web‑only services into simple endpoints.
-- **`web/`** — Vue 3 + Vite single‑page app. The face you talk to: dashboard, Kulon courses, akademik profile.
-- **`mobile/`** — Kotlin (Jetpack Compose) Android app wired to the same API: dashboard, IRS, KHS, jadwal, dan pemindai QR presensi.
-- **`extension/`** — a Chrome/Edge MV3 extension. The recommended way to log in (details below).
-
----
-
-## Why does this exist?
-
-Most of Undip's services authenticate against SSO but expose no public API. To read your grades on SIAP or pull your Kulon assignments programmatically, you would scrape pages by hand or log in everywhere.
-
-This project centralizes that. Sign in **once** in your own browser, and every downstream service reuses that single session. Anything you build on top, a schedule widget, a grade tracker, a personal portal, just calls ordinary REST endpoints instead of fighting browser sessions.
-
-## How sign‑in works
-
-Your password never reaches the backend. All three services use httpOnly cookies bound to their own domains, and SSO has MFA, so there is no credential API to call. Instead you log in manually in your own browser, the session is captured where the cookies live, and the backend only ever sees cookies that are already valid.
-
-There are two ways in:
-
-1. **Browser extension (recommended).** The MV3 extension reads the SSO, Kulon, and SIAP cookies straight from your everyday browser via `chrome.cookies`. It opens a single tab to any missing service (Kulon first, then SIAP), waits for the login to finish, closes the tab, and sends the captured session to `POST /api/auth/session/handoff`. The backend verifies the Kulon session, derives your identity (your NIM), and returns a JWT that comes back to the web app. When the extension is installed, the web app hides the older login button.
-2. **Interactive login (deprecated fallback).** For development and testing only. The backend opens a *visible* browser window through Playwright so you can log in yourself, then captures the session. It always uses an isolated fresh profile (`CHROME_PROFILE_DIR`), never your private browser. This path is superseded by the extension.
-
-Microsoft/Entra is a separate case since Kulon uses Microsoft OIDC rather than the SSO login page, so it gets its own callback flow: `/api/auth/microsoft/login` → `/api/auth/microsoft/callback`.
-
-## What you get
-
-The web dashboard brings the data together on one page:
-
-- Your IPK, cumulative SKS (against the 144‑SKS target), and semester SKS at a glance.
-- IP trend, grade distribution, and SKS accumulation charts.
-- Your daily/weekly schedule (from the IRS) and a live task list for Kulon assignments with the closest deadlines.
-- A notifications popover, an akademik profile page, and a Kulon section for your courses and assignment details.
-
-On the backend side, that data is just ordinary endpoints.
-
-## The API surface
-
-All routes live under `/api`.
-
-| Method | Path | What it's for |
+| Part | Stack | What it does |
 | --- | --- | --- |
-| `POST` | `/auth/login` | Manual credentials login (legacy, dev only) |
-| `POST` | `/auth/sso/capture` | Browser‑automation capture (deprecated) |
-| `GET` | `/auth/microsoft/login` | Start Microsoft/Entra OIDC for Kulon |
-| `GET` | `/auth/microsoft/callback` | OIDC redirect target |
-| `POST` | `/auth/session/handoff` | Accept a captured session and issue a JWT |
-| `GET` | `/auth/me` | Current user from your token (also a validity probe) |
-| `GET` | `/kulon/courses` | Courses from Kulon, with lecturer names merged in |
-| `GET` | `/kulon/assignments` · `/all` | Assignments, grouped or flat |
-| `GET` | `/kulon/assignments/:id/detail` | One assignment's details |
-| `GET` | `/kulon/courses/:id/content` | A course's content |
-| `GET` | `/siap/profile` | Your SIAP profile |
-| `GET` | `/siap/irs` | IRS (study‑plan) records |
-| `GET` | `/siap/khs` | KHS (grades) records |
-| `GET` | `/siap/lecturers` | Lecturer names per study‑plan code |
-| `GET` | `/siap/notifications` | SIAP notifications |
-| `POST` | `/siap/notifications/:id/unread` | Mark a notification unread |
+| [`backend/`](backend) | NestJS + TypeScript | Core API: sign-in, Kulon/SIAP aggregation, encrypted sessions, push notifications |
+| [`web/`](web) | Vue 3 + Vite + Tailwind + shadcn-vue | Web dashboard: GPA, academic charts, tasks, schedule, profile, notifications |
+| [`mobile/`](mobile) | Kotlin + Jetpack Compose | Android app: everything the web has, plus QR attendance scanning |
+| [`extension/`](extension) | Chrome/Edge MV3 (TypeScript) | The main way to sign in from a browser |
 
-> Every request except the login/callback entry points requires a JWT `Authorization: Bearer …` header. The handoff and capture endpoints deliberately have no JWT guard, since issuing a token is their whole job; they are rate‑limited instead (30/min for handoff, 5/min for capture).
->
-> `POST /auth/sso/capture` (Playwright interactive capture) is **deprecated** for production. The browser extension is the supported path.
+## Contents
 
-## Getting started
+- [Use it without building](#use-it-without-building)
+  - [Supported browsers](#supported-browsers)
+- [How to sign in](#how-to-sign-in)
+  - [On the web](#on-the-web)
+  - [On Android](#on-android)
+- [Developing locally](#developing-locally)
+  - [Environment](#environment)
+  - [Architecture notes](#architecture-notes)
+- [API overview](#api-overview)
+- [Deployment](#deployment)
+- [Releasing](#releasing)
+- [Security notes](#security-notes)
 
-### Prerequisites
+## Use it without building
 
-- Node.js 18+ (v20 LTS recommended) and npm
-- Google Chrome or Chromium for the interactive capture fallback
-- Redis (only if you run the session store in `redis` mode, see below)
+No build steps needed if you just want to use it:
 
-### 1. Environment
+- **Web**: [sso.crunchy.my.id](https://sso.crunchy.my.id)
+- **Browser extension**: [YoDips on the Chrome Web Store](https://chromewebstore.google.com/detail/eamfeldmafelalbkflomdjlfgfmifgic)
+- **Android**: grab the APK from [GitHub Releases](https://github.com/kemal-faza/yodips/releases). Install guide in [`INSTALL.md`](INSTALL.md)
 
-Copy the example config and fill in your secrets:
+### Supported browsers
+
+The extension targets Chromium (Manifest V3), so besides Chrome it installs straight from that link on Edge, Brave, Opera, Vivaldi, and other Chromium browsers. On Edge, first turn on **Allow extensions from other stores** in `edge://extensions`. An official Edge Add-ons listing is planned; Firefox is not supported yet because its extension platform works differently.
+
+## How to sign in
+
+One rule across every device: your password stays between you and Undip. You sign in yourself, on your own device, and YoDips only reuses the session that already exists. It never asks for or stores your credentials.
+
+### On the web
+
+1. Install the [YoDips extension](https://chromewebstore.google.com/detail/eamfeldmafelalbkflomdjlfgfmifgic).
+2. Open [sso.crunchy.my.id](https://sso.crunchy.my.id) and click **Login via Extension**.
+3. Sign in with your Undip account in the tab that opens. This is the regular SSO page, including MFA when prompted.
+4. That's it. Kulon and SIAP connect on their own, the tab closes, and your dashboard appears.
+
+If a session expires later, the app quietly restores it the same way. No need to click anything.
+
+### On Android
+
+1. Install the app from [Releases](https://github.com/kemal-faza/yodips/releases).
+2. Open it and sign in once on the SSO screen inside the app.
+3. Done. Kulon and SIAP connect automatically and your dashboard appears.
+
+Notifications for new assignments and schedule changes arrive through Firebase after you sign in.
+
+## Developing locally
+
+Each subproject stands alone; there is no root task runner.
+
+```bash
+# backend (NestJS) — http://localhost:3000
+cd backend && npm install && npm run start:dev
+
+# web (Vue 3) — http://localhost:5173
+cd web && npm install && npm run dev
+
+# extension (MV3 TS) — builds into dist/, load it unpacked at chrome://extensions
+cd extension && npm install && npm run dev
+```
+
+Mobile (Kotlin): open `mobile/` in Android Studio, or `cd mobile && ./gradlew :app:testDebugUnitTest && ./gradlew assembleDebug`.
+
+Verified test counts as of 2026-08-24: backend **331**, web **318**, extension **118**, mobile **139**.
+
+### Environment
+
+Copy the templates and fill in your secrets:
 
 ```bash
 cp backend/.env.example backend/.env
 cp web/.env.example web/.env
 ```
 
-**Backend** — the important ones:
+Backend variables that matter most:
 
 | Variable | Meaning |
 | --- | --- |
-| `SSO_BASE_URL` / `SSO_LOGIN_PATH` | SSO login endpoints |
-| `JWT_SECRET` / `JWT_EXPIRES_IN` | Token signing secret (generate with `openssl rand -hex 32`) and lifetime |
-| `CORS_ORIGIN` | Allowed frontend origin(s), comma‑separated |
-| `MS_*` | Microsoft Entra app credentials for Kulon OIDC |
-| `CHROME_PATH` / `CHROME_PROFILE_DIR` | Browser binary and isolated profile for the interactive window (deprecated) |
-| `SESSION_BACKEND` | `memory` (dev/test, no Redis) or `redis` (production) |
+| `JWT_SECRET` / `JWT_EXPIRES_IN` | Token signing secret (`openssl rand -hex 32`) and lifetime. Never commit it |
+| `CORS_ORIGIN` | Allowed frontend origins, comma-separated |
+| `SESSION_BACKEND` | `memory` for dev/test, `redis` for production |
+| `REDIS_URL` / `SESSION_ENC_KEY` / `SESSION_TTL_MS` | Required when `SESSION_BACKEND=redis`; sessions are AES-256-GCM encrypted |
+| `CACHE_TTL_MS` | TTL for upstream scrape cache (default 5 minutes) |
+| `NOTIFICATIONS_ENABLED` / `FIREBASE_SERVICE_ACCOUNT_JSON` | FCM push notifications (production) |
+| `MS_*`, `CHROME_PATH` / `CHROME_PROFILE_DIR`, `CDP_URL` | Deprecated legacy login paths; dummies are fine in production |
 
-**Production only** (`SESSION_BACKEND=redis`): also set `REDIS_URL`, `SESSION_ENC_KEY`, and `SESSION_TTL_MS`.
+On the web side, `VITE_API_BASE_URL` points at the backend and `VITE_EXTENSION_ID` bakes in the extension ID used for SPA-extension detection.
 
-### 2. Backend
+### Architecture notes
 
-```bash
-cd backend
-npm install
-npm run start:dev       # dev with reload; default http://localhost:3000
-```
+- Per-user sessions sit behind a small `SessionStore` interface: in-memory for dev, encrypted Redis for production. Restarting the backend while on `memory` logs everyone out.
+- Upstream scrape results are cached per user (Redis in production) so pages don't repeat expensive scrapes.
+- Kulon/SIAP HTML and JSON parsers live in pure modules (`kulon-parse.ts`, `siap-parse.ts`) with no fetch dependencies, which keeps them easy to test.
+- The extension separates its state machine (pure TS in `extension/src/core/`) from the thin `chrome.*` adapter in `background.ts`.
 
-### 3. Web
+## API overview
 
-```bash
-cd web
-npm install
-npm run dev             # default http://localhost:5173
-```
+All routes live under `/api`. Everything except the endpoints noted below requires an `Authorization: Bearer <JWT>` header.
 
-Point the web app at the API via `VITE_API_BASE_URL` (it defaults to `http://localhost:3000`).
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/auth/session/handoff` | Accept captured cookies, issue a JWT (no JWT guard by design, rate-limited) |
+| `POST` | `/auth/refresh` | Rotate the JWT |
+| `GET` | `/auth/me` | Identity + validity of the SSO/Kulon/SIAP sessions |
+| `GET` | `/kulon/courses` | Kulon courses with lecturer names merged in from SIAP |
+| `GET` | `/kulon/assignments/all` | Every assignment and quiz, completed ones included |
+| `GET` | `/kulon/assignments/:id/detail` | One assignment's details |
+| `GET` | `/kulon/courses/:id/content` | A course's materials |
+| `GET` | `/siap/profile` · `/irs` · `/khs` | Profile, IRS, KHS (GPA read straight from the official KHS footer) |
+| `GET` | `/siap/jadwal` · `/absen` · `/kehadiran/:id` | Class meetings, attendance summary, per-meeting history |
+| `POST` | `/siap/kehadiran` | Proxy a scanned attendance QR to SIAP |
+| `GET` | `/siap/lecturers` · `/notifications` | Lecturers per course code; SIAP notifications |
+| `POST` | `/siap/notifications/:id/unread` | Mark a notification unread |
+| `POST` | `/notifications/device` | Register a device's FCM token |
 
-### 4. Extension
+`POST /auth/sso/capture` and `GET /auth/microsoft/*` still exist but are deprecated, dev/test only.
 
-```bash
-cd extension
-npm install
-npm run dev             # vite build --watch into dist/
-```
+## Deployment
 
-Build, then load the `dist/` directory as an unpacked extension in `chrome://extensions`. Re‑build and reload after any change to its code.
+Production runs the backend on Heroku and the web app on Vercel. A push to `main` that passes CI deploys both automatically through `.github/workflows/deploy-backend.yml` and `deploy-web.yml`. Production requires `SESSION_BACKEND=redis` with `REDIS_URL` + `SESSION_ENC_KEY`, and the custom domain must be registered on Heroku so requests don't die at Cloudflare with a 520. Runbooks live in `tools/deploy/`.
 
-## Session storage
+## Releasing
 
-Sessions sit behind a small interface so you can swap the implementation without touching the rest:
-
-- **`memory`** — an in‑memory store. Zero setup, perfect for development and tests, but sessions don't survive a restart and aren't shared across instances.
-- **`redis`** — production‑grade. Sessions persist and share across replicas and are encrypted before writing. Requires Redis + `SESSION_ENC_KEY`.
-
-## Scripts & tests
-
-Each subproject runs independently (no root task runner). Test counts as of 2026‑08‑13:
-
-- **backend** ~227 tests (Jest) — `cd backend && npm test`
-- **web** ~267 tests (Vitest + jsdom) — `cd web && npm test`
-- **extension** ~109 tests (Vitest) — `cd extension && npm test`
-- **mobile** (Jetpack Compose) — `cd mobile && ./gradlew :app:testDebugUnitTest`
-
-The backend also ships `npm run build` (nest build) and `npm run start:prod` (runs `node dist/main`; build first). The web app builds with `npm run build` (`vue-tsc -b && vite build`).
-
-## Releasing & publishing
-
-- **Extension** → Chrome Web Store. Sekali jalan lewat `cd extension && npm run release <patch|minor|major>`
-  (`extension/scripts/release.mjs`): naikkan versi semver di `manifest.json`+`package.json`, build, test, lalu buat
-  `build/undip-sso-ext-v<X.Y.Z>.zip` (berisi `manifest.json` + `icon16/32/48/128.png` + `dist/`). Upload zip itu
-  ke Chrome Web Store Developer Dashboard (ikut sertakan screenshot 1280×800/640×400 + icon 128px); setelah versi
-  terpublish, Chrome auto-update ke pengguna.
-- **Mobile** → GitHub Releases. `node mobile/scripts/bump.mjs <X.Y.Z>` menaikkan `versionCode`/`versionName`.
-- **Alur rilis otomatis**: push tag `v*` → `.github/workflows/release.yml` menjalankan test + build APK **signed**
-  (butuh `KEYSTORE_*` repo secrets) + zip extension, lalu membuat GitHub Release berisi
-  `undip-sso-v<tag>.apk`, `undip-sso-ext-v<tag>.zip`, dan `SHA256SUMS.txt`. User bisa download & install APK
-  langsung dari tab Re unless/clone.
-- Panduan install APK (sideload) + load extension ada di `INSTALL.md`.
+- **Extension**: `cd extension && npm run release <patch|minor|major>` bumps the version, builds, tests, and produces the zip for upload to the Chrome Web Store (and Edge Add-ons). Keep icons 16/32/48/128 in the zip; the store rejects submissions without them.
+- **Mobile**: `node mobile/scripts/bump.mjs <X.Y.Z>` bumps `versionCode`/`versionName`.
+- **Automatic**: pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes a GitHub Release containing the signed APK, the extension zip, and `SHA256SUMS.txt`.
 
 ## Security notes
 
-- Always generate a real `JWT_SECRET` before serving anything outside localhost.
-- Keep `SESSION_BACKEND=memory` for development; use `redis` in production so sessions are encrypted at rest.
-- Your credentials never reach the backend. The only thing it accepts is already‑valid cookies, and your identity is always derived from the verified Kulon session, never from anything a client claims.
-- The interactive capture window deliberately uses a fresh isolated profile so it never touches your personal browser sessions.
-
----
-
-Built with [Nest](https://nestjs.com), [Vue](https://vuejs.org), [Tailwind CSS](https://tailwindcss.com) + [shadcn‑vue](https://www.shadcn-vue.com), and [Playwright](https://playwright.dev) (deprecated login path — the browser extension is the recommended way in).
+Your password never reaches the backend. Identity is always derived from the verified Kulon session, never from anything a client claims. JWTs carry server-side session references, not raw cookies. CORS allowlist, helmet, global ValidationPipe, OIDC `state` CSRF protection, and gitleaks/semgrep/npm-audit/trivy gates run in CI. Sessions are encrypted at rest when Redis backs them.
