@@ -94,6 +94,17 @@ export class EnvConfig {
    *  single-session store could otherwise receive another user's session+JWT). */
   CAPTURE_REUSE_ENABLED?: boolean;
 
+  // ---- Device pairing -------------------------------------------------------
+  /** Origin frontend utk URL absolut (qrUrl pairing). Opsional; kosong = qrUrl relatif (dev). */
+  @IsOptional()
+  @IsString()
+  FRONTEND_BASE_URL?: string;
+
+  /** Umur kode pairing (ms). Default 5 menit. */
+  @IsOptional()
+  @Min(30_000)
+  PAIRING_TTL_MS: number = 300_000;
+
   // Session store persistence
   @IsIn(['memory', 'redis'])
   SESSION_BACKEND: 'memory' | 'redis' = 'memory';
