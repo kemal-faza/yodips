@@ -6,6 +6,11 @@ import { useAuthStore } from "../stores/auth";
 
 vi.mock("../stores/auth", () => ({ useAuthStore: vi.fn() }));
 
+const pairConsume = vi.hoisted(() => vi.fn());
+vi.mock("../api/client", () => ({
+  pairConsume,
+}));
+
 // Konfigurasi module di-mock agar tiap test bisa mengendalikan apakah jalur
 // /sso/capture diaktifkan dan apakah user-agent = seluler.
 const cfg = vi.hoisted(() => ({
@@ -92,14 +97,14 @@ describe("LoginView", () => {
     expect(w.text()).toContain("Pasang di Chrome/Edge");
   });
 
-  it("does not offer interactive login on mobile and points to the native app", async () => {
+  it("mobile: menampilkan form pairing (bukan arahan Play Store)", async () => {
     cfg.mobile = true;
     makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(false) });
-    const w = mount(LoginView);
+    const w = mount(LoginView, { global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } } });
     await flushPromises();
-    expect(w.text()).not.toContain("Login via SSO");
-    expect(w.text()).toContain("aplikasi");
-    expect(w.text()).toContain("Play Store");
+    expect(w.text()).not.toContain("Play Store");
+    expect(w.find('[data-test="pair-login"]').exists()).toBe(true);
+    expect(w.find('[data-test="pair-input"]').exists()).toBe(true);
   });
 
   it("explains how to fix an undetected extension before falling back to SSO", async () => {
@@ -370,5 +375,61 @@ describe("LoginView", () => {
     expect(svgs[0].classes().join(" ")).toContain("lucide-circle-check");
     expect(svgs[1].classes().join(" ")).toContain("lucide-loader-circle");
     vi.useRealTimers();
+  });
+
+  // ---- Pairing login (branch mobile) ---------------------------------------
+
+  function mobileMount(query: Record<string, string> = {}) {
+    return mount(LoginView, {
+      global: { mocks: { $route: { query }, $router: { push: vi.fn() } } },
+    });
+  }
+
+  it("mobile: submit kode valid memanggil pairConsume + finishHandoff + redirect", async () => {
+    cfg.mobile = true;
+    pairConsume.mockResolvedValue({ accessToken: "jwt-pair", hasKulon: true, hasSiap: true });
+    const store = makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(false) });
+    const w = mobileMount();
+    await flushPromises();
+    await w.find('[data-test="pair-input"]').setValue("abcd2345");
+    await w.find('[data-test="pair-submit"]').trigger("click");
+    await flushPromises();
+    expect(pairConsume).toHaveBeenCalledWith("ABCD2345");
+    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-pair");
+  });
+
+  it("mobile: kode 400 INVALID_CODE menampilkan pesan ramah", async () => {
+    cfg.mobile = true;
+    makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(false) });
+    pairConsume.mockRejectedValue({ response: { status: 400 } });
+    const w = mobileMount();
+    await flushPromises();
+    await w.find('[data-test="pair-input"]').setValue("XXXX2345");
+    await w.find('[data-test="pair-submit"]').trigger("click");
+    await flushPromises();
+    expect(w.text()).toContain("tidak valid atau sudah kedaluwarsa");
+  });
+
+  it("mobile: deep-link ?pair= auto-submit SEKALI", async () => {
+    cfg.mobile = true;
+    pairConsume.mockResolvedValue({ accessToken: "jwt-deep", hasKulon: true, hasSiap: true });
+    const store = makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(false) });
+    mobileMount({ pair: "abcd2345" });
+    await flushPromises();
+    expect(pairConsume).toHaveBeenCalledTimes(1);
+    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-deep");
+  });
+
+  it("mobile: sesi parsial (hasSiap false) tetap masuk tapi set warning", async () => {
+    cfg.mobile = true;
+    pairConsume.mockResolvedValue({ accessToken: "jwt-part", hasKulon: true, hasSiap: false });
+    const store = makeStore({ isExtensionInstalled: vi.fn().mockResolvedValue(false), error: null });
+    const w = mobileMount();
+    await flushPromises();
+    await w.find('[data-test="pair-input"]').setValue("ABCD2345");
+    await w.find('[data-test="pair-submit"]').trigger("click");
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-part");
+    expect(store.error).toContain("beberapa layanan belum tersambung");
   });
 });
