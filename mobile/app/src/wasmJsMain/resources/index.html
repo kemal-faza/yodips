@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#01637E">
+    <title>YoDips</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #ffffff;
+        }
+        /* ComposeViewport mengambil alih canvas ini; ukuran wajib penuh viewport */
+        #ComposeTarget {
+            width: 100%;
+            height: 100%;
+            outline: none;
+            display: block;
+            touch-action: none;
+        }
+        #loader {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 12px;
+            font-family: system-ui, sans-serif;
+            color: #01637E;
+            background: #ffffff;
+        }
+        #loader.hidden { display: none; }
+        .spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid #d4e6ec;
+            border-top-color: #01637E;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<canvas id="ComposeTarget"></canvas>
+<div id="loader">
+    <div class="spinner"></div>
+    <div>Memuat YoDips…</div>
+</div>
+<script src="composeApp.js"></script>
+<script>
+    // Sembunyikan loader begitu runtime Compose siap menggambar (fallback: tetap
+    // hilang setelah 20 dtk supaya user tidak pernah terjebak di layar loading).
+    var hideLoader = function () {
+        var l = document.getElementById('loader');
+        if (l) l.classList.add('hidden');
+    };
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(hideLoader);
+    setTimeout(hideLoader, 20000);
+</script>
+</body>
+</html>
