@@ -1,10 +1,11 @@
 package ac.undip.sso.ui
 
+import ac.undip.sso.core.data.PersistentCache
+import ac.undip.sso.core.data.TokenStoreLike
 import ac.undip.sso.core.network.ApiClient
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.normalizeNavTarget
-import ac.undip.sso.core.session.TokenStore
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
 import ac.undip.sso.ui.theme.ThemeController
@@ -33,7 +34,8 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun AppRoot(
-    tokenStore: TokenStore,
+    tokenStore: TokenStoreLike,
+    persistentCache: PersistentCache,
     themeController: ThemeController,
     pendingNavTarget: String? = null,
     onNavConsumed: () -> Unit = {},
@@ -99,6 +101,7 @@ fun AppRoot(
     if (hasToken) {
         AppShell(
             tokenStore = tokenStore,
+            persistentCache = persistentCache,
             themeController = themeController,
             onLogout = onLogout,
             initialNavTarget = normalizeNavTarget(pendingNavTarget),

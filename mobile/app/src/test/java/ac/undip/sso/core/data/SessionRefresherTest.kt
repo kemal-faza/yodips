@@ -26,6 +26,7 @@ class SessionRefresherTest {
             saved = Triple(token, siap, kulon)
         }
         override suspend fun currentToken(): String? = saved?.first
+        override suspend fun clear() { saved = null }
     }
 
     private fun http401() =

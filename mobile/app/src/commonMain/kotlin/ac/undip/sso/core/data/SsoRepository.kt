@@ -31,6 +31,7 @@ interface TokenStoreLike {
     val kulonCookie: Flow<String?>
     suspend fun save(token: String, siap: String?, kulon: String?)
     suspend fun currentToken(): String?
+    suspend fun clear()
 }
 
 /**

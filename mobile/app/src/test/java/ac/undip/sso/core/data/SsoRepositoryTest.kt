@@ -42,6 +42,7 @@ private class FakeTokenStore(
         saved = Triple(token, siap, kulon)
     }
     override suspend fun currentToken(): String? = saved?.first
+    override suspend fun clear() { saved = null }
 }
 
 /** Stub-able SsoApi fake so the repository's error mapping is unit-testable. */
