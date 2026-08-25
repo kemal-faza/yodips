@@ -23,9 +23,10 @@ fun releaseStoreFile(): java.io.File? {
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.jetbrains.compose)
 }
 
 android {
@@ -78,49 +79,61 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         compose = true
         buildConfig = true
     }
 }
 
+kotlin {
+    androidTarget {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
+    }
+
+    sourceSets {
+        // Selama transisi F1 semua dependensi lama masih dirujuk dari androidMain;
+        // commonMain diisi bertahap task berikutnya.
+        androidMain.dependencies {
+            implementation(libs.androidx.core.ktx)
+            implementation(libs.androidx.lifecycle.runtime.ktx)
+            implementation(libs.androidx.lifecycle.runtime.compose)
+            implementation(libs.androidx.lifecycle.viewmodel.compose)
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.compose.ui)
+            implementation(libs.compose.ui.graphics)
+            implementation(libs.androidx.material3)
+            implementation(libs.compose.material.icons)
+            implementation(libs.navigation.multiplatform)
+            implementation(libs.compose.ui.tooling.preview)
+            implementation(libs.datastore.preferences)
+            implementation(libs.retrofit)
+            implementation(libs.retrofit.kotlinx.serialization)
+            implementation(libs.okhttp)
+            implementation(libs.okhttp.logging)
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.datetime)
+            implementation(libs.coil.compose)
+            // CameraX + MLKit QR scan (absen presence)
+            implementation(libs.androidx.camera.core)
+            implementation(libs.androidx.camera.camera2)
+            implementation(libs.androidx.camera.lifecycle)
+            implementation(libs.androidx.camera.view)
+            implementation(libs.mlkit.barcode)
+        }
+        androidUnitTest.dependencies {
+            implementation(libs.junit)
+            implementation(libs.mockwebserver)
+            implementation(libs.kotlinx.coroutines.test)
+        }
+    }
+}
+
 dependencies {
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.ui)
-    implementation(libs.androidx.ui.graphics)
-    implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons)
-    implementation(libs.androidx.navigation.compose)
-    implementation(libs.androidx.ui.tooling.preview)
-    implementation(libs.androidx.datastore.preferences)
-
-    implementation(libs.retrofit)
-    implementation(libs.retrofit.kotlinx.serialization)
-    implementation(libs.okhttp)
-    implementation(libs.okhttp.logging)
-    implementation(libs.kotlinx.serialization.json)
+    // Coil 2 -> 3: satu-satunya pemakaian adalah coil.compose.AsyncImage di ProfileScreen
     implementation(libs.coil.compose)
-
-    // CameraX + MLKit QR scan (absen presence)
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-    implementation(libs.mlkit.barcode)
-
-    testImplementation(libs.junit)
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
-    // Matches the coroutines version Gradle resolves (BOM 1.8.1) — needed for runTest.
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
-
-    debugImplementation(libs.androidx.ui.tooling)
+    implementation(libs.coil.network.ktor3)   // fetcher jaringan Coil3
 }
 
 // Firebase hanya saat config ada — CI / fresh clone tidak membawa
