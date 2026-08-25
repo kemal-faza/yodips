@@ -1,7 +1,8 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
-import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.scan.QrScanResult
+import ac.undip.sso.core.scan.QrScanner
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14,9 +15,31 @@ import kotlinx.coroutines.launch
 internal actual fun ScanScreen(repo: SsoRepository) {
     var outcome by remember { mutableStateOf<ScanOutcome?>(null) }
     var cameraError by remember { mutableStateOf<String?>(null) }
-    var scanning by remember { mutableStateOf(true) }
     var scanningBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    fun startScan() {
+        if (scanningBusy) return
+        scanningBusy = true
+        cameraError = null
+        scope.launch {
+            when (val result = QrScanner.scanOnce()) {
+                is QrScanResult.Success -> {
+                    val submit = repo.markKehadiran(result.token)
+                    outcome = scanOutcome(submit)
+                }
+
+                is QrScanResult.Error -> cameraError = result.message
+            }
+            scanningBusy = false
+        }
+    }
+
+    // Harness E2E / shortcut user: ?scan=1 memulai pemindaian otomatis saat
+    // layar dibuka (paritas perilaku dgn Android yang langsung aktifkan kamera).
+    LaunchedEffect(Unit) {
+        if (jsUrlSearchParams("scan") == "1") startScan()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -25,7 +48,7 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         Text("Scan QR Absensi", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(16.dp))
 
-        if (cameraError != null && !scanning) {
+        if (cameraError != null) {
             var manualToken by remember { mutableStateOf("") }
             Text(cameraError!!, color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(8.dp))
@@ -48,28 +71,15 @@ internal actual fun ScanScreen(repo: SsoRepository) {
             }, enabled = manualToken.isNotBlank() && !scanningBusy) {
                 Text("Kirim")
             }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        if (scanning && !scanningBusy) {
-            Button(onClick = {
-                scanningBusy = true
-                scope.launch {
-                    try {
-                        // TODO(F4): Implement jsQR camera scanner
-                        cameraError = "Kamera QR belum tersedia. Gunakan input manual."
-                        scanning = false
-                    } finally {
-                        scanningBusy = false
-                    }
-                }
-            }) {
-                Text("Scan QR")
+        } else {
+            // Kamera belum dicoba/gagal belum terjadi - tampilkan tombol pindai.
+            Button(onClick = { startScan() }, enabled = !scanningBusy) {
+                Text(if (scanningBusy) "Memindai…" else "Scan QR")
             }
         }
 
         if (scanningBusy) {
+            Spacer(Modifier.height(16.dp))
             CircularProgressIndicator()
         }
 
@@ -94,7 +104,6 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = {
                         outcome = null
-                        scanning = true
                         cameraError = null
                     }) {
                         Text("Scan Lagi")
@@ -104,3 +113,6 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         }
     }
 }
+
+@JsFun("(key) => { const p = new URLSearchParams(window.location.search); return p.get(key); }")
+private external fun jsUrlSearchParams(key: String): String?
