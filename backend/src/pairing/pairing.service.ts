@@ -42,18 +42,28 @@ export class PairingService {
     codeRaw: string,
   ): Promise<{ accessToken: string; hasKulon: boolean; hasSiap: boolean }> {
     const code = normalizePairingCode(codeRaw ?? '');
-    const record =
-      code.length > 0 ? await this.pairingStore.consume(hashPairingCode(code)) : null;
-    if (!record) {
-      // Pesan identik untuk miss & expired: jangan sediakan oracle.
+    const outcome =
+      code.length > 0
+        ? await this.pairingStore.consume(hashPairingCode(code))
+        : ({ status: 'invalid' } as const);
+    if (outcome.status === 'expired') {
+      // Dibedakan dari INVALID atas permintaan UX (2026-08-25); oracle-leak-nya
+      // kecil & terhitung tidak feasible — lihat PairingConsumeResult.
+      throw new HttpException(
+        { message: 'Kode sudah kedaluwarsa. Minta kode baru.', code: 'EXPIRED_CODE' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (outcome.status !== 'consumed') {
+      // INVALID mencakup: tak pernah ada, sudah terpakai (single-use), format kosong.
       throw new HttpException(
         { message: 'Kode tidak valid atau sudah kedaluwarsa', code: 'INVALID_CODE' },
         HttpStatus.BAD_REQUEST,
       );
     }
-    const session = await this.sessionStore.get(record.sub);
+    const session = await this.sessionStore.get(outcome.record.sub);
     if (!session) {
-      this.logger.warn(`Pairing consumed for dead session ${record.sub}`);
+      this.logger.warn(`Pairing consumed for dead session ${outcome.record.sub}`);
       throw new HttpException(
         {
           message:
@@ -64,7 +74,7 @@ export class PairingService {
       );
     }
     // via='pair' → AuthService.me() tidak mensyaratkan ssoCookie (lihat me()).
-    const accessToken = await this.jwt.signAsync({ sub: record.sub, via: 'pair' });
+    const accessToken = await this.jwt.signAsync({ sub: outcome.record.sub, via: 'pair' });
     return {
       accessToken,
       hasKulon: !!session.kulonCookie,

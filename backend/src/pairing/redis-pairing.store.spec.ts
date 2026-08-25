@@ -12,7 +12,7 @@ function makeClient() {
 const RECORD = { sub: 'NIM1', expiresAt: 123456 };
 
 describe('RedisPairingStore', () => {
-  it('set menyimpan JSON dengan prefix pair: + EX detik', async () => {
+  it('set menyimpan JSON dengan prefix pair: + EX detik, plus tombstone pair-exp:', async () => {
     const client = makeClient();
     const s = new RedisPairingStore(client as any);
     await s.set('abc', RECORD, 300_000);
@@ -22,6 +22,7 @@ describe('RedisPairingStore', () => {
       'EX',
       300,
     );
+    expect(client.set).toHaveBeenCalledWith('pair-exp:abc', '1', 'EX', 360);
   });
 
   it('get membaca JSON dan null saat miss', async () => {
@@ -33,11 +34,11 @@ describe('RedisPairingStore', () => {
     await expect(s.get('k')).resolves.toBeNull();
   });
 
-  it('consume memakai GETDEL (atomik)', async () => {
+  it('consume memakai GETDEL (atomik) → consumed', async () => {
     const client = makeClient();
     client.getdel.mockResolvedValue(JSON.stringify(RECORD));
     const s = new RedisPairingStore(client as any);
-    await expect(s.consume('k')).resolves.toEqual(RECORD);
+    await expect(s.consume('k')).resolves.toEqual({ status: 'consumed', record: RECORD });
     expect(client.getdel).toHaveBeenCalledWith('pair:k');
   });
 
@@ -46,7 +47,24 @@ describe('RedisPairingStore', () => {
     client.getdel.mockRejectedValue(new Error('unknown command'));
     client.eval.mockResolvedValue(JSON.stringify(RECORD));
     const s = new RedisPairingStore(client as any);
-    await expect(s.consume('k')).resolves.toEqual(RECORD);
+    await expect(s.consume('k')).resolves.toEqual({ status: 'consumed', record: RECORD });
     expect(client.eval).toHaveBeenCalled();
+  });
+
+  it('consume miss + tombstone ada → expired', async () => {
+    const client = makeClient();
+    client.getdel.mockResolvedValue(null);
+    client.get.mockResolvedValue('1');
+    const s = new RedisPairingStore(client as any);
+    await expect(s.consume('k')).resolves.toEqual({ status: 'expired' });
+    expect(client.get).toHaveBeenCalledWith('pair-exp:k');
+  });
+
+  it('consume miss + tanpa tombstone → invalid', async () => {
+    const client = makeClient();
+    client.getdel.mockResolvedValue(null);
+    client.get.mockResolvedValue(null);
+    const s = new RedisPairingStore(client as any);
+    await expect(s.consume('k')).resolves.toEqual({ status: 'invalid' });
   });
 });

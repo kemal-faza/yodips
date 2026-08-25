@@ -74,7 +74,25 @@ describe('PairingService', () => {
     });
   });
 
-  it('consume kode sampah 400 INVALID_CODE (pesan sama dengan expired)', async () => {
+  it('consume kode kedaluwarsa → 400 EXPIRED_CODE (dibedakan dari INVALID)', async () => {
+    const prev = config.get.getMockImplementation();
+    // TTL negatif → entri langsung kedaluwarsa saat dibuat.
+    config.get.mockImplementation(
+      (key: string) => (key === 'PAIRING_TTL_MS' ? -1 : prev?.(key)),
+    );
+    try {
+      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      const { code } = await service.requestPairing('NIM1');
+      await expect(service.consume(code)).rejects.toMatchObject({
+        status: 400,
+        response: { code: 'EXPIRED_CODE', message: 'Kode sudah kedaluwarsa. Minta kode baru.' },
+      });
+    } finally {
+      config.get.mockImplementation(prev as any);
+    }
+  });
+
+  it('consume kode sampah 400 INVALID_CODE', async () => {
     await expect(service.consume('ZZZZZZZZ')).rejects.toMatchObject({ status: 400 });
     await expect(service.consume('')).rejects.toMatchObject({ status: 400 });
   });
