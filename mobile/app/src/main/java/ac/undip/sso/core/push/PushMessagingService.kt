@@ -2,6 +2,7 @@ package ac.undip.sso.core.push
 
 import ac.undip.sso.MainActivity
 import ac.undip.sso.R
+import ac.undip.sso.core.network.Backend
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -68,7 +69,7 @@ fun showPush(
  */
 class PushMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
-        val loggedIn = !ac.undip.sso.core.network.ApiClient.authToken.isNullOrBlank()
+        val loggedIn = !Backend.authToken.isNullOrBlank()
         PushGraph.ioScope.launch { PushGraph.onNewToken(token, loggedIn) }
     }
 

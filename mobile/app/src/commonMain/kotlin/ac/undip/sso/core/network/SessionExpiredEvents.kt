@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.update
  * reappears. `StateFlow` conflates, so N concurrent 401s (parallel screen
  * refreshes) still yield exactly one dialog.
  *
- * Notifications are ignored while no JWT is attached to [ApiClient] — i.e.
+ * Notifications are ignored while no JWT is attached to [Backend] — i.e.
  * after logout / on the login screen — so a dying in-flight request that lands
  * a 401 right after the user tapped "Login Ulang" cannot resurrect the dialog.
  */
@@ -29,7 +29,7 @@ object SessionExpiredEvents {
     val events: StateFlow<Int> = _events.asStateFlow()
 
     fun notifySessionExpired() {
-        if (ApiClient.authToken == null) return
+        if (Backend.authToken == null) return
         _events.update { it + 1 }
     }
 

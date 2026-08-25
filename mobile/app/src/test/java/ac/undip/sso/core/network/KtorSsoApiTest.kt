@@ -3,6 +3,8 @@ package ac.undip.sso.core.network
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.header
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.utils.io.ByteReadChannel
@@ -18,6 +20,9 @@ class KtorSsoApiTest {
         assertRequest: suspend (io.ktor.client.request.HttpRequestData) -> Unit = {},
     ): HttpClient =
         HttpClient(MockEngine) {
+            defaultRequest {
+                header(HttpHeaders.Authorization, "Bearer test-jwt")
+            }
             engine {
                 addHandler { request ->
                     assertEquals("Bearer test-jwt", request.headers[HttpHeaders.Authorization])
@@ -38,43 +43,46 @@ class KtorSsoApiTest {
     }
 
     @Test(expected = ApiHttpException::class)
-    fun `401 throws ApiHttpException with status`() = runBlocking {
-        api(
-            mockClient(
-                status = HttpStatusCode.Unauthorized,
-                body = """{"code":"SESSION_DEAD"}""",
-            ),
-        ).profile()
+    fun `401 throws ApiHttpException with status`() {
+        runBlocking {
+            api(
+                mockClient(
+                    status = HttpStatusCode.Unauthorized,
+                    body = """{"code":"SESSION_DEAD"}""",
+                ),
+            ).profile()
+        }
     }
 
     @Test
     fun `markKehadiran posts json body and parses response`() = runBlocking {
-        var ctype = ""
         val resp = api(
             mockClient(
                 body = """{"status":"OK"}""",
-                assertRequest = { ctype = it.headers[HttpHeaders.ContentType].orEmpty() },
+                assertRequest = { req ->
+                    assertEquals("POST", req.method.value)
+                    assertTrue("content-type present",
+                        req.body.contentType != null &&
+                        req.body.contentType.toString().startsWith("application/json"))
+                },
             ),
         ).markKehadiran(KehadiranRequest(token = "qr-token-xyz"))
-        assertTrue("content-type json", ctype.startsWith("application/json"))
         assertEquals("OK", resp.status)
     }
 
     @Test
     fun `unregisterPushDevice sends DELETE with body`() = runBlocking {
-        var method = ""
-        var ctype = ""
         val resp = api(
             mockClient(
                 body = """{"ok":true}""",
-                assertRequest = {
-                    method = it.method.value
-                    ctype = it.headers[HttpHeaders.ContentType].orEmpty()
+                assertRequest = { req ->
+                    assertEquals("DELETE", req.method.value)
+                    assertTrue("content-type present",
+                        req.body.contentType != null &&
+                        req.body.contentType.toString().startsWith("application/json"))
                 },
             ),
         ).unregisterPushDevice(PushDeviceRequest(token = "fcm-token-abc"))
-        assertEquals("DELETE", method)
-        assertTrue("content-type json", ctype.startsWith("application/json"))
         assertEquals(true, resp.ok)
     }
 

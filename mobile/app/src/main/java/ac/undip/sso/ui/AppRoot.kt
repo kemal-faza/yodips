@@ -2,7 +2,7 @@ package ac.undip.sso.ui
 
 import ac.undip.sso.core.data.PersistentCache
 import ac.undip.sso.core.data.TokenStoreLike
-import ac.undip.sso.core.network.ApiClient
+import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.normalizeNavTarget
@@ -67,10 +67,10 @@ fun AppRoot(
     }
 
     // Read the stored JWT once on startup and reattach it to the HTTP client
-    // so Retrofit sends `Authorization: Bearer` on every data call.
+    // so Ktor sends `Authorization: Bearer` on every data call.
     LaunchedEffect(tokenStore) {
         val t = tokenStore.currentToken()
-        if (t != null) ApiClient.authToken = t
+        if (t != null) Backend.authToken = t
         hasToken = t != null
         checked = true
     }
@@ -82,15 +82,14 @@ fun AppRoot(
     // WebView session cookies, and the session-expired signal so the next login
     // starts fresh (not auto-attached to the old part).
     //
-    // ORDERING INVARIANT: PushGraph.onLogout() MUST run while ApiClient.authToken
-    // is still set — DELETE /api/notifications/device needs the bearer, and the
-    // OkHttp interceptor reads authToken when the request is BUILT. Nulling the
-    // token first would send the request without auth → 401 → the device token
-    // is never pruned in the backend registry.
+    // ORDERING INVARIANT: PushGraph.onLogout() MUST run while Backend.authToken
+    // is still set — DELETE /api/notifications/device needs the bearer.
+    // Nulling the token first would send the request without auth → 401 → the
+    // device token is never pruned in the backend registry.
     val onLogout: () -> Unit = {
         scope.launch {
             runCatching { PushGraph.onLogout() } // DELETE pakai JWT yang masih ada
-            ApiClient.authToken = null
+            Backend.authToken = null
             scope.launch { tokenStore.clear() }
             runCatching { CookieManager.getInstance().removeAllCookies(null) }
             SessionExpiredEvents.consume()

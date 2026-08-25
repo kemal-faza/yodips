@@ -1,7 +1,7 @@
 package ac.undip.sso.core.data
 
-import ac.undip.sso.core.network.ApiClient
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
@@ -48,13 +48,13 @@ interface TokenStoreLike {
  * [ApiResult] so UI can clamp to Loading/Empty/Error/Content.
  */
 class SsoRepository(
-    private val api: SsoApi = ApiClient.api,
+    private val api: SsoApi = Backend.api,
     cache: DataCache = InMemoryDataCache(),
     persistent: PersistentCache = NoOpPersistentCache,
     diskMaxAgeMs: Long = DEFAULT_DISK_MAX_AGE_MS,
     onSessionExpired: () -> Unit = SessionExpiredEvents::notifySessionExpired,
     tokenStore: TokenStoreLike? = null,
-    refreshToken: suspend () -> String = { ApiClient.refresh() },
+    refreshToken: suspend () -> String = { Backend.refresh() },
 ) {
     // Stale-while-revalidate refreshes must not block callers nor outlive a
     // screen: a supervised IO scope owned by the repository.

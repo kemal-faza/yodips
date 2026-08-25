@@ -1,6 +1,6 @@
 package ac.undip.sso.core.push
 
-import ac.undip.sso.core.network.ApiClient
+import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.PushDeviceRequest
 import android.content.Context
 import androidx.datastore.preferences.core.edit
@@ -45,12 +45,12 @@ object PushGraph {
                     // → jalur stash-pending yang menangani retry.
                     override suspend fun registerOnBackend(token: String): Boolean =
                         runCatching {
-                            ApiClient.api.registerPushDevice(PushDeviceRequest(token)).ok
+                            Backend.api.registerPushDevice(PushDeviceRequest(token)).ok
                         }.getOrDefault(false)
 
                     override suspend fun unregisterOnBackend(token: String): Boolean =
                         runCatching {
-                            ApiClient.api.unregisterPushDevice(PushDeviceRequest(token)).ok
+                            Backend.api.unregisterPushDevice(PushDeviceRequest(token)).ok
                         }.getOrDefault(false)
 
                     override suspend fun stashPending(token: String) {
