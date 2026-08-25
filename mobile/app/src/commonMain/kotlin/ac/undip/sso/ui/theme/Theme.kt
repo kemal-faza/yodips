@@ -1,6 +1,6 @@
 package ac.undip.sso.ui.theme
 
-import ac.undip.sso.R
+import ac.undip.sso.ui.theme.Res // generated accessor (module :app)
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -13,10 +13,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import org.jetbrains.compose.resources.Font
 
 // ===== Tokens mirrored from web/DESIGN.md (web/src/assets/css/main.css) =====
 // Primary/brand (unchanged in light & dark).
@@ -152,22 +152,26 @@ private val AppShapes =
     )
 
 // ===== Geist (mirrors web font stack: Geist 400/500/600/700) =====
-// Embedded static TTFs (SIL OFL). A single FontFamily of four weights lets
-// Material3 pick the right face for each TextStyle/fontWeight.
-private val Geist =
+// Embedded static TTFs (SIL OFL) via Compose Multiplatform resources. A single
+// FontFamily of four weights lets Material3 pick the right face for each
+// TextStyle/fontWeight. CMP's resource-backed Font() is @Composable (unlike the
+// old androidx Font(resId)), so the family is built inside composition.
+@Composable
+private fun geistFontFamily(): FontFamily =
     FontFamily(
-        Font(R.font.geist_regular, weight = FontWeight.Normal),
-        Font(R.font.geist_medium, weight = FontWeight.Medium),
-        Font(R.font.geist_semibold, weight = FontWeight.SemiBold),
-        Font(R.font.geist_bold, weight = FontWeight.Bold),
+        Font(Res.font.geist_regular, weight = FontWeight.Normal),
+        Font(Res.font.geist_medium, weight = FontWeight.Medium),
+        Font(Res.font.geist_semibold, weight = FontWeight.SemiBold),
+        Font(Res.font.geist_bold, weight = FontWeight.Bold),
     )
-
-private fun rewrite(ts: TextStyle) = ts.copy(fontFamily = Geist)
 
 // Web uses Geist across all weights; keep each face's own size/style/weight but
 // point the family at Geist so the whole UI follows the brand typeface.
-private val AppTypography =
-    Typography().run {
+@Composable
+private fun appTypography(): Typography {
+    val geist = geistFontFamily()
+    fun rewrite(ts: TextStyle) = ts.copy(fontFamily = geist)
+    return Typography().run {
         Typography(
             displayLarge = rewrite(displayLarge),
             displayMedium = rewrite(displayMedium),
@@ -186,6 +190,7 @@ private val AppTypography =
             labelSmall = rewrite(labelSmall),
         )
     }
+}
 
 /** True when the active Material color scheme is the dark one. */
 val LocalIsDark = staticCompositionLocalOf { false }
@@ -211,7 +216,7 @@ fun UndipSSOTheme(
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColors else LightColors,
             shapes = AppShapes,
-            typography = AppTypography,
+            typography = appTypography(),
             content = content,
         )
     }

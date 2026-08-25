@@ -7,7 +7,7 @@ import ac.undip.sso.core.session.KeystoreTokenCipher
 import ac.undip.sso.core.session.TokenStore
 import ac.undip.sso.core.session.tokenDataStore
 import ac.undip.sso.ui.AppRoot
-import ac.undip.sso.ui.theme.ThemeController
+import ac.undip.sso.ui.theme.platformThemeController
 import ac.undip.sso.ui.theme.UndipSSOTheme
 import android.content.Intent
 import android.os.Bundle
@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
         PushGraph.install(this)
         navTargetFlow.value = normalizeNavTarget(intent?.getStringExtra("target"))
         setContent {
-            val themeController = remember { ThemeController(applicationContext) }
+            val themeController = remember { platformThemeController(applicationContext) }
             UndipSSOTheme(darkTheme = themeController.dark) {
                 SideEffect {
                     WindowCompat.getInsetsController(window, window.decorView).apply {
