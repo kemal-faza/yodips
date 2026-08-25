@@ -10,7 +10,7 @@ import AuroraBackground from '@/components/ui/aurora-background/AuroraBackground
 import MultiStepLoader from '@/components/ui/multi-step-loader/MultiStepLoader.vue';
 import QrScanner from '../mobile/QrScanner.vue';
 import { pairConsume } from '../api/client';
-import { extractPairCode, normalizePairingInput } from '../utils/pairing';
+import { extractPairCode, normalizePairingInput, pairErrorMessage } from '../utils/pairing';
 import { SSO_CAPTURE_ENABLED, isMobileUserAgent } from '../config/extension';
 
 const store = useAuthStore();
@@ -59,17 +59,7 @@ async function submitPair(codeOverride?: string) {
     }
     proxy().$router?.push('/');
   } catch (e: any) {
-    const status = e?.response?.status;
-    if (status === 400) {
-      pairError.value = 'Kode tidak valid atau sudah kedaluwarsa. Minta kode baru.';
-    } else if (status === 409) {
-      pairError.value =
-        'Sesi di perangkat lama sudah berakhir. Login ulang di sana, lalu minta kode baru.';
-    } else if (status === 429) {
-      pairError.value = 'Terlalu banyak percobaan. Tunggu sekitar 1 menit lalu coba lagi.';
-    } else {
-      pairError.value = 'Gagal pairing. Periksa koneksi lalu coba lagi.';
-    }
+    pairError.value = pairErrorMessage(e?.response?.status, e?.response?.data?.code);
   } finally {
     pairBusy.value = false;
   }

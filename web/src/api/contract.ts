@@ -15,8 +15,10 @@ export const BACKEND_ERROR_CODES = {
   INVALID_TOKEN: 'INVALID_TOKEN',
   /** Server-side session record is gone — silent refresh impossible. */
   SESSION_DEAD: 'SESSION_DEAD',
-  /** Kode pairing salah / kedaluwarsa (POST /api/auth/pair/consume). */
+  /** Kode pairing salah / sudah terpakai (POST /api/auth/pair/consume). */
   INVALID_CODE: 'INVALID_CODE',
+  /** Kode pairing pernah ada tapi TTL-nya lewat (beda dari INVALID sejak 2026-08-25). */
+  EXPIRED_CODE: 'EXPIRED_CODE',
 } as const;
 
 export type BackendErrorCode = keyof typeof BACKEND_ERROR_CODES;
