@@ -1,7 +1,8 @@
 package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
-import java.util.concurrent.ConcurrentHashMap
+import ac.undip.sso.nowMs
+import kotlin.concurrent.Volatile
 
 /**
  * Size of a fetched value is not re-read from the wire logic — this cache only
@@ -14,7 +15,7 @@ interface DataCache {
     /** Fresh = returned with ttl; Stale = data is older than ttl (still usable). */
     fun <T> get(
         key: String,
-        now: Long = System.currentTimeMillis(),
+        now: Long = nowMs(),
     ): Cached<ApiResult<T>>?
 
     fun <T> put(
@@ -35,7 +36,7 @@ interface DataCache {
 
 const val DEFAULT_CACHE_TTL_MS = 2 * 60_000L
 
-/** Thread-safe in-memory TTL cache. Pure JVM — no Android deps, unit-testable. */
+/** Thread-safe in-memory TTL cache. Pure Kotlin — no JVM deps, unit-testable. */
 class InMemoryDataCache(
     private val ttlMs: Long = DEFAULT_CACHE_TTL_MS,
 ) : DataCache {
@@ -44,17 +45,18 @@ class InMemoryDataCache(
         val fetchedAt: Long,
     )
 
-    private val store = ConcurrentHashMap<String, Entry>()
+    private val lock = Any()
+    private val store = mutableMapOf<String, Entry>()
 
     override fun <T> get(
         key: String,
         now: Long,
-    ): DataCache.Cached<ApiResult<T>>? {
-        val e = store[key] ?: return null
+    ): DataCache.Cached<ApiResult<T>>? = synchronized(lock) {
+        val e = store[key] ?: return@synchronized null
 
         @Suppress("UNCHECKED_CAST")
         val value = e.value as ApiResult<T>
-        return if (now - e.fetchedAt <= ttlMs) {
+        return@synchronized if (now - e.fetchedAt <= ttlMs) {
             DataCache.Cached.Fresh(value)
         } else {
             DataCache.Cached.Stale(value)
@@ -65,6 +67,8 @@ class InMemoryDataCache(
         key: String,
         value: ApiResult<T>,
     ) {
-        store[key] = Entry(value, System.currentTimeMillis())
+        synchronized(lock) {
+            store[key] = Entry(value, nowMs())
+        }
     }
 }

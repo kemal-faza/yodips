@@ -93,16 +93,24 @@ kotlin {
     }
 
     sourceSets {
-        // Selama transisi F1 semua dependensi lama masih dirujuk dari androidMain;
-        // commonMain diisi bertahap task berikutnya.
         commonMain.dependencies {
-            // Dipakai ui/theme/Theme.kt (T3): material3 direct + alias CMP + resources.
-            // (Rencana T4 Step 7 akan memindah sisa deps UI ke sini.)
+            // Dipakai ui/theme/Theme.kt (T3):
             implementation(libs.compose.ui)
             implementation(libs.compose.foundation)
             implementation(libs.compose.runtime)
             implementation(libs.androidx.material3)
             implementation(libs.compose.components.resources)
+            // Dibawa Task 4 — data+network stack di commonMain (retrofit transit F1):
+            implementation(libs.compose.ui.graphics)
+            implementation(libs.compose.material.icons)
+            implementation(libs.retrofit)
+            implementation(libs.retrofit.kotlinx.serialization)
+            implementation(libs.okhttp)
+            implementation(libs.okhttp.logging)
+            implementation(libs.kotlinx.serialization.json)
+            // Coil 3 — dipakai ProfileScreen (T6a)
+            implementation(libs.coil.compose)
+            implementation(libs.coil.network.ktor3)
         }
         androidMain.dependencies {
             implementation(libs.androidx.core.ktx)
@@ -110,6 +118,7 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtime.compose)
             implementation(libs.androidx.lifecycle.viewmodel.compose)
             implementation(libs.androidx.activity.compose)
+            // CMP aliases masih di androidMain untuk UI files yang belum pindah
             implementation(libs.compose.ui)
             implementation(libs.compose.ui.graphics)
             implementation(libs.androidx.material3)
@@ -117,13 +126,10 @@ kotlin {
             implementation(libs.navigation.multiplatform)
             implementation(libs.compose.ui.tooling.preview)
             implementation(libs.datastore.preferences)
-            implementation(libs.retrofit)
-            implementation(libs.retrofit.kotlinx.serialization)
-            implementation(libs.okhttp)
-            implementation(libs.okhttp.logging)
+            // Retrofit/OkHttp transit — sudah di commonMain, tapi androidMain
+            // tetap butuh karena androidMain masih ada file yang pakai (fallback)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.datetime)
-            implementation(libs.coil.compose)
             // CameraX + MLKit QR scan (absen presence)
             implementation(libs.androidx.camera.core)
             implementation(libs.androidx.camera.camera2)

@@ -12,19 +12,6 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Encrypts (+ decrypts) sensitive values — the JWT and the captured SSO/Kulon/
- * SIAP session cookies — before they are persisted in DataStore, so nothing
- * survives on disk as plaintext. This is the baseline that makes a long-lived
- * backend session (and later a refresh/rotation scheme) safe on-device.
- */
-interface TokenCipher {
-    fun encrypt(plain: String): String
-    /** Returns null when [encoded] is not a valid ciphertext under this key
-     *  (tampered, wrong key, or legacy plaintext) — never throws. */
-    fun decrypt(encoded: String): String?
-}
-
-/**
  * AES-256-GCM with a fresh random 12-byte IV per encryption, framed as
  * Base64(iv || ciphertext). GCM provides integrity (auth tag), so a tampered or
  * wrong-key ciphertext fails authentication and [decrypt] returns null.
@@ -94,8 +81,6 @@ class KeystoreTokenCipher(
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .setKeySize(256)
-            // API 30+: bind the key to the device-unlocked state so it is unusable
-            // while the device is locked (zero UX cost, reduces cold-boot exposure).
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 specBuilder.setUnlockedDeviceRequired(true)
             }

@@ -1,9 +1,9 @@
 package ac.undip.sso.core.network
 
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * Process-wide "session expired" signal.
@@ -24,18 +24,16 @@ import kotlinx.coroutines.flow.asStateFlow
  * a 401 right after the user tapped "Login Ulang" cannot resurrect the dialog.
  */
 object SessionExpiredEvents {
-    private val counter = AtomicInteger(0)
     private val _events = MutableStateFlow(0)
 
     val events: StateFlow<Int> = _events.asStateFlow()
 
     fun notifySessionExpired() {
         if (ApiClient.authToken == null) return
-        _events.value = counter.incrementAndGet()
+        _events.update { it + 1 }
     }
 
     fun consume() {
-        counter.set(0)
         _events.value = 0
     }
 }

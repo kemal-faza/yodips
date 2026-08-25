@@ -1,5 +1,6 @@
 package ac.undip.sso.core.network
 
+import ac.undip.sso.nowMs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -41,7 +42,7 @@ fun handoffBody(
 ): String =
     buildString {
         append("{")
-        append("\"capturedAt\":").append(System.currentTimeMillis() / 1000)
+        append("\"capturedAt\":").append(nowMs() / 1000)
         if (siapCookie != null) {
             append(",\"siapCookie\":\"").append(jsonEscape(siapCookie)).append("\"")
         }
