@@ -9,7 +9,6 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.SerializationException
-import java.io.IOException
 
 /** HTTP status → coarse [ErrorType] for every non-401 backend failure. */
 fun typeForHttp(code: Int): ErrorType =
@@ -58,8 +57,8 @@ class SessionRefresher(
                 RefreshResult.SUCCESS
             } catch (e: ApiHttpException) {
                 RefreshResult.DEAD_SESSION // 401 SESSION_DEAD / INVALID_TOKEN
-            } catch (e: IOException) {
-                RefreshResult.NETWORK_FAILURE // do NOT fire the dialog
+            } catch (e: Exception) {
+                RefreshResult.NETWORK_FAILURE // do NOT fire the dialog (wasmJs has no IOException)
             }
         }
         inflightRefresh = deferred
@@ -116,12 +115,25 @@ class SessionRefresher(
             } else {
                 ApiResult.Error(e.status, e.message, typeForHttp(e.status))
             }
-        } catch (e: IOException) {
-            ApiResult.Error(null, "Tidak dapat terhubung ke server: ${e.message}", ErrorType.NETWORK)
         } catch (e: SerializationException) {
             ApiResult.Error(null, "Respons tidak dapat dibaca", ErrorType.SERVER)
         } catch (e: Exception) {
-            ApiResult.Error(null, e.message ?: "Terjadi kesalahan", ErrorType.SERVER)
+            // Network or generic error.
+            // IOException is JVM-only; wasmJs uses Exception for network failures.
+            if (e is ApiHttpException) {
+                val t = typeForHttp(e.status)
+                if (t == ErrorType.UNAUTHORIZED) onSessionExpired()
+                ApiResult.Error(e.status, e.message, t)
+            } else {
+                val msg = e.message ?: "Terjadi kesalahan"
+                // Type hint: NETWORK for IOException-like messages, SERVER otherwise.
+                val isNetwork = msg.contains("connect", ignoreCase = true) ||
+                    msg.contains("ECONN", ignoreCase = true) ||
+                    msg.contains("timeout", ignoreCase = true) ||
+                    msg.contains("network", ignoreCase = true) ||
+                    msg.contains("resolve", ignoreCase = true)
+                ApiResult.Error(null, msg, if (isNetwork) ErrorType.NETWORK else ErrorType.SERVER)
+            }
         }
     }
 }

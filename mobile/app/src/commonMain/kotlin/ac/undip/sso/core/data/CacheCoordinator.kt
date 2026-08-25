@@ -94,9 +94,14 @@ class CacheCoordinator(
         serializer: KSerializer<T>,
         block: suspend () -> ApiResult<T>,
     ) {
-        synchronized(lock) {
-            if (!refreshing.add(key)) return
+        val alreadyRefreshing = platformSynchronized(lock) {
+            if (refreshing.add(key)) {
+                false
+            } else {
+                true
+            }
         }
+        if (alreadyRefreshing) return
         scope.launch {
             try {
                 val fresh = block()
@@ -105,7 +110,7 @@ class CacheCoordinator(
                     persist(key, serializer, fresh)
                 }
             } finally {
-                synchronized(lock) {
+platformSynchronized(lock) {
                     refreshing.remove(key)
                 }
             }

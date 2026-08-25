@@ -21,7 +21,7 @@ object Backend {
     val BASE_URL: String = appBaseUrl
     private val API_BASE = "$BASE_URL/"
 
-    @Volatile var authToken: String? = null
+    @kotlin.concurrent.Volatile var authToken: String? = null
 
     val apiJson = Json {
         ignoreUnknownKeys = true

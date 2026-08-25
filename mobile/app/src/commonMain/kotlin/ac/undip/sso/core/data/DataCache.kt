@@ -2,7 +2,6 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.nowMs
-import kotlin.concurrent.Volatile
 
 /**
  * Size of a fetched value is not re-read from the wire logic — this cache only
@@ -51,15 +50,20 @@ class InMemoryDataCache(
     override fun <T> get(
         key: String,
         now: Long,
-    ): DataCache.Cached<ApiResult<T>>? = synchronized(lock) {
-        val e = store[key] ?: return@synchronized null
-
-        @Suppress("UNCHECKED_CAST")
-        val value = e.value as ApiResult<T>
-        return@synchronized if (now - e.fetchedAt <= ttlMs) {
-            DataCache.Cached.Fresh(value)
-        } else {
-            DataCache.Cached.Stale(value)
+    ): DataCache.Cached<ApiResult<T>>? {
+        return platformSynchronized(lock) {
+            val e = store[key] ?: null
+            if (e == null) {
+                null as DataCache.Cached<ApiResult<T>>?
+            } else {
+                @Suppress("UNCHECKED_CAST")
+                val value = e.value as ApiResult<T>
+                if (now - e.fetchedAt <= ttlMs) {
+                    DataCache.Cached.Fresh(value)
+                } else {
+                    DataCache.Cached.Stale(value)
+                }
+            }
         }
     }
 
@@ -67,7 +71,7 @@ class InMemoryDataCache(
         key: String,
         value: ApiResult<T>,
     ) {
-        synchronized(lock) {
+        platformSynchronized(lock) {
             store[key] = Entry(value, nowMs())
         }
     }

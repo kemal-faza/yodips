@@ -51,10 +51,17 @@ internal fun epochToDate(epochSec: Long): String {
     val ldt = Instant.fromEpochSeconds(epochSec).toLocalDateTime(TimeZone.currentSystemDefault())
     val d = ldt.date
     val bulan = arrayOf("Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des")[d.monthNumber - 1]
-    return "%02d %s %04d %02d:%02d".format(d.dayOfMonth, bulan, d.year, ldt.hour, ldt.minute)
+    val hh = ldt.hour.toString().padStart(2, '0')
+    val mm = ldt.minute.toString().padStart(2, '0')
+    val dd = d.dayOfMonth.toString().padStart(2, '0')
+    return "$dd $bulan ${d.year} $hh:$mm"
 }
 
-internal fun formatIpk(value: Double?): String = if (value == null) "—" else "%.2f".format(value)
+internal fun formatIpk(value: Double?): String = if (value == null) "—" else {
+    val whole = value.toLong()
+    val frac = ((value - whole) * 100 + 0.5).toInt().coerceIn(0, 99)
+    "$whole.$frac"
+}
 
 internal fun formatSks(value: Double?): String = if (value == null) "—" else ((if (value % 1.0 == 0.0) value.toInt() else value).toString())
 
