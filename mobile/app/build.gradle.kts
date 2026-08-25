@@ -95,6 +95,15 @@ kotlin {
     sourceSets {
         // Selama transisi F1 semua dependensi lama masih dirujuk dari androidMain;
         // commonMain diisi bertahap task berikutnya.
+        commonMain.dependencies {
+            // Dipakai ui/theme/Theme.kt (T3): material3 direct + alias CMP + resources.
+            // (Rencana T4 Step 7 akan memindah sisa deps UI ke sini.)
+            implementation(libs.compose.ui)
+            implementation(libs.compose.foundation)
+            implementation(libs.compose.runtime)
+            implementation(libs.androidx.material3)
+            implementation(libs.compose.components.resources)
+        }
         androidMain.dependencies {
             implementation(libs.androidx.core.ktx)
             implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -127,6 +136,14 @@ kotlin {
             implementation(libs.mockwebserver)
             implementation(libs.kotlinx.coroutines.test)
         }
+    }
+}
+
+// Generated Res accessor package — dipin agar import stabil sesuai rencana T3
+// (`ac.undip.sso.ui.theme.Res`), bukan default `{group}.{module}.generated.resources`.
+compose {
+    resources {
+        packageOfResClass = "ac.undip.sso.ui.theme"
     }
 }
 
