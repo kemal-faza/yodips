@@ -2,12 +2,16 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   plugins: [
     vue(),
     tailwindcss(),
+    // HTTPS preview utk testing kamera dari HP di LAN (npm run preview:https).
+    // Saklar env agar build/dev/preview biasa & produksi Vercel tak tersentuh.
+    ...(process.env.HTTPS_PREVIEW ? [basicSsl()] : []),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'favicon-192.png', 'yodips-logo-512.png'],
