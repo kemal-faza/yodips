@@ -1,5 +1,6 @@
 package ac.undip.sso.core.data
 
+import ac.undip.sso.core.network.ApiHttpException
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranRequest
@@ -22,12 +23,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerializationException
-import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import retrofit2.HttpException
-import retrofit2.Response
 import java.io.IOException
 
 /** Fake TokenStoreLike so refresh + cookie persistence is unit-testable. */
@@ -87,14 +85,11 @@ class SsoRepositoryTest {
 
     @Test
     fun `upstream-scraped 401 maps to STALE_SESSION`() {
-        // Kulon/SIAP data comes from scraping with stored cookies: a 401 here
-        // means the UPSTREAM session died while the JWT may still be fine —
-        // the precise taxonomy the UI already messages for.
-        val error = HttpException(Response.error<Any>(401, "Session SIAP expired".toResponseBody(null)))
+        val error = ApiHttpException(401, "Session SIAP expired")
         val repo =
             SsoRepository(
                 FakeApi().apply { profileStub = { throw error } },
-                refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
+                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
             )
         val r = runBlocking { repo.profile() }
         assertTrue(r is ApiResult.Error)
@@ -104,13 +99,13 @@ class SsoRepositoryTest {
 
     @Test
     fun `auth-level 401 on non-upstream route maps to UNAUTHORIZED`() {
-        val error = HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
+        val error = ApiHttpException(401, "expired")
         val repo =
             SsoRepository(
                 FakeApi().apply {
                     registerPushDeviceStub = { throw error }
                 },
-                refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
+                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
             )
         val r = runBlocking { repo.registerPushDevice("tok") }
         assertTrue(r is ApiResult.Error)
@@ -120,7 +115,7 @@ class SsoRepositoryTest {
 
     @Test
     fun `not-found 404 maps to NOT_FOUND`() {
-        val error = HttpException(Response.error<Any>(404, "nf".toResponseBody(null)))
+        val error = ApiHttpException(404, "nf")
         val repo = SsoRepository(FakeApi().apply { profileStub = { throw error } })
         val r = runBlocking { repo.profile() }
         assertEquals(ErrorType.NOT_FOUND, (r as ApiResult.Error).type)
@@ -128,7 +123,7 @@ class SsoRepositoryTest {
 
     @Test
     fun `upstream 4xx maps to UPSTREAM`() {
-        val error = HttpException(Response.error<Any>(429, "rate".toResponseBody(null)))
+        val error = ApiHttpException(429, "rate")
         val repo = SsoRepository(FakeApi().apply { profileStub = { throw error } })
         val r = runBlocking { repo.profile() }
         assertEquals(ErrorType.UPSTREAM, (r as ApiResult.Error).type)
@@ -136,7 +131,7 @@ class SsoRepositoryTest {
 
     @Test
     fun `server 5xx maps to SERVER`() {
-        val error = HttpException(Response.error<Any>(503, "down".toResponseBody(null)))
+        val error = ApiHttpException(503, "down")
         val repo = SsoRepository(FakeApi().apply { profileStub = { throw error } })
         val r = runBlocking { repo.profile() }
         assertEquals(ErrorType.SERVER, (r as ApiResult.Error).type)
@@ -159,18 +154,13 @@ class SsoRepositoryTest {
 
     @Test
     fun `auth 401 notifies the session-expired listener so the app shows re-login`() {
-        // The universal dialog is driven by this signal: ANY authenticated call
-        // hitting a 401 (expired JWT or backend lost the upstream session) must
-        // fire it, even from a background refresh the screen never surfaces.
         var notified = 0
-        val error = HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
-        // Refresh faked dead (same reason as `auth 401 maps to UNAUTHORIZED`):
-        // no live-network dependency in a unit test.
+        val error = ApiHttpException(401, "expired")
         val repo =
             SsoRepository(
                 FakeApi().apply { profileStub = { throw error } },
                 onSessionExpired = { notified++ },
-                refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
+                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
             )
 
         val r = runBlocking { repo.profile() }
@@ -183,7 +173,7 @@ class SsoRepositoryTest {
     @Test
     fun `non-auth errors do not notify the session-expired listener`() {
         var notified = 0
-        val error = HttpException(Response.error<Any>(429, "rate".toResponseBody(null)))
+        val error = ApiHttpException(429, "rate")
         val repo = SsoRepository(FakeApi().apply { profileStub = { throw error } }, onSessionExpired = { notified++ })
 
         val r = runBlocking { repo.profile() }
@@ -194,8 +184,6 @@ class SsoRepositoryTest {
 
     @Test
     fun `stale cache serves stale data immediately (stale-while-revalidate)`() {
-        // The network stub is never awaited: a stale hit must return the cached
-        // value now and refresh in the background, not block on the slow scrape.
         val cachedProfile = SiapProfile(nama = "CACHED", nim = "0000")
         val staleCache = SingleStaleCache(ApiResult.Success(cachedProfile))
         val api = FakeApi().apply { profileStub = { SiapProfile(nama = "FRESH-NET", nim = "9999") } }
@@ -208,9 +196,6 @@ class SsoRepositoryTest {
 
     @Test
     fun `cold miss restores fresh-enough data from disk before hitting the network`() {
-        // Empty in-memory cache + nothing on disk would mean a blocking network
-        // call. A disk entry (fresh enough) must be served instantly instead,
-        // seeding the in-memory cache so a follow-up visit is cold-free.
         val onDisk = SiapProfile(nama = "FROM-DISK", nim = "1111")
         val diskJson = jsonSerializer.encodeToString(SiapProfile.serializer(), onDisk)
         val disk = MapPersistentCache(mapOf("profile" to PersistentCache.Entry(diskJson, System.currentTimeMillis())))
@@ -230,7 +215,7 @@ class SsoRepositoryTest {
         val api = FakeApi().apply {
             profileStub = {
                 calls++
-                if (calls == 1) throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
+                if (calls == 1) throw ApiHttpException(401, "expired")
                 SiapProfile(nama = "OK", nim = "2404")
             }
         }
@@ -252,13 +237,13 @@ class SsoRepositoryTest {
     fun `401 refresh fails 401 signals onSessionExpired, no retry`() = runBlocking {
         var notified = 0
         val api = FakeApi().apply {
-            profileStub = { throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null))) }
+            profileStub = { throw ApiHttpException(401, "expired") }
         }
         val repo = SsoRepository(
             api,
             onSessionExpired = { notified++ },
             tokenStore = FakeTokenStore(),
-            refreshToken = { throw HttpException(Response.error<Any>(401, "SESSION_DEAD".toResponseBody(null))) },
+            refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
         )
         val r = repo.profile(force = true)
         assertEquals(1, notified)
@@ -269,7 +254,7 @@ class SsoRepositoryTest {
     fun `401 refresh network failure returns NETWORK error, no dialog`() = runBlocking {
         var notified = 0
         val api = FakeApi().apply {
-            profileStub = { throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null))) }
+            profileStub = { throw ApiHttpException(401, "expired") }
         }
         val repo = SsoRepository(
             api,
@@ -287,7 +272,7 @@ class SsoRepositoryTest {
         var notified = 0
         var refreshAttempts = 0
         val api = FakeApi().apply {
-            markKehadiranStub = { throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null))) }
+            markKehadiranStub = { throw ApiHttpException(401, "expired") }
         }
         val repo = SsoRepository(
             api,
@@ -308,7 +293,7 @@ class SsoRepositoryTest {
         val api = FakeApi().apply {
             profileStub = {
                 calls++
-                if (calls == 1) throw HttpException(Response.error<Any>(401, "expired".toResponseBody(null)))
+                if (calls == 1) throw ApiHttpException(401, "expired")
                 SiapProfile(nama = "OK", nim = "2404")
             }
         }
@@ -322,8 +307,6 @@ class SsoRepositoryTest {
                 "new-jwt"
             },
         )
-        // Fire two independent data calls concurrently (both 401 on first attempt).
-        // They share one single-flight refresh, so refreshCalls must be exactly 1.
         val (r1, r2) =
             coroutineScope {
                 val a = async { repo.profile(force = true) }

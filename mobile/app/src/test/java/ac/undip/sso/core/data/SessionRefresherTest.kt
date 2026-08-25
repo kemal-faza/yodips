@@ -1,5 +1,6 @@
 package ac.undip.sso.core.data
 
+import ac.undip.sso.core.network.ApiHttpException
 import ac.undip.sso.core.network.ErrorType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -8,12 +9,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.SerializationException
-import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import retrofit2.HttpException
-import retrofit2.Response
 import java.io.IOException
 
 /** Session refresh + error taxonomy, split out of SsoRepository (one concern per class). */
@@ -29,8 +27,7 @@ class SessionRefresherTest {
         override suspend fun clear() { saved = null }
     }
 
-    private fun http401() =
-        HttpException(Response.error<Any>(401, "unauthorized".toResponseBody()))
+    private fun http401() = ApiHttpException(401, "unauthorized")
 
     @Test
     fun `concurrent 401s share one in-flight refresh`() = runTest {

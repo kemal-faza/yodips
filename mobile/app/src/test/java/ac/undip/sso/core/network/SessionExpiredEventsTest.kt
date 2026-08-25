@@ -13,7 +13,7 @@ import org.junit.Test
 class SessionExpiredEventsTest {
     @Before
     fun reset() {
-        ApiClient.authToken = null
+        Backend.authToken = null
         SessionExpiredEvents.consume()
     }
 
@@ -22,7 +22,7 @@ class SessionExpiredEventsTest {
 
     @Test
     fun `notify with an active JWT bumps the event counter`() {
-        ApiClient.authToken = "jwt-token"
+        Backend.authToken = "jwt-token"
 
         SessionExpiredEvents.notifySessionExpired()
 
@@ -31,7 +31,7 @@ class SessionExpiredEventsTest {
 
     @Test
     fun `consume resets the counter so a later 401 can re-arm the dialog`() {
-        ApiClient.authToken = "jwt-token"
+        Backend.authToken = "jwt-token"
         SessionExpiredEvents.notifySessionExpired()
         SessionExpiredEvents.consume()
         assertEquals(0, SessionExpiredEvents.events.value)
@@ -45,7 +45,7 @@ class SessionExpiredEventsTest {
         // After the user taps "Login Ulang" the JWT is detached first; a dying
         // in-flight request that then lands a 401 must NOT resurrect the dialog
         // on top of the login screen.
-        ApiClient.authToken = null
+        Backend.authToken = null
 
         SessionExpiredEvents.notifySessionExpired()
 

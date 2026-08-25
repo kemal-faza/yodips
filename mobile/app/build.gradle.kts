@@ -100,13 +100,9 @@ kotlin {
             implementation(libs.compose.runtime)
             implementation(libs.androidx.material3)
             implementation(libs.compose.components.resources)
-            // Dibawa Task 4 — data+network stack di commonMain (retrofit transit F1):
+            // Dibawa Task 4 — data+network stack di commonMain:
             implementation(libs.compose.ui.graphics)
             implementation(libs.compose.material.icons)
-            implementation(libs.retrofit)
-            implementation(libs.retrofit.kotlinx.serialization)
-            implementation(libs.okhttp)
-            implementation(libs.okhttp.logging)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.datetime)
             // Coil 3 — dipakai ProfileScreen (T6a)
@@ -128,7 +124,6 @@ kotlin {
             implementation(libs.compose.ui.graphics)
             implementation(libs.androidx.material3)
             implementation(libs.compose.material.icons)
-            implementation(libs.compose.ui.tooling.preview)
             implementation(libs.datastore.preferences)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.datetime)
@@ -144,7 +139,6 @@ kotlin {
         }
         androidUnitTest.dependencies {
             implementation(libs.junit)
-            implementation(libs.mockwebserver)
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.mock)
         }
@@ -160,7 +154,7 @@ compose {
 }
 
 dependencies {
-    // Coil 2 -> 3: satu-satunya pemakaian adalah coil.compose.AsyncImage di ProfileScreen
+    // Coil 3 — dipakai ProfileScreen
     implementation(libs.coil.compose)
     implementation(libs.coil.network.ktor3)   // fetcher jaringan Coil3
 }
