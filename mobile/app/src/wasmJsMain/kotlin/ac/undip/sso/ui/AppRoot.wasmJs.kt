@@ -10,11 +10,10 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 
 @Composable
-fun AppRoot() {
+fun AppRoot(themeController: ThemeController) {
     val tokenStore = remember { TokenStore() }
     var hasToken by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(false) }
-    val themeController = remember { ThemeController({ false }, {}) }
 
     LaunchedEffect(tokenStore) {
         val t = tokenStore.currentToken()
