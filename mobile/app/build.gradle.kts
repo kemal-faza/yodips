@@ -111,6 +111,8 @@ kotlin {
             // Coil 3 — dipakai ProfileScreen (T6a)
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor3)
+            // Navigation multiplatform (AppShell commonMain)
+            implementation(libs.navigation.multiplatform)
         }
         androidMain.dependencies {
             implementation(libs.androidx.core.ktx)
@@ -123,7 +125,6 @@ kotlin {
             implementation(libs.compose.ui.graphics)
             implementation(libs.androidx.material3)
             implementation(libs.compose.material.icons)
-            implementation(libs.navigation.multiplatform)
             implementation(libs.compose.ui.tooling.preview)
             implementation(libs.datastore.preferences)
             // Retrofit/OkHttp transit — sudah di commonMain, tapi androidMain

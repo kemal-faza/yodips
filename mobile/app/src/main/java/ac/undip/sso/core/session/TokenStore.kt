@@ -53,7 +53,7 @@ class TokenStore(
 
     override suspend fun currentToken(): String? = jwt.first()
 
-    suspend fun clear() {
+    override suspend fun clear() {
         dataStore.edit { it.clear() }
     }
 

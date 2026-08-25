@@ -13,7 +13,7 @@ import ac.undip.sso.core.login.siapTicketUrl
 import ac.undip.sso.core.login.ssoLoginCompleted
 import ac.undip.sso.core.network.ApiClient
 import ac.undip.sso.core.network.HandoffResult
-import ac.undip.sso.core.session.TokenStore
+import ac.undip.sso.core.data.TokenStoreLike
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.util.Log
@@ -95,7 +95,7 @@ private const val SSO_LAYOUT_SHIM =
 @Composable
 fun LoginScreen(
     onLoggedIn: () -> Unit,
-    tokenStore: TokenStore,
+    tokenStore: TokenStoreLike,
 ) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(false) }

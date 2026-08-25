@@ -1,5 +1,8 @@
 package ac.undip.sso
 
+import ac.undip.sso.core.data.EncryptedPersistentCache
+import ac.undip.sso.core.data.PersistentCache
+import ac.undip.sso.core.data.PrefsPersistentCache
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.ensureAkademikChannel
 import ac.undip.sso.core.push.normalizeNavTarget
@@ -52,9 +55,16 @@ class MainActivity : ComponentActivity() {
                         // AES key (KeystoreTokenCipher) — never stored as plaintext.
                         TokenStore(applicationContext.tokenDataStore, KeystoreTokenCipher(applicationContext))
                     }
+                    val persistentCache: PersistentCache = remember {
+                        EncryptedPersistentCache(
+                            KeystoreTokenCipher(applicationContext),
+                            PrefsPersistentCache(applicationContext),
+                        )
+                    }
                     val pendingNavTarget by navTargetFlow.collectAsState()
                     AppRoot(
                         tokenStore,
+                        persistentCache,
                         themeController,
                         pendingNavTarget = pendingNavTarget,
                         onNavConsumed = { navTargetFlow.value = null },

@@ -1,12 +1,10 @@
 package ac.undip.sso.ui.shell
 
-import android.os.SystemClock
-import ac.undip.sso.core.data.EncryptedPersistentCache
-import ac.undip.sso.core.data.PrefsPersistentCache
+import ac.undip.sso.core.data.TokenStoreLike
+import ac.undip.sso.core.data.PersistentCache
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.push.PushTargets
-import ac.undip.sso.core.session.KeystoreTokenCipher
-import ac.undip.sso.core.session.TokenStore
+import ac.undip.sso.uptimeMs
 import ac.undip.sso.ui.feature.DashboardScreen
 import ac.undip.sso.ui.feature.IrsScreen
 import ac.undip.sso.ui.feature.KhsScreen
@@ -57,7 +55,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -90,7 +87,8 @@ enum class Tab(
 
 @Composable
 fun AppShell(
-    tokenStore: TokenStore,
+    tokenStore: TokenStoreLike,
+    persistentCache: PersistentCache,
     themeController: ThemeController,
     onLogout: () -> Unit = {},
     initialNavTarget: String? = null,
@@ -99,17 +97,10 @@ fun AppShell(
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val context = LocalContext.current.applicationContext
-    // Encrypt cache payloads (incl. the PII-bearing profile) at rest via the same
-    // Android-KeyStore-backed cipher as the token store — never plaintext on disk.
     val repo =
         remember {
             SsoRepository(
-                persistent =
-                    EncryptedPersistentCache(
-                        KeystoreTokenCipher(context),
-                        PrefsPersistentCache(context),
-                    ),
+                persistent = persistentCache,
                 tokenStore = tokenStore,
             )
         }
@@ -188,7 +179,7 @@ fun ShellBottomBar(
     // Scan/QR camera is not torn down & re-bound on every rapid tap.
     var lastTapAt by remember { mutableStateOf(Long.MIN_VALUE) }
     fun throttled(route: String) {
-        val now = SystemClock.uptimeMillis()
+        val now = uptimeMs()
         // Guard the very first tap: Long.MIN_VALUE is the "never tapped yet"
         // sentinel; subtracting it from a real uptime overflows (which would
         // block every tap), so treat it as always allowed.
