@@ -62,6 +62,20 @@
     };
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(hideLoader);
     setTimeout(hideLoader, 20000);
+
+    // Kode pairing/token QR selalu uppercase: Compose wasm mengetik lewat <input>
+    // tersembunyi yang TIDAK meneruskan KeyboardCapitalization ke IME — paksa
+    // autocapitalize di level DOM tepat sebelum keyboard muncul (focusin).
+    document.addEventListener('focusin', function (e) {
+        var el = e.target;
+        if (!el) return;
+        var tag = el.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') {
+            el.setAttribute('autocapitalize', 'characters');
+            el.setAttribute('autocorrect', 'off');
+            el.setAttribute('spellcheck', 'false');
+        }
+    }, true);
 </script>
 </body>
 </html>

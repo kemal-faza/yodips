@@ -4,10 +4,15 @@ import ac.undip.sso.appBaseUrl
 import ac.undip.sso.core.data.TokenStoreLike
 import ac.undip.sso.core.network.createPlatformClient
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -97,37 +102,66 @@ fun LoginScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text("YoDips", style = MaterialTheme.typography.headlineLarge)
-        Spacer(Modifier.height(8.dp))
-        Text("Scan atau masukkan kode pairing dari perangkat utama")
-        Spacer(Modifier.height(24.dp))
-
-        OutlinedTextField(
-            value = code,
-            onValueChange = { if (it.length <= 8) code = normalize(it) },
-            label = { Text("Kode pairing") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !busy,
-        )
-        Spacer(Modifier.height(16.dp))
-
-        Button(
-            onClick = { submit() },
-            enabled = code.length == 8 && !busy,
-            modifier = Modifier.fillMaxWidth(),
+    // Surface eksplisit: canvas Compose transparan secara default — tanpa ini
+    // background halaman (putih di index.html) tembus, dan teks putih tema gelap
+    // jadi tak terlihat. Surface memastikan bg selalu = colorScheme.background.
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
-            Text(if (busy) "Menyambungkan…" else "Masuk")
-        }
+            Text("YoDips", style = MaterialTheme.typography.headlineLarge)
+            Spacer(Modifier.height(8.dp))
+            Text("Scan atau masukkan kode pairing dari perangkat utama")
+            Spacer(Modifier.height(24.dp))
 
-        if (error != null) {
+            OutlinedTextField(
+                value = code,
+                onValueChange = { if (it.length <= 8) code = normalize(it) },
+                label = { Text("Kode pairing") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+                // Kode pairing Crockford uppercase: keyboard caps otomatis,
+                // tanpa autocorrect, ascii saja.
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Ascii,
+                    capitalization = KeyboardCapitalization.Characters,
+                    autoCorrectEnabled = false,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    // Eksplisit onSurface: default M3 (varian CMP alpha) pernah
+                    // resolve ke warna yang menyatu dengan background.
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    disabledTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
             Spacer(Modifier.height(16.dp))
-            Text(error!!, color = MaterialTheme.colorScheme.error)
+
+            Button(
+                onClick = { submit() },
+                enabled = code.length == 8 && !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (busy) "Menyambungkan…" else "Masuk")
+            }
+
+            if (error != null) {
+                Spacer(Modifier.height(16.dp))
+                Text(error!!, color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }
