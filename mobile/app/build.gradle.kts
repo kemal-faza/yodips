@@ -1,5 +1,7 @@
 import java.io.FileInputStream
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+// ^^ wasmJs target (Plan 3/F3)
 
 // Secrets never live in the repo: `keystore.properties` is git-ignored and
 // holds the release keystore path + passwords. Absent → release stays unsigned
@@ -92,13 +94,27 @@ kotlin {
         }
     }
 
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        outputModuleName = "composeApp"
+        browser {
+            commonWebpackConfig {
+                outputFileName = "composeApp.js"
+            }
+        }
+        binaries.executable()
+    }
+
     sourceSets {
         commonMain.dependencies {
             // Dipakai ui/theme/Theme.kt (T3):
             implementation(libs.compose.ui)
             implementation(libs.compose.foundation)
             implementation(libs.compose.runtime)
-            implementation(libs.androidx.material3)
+            // Material3 via CMP BOM (androidx.compose.material3:material3:1.5.0-alpha17 for CMP 1.11.1)
+            // wasmJs target needs the CMP-published variant (has wasm-js variant).
+            // androidMain keeps stable 1.4.0 via explicit override.
+            implementation(compose.material3)
             implementation(libs.compose.components.resources)
             // Dibawa Task 4 — data+network stack di commonMain:
             implementation(libs.compose.ui.graphics)
@@ -141,6 +157,11 @@ kotlin {
             implementation(libs.junit)
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.mock)
+        }
+        wasmJsMain.dependencies {
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.js)
+            implementation(npm("jsqr", "1.4.0"))
         }
     }
 }

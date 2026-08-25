@@ -109,7 +109,12 @@ private fun lengthOfMonth(year: Int, month: Int): Int = when (month) {
 internal fun scheduleSections(jadwal: List<SiapJadwal>): Map<String, List<Pair<String, SiapJadwal>>> =
     jadwal
         .groupBy { it.hari.lowercase() }
-        .toSortedMap(compareBy { dayRank(it) })
+        .let { map ->
+            // LinkedHashMap sorted by dayRank (replaces JVM-only toSortedMap)
+            val sorted = LinkedHashMap<String, List<SiapJadwal>>()
+            map.entries.sortedBy { dayRank(it.key) }.forEach { (k, v) -> sorted[k] = v }
+            sorted
+        }
         .mapValues { (day, entries) ->
             entries
                 // SIAP emits one row per scheduled instance; collapse same-day duplicate courses.

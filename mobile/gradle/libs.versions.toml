@@ -1,6 +1,6 @@
 [versions]
 agp = "8.7.3"
-kotlin = "2.2.20"
+kotlin = "2.3.20"
 composeMultiplatform = "1.11.1"
 navigationMultiplatform = "2.9.2"
 coreKtx = "1.13.1"
@@ -53,6 +53,7 @@ mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", versio
 
 ktor-client-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }
 ktor-client-okhttp = { group = "io.ktor", name = "ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-js = { group = "io.ktor", name = "ktor-client-js", version.ref = "ktor" }
 ktor-client-mock = { group = "io.ktor", name = "ktor-client-mock", version.ref = "ktor" }
 
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }

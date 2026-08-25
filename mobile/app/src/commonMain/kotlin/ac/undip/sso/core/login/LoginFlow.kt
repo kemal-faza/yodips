@@ -31,7 +31,7 @@ object LoginUrls {
  */
 fun generateSsoTicket(): String =
     Base64.Default.encode(
-        (nowMs() / 1000).toString().toByteArray(),
+        (nowMs() / 1000).toString().encodeToByteArray(),
     )
 
 /** Kulon SSO bridge URL — establishes the Moodle session from the SSO ticket. */
@@ -147,7 +147,7 @@ private fun percentDecode(s: String): String {
             c == '+' -> sb.append(' ')
             c == '%' && i + 2 < s.length -> {
                 val hex = s.substring(i + 1, i + 3)
-                sb.append(Integer.parseInt(hex, 16).toChar())
+                sb.append(hex.toInt(16).toChar())
                 i += 2
             }
             else -> sb.append(c)
