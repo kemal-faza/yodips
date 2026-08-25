@@ -1,11 +1,6 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
-import ac.undip.sso.core.network.ApiResult
-import ac.undip.sso.core.network.ErrorType
-import ac.undip.sso.core.network.KehadiranResponse
-import ac.undip.sso.ui.theme.Primary
-import ac.undip.sso.ui.theme.accentForeground
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -66,12 +61,12 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -82,78 +77,17 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Result of interpreting a presence (absen) attendance response, for surfacing
- * in the QR scan UI. Pure so it is unit-testable without camera/network.
- */
-data class ScanOutcome(
-    val success: Boolean,
-    val message: String,
-)
-
-/**
- * Map the backend presence-proxy result ([SsoRepository.markKehadiran]) to a
- * concise user-facing outcome. The backend passes through SIAP's own message
- * for a business rejection (e.g. an expired/consumed QR); the /me-grade failures
- * (no-session, network, 5xx) get a generic prompt.
- */
-fun scanOutcome(
-    result: ApiResult<KehadiranResponse>,
-    fallback: String = "Gagal mencatat kehadiran.",
-): ScanOutcome =
-    when (result) {
-        is ApiResult.Success -> {
-            // SIAP's success `status` is not a stable literal (observed "", "success",
-            // "Sukses", "OK", "Berhasil", ...). Default to SUCCESS and only report a
-            // failure when the response explicitly flags an error, so a genuinely
-            // recorded absence is never shown as a failed scan.
-            val status = result.data.status.trim().lowercase()
-            val message = result.data.message.orEmpty()
-            val explicitFailure =
-                status in setOf("error", "gagal", "false", "0") ||
-                    message.contains("tidak valid", ignoreCase = true) ||
-                    message.contains("expired", ignoreCase = true) ||
-                    message.contains("kedaluwarsa", ignoreCase = true) ||
-                    message.contains("gagal", ignoreCase = true)
-            ScanOutcome(success = !explicitFailure, message = if (explicitFailure) "QR Code Invalid" else "Berhasil Absen")
-        }
-
-        is ApiResult.Error -> {
-            when (result.type) {
-                ErrorType.UNAUTHORIZED -> {
-                    ScanOutcome(false, "Sesi berakhir. Silakan login ulang.")
-                }
-
-                ErrorType.NETWORK -> {
-                    ScanOutcome(false, "Tidak dapat terhubung ke server.")
-                }
-
-                ErrorType.UPSTREAM -> {
-                    ScanOutcome(false, "QR Code Invalid")
-                }
-
-                ErrorType.STALE_SESSION -> {
-                    ScanOutcome(false, "Sesi SIAP kedaluwarsa. Silakan login ulang.")
-                }
-
-                ErrorType.NOT_FOUND, ErrorType.SERVER -> {
-                    ScanOutcome(false, fallback)
-                }
-            }
-        }
-    }
-
-/**
- * QR presence scanner. Live CameraX preview; each frame is pushed through the
- * MLKit QR decoder. On the first QR token found the analysis is paused and the
- * token is POSTed to `POST /api/siap/kehadiran` (proxied to SIAP). The scan
- * frame + corner overlay guide alignment; a result card shows the outcome with
- * a "Scan lagi" reset.
+ * QR presence scanner — Android actual. Live CameraX preview; each frame is
+ * pushed through the MLKit QR decoder. On the first QR token found the analysis
+ * is paused and the token is POSTed to `POST /api/siap/kehadiran` (proxied to
+ * SIAP). The scan frame + corner overlay guide alignment; a result card shows
+ * the outcome with a "Scan lagi" reset.
  *
  * Extras: pinch + on-screen buttons for zoom, a flip switch between the front
  * and back cameras. The scan frame pulses with a subtle scale up/down loop.
  */
 @Composable
-fun ScanScreen(repo: SsoRepository) {
+internal actual fun ScanScreen(repo: SsoRepository) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -333,7 +267,7 @@ private fun ScanOverlay() {
             Modifier
                 .size(260.dp)
                 .scale(scale)
-                .border(3.dp, Primary, RoundedCornerShape(16.dp)),
+                .border(3.dp, ac.undip.sso.ui.theme.Primary, RoundedCornerShape(16.dp)),
         )
     }
 }
@@ -441,7 +375,7 @@ private fun PermissionPrompt(onRequest: () -> Unit) {
         Icon(
             Icons.Filled.QrCodeScanner,
             contentDescription = null,
-            tint = accentForeground(),
+            tint = ac.undip.sso.ui.theme.accentForeground(),
             modifier = Modifier.size(96.dp),
         )
         Spacer(Modifier.height(16.dp))
