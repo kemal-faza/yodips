@@ -1,3 +1,4 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
@@ -37,7 +38,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
-import java.time.LocalDateTime
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import ac.undip.sso.nowMs
 
 internal const val DashboardContentBottomPadding = 32
 
@@ -113,8 +117,8 @@ data class MenuSpec(
 
 /** Today's weekday rank (senin=0 … minggu=6) and minutes-from-midnight. */
 private fun nowMinutes(): Pair<Int, Int> {
-    val now = LocalDateTime.now()
-    return (now.dayOfWeek.value - 1) to (now.hour * 60 + now.minute)
+    val now = Instant.fromEpochMilliseconds(nowMs()).toLocalDateTime(TimeZone.currentSystemDefault())
+    return (now.dayOfWeek.ordinal) to (now.hour * 60 + now.minute)
 }
 
 @Composable
