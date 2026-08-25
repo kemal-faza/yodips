@@ -1,6 +1,7 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.nowMs
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapIrsMataKuliah
@@ -88,7 +89,7 @@ fun IrsScreen(
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             onRefresh = {
-                val now = System.currentTimeMillis()
+                val now = nowMs()
                 if (now - lastRefreshAt[0] < REFRESH_COOLDOWN_MS) return@PullToRefreshBox
                 lastRefreshAt[0] = now
                 isRefreshing = true

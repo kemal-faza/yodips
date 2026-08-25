@@ -1,3 +1,4 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
@@ -49,8 +50,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
-import java.time.LocalDate
-import java.time.YearMonth
+import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import ac.undip.sso.nowMs
+
+private fun todayLocalDate(): LocalDate =
+    Instant.fromEpochMilliseconds(nowMs()).toLocalDateTime(TimeZone.currentSystemDefault()).date
 
 /** Indonesian month names (calendar header + picker). */
 internal val MONTH_NAMES_ID =
@@ -78,12 +85,19 @@ internal val WEEKDAY_SHORT = listOf("Min", "Sen", "Sel", "Rab", "Kam", "Jum", "S
  * day-of-month.
  */
 internal fun monthGrid(year: Int, month: Int): List<Int?> {
-    val first = LocalDate.of(year, month, 1)
-    val lead = first.dayOfWeek.value % 7 // Sun=0 … Sat=6
-    val days = YearMonth.of(year, month).lengthOfMonth()
+    val first = LocalDate(year, month, 1)
+    val lead = (first.dayOfWeek.ordinal + 1) % 7 // Sun=0 … Sat=6
+    val days = lengthOfMonth(year, month)
     val cells = MutableList<Int?>(42) { null }
     for (d in 1..days) cells[lead + d - 1] = d
     return cells
+}
+
+private fun lengthOfMonth(year: Int, month: Int): Int = when (month) {
+    1, 3, 5, 7, 8, 10, 12 -> 31
+    4, 6, 9, 11 -> 30
+    2 -> if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) 29 else 28
+    else -> 0
 }
 
 /**
@@ -141,7 +155,7 @@ fun ScheduleScreen(repo: SsoRepository) {
             var yearMonth by remember { mutableIntStateOf(currentCalendarMonth(byTanggal)) }
             var selected by remember { mutableStateOf<String?>(null) }
             // Default selection: today if it has meetings, else the first dated event.
-            val today = LocalDate.now().toString()
+            val today = todayLocalDate().toString()
             var defaultSelected by remember { mutableStateOf(if (byTanggal.containsKey(today)) today else byTanggal.keys.minOrNull()) }
             if (selected == null) selected = defaultSelected
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -178,13 +192,14 @@ fun ScheduleScreen(repo: SsoRepository) {
 /** Encode (year, month) as a single int; the month containing the first dated event, else now. */
 internal fun currentCalendarMonth(byTanggal: Map<String, List<SiapJadwal>>): Int {
     val first = byTanggal.keys.minOrNull()
+    val today = todayLocalDate()
     val base =
         if (first != null) {
-            runCatching { LocalDate.parse(first) }.getOrNull() ?: LocalDate.now()
+            runCatching { LocalDate.parse(first) }.getOrNull() ?: today
         } else {
-            LocalDate.now()
+            today
         }
-    return base.year * 100 + base.monthValue
+    return base.year * 100 + base.monthNumber
 }
 
 /**
@@ -218,8 +233,8 @@ private fun KomoCalendarCard(
             // Header: previous arrow · month chip (opens picker) · next arrow
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = {
-                    val prev = YearMonth.of(year, monthOfYear).minusMonths(1)
-                    onMonthChange(prev.year, prev.monthValue)
+                    val (py, pm) = if (monthOfYear == 1) (year - 1) to 12 else year to (monthOfYear - 1)
+                    onMonthChange(py, pm)
                 }) {
                     Icon(Icons.Filled.ChevronLeft, contentDescription = "Bulan sebelumnya", tint = accentForeground())
                 }
@@ -236,8 +251,8 @@ private fun KomoCalendarCard(
                     textAlign = TextAlign.Center,
                 )
                 IconButton(onClick = {
-                    val next = YearMonth.of(year, monthOfYear).plusMonths(1)
-                    onMonthChange(next.year, next.monthValue)
+                    val (ny, nm) = if (monthOfYear == 12) (year + 1) to 1 else year to (monthOfYear + 1)
+                    onMonthChange(ny, nm)
                 }) {
                     Icon(Icons.Filled.ChevronRight, contentDescription = "Bulan berikutnya", tint = accentForeground())
                 }
@@ -258,10 +273,10 @@ private fun KomoCalendarCard(
             monthGrid(year, monthOfYear).chunked(7).forEach { week ->
                 Row(Modifier.fillMaxWidth()) {
                     week.forEach { day ->
-                        val date = if (day != null) LocalDate.of(year, monthOfYear, day).toString() else null
+                        val date = if (day != null) LocalDate(year, monthOfYear, day).toString() else null
                         val hasEvent = date != null && byTanggal.containsKey(date)
                         val isSelected = date != null && date == selected
-                        val isToday = date == LocalDate.now().toString()
+                        val isToday = date == todayLocalDate().toString()
                         DayCell(
                             day = day,
                             isSelected = isSelected,
