@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import jsQR from 'jsqr';
 import { Button } from '@/components/ui/button';
 import { X } from '@lucide/vue';
+import { qrCameraErrorMessage } from './qr-camera-error';
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'decode', text: string): void }>();
 
@@ -27,6 +28,13 @@ function handleClose() {
 
 async function start() {
   error.value = null;
+  if (!window.isSecureContext || !navigator.mediaDevices) {
+    error.value = qrCameraErrorMessage({
+      secureContext: window.isSecureContext,
+      mediaDevicesAvailable: !!navigator.mediaDevices,
+    });
+    return;
+  }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment' },
@@ -38,10 +46,11 @@ async function start() {
     await video.play();
     tick();
   } catch (e: any) {
-    error.value =
-      e?.name === 'NotAllowedError'
-        ? 'Kamera tidak diizinkan. Izinkan akses kamera di pengaturan Safari/PWA, lalu coba lagi.'
-        : 'Kamera tidak tersedia. Coba lagi.';
+    error.value = qrCameraErrorMessage({
+      secureContext: true,
+      mediaDevicesAvailable: true,
+      errorName: e?.name ?? null,
+    });
   }
 }
 
@@ -87,9 +96,10 @@ defineExpose({ stop });
       >
         <X class="size-6" aria-hidden="true" />
       </Button>
-      <p v-if="error" class="relative z-10 mt-6 max-w-xs rounded bg-danger/20 p-3 text-center text-sm text-white">
-        {{ error }}
-      </p>
+      <div v-if="error" class="relative z-10 mt-6 flex flex-col items-center gap-3" data-test="qr-scanner-error">
+        <p class="max-w-xs rounded bg-danger/20 p-3 text-center text-sm text-white">{{ error }}</p>
+        <Button type="button" variant="outline" data-test="qr-retry" @click="start">Coba lagi</Button>
+      </div>
       <p v-else class="relative z-10 mt-6 text-sm text-white/80">Arahkan QR ke dalam kotak</p>
     </div>
   </Teleport>
