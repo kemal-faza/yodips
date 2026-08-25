@@ -30,10 +30,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlin.time.ExperimentalTime
 
+import kotlinx.datetime.toLocalDateTime
 /** Weekday order used to sort schedule rows Senin-first (0) to Minggu (6). */
 internal val dayOrder = listOf("senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu")
 
@@ -43,15 +44,17 @@ internal fun dayRank(hari: String): Int = dayOrder.indexOf(hari.trim().lowercase
 /** Capitalize a weekday name from SIAP's lowercase token ("jumat" → "Jumat", blank → ""). */
 internal fun capitalizeDay(hari: String): String = if (hari.isBlank()) "" else hari.trim().replaceFirstChar { it.uppercase() }
 
+/** input: epoch SECONDS, output "dd MMM yyyy HH:mm" — parity dgn java.time.DateTimeFormatter lama. */
+@OptIn(ExperimentalTime::class)
 internal fun epochToDate(epochSec: Long): String {
     if (epochSec <= 0) return "—"
-    return Instant
-        .ofEpochSecond(epochSec)
-        .atZone(ZoneId.systemDefault())
-        .format(DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm"))
+    val ldt = Instant.fromEpochSeconds(epochSec).toLocalDateTime(TimeZone.currentSystemDefault())
+    val d = ldt.date
+    val bulan = arrayOf("Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des")[d.monthNumber - 1]
+    return "%02d %s %04d %02d:%02d".format(d.dayOfMonth, bulan, d.year, ldt.hour, ldt.minute)
 }
 
-internal fun formatIpk(value: Double?): String = if (value == null) "—" else String.format("%.2f", value)
+internal fun formatIpk(value: Double?): String = if (value == null) "—" else "%.2f".format(value)
 
 internal fun formatSks(value: Double?): String = if (value == null) "—" else ((if (value % 1.0 == 0.0) value.toInt() else value).toString())
 
