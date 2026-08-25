@@ -2,7 +2,6 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapKhs
-import ac.undip.sso.core.network.SiapKhsSemester
 import ac.undip.sso.ui.common.LoadableData
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -32,7 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -43,132 +41,21 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.util.Locale
-import kotlin.math.roundToInt
 
-// ===== Pure data helpers (mirror web src/utils/dashboard.ts) =====
-
-private fun graded(s: SiapKhsSemester): Boolean = s.nilai.any { it.nilaiHuruf.trim().isNotEmpty() }
-
-/** Per-semester IP for graded terms only (the on-going term has no grades → excluded). */
-internal fun ipTrend(khs: SiapKhs): List<Pair<Int, Double>> = khs.semesters.filter { graded(it) }.mapIndexed { i, s -> (i + 1) to s.ip }
-
-internal val GRADE_KEYS = listOf("A", "AB", "B", "BC", "C", "D", "E")
-
-internal data class TooltipRow(
-    val label: String,
-    val value: String,
-)
-
-internal data class ChartTooltipModel(
-    val title: String,
-    val rows: List<TooltipRow>,
-)
-
-internal fun lineTooltipModel(
-    semester: Int,
-    value: Float,
-    label: String,
-): ChartTooltipModel =
-    ChartTooltipModel(
-        title = "Semester $semester",
-        rows = listOf(TooltipRow(label, formatTooltipValue(value.toDouble()))),
-    )
-
-internal fun gradeTooltipModel(
-    semester: Int,
-    counts: Map<String, Int>,
-): ChartTooltipModel =
-    ChartTooltipModel(
-        title = "Semester $semester",
-        rows = GRADE_KEYS.mapNotNull { grade ->
-            val count = counts[grade] ?: 0
-            if (count > 0) TooltipRow(grade, count.toString()) else null
-        },
-    )
-
-private fun formatTooltipValue(value: Double): String {
-    if (value == value.toLong().toDouble()) return value.toLong().toString()
-    return String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
-}
-
-private val GRADE_COLORS =
-    mapOf(
-        "A" to Color(0xFF16A34A),
-        "AB" to Color(0xFF22C55E),
-        "B" to Color(0xFF3B82F6),
-        "BC" to Color(0xFF6366F1),
-        "C" to Color(0xFFF59E0B),
-        "D" to Color(0xFFF97316),
-        "E" to Color(0xFFDC2626),
-    )
-
-/** Letter-grade counts per graded semester (key = normalized grade, value = count). */
-internal fun gradeRows(khs: SiapKhs): List<Pair<Int, Map<String, Int>>> =
-    khs.semesters
-        .filter { graded(it) }
-        .mapIndexed { i, s ->
-            val m = GRADE_KEYS.associateWith { 0 }.toMutableMap()
-            s.nilai.forEach { n ->
-                val k = n.nilaiHuruf.trim().uppercase()
-                if (k in m) m[k] = m[k]!! + 1
-            }
-            (i + 1) to m
-        }
-
-/** Running cumulative SKS across semesters that carry SKS (incl. current term). */
-internal fun sksCumulative(khs: SiapKhs): List<Pair<Int, Double>> {
-    var running = 0.0
-    return khs.semesters
-        .filter { it.totalSks > 0 }
-        .map {
-            running += it.totalSks
-            running
-        }.mapIndexed { idx, value -> (idx + 1) to value }
-}
-
-// ===== Hit-testing helpers (pure, unit-tested) =====
-
-/** Horizontal pixel distance between consecutive points of an n-point series. */
-internal fun lineSlot(plotLeft: Float, plotRight: Float, n: Int): Float =
-    if (n <= 1) 0f else (plotRight - plotLeft) / (n - 1)
-
-/** Nearest point index for a tap/drag x on a line chart; clamped to the series. */
-internal fun nearestLineIndex(
-    x: Float,
-    plotLeft: Float,
-    slot: Float,
-    n: Int,
-): Int =
-    when {
-        n <= 1 -> 0
-        slot <= 0f -> 0
-        else -> ((x - plotLeft) / slot).roundToInt().coerceIn(0, n - 1)
-    }
-
-/** Stacked-bar slot index for a tap/drag x; clamped to the bar count. */
-internal fun barIndex(
-    x: Float,
-    plotLeft: Float,
-    slot: Float,
-    n: Int,
-): Int =
-    when {
-        n <= 1 -> 0
-        slot <= 0f -> 0
-        else -> ((x - plotLeft) / slot).toInt().coerceIn(0, n - 1)
-    }
-
-// ===== Section that renders the three web charts =====
-
+/**
+ * Android Canvas–based chart rendering.  expect/actual seam:
+ * the pure data helpers live in AcademicChartsCommon.kt (commonMain);
+ * the Paint/Canvas drawing (Android-only) stays here.
+ */
 @Composable
-fun AcademicCharts(
+internal actual fun AcademicCharts(
     repo: SsoRepository,
-    refreshTick: Int = 0,
+    refreshTick: Int,
 ) {
     LoadableData(load = { repo.khs() }, emptyMessage = "Belum ada data nilai untuk grafik", refreshTrigger = refreshTick) { khs ->
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -458,9 +345,6 @@ private fun GradeChartCard(khs: SiapKhs) {
         }
     }
 }
-
-private fun fmtValue(v: Float): String =
-    if (kotlin.math.abs(v - kotlin.math.round(v)) < 0.05f) v.roundToInt().toString() else String.format("%.1f", v)
 
 // ===== Text drawing on Canvas =====
 

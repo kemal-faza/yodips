@@ -2,6 +2,7 @@ package ac.undip.sso.ui.common
 
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
+import ac.undip.sso.nowMs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -118,7 +119,7 @@ fun <T> RefreshableLoadableData(
     PullToRefreshBox(
         isRefreshing = isRefreshing,
         onRefresh = {
-            val now = System.currentTimeMillis()
+            val now = nowMs()
             if (now - lastRefreshAt[0] < minRefreshIntervalMs) return@PullToRefreshBox
             lastRefreshAt[0] = now
             isRefreshing = true
