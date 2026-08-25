@@ -29,6 +29,9 @@ object Backend {
         isLenient = true
     }
 
+    @kotlinx.serialization.Serializable
+    private data class RefreshResponse(val accessToken: String)
+
     val api: SsoApi by lazy {
         KtorSsoApi(
             createPlatformClient {
