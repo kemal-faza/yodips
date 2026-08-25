@@ -12,7 +12,9 @@ pluginManagement {
     }
 }
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    // FAIL_ON_PROJECT_REPOS blocks wasmJs from adding Node distribution repo.
+    // Use PREFER_PROJECT so KMP wasm plugin can add its own repos.
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
     repositories {
         google()
         mavenCentral()
