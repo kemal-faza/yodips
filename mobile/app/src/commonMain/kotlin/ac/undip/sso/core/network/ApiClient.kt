@@ -1,6 +1,6 @@
 package ac.undip.sso.core.network
 
-import ac.undip.sso.BuildConfig
+import ac.undip.sso.appBaseUrl
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
  * network_security_config); release → production HTTPS backend.
  */
 object ApiClient {
-    val BASE_URL = BuildConfig.BASE_URL
+    val BASE_URL = appBaseUrl
     private val API_BASE = "$BASE_URL/"
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()

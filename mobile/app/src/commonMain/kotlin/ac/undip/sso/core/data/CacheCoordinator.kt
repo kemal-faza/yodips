@@ -1,11 +1,11 @@
 package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.nowMs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
-import java.util.concurrent.ConcurrentHashMap
 
 /** Oldest on-disk entry we will serve before falling back to the network. */
 const val DEFAULT_DISK_MAX_AGE_MS = 12 * 60 * 60 * 1000L // 12h
@@ -28,7 +28,8 @@ class CacheCoordinator(
     private val scope: CoroutineScope,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val refreshing = ConcurrentHashMap.newKeySet<String>()
+    private val lock = Any()
+    private val refreshing = mutableSetOf<String>()
 
     /**
      * Fresh cache → serve instantly, never hitting the network.
@@ -43,7 +44,6 @@ class CacheCoordinator(
         force: Boolean,
         block: suspend () -> ApiResult<T>,
     ): ApiResult<T> {
-        // Pull-to-refresh: bypass the cache and re-fetch from the network now.
         if (force) {
             val fresh = block()
             if (fresh is ApiResult.Success) {
@@ -81,7 +81,7 @@ class CacheCoordinator(
         serializer: KSerializer<T>,
     ): ApiResult<T>? {
         val entry = runCatching { persistent.load(key) }.getOrNull() ?: return null
-        if (System.currentTimeMillis() - entry.fetchedAt > diskMaxAgeMs) return null
+        if (nowMs() - entry.fetchedAt > diskMaxAgeMs) return null
         return runCatching {
             val value = json.decodeFromString(serializer, entry.json)
             cache.put(key, ApiResult.Success(value))
@@ -94,7 +94,9 @@ class CacheCoordinator(
         serializer: KSerializer<T>,
         block: suspend () -> ApiResult<T>,
     ) {
-        if (!refreshing.add(key)) return
+        synchronized(lock) {
+            if (!refreshing.add(key)) return
+        }
         scope.launch {
             try {
                 val fresh = block()
@@ -103,7 +105,9 @@ class CacheCoordinator(
                     persist(key, serializer, fresh)
                 }
             } finally {
-                refreshing.remove(key)
+                synchronized(lock) {
+                    refreshing.remove(key)
+                }
             }
         }
     }
@@ -117,7 +121,7 @@ class CacheCoordinator(
         val value = (result as? ApiResult.Success)?.data ?: return
         val payload = runCatching { json.encodeToString(serializer, value) }.getOrNull() ?: return
         scope.launch {
-            runCatching { persistent.save(key, payload, System.currentTimeMillis()) }
+            runCatching { persistent.save(key, payload, nowMs()) }
         }
     }
 }

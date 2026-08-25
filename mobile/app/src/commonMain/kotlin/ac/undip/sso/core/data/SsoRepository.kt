@@ -16,8 +16,8 @@ import ac.undip.sso.core.network.SiapLecturer
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.network.SsoApi
+import ac.undip.sso.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.KSerializer
@@ -57,7 +57,7 @@ class SsoRepository(
 ) {
     // Stale-while-revalidate refreshes must not block callers nor outlive a
     // screen: a supervised IO scope owned by the repository.
-    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val refreshScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
     private val cacheCoordinator = CacheCoordinator(
         cache = cache,
