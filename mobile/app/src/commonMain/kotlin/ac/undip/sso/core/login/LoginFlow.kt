@@ -1,5 +1,8 @@
 package ac.undip.sso.core.login
 
+import ac.undip.sso.nowMs
+import kotlin.io.encoding.Base64
+
 /**
  * Pure, JVM-testable helpers for the in-app WebView login cascade:
  *
@@ -27,8 +30,8 @@ object LoginUrls {
  * against the SSO session to mint their own session cookie.
  */
 fun generateSsoTicket(): String =
-    java.util.Base64.getEncoder().encodeToString(
-        (System.currentTimeMillis() / 1000).toString().toByteArray(),
+    Base64.Default.encode(
+        (nowMs() / 1000).toString().toByteArray(),
     )
 
 /** Kulon SSO bridge URL — establishes the Moodle session from the SSO ticket. */
@@ -134,6 +137,26 @@ fun ssoLoginCompleted(
     return !isSsoLoginPath(u) // a genuine post-login page (not the login form)
 }
 
+/** Percent-decode a URL-encoded string (replaces java.net.URLDecoder). */
+private fun percentDecode(s: String): String {
+    val sb = StringBuilder(s.length)
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        when {
+            c == '+' -> sb.append(' ')
+            c == '%' && i + 2 < s.length -> {
+                val hex = s.substring(i + 1, i + 3)
+                sb.append(Integer.parseInt(hex, 16).toChar())
+                i += 2
+            }
+            else -> sb.append(c)
+        }
+        i++
+    }
+    return sb.toString()
+}
+
 /** Extract a query parameter (URL-decoded) or null when absent. */
 private fun queryParam(
     url: String,
@@ -143,7 +166,7 @@ private fun queryParam(
     if (qIdx < 0) return null
     val q = url.substring(qIdx + 1)
     val pair = q.split('&').firstOrNull { it.startsWith("$name=") } ?: return null
-    return java.net.URLDecoder.decode(pair.substringAfter('='), "UTF-8")
+    return percentDecode(pair.substringAfter('='))
 }
 
 /** True when the SSO URL is (still) the login form; a login bounce must stay here. */
