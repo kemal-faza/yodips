@@ -11,7 +11,7 @@ import ac.undip.sso.core.login.isSsoLoginPage
 import ac.undip.sso.core.login.kulonTicketUrl
 import ac.undip.sso.core.login.siapTicketUrl
 import ac.undip.sso.core.login.ssoLoginCompleted
-import ac.undip.sso.core.network.ApiClient
+import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.HandoffResult
 import ac.undip.sso.core.data.TokenStoreLike
 import android.annotation.SuppressLint
@@ -142,10 +142,10 @@ fun LoginScreen(
         loading = true
         slog("handoff siap=${siap.isNotBlank()} kulon=${kulon.isNotBlank()}")
         scope.launch {
-            when (val r = ApiClient.handoff(siap, kulon)) {
+            when (val r = Backend.handoff(siap, kulon)) {
                 is HandoffResult.Success -> {
                     slog("handoff OK")
-                    ApiClient.authToken = r.token
+                    Backend.authToken = r.token
                     tokenStore.save(r.token, siap, kulon)
                     onLoggedIn()
                 }

@@ -108,11 +108,14 @@ kotlin {
             implementation(libs.okhttp)
             implementation(libs.okhttp.logging)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.datetime)
             // Coil 3 — dipakai ProfileScreen (T6a)
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor3)
             // Navigation multiplatform (AppShell commonMain)
             implementation(libs.navigation.multiplatform)
+            // Ktor client (F2) — core engine
+            implementation(libs.ktor.client.core)
         }
         androidMain.dependencies {
             implementation(libs.androidx.core.ktx)
@@ -127,10 +130,11 @@ kotlin {
             implementation(libs.compose.material.icons)
             implementation(libs.compose.ui.tooling.preview)
             implementation(libs.datastore.preferences)
-            // Retrofit/OkHttp transit — sudah di commonMain, tapi androidMain
-            // tetap butuh karena androidMain masih ada file yang pakai (fallback)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.datetime)
+            // Ktor client — core + OkHttp engine (androidMain, engine nyata)
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.okhttp)
             // CameraX + MLKit QR scan (absen presence)
             implementation(libs.androidx.camera.core)
             implementation(libs.androidx.camera.camera2)

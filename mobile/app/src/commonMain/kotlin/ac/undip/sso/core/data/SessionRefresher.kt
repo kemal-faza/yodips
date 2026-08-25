@@ -1,14 +1,14 @@
 package ac.undip.sso.core.data
 
-import ac.undip.sso.core.network.ApiClient
+import ac.undip.sso.core.network.ApiHttpException
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.ErrorType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.SerializationException
-import retrofit2.HttpException
 import java.io.IOException
 
 /** HTTP status → coarse [ErrorType] for every non-401 backend failure. */
@@ -51,12 +51,12 @@ class SessionRefresher(
         val deferred = scope.async {
             try {
                 val newJwt = refreshToken()
-                ApiClient.authToken = newJwt
+                Backend.authToken = newJwt
                 val siap = tokenStore?.let { runCatching { it.siapCookie.first() }.getOrNull() }
                 val kulon = tokenStore?.let { runCatching { it.kulonCookie.first() }.getOrNull() }
                 tokenStore?.save(newJwt, siap, kulon)
                 RefreshResult.SUCCESS
-            } catch (e: HttpException) {
+            } catch (e: ApiHttpException) {
                 RefreshResult.DEAD_SESSION // 401 SESSION_DEAD / INVALID_TOKEN
             } catch (e: IOException) {
                 RefreshResult.NETWORK_FAILURE // do NOT fire the dialog
@@ -89,32 +89,32 @@ class SessionRefresher(
         val staleType = if (serviceStale) ErrorType.STALE_SESSION else ErrorType.UNAUTHORIZED
         return try {
             ApiResult.Success(block())
-        } catch (e: HttpException) {
-            if (e.code() == 401) {
+        } catch (e: ApiHttpException) {
+            if (e.status == 401) {
                 if (!retryable) {
                     onSessionExpired()
-                    return ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", staleType)
+                    return ApiResult.Error(e.status, e.message, staleType)
                 }
                 when (tryRefresh()) {
                     RefreshResult.SUCCESS -> {
                         try {
                             ApiResult.Success(block())
-                        } catch (e2: HttpException) {
-                            val t = typeForHttp(e2.code())
+                        } catch (e2: ApiHttpException) {
+                            val t = typeForHttp(e2.status)
                             if (t == ErrorType.UNAUTHORIZED) onSessionExpired()
-                            ApiResult.Error(e2.code(), e2.message() ?: "HTTP ${e2.code()}", t)
+                            ApiResult.Error(e2.status, e2.message, t)
                         }
                     }
                     RefreshResult.DEAD_SESSION -> {
                         onSessionExpired()
-                        ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", staleType)
+                        ApiResult.Error(e.status, e.message, staleType)
                     }
                     RefreshResult.NETWORK_FAILURE -> {
                         ApiResult.Error(null, "Tidak dapat terhubung ke server", ErrorType.NETWORK)
                     }
                 }
             } else {
-                ApiResult.Error(e.code(), e.message() ?: "HTTP ${e.code()}", typeForHttp(e.code()))
+                ApiResult.Error(e.status, e.message, typeForHttp(e.status))
             }
         } catch (e: IOException) {
             ApiResult.Error(null, "Tidak dapat terhubung ke server: ${e.message}", ErrorType.NETWORK)
