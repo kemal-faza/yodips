@@ -1,9 +1,7 @@
 package ac.undip.sso.ui.feature
 
-import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.SiapKhsSemester
-import androidx.compose.runtime.Composable
 import kotlin.math.roundToInt
 
 // ===== Pure data helpers (mirror web src/utils/dashboard.ts) =====
@@ -131,12 +129,7 @@ internal fun fmtValue(v: Float): String {
     return if (r.endsWith(".0")) r.dropLast(2) else r
 }
 
-// ===== expect declaration =====
-
-/**
- * Renders the three web-styled charts (IP trend, grade distribution, SKS
- * cumulative) inside a LoadableData shell. Actual Canvas-based rendering
- * lives in androidMain via android.graphics.Paint.
- */
-@Composable
-internal expect fun AcademicCharts(repo: SsoRepository, refreshTick: Int)
+// ===== AcademicCharts (renderer Canvas CMP) =====
+// Implementasi `AcademicCharts` kini hidup di ChartsCanvas.kt (commonMain) —
+// dirender dengan Canvas Compose multiplatform, dipakai Android & PWA /app/.
+// Data helper murni di file ini tetap di-test di ChartsDataTest (JVM).
