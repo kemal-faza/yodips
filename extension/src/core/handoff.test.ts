@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { interpretHandoff, summarizeHandoff } from './handoff.js';
+import { interpretHandoff, summarizeHandoff, networkFailureMessage } from './handoff.js';
+
+describe('networkFailureMessage', () => {
+  it('menyebut host tujuan + arahan ke Server URL popup (bukan "Failed to fetch" mentah)', () => {
+    const msg = networkFailureMessage('http://localhost:3000/api/auth/session/handoff');
+    expect(msg).toContain('localhost:3000');
+    expect(msg).toContain('Server URL');
+    expect(msg).not.toContain('Failed to fetch');
+  });
+  it('aman untuk URL tidak valid (fallback tanpa host)', () => {
+    const msg = networkFailureMessage('bukan-url');
+    expect(msg).toContain('Server URL');
+  });
+});
 
 describe('interpretHandoff', () => {
   it('ok when all three verified', () => {

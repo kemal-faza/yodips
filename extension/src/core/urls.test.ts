@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { generateTicket, buildKulonTicketUrl, buildSiapTicketUrl, KULON_OIDC_URL, SIAP_SSO_URL } from './urls.js';
+import { generateTicket, buildKulonTicketUrl, buildSiapTicketUrl, KULON_OIDC_URL, SIAP_SSO_URL, DEFAULT_SERVER_URL } from './urls.js';
+
+describe('DEFAULT_SERVER_URL', () => {
+  it('menunjuk backend produksi — default localhost membuat install CWS baru gagal fetch', () => {
+    expect(DEFAULT_SERVER_URL).toBe('https://backend.crunchy.my.id');
+  });
+});
 
 /** Node-compatible atob for the vitest (node) environment. */
 function atobNode(b64: string): string {
