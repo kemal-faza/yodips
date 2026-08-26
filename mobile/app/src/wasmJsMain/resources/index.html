@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#01637E">
+    <link rel="manifest" href="manifest.webmanifest">
     <title>YoDips</title>
     <style>
         html, body {
@@ -76,6 +77,12 @@
             el.setAttribute('spellcheck', 'false');
         }
     }, true);
+
+    // PWA: SW hanya ada pada penyajian produksi di bawah /app/ (file sw.js
+    // digenerate scripts/build-pwa-app.mjs; dev webpack :8080 tidak punya).
+    if ('serviceWorker' in navigator && location.pathname.startsWith('/app/')) {
+        navigator.serviceWorker.register('sw.js').catch(function () { /* offline bukan syarat hard */ });
+    }
 </script>
 </body>
 </html>
