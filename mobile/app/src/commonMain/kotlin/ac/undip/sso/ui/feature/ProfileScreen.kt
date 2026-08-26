@@ -39,10 +39,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 
 private data class PInfo(
     val label: String,
@@ -207,11 +205,10 @@ private fun Avatar(p: SiapProfile) {
         // Loaded photo covers the initials (initial fallback stays visible beneath
         // if the image fails or is missing).
         if (photo != null) {
-            AsyncImage(
-                model = photo,
+            ProfilePhoto(
+                url = photo,
                 contentDescription = "Foto profil",
                 modifier = Modifier.matchParentSize(),
-                contentScale = ContentScale.Crop,
             )
         }
     }
