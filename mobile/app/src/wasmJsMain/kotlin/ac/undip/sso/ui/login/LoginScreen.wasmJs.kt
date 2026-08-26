@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -142,6 +141,10 @@ fun LoginScreen(
                         Backend.authToken = result.accessToken
                         onLoggedIn()
                     } else {
+                        // Gagal = kode bermasalah (salah/pakai/kedaluwarsa/sesi
+                        // mati): kosongkan agar user ketik/scan ulang dan
+                        // auto-submit menyala lagi untuk kode baru.
+                        code = ""
                         val err = try {
                             json.decodeFromString<PairErrorResponse>(text)
                         } catch (_: Exception) {
@@ -158,6 +161,7 @@ fun LoginScreen(
                     client.close()
                 }
             } catch (e: Exception) {
+                code = ""
                 error = "Gagal terhubung ke server: ${e.message}"
             } finally {
                 busy = false
@@ -214,15 +218,6 @@ fun LoginScreen(
                 onDone = { submit() },
             )
             Spacer(Modifier.height(20.dp))
-
-            Button(
-                onClick = { submit() },
-                enabled = code.length == CODE_LEN && !busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (busy) "Menyambungkan…" else "Masuk")
-            }
-            Spacer(Modifier.height(12.dp))
 
             OutlinedButton(
                 onClick = { startScan() },
