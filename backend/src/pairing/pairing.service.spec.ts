@@ -106,4 +106,71 @@ describe('PairingService', () => {
       response: { code: 'SESSION_DEAD' },
     });
   });
+
+  describe('statusFor (polling web: pending/consumed/invalid)', () => {
+    it('pending + expiresAt utk pemilik kode yang masih hidup', async () => {
+      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      const { code, expiresAt } = await service.requestPairing('NIM1');
+      await expect(service.statusFor('NIM1', code)).resolves.toEqual({
+        status: 'pending',
+        expiresAt,
+      });
+    });
+
+    it('consumed setelah dipakai (pemilik), tanpa expiresAt', async () => {
+      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      const { code } = await service.requestPairing('NIM1');
+      await service.consume(code);
+      await expect(service.statusFor('NIM1', code)).resolves.toEqual({
+        status: 'consumed',
+      });
+    });
+
+    it('kode milik sub lain → invalid (tanpa bocor keberadaan)', async () => {
+      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      const { code } = await service.requestPairing('NIM1');
+      await expect(service.statusFor('NIM2', code)).resolves.toEqual({
+        status: 'invalid',
+      });
+      // consumed oleh pemilik tetap tak terlihat sub lain:
+      await service.consume(code);
+      await expect(service.statusFor('NIM2', code)).resolves.toEqual({
+        status: 'invalid',
+      });
+    });
+
+    it('input kosong/sampah → invalid tanpa error', async () => {
+      await expect(service.statusFor('NIM1', '')).resolves.toEqual({
+        status: 'invalid',
+      });
+      await expect(service.statusFor('NIM1', 'ZZZZZZZZ')).resolves.toEqual({
+        status: 'invalid',
+      });
+    });
+
+    it('kode kedaluwarsa tanpa consume → invalid (bukan pending)', async () => {
+      const prev = config.get.getMockImplementation();
+      config.get.mockImplementation(
+        (key: string) => (key === 'PAIRING_TTL_MS' ? -1 : prev?.(key)),
+      );
+      try {
+        sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+        const { code } = await service.requestPairing('NIM1');
+        await expect(service.statusFor('NIM1', code)).resolves.toEqual({
+          status: 'invalid',
+        });
+      } finally {
+        config.get.mockImplementation(prev as any);
+      }
+    });
+
+    it('normalisasi input (lowercase/dash) diterima', async () => {
+      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      const { code } = await service.requestPairing('NIM1');
+      const messy = code.toLowerCase().slice(0, 4) + '-' + code.slice(4);
+      await expect(service.statusFor('NIM1', messy)).resolves.toMatchObject({
+        status: 'pending',
+      });
+    });
+  });
 });

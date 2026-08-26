@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ConsumeDto } from './dto/pair.dto';
@@ -21,5 +21,14 @@ export class PairingController {
   @Post('pair/consume')
   consume(@Body() dto: ConsumeDto) {
     return this.pairing.consume(dto.code);
+  }
+
+  // Status kode (polling web): read-only, tak mengonsumsi. Hanya pemilik
+  // (sub dari JWT) yang bisa menanyakan kodenya sendiri — anti-oracle.
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('pair/status')
+  status(@Req() req: any, @Query('code') code?: string) {
+    return this.pairing.statusFor(req.user?.sub, code ?? '');
   }
 }

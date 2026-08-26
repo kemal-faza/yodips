@@ -43,6 +43,26 @@ describe('PairingController', () => {
     expect(res.accessToken).toBe('j');
   });
 
+  it('pair/status meneruskan sub + code ke service (JWT-guarded)', async () => {
+    pairing.statusFor = jest
+      .fn()
+      .mockResolvedValue({ status: 'pending', expiresAt: 123 });
+    const res = await controller.status(
+      { user: { sub: 'NIM1' } } as any,
+      'abcd1234',
+    );
+    expect(pairing.statusFor).toHaveBeenCalledWith('NIM1', 'abcd1234');
+    expect(res.status).toBe('pending');
+  });
+
+  it('pair/status tanpa query code → invalid, bukan 500', async () => {
+    pairing.statusFor = jest.fn().mockResolvedValue({ status: 'invalid' });
+    await expect(
+      controller.status({ user: { sub: 'NIM1' } } as any, undefined),
+    ).resolves.toEqual({ status: 'invalid' });
+    expect(pairing.statusFor).toHaveBeenCalledWith('NIM1', '');
+  });
+
   it('DTO tanpa code ditolak ValidationPipe (400, bukan 500)', async () => {
     const pipe = new ValidationPipe({ whitelist: true });
     await expect(
