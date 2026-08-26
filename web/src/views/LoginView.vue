@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
+import { getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 import { Button } from '@/components/ui/button';
@@ -8,9 +8,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import AuroraBackground from '@/components/ui/aurora-background/AuroraBackground.vue';
 import MultiStepLoader from '@/components/ui/multi-step-loader/MultiStepLoader.vue';
-import QrScanner from '../mobile/QrScanner.vue';
-import { pairConsume } from '../api/client';
-import { extractPairCode, normalizePairingInput, pairErrorMessage } from '../utils/pairing';
 import { SSO_CAPTURE_ENABLED, isMobileUserAgent } from '../config/extension';
 
 const store = useAuthStore();
@@ -34,54 +31,6 @@ let stopListening: (() => void) | null = null;
 let stopFocusListeners: (() => void) | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 const POLL_INTERVAL_MS = 3000;
-
-// ---- Login pairing (branch mobile) -----------------------------------------
-
-const pairBusy = ref(false);
-const pairError = ref<string | null>(null);
-const pairCode = ref('');
-const scanning = ref(false);
-
-const pairReady = computed(() => normalizePairingInput(pairCode.value).length === 8);
-
-async function submitPair(codeOverride?: string) {
-  const code = normalizePairingInput(codeOverride ?? pairCode.value);
-  if (code.length !== 8 || pairBusy.value) return;
-  pairBusy.value = true;
-  pairError.value = null;
-  try {
-    const res = await pairConsume(code);
-    store.finishHandoff(res.accessToken);
-    if (!res.hasKulon || !res.hasSiap) {
-      // Warning sesi parsial: tetap masuk, tapi beri tahu user.
-      store.error =
-        'Login berhasil, tapi beberapa layanan belum tersambung. Sebagian data mungkin kosong.';
-    }
-    proxy().$router?.push('/');
-  } catch (e: any) {
-    pairError.value = pairErrorMessage(e?.response?.status, e?.response?.data?.code);
-  } finally {
-    pairBusy.value = false;
-  }
-}
-
-let autoSubmittedPair = false;
-
-/** Deep-link hasil scan kamera iPhone bawaan: /login?pair=CODE → auto-submit sekali. */
-function maybeAutoSubmitDeepLink() {
-  const qp = proxy().$route?.query?.pair as string | undefined;
-  if (qp && !autoSubmittedPair) {
-    autoSubmittedPair = true;
-    void submitPair(qp);
-  }
-}
-
-function onScan(text: string) {
-  scanning.value = false;
-  const code = extractPairCode(text);
-  if (code) void submitPair(code);
-  else pairError.value = 'QR yang discan bukan kode pairing YoDips.';
-}
 
 /** Stop the self-healing result poll (on success/error/unmount). */
 function stopPoll() {
@@ -133,7 +82,6 @@ async function checkExtension() {
 
 onMounted(async () => {
   await checkExtension();
-  maybeAutoSubmitDeepLink();
   // Listen for the extension's final result (posted to the window by the
   // content-script bridge). Handles both success (JWT) and failure/timeout.
   stopListening = store.onExtensionResult((payload: ExtOutboundStatus) => {
@@ -262,41 +210,6 @@ async function handleExtensionDone() {
           :text="store.checking ? 'Memeriksa session…' : 'Login via SSO'"
           @click="handleLogin"
         />
-        <!-- Mobile (iPhone/Android tanpa extension): login pairing.
-             KONDISI HARUS sama dengan arm lama: !extInstalled && isMobile —
-             bila isMobile saja, panel pairing dan tombol extension tampil
-             bersamaan pada kasus tepi mobile+extension terpasang. -->
-        <div v-else-if="!extInstalled && isMobile" class="mt-6 space-y-4" data-test="pair-login">
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-foreground" for="pair-code">Kode pairing</label>
-            <input
-              id="pair-code"
-              v-model="pairCode"
-              data-test="pair-input"
-              type="text"
-              inputmode="text"
-              autocapitalize="characters"
-              autocomplete="off"
-              maxlength="8"
-              placeholder="XXXXXXXX"
-              class="w-full rounded-md border border-border bg-background px-3 py-2 text-center font-mono text-lg uppercase tracking-widest"
-              @keyup.enter="submitPair()"
-            />
-          </div>
-          <InteractiveHoverButton
-            class="h-11 w-full"
-            data-test="pair-submit"
-            :disabled="!pairReady || pairBusy"
-            :text="pairBusy ? 'Menyambungkan…' : 'Masuk'"
-            @click="submitPair()"
-          />
-          <Button variant="outline" size="sm" class="w-full" data-test="pair-scan" @click="scanning = true">
-            Pindai QR dari desktop
-          </Button>
-          <Alert v-if="pairError" variant="destructive" class="bg-danger/10 p-3">
-            <AlertDescription>{{ pairError }}</AlertDescription>
-          </Alert>
-        </div>
         <!-- Desktop tanpa extension & tanpa jalur capture (produksi): beri panduan. -->
         <Alert v-else-if="!extInstalled && !ssoCaptureEnabled" class="mt-6 border-warn/40 bg-warn/10 p-3">
           <AlertDescription class="text-sm text-foreground">
@@ -350,7 +263,6 @@ async function handleExtensionDone() {
       <Alert v-if="store.error" variant="destructive" class="mt-4 bg-danger/10 p-3">
         <AlertDescription>{{ store.error }}</AlertDescription>
       </Alert>
-      <QrScanner v-if="scanning" @close="scanning = false" @decode="onScan" />
       </CardContent>
     </Card>
     <p class="mt-4 text-center text-xs text-muted-foreground">
