@@ -2,9 +2,6 @@ import { createRouter, createWebHistory, type RouterHistory, type Router } from 
 import { useAuthStore } from '../stores/auth';
 import { isMobileDevice } from '../config/extension';
 
-// Layar mobile-only (spec §9): versi desktop YAGNI → redirect '/'.
-const MOBILE_ONLY_PATHS = new Set(['/scan', '/jadwal', '/khs', '/irs', '/presensi']);
-
 export function buildRouter(history: RouterHistory): Router {
   const router = createRouter({
     history,
@@ -22,27 +19,18 @@ export function buildRouter(history: RouterHistory): Router {
           { path: 'kulon/dashboard', name: 'kulon-dashboard', component: () => import('../views/KulonDashboardView.vue') },
           { path: 'kulon/matakuliah', name: 'kulon-courses', component: () => import('../views/KulonCoursesView.vue') },
           { path: 'kulon/matakuliah/:courseId', name: 'kulon-course-detail', component: () => import('../views/KulonCourseDetailView.vue') },
-          // Mobile-only (transisi F5): file masih ada sampai F6, tapi hanya
-          // dijangkau desktop-redirect di guard; UA-mobile sudah dilempar /app/.
-          { path: 'scan', name: 'scan', component: () => import('../mobile/screens/ScanMobile.vue') },
-          { path: 'jadwal', name: 'jadwal', component: () => import('../mobile/screens/ScheduleMobile.vue') },
-          { path: 'khs', name: 'khs', component: () => import('../mobile/screens/KhsMobile.vue') },
-          { path: 'irs', name: 'irs', component: () => import('../mobile/screens/IrsMobile.vue') },
-          { path: 'presensi', name: 'presensi', component: () => import('../mobile/screens/PresensiMobile.vue') },
         ],
       },
     ],
   });
 
   router.beforeEach(async (to) => {
-    // Transisi F5: perangkat mobile → PWA CMP. /privacy publik untuk semua;
-    // /login dikecualikan SAMPAI F6 (branch pairing LoginView masih dipakai
-    // fallback & test-nya mock UA mobile).
-    if (isMobileDevice() && to.path !== '/privacy' && to.path !== '/login') {
+    // Pasca-F6: satu-satunya jalur mobile adalah PWA /app/. /privacy tetap
+    // publik (URL listing store, harus terbaca dari HP).
+    if (isMobileDevice() && to.path !== '/privacy') {
       window.location.replace('/app/');
       return false;
     }
-    if (!isMobileDevice() && MOBILE_ONLY_PATHS.has(to.path)) return '/';
     const store = useAuthStore();
     if (to.name !== 'login' && to.name !== 'privacy' && !store.isAuthenticated) {
       return { name: 'login' };

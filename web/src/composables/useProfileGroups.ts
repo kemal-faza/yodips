@@ -5,7 +5,7 @@ export interface ProfileRow { label: string; value?: string; group: string; mask
 export interface ProfileGroup { name: string; rows: ProfileRow[] }
 
 /**
- * Grup biodata bersama desktop (ProfileView) & mobile (ProfileMobile).
+ * Grup biodata tampilan profile desktop (ProfileView).
  * Logika dipindah apa adanya dari ProfileView.vue — urutan grup & filter nilai
  * kosong tidak berubah (test ProfileView desktop adalah penjaga perilaku).
  */
