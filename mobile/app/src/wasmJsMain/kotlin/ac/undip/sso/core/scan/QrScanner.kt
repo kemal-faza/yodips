@@ -30,12 +30,13 @@ private const val DECODE_INTERVAL_MS = 120L
  * baru Kotlin/Wasm (piksel frame juga tidak pernah disalin ke Kotlin):
  *  1. [jsImportJsQr]: dynamic import('jsqr') - literal string sehingga
  *     webpack bisa menganalisis dan mem-bundle modul npm-nya.
- *  2. [jsStartCamera]: tampilkan overlay kamera fullscreen (video terlihat,
- *     kotak frame, tombol tutup) + canvas kerja OFFSCREEN utk decode;
+ *  2. [jsStartCamera]: tampilkan overlay kamera fullscreen immersive (video
+ *     terlihat + kotak frame; TANPA tombol tutup — paritas Android; keluar
+ *     dari layar scan via navigasi) + canvas kerja OFFSCREEN utk decode;
  *     hasil dikirim balik lewat callback sebagai handles.
  *  3. Loop Kotlin mem-poll [jsDecodeFrame] tiap [DECODE_INTERVAL_MS];
- *     tombol tutup hanya menandai [closeRequested] - loop yang keluar
- *     sehingga cleanup lewat finally tetap satu jalur.
+ *     pembatalan coroutine (navigasi keluar) menandai [closeRequested] -
+ *     loop yang keluar sehingga cleanup lewat finally tetap satu jalur.
  *  4. [jsStopCamera] di finally - tetap jalan saat coroutine dibatalkan
  *     navigasi tab, jadi lampu kamera tidak menyala sendirian.
  *
@@ -154,14 +155,8 @@ private external fun jsErrText(err: JsAny?): JsString?
         "var hint = document.createElement('p');" +
         "hint.textContent = 'Arahkan QR ke dalam kotak';" +
         "hint.style.cssText = 'position:absolute;left:0;right:0;bottom:48px;margin:0;text-align:center;color:rgba(255,255,255,0.85);font-family:sans-serif;font-size:14px;';" +
-        "var btn = document.createElement('button');" +
-        "btn.type = 'button';" +
-        "btn.setAttribute('aria-label','Tutup scanner');" +
-        "btn.textContent = '\\u2715';" +
-        "btn.style.cssText = 'position:absolute;top:16px;right:16px;width:44px;height:44px;border:none;border-radius:50%;background:rgba(255,255,255,0.15);color:#fff;font-size:18px;line-height:1;cursor:pointer;';" +
-        "wrap.appendChild(v); wrap.appendChild(frame); wrap.appendChild(hint); wrap.appendChild(btn);" +
+        "wrap.appendChild(v); wrap.appendChild(frame); wrap.appendChild(hint);" +
         "document.body.appendChild(wrap);" +
-        "btn.addEventListener('click', function(){ onCancel(); });" +
         "navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }).then(function(stream) {" +
         "v.srcObject = stream;" +
         "var play = v.play(); if (play && play.catch) play.catch(function(){});" +
