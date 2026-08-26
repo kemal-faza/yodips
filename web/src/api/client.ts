@@ -8,6 +8,7 @@ import type {
   KulonCourseContent,
   PairConsumeResult,
   PairRequestResult,
+  PairStatusResult,
   SiapAbsenItem,
   SiapIrs,
   SiapJadwal,
@@ -184,6 +185,14 @@ export async function pairRequest(): Promise<PairRequestResult> {
 /** Tukar kode pairing dengan JWT sesi yang sama. */
 export async function pairConsume(code: string): Promise<PairConsumeResult> {
   const { data } = await apiClient.post<PairConsumeResult>(API.auth.pairConsume, { code });
+  return data;
+}
+
+/** Polling status kode pairing milik sendiri (read-only, tak mengonsumsi). */
+export async function pairStatus(code: string): Promise<PairStatusResult> {
+  const { data } = await apiClient.get<PairStatusResult>(API.auth.pairStatus, {
+    params: { code },
+  });
   return data;
 }
 

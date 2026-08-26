@@ -41,6 +41,7 @@ export const API = {
     logout: '/api/auth/logout',
     pairRequest: '/api/auth/pair/request',
     pairConsume: '/api/auth/pair/consume',
+    pairStatus: '/api/auth/pair/status',
   },
   kulon: {
     courses: '/api/kulon/courses',
