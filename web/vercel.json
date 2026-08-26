@@ -3,6 +3,13 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
+  "redirects": [
+    {
+      "source": "/app",
+      "destination": "/app/",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     { "source": "/app/(.*)", "destination": "/app/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
