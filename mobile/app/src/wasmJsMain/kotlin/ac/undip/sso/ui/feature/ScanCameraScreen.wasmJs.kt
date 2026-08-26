@@ -40,10 +40,10 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         }
     }
 
-    // Harness E2E / shortcut user: ?scan=1 memulai pemindaian otomatis saat
-    // layar dibuka (paritas perilaku dgn Android yang langsung aktifkan kamera).
+    // Paritas Android: kamera langsung aktif saat layar dibuka. ?scan=1 tetap
+    // diterima (harness E2E) tapi redundant — startScan() dipanggil tanpa syarat.
     LaunchedEffect(Unit) {
-        if (jsUrlSearchParams("scan") == "1") startScan()
+        startScan()
     }
 
     Column(
@@ -132,6 +132,3 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         }
     }
 }
-
-@JsFun("(key) => { const p = new URLSearchParams(window.location.search); return p.get(key); }")
-private external fun jsUrlSearchParams(key: String): String?
