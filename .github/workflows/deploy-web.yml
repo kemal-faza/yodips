@@ -52,6 +52,16 @@ jobs:
         with:
           node-version: 22
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Build bundle wasm (PWA /app)
+        working-directory: mobile
+        run: ./gradlew :app:wasmJsBrowserDistribution --console=plain -q
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
@@ -89,6 +99,12 @@ jobs:
               --project "$VERCEL_PROJECT_ID" \
               --token "$VERCEL_TOKEN" \
               --yes
+
+          # PWA /app/: salin dist wasm ke output prebuilt + generate SW/manifest
+          # + gerbang gzip ≤6MB (gagal = job gagal; deviasi terukur dari spec §10).
+          node web/scripts/build-pwa-app.mjs \
+            --dist mobile/app/build/dist/wasmJs/productionExecutable \
+            --out web/.vercel/output/static/app
 
           # Tangkap URL deployment yang baru saja dibuat (baris Production).
           DEPLOY_URL=$(npx vercel deploy --prebuilt --prod \
