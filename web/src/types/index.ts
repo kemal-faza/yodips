@@ -100,6 +100,12 @@ export interface PairRequestResult {
   expiresAt: number;
 }
 
+/** GET /api/auth/pair/status response: hasil polling kode milik sendiri. */
+export interface PairStatusResult {
+  status: 'pending' | 'consumed' | 'invalid';
+  expiresAt?: number;
+}
+
 /** POST /api/auth/pair/consume: JWT utk sesi server yang sama. */
 export interface PairConsumeResult {
   accessToken: string;

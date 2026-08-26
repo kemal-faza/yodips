@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import QRCode from 'qrcode';
-import { pairRequest } from '../api/client';
+import { pairRequest, pairStatus } from '../api/client';
 import type { PairRequestResult } from '../types';
 import { Button } from '@/components/ui/button';
 
@@ -9,7 +9,14 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const data = ref<PairRequestResult | null>(null);
 const remainingSec = ref(0);
+/** True sesaat setelah kode lama terdeteksi terpakai (sebelum kode baru siap). */
+const consumed = ref(false);
 let timer: ReturnType<typeof setInterval> | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+const POLL_INTERVAL_MS = 4_000;
+const REFRESH_DELAY_MS = 1_500;
 
 const groupedCode = computed(() => (data.value?.code ?? '').replace(/^(.{4})/, '$1 '));
 const countdown = computed(() => {
@@ -22,6 +29,37 @@ function stopTimer() {
     clearInterval(timer);
     timer = null;
   }
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
+function startPolling(code: string) {
+  stopPolling();
+  pollTimer = setInterval(async () => {
+    try {
+      const s = await pairStatus(code);
+      // Kode sekali-pakai: begitu terpakai di perangkat lain, langsung
+      // tampilkan banner dan siapkan kode baru tanpa klik manual.
+      if (s.status === 'consumed') {
+        stopPolling();
+        consumed.value = true;
+        refreshTimer = setTimeout(() => {
+          void requestCode();
+        }, REFRESH_DELAY_MS);
+      }
+    } catch {
+      // Jaringan/sesi: senyap saja — tick berikutnya mencoba lagi.
+    }
+  }, POLL_INTERVAL_MS);
 }
 
 function startTimer(expiresAt: number) {
@@ -44,11 +82,14 @@ async function renderQr(url: string) {
 async function requestCode() {
   loading.value = true;
   error.value = null;
+  consumed.value = false;
+  stopPolling();
   data.value = null;
   try {
     const res = await pairRequest();
     data.value = res;
     startTimer(res.expiresAt);
+    startPolling(res.code);
     // v-if canvas baru ter-mount setelah flush render Vue — tunggu dulu, kalau
     // tidak getElementById('pair-qr') balik null dan QR diam-diam tak digambar.
     await nextTick();
@@ -63,7 +104,10 @@ async function requestCode() {
   }
 }
 
-onBeforeUnmount(stopTimer);
+onBeforeUnmount(() => {
+  stopTimer();
+  stopPolling();
+});
 </script>
 
 <template>
@@ -90,7 +134,18 @@ onBeforeUnmount(stopTimer);
         <p class="mt-1 text-xs text-muted-foreground">
           Berlaku <span data-test="pairing-countdown">{{ countdown }}</span>
         </p>
+        <p class="mt-1 text-xs text-muted-foreground" data-test="pairing-once">
+          Kode berlaku sekali. Setelah dipakai, kode baru dibuat otomatis di sini.
+        </p>
       </div>
     </div>
+
+    <p
+      v-if="consumed"
+      class="text-sm font-medium text-success"
+      data-test="pairing-consumed"
+    >
+      Perangkat berhasil terhubung. Menyiapkan kode baru…
+    </p>
   </section>
 </template>
