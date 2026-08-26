@@ -22,3 +22,18 @@ export function interpretHandoff(raw: HandoffRaw): HandoffDecision {
 export function summarizeHandoff(raw: HandoffRaw) {
   return { ok: raw.ok, code: raw.code, hasSso: raw.hasSso, hasKulon: raw.hasKulon, hasSiap: raw.hasSiap };
 }
+
+/**
+ * Pesan ramah untuk kegagalan jaringan fetch (TypeError "Failed to fetch"):
+ * sebut host tujuan + arahan ke Server URL popup — jangan pernah tampilkan
+ * teks mentah browser ke pengguna.
+ */
+export function networkFailureMessage(url: string): string {
+  let host = 'server';
+  try {
+    host = new URL(url).host;
+  } catch {
+    /* URL tidak valid — pakai fallback */
+  }
+  return `Tidak dapat terhubung ke ${host}. Periksa koneksi internet, atau set Server URL yang benar di popup extension YoDips.`;
+}

@@ -23,7 +23,7 @@ import {
   cookiePatternsForPhase,
   cookieStoreForTab,
 } from "./core/cookies.js";
-import { interpretHandoff, summarizeHandoff } from "./core/handoff.js";
+import { interpretHandoff, summarizeHandoff, networkFailureMessage } from "./core/handoff.js";
 import {
   DEFAULT_SERVER_URL,
   SSO_LOGIN_URL,
@@ -104,11 +104,18 @@ async function getServerUrl(): Promise<string> {
   return (res[SERVER_KEY] as string) || DEFAULT_SERVER_URL;
 }
 async function fetchHandoff(url: string, body: unknown): Promise<HandoffRaw> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // TypeError jaringan ("Failed to fetch" dsb.) — terjemahkan ke pesan
+    // ramah yang menyebut host + Server URL, bukan teks mentah browser.
+    return { ok: false, status: 0, message: networkFailureMessage(url) };
+  }
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, ...data };
 }
