@@ -7,6 +7,9 @@ const seconds = (ms: number) => Math.max(1, Math.floor(ms / 1000));
  *  consume-miss dilaporkan 'expired', selebihnya 'invalid'. */
 export const EXPIRED_TOMBSTONE_GRACE_MS = 60_000;
 
+/** TTL tombstone consumed (pair-used:<hash> = sub) utk status polling web. */
+export const CONSUMED_TOMBSTONE_TTL_MS = 600_000;
+
 export class RedisPairingStore extends PairingStore {
   constructor(private readonly client: Redis) {
     super();
@@ -51,8 +54,22 @@ export class RedisPairingStore extends PairingStore {
         key,
       )) as string | null;
     }
-    if (raw) return { status: 'consumed', record: JSON.parse(raw) as PairingRecord };
+    if (raw) {
+      const record = JSON.parse(raw) as PairingRecord;
+      // Tombstone consumed: sub pemilik, dipakai endpoint pair/status.
+      await this.client.set(
+        `pair-used:${codeHash}`,
+        record.sub,
+        'EX',
+        seconds(CONSUMED_TOMBSTONE_TTL_MS),
+      );
+      return { status: 'consumed', record };
+    }
     const tombstone = await this.client.get(`pair-exp:${codeHash}`);
     return tombstone ? { status: 'expired' } : { status: 'invalid' };
+  }
+
+  async findConsumed(codeHash: string): Promise<string | null> {
+    return await this.client.get(`pair-used:${codeHash}`);
   }
 }

@@ -81,4 +81,28 @@ export class PairingService {
       hasSiap: !!session.siapCookie,
     };
   }
+
+  /**
+   * Status kode utk polling web (pemilik menanyakan kodenya sendiri).
+   * Anti-oracle: viewerSub WAJIB cocok dengan pemilik record/tombstone —
+   * kode milik orang lain dilaporkan persis seperti kode tak dikenal.
+   */
+  async statusFor(
+    viewerSub: string,
+    codeRaw: string,
+  ): Promise<{ status: 'pending' | 'consumed' | 'invalid'; expiresAt?: number }> {
+    const code = normalizePairingCode(codeRaw ?? '');
+    if (code.length === 0) return { status: 'invalid' };
+    const hash = hashPairingCode(code);
+
+    const record = await this.pairingStore.get(hash);
+    if (record) {
+      if (record.sub !== viewerSub) return { status: 'invalid' };
+      return { status: 'pending', expiresAt: record.expiresAt };
+    }
+
+    const consumedBy = await this.pairingStore.findConsumed(hash);
+    if (consumedBy === viewerSub) return { status: 'consumed' };
+    return { status: 'invalid' };
+  }
 }

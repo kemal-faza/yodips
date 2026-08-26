@@ -67,4 +67,28 @@ describe('RedisPairingStore', () => {
     const s = new RedisPairingStore(client as any);
     await expect(s.consume('k')).resolves.toEqual({ status: 'invalid' });
   });
+
+  it('findConsumed membaca tombstone pair-used: berisi sub, null saat absen', async () => {
+    const client = makeClient();
+    client.getdel.mockResolvedValue(JSON.stringify(RECORD));
+    const s = new RedisPairingStore(client as any);
+    await s.consume('k');
+    expect(client.set).toHaveBeenCalledWith(
+      'pair-used:k',
+      'NIM1',
+      'EX',
+      expect.any(Number),
+    );
+    client.get.mockImplementation((key: string) =>
+      Promise.resolve(key === 'pair-used:k' ? 'NIM1' : null),
+    );
+    await expect(s.findConsumed('k')).resolves.toBe('NIM1');
+    await expect(s.findConsumed('other')).resolves.toBeNull();
+  });
+
+  it('findConsumed kode tak pernah ada → null (tanpa crash)', async () => {
+    const client = makeClient();
+    const s = new RedisPairingStore(client as any);
+    await expect(s.findConsumed('ghost')).resolves.toBeNull();
+  });
 });

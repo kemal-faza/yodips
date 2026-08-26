@@ -44,4 +44,13 @@ describe('InMemoryPairingStore', () => {
     await s.set('h', { sub: 'B', expiresAt: 1 }, 60_000);
     await expect(s.get('h')).resolves.toEqual({ sub: 'B', expiresAt: 1 });
   });
+
+  it('findConsumed: null sebelum consume, sub pemilik setelahnya, null utk tak dikenal', async () => {
+    const s = new InMemoryPairingStore();
+    await expect(s.findConsumed('h1')).resolves.toBeNull();
+    await s.set('h1', { sub: 'NIM1', expiresAt: 999 }, 60_000);
+    await s.consume('h1');
+    await expect(s.findConsumed('h1')).resolves.toBe('NIM1');
+    await expect(s.findConsumed('nope')).resolves.toBeNull();
+  });
 });
