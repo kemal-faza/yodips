@@ -33,6 +33,8 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                 }
 
                 is QrScanResult.Error -> cameraError = result.message
+                // User menutup scanner sendiri - kembali tanpa pesan.
+                QrScanResult.Cancelled -> Unit
             }
             scanningBusy = false
         }

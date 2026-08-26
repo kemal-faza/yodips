@@ -178,6 +178,8 @@ fun LoginScreen(
                 }
 
                 is QrScanResult.Error -> error = result.message
+                // User menutup scanner sendiri - kembali ke form tanpa pesan.
+                QrScanResult.Cancelled -> Unit
             }
             scanning = false
         }
@@ -203,8 +205,6 @@ fun LoginScreen(
             verticalArrangement = Arrangement.Center,
         ) {
             Text("YoDips", style = MaterialTheme.typography.headlineLarge)
-            Spacer(Modifier.height(8.dp))
-            Text("Masukkan kode pairing dari perangkat utama")
             Spacer(Modifier.height(24.dp))
 
             OtpCodeInput(
