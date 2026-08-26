@@ -1,6 +1,5 @@
 package ac.undip.sso.core.scan
 
-import ac.undip.sso.nowMs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -15,13 +14,13 @@ sealed interface QrScanResult {
 
     /** Gagal dengan pesan siap-tampil ke user (sudah humanized). */
     data class Error(val message: String) : QrScanResult
+
+    /** User menutup scanner sendiri / coroutine dibatalkan - bukan error, tanpa pesan. */
+    data object Cancelled : QrScanResult
 }
 
 /** Jeda antar percobaan decode (ms) - sekitar 8 fps cukup untuk QR statis. */
 private const val DECODE_INTERVAL_MS = 120L
-
-/** Batas waktu menunggu QR terbaca sebelum berhenti sendiri (ms). */
-private const val SCAN_TIMEOUT_MS = 15_000L
 
 /**
  * Scanner QR untuk wasmJs: getUserMedia (kamera belakang) + jsQR.
@@ -53,11 +52,10 @@ object QrScanner {
     private var closeRequested = false
 
     /**
-     * Mulai kamera dan tunggu QR pertama terbaca.
-     * Berhenti sendiri dalam [SCAN_TIMEOUT_MS]; aman dibatalkan dari luar.
+     * Mulai kamera dan tunggu QR pertama terbaca. Scan berjalan sampai kode
+     * ketemu atau user menutup lewat tombol tutup; aman dibatalkan dari luar.
      */
     suspend fun scanOnce(): QrScanResult {
-        val startedAt = nowMs()
         closeRequested = false
 
         // Decoder jsQR - dynamic import di-cache browser, murah dipanggil ulang.
@@ -76,12 +74,7 @@ object QrScanner {
         try {
             while (coroutineContext.isActive) {
                 if (closeRequested) {
-                    return QrScanResult.Error("Pemindaian dihentikan.")
-                }
-                if (nowMs() - startedAt > SCAN_TIMEOUT_MS) {
-                    return QrScanResult.Error(
-                        "Waktu tunggu habis. Arahkan QR ke kamera lalu coba lagi."
-                    )
+                    return QrScanResult.Cancelled
                 }
                 val text = jsDecodeFrame(decoder, camera.canvas, camera.video)?.toString()
                 if (!text.isNullOrBlank()) {
@@ -89,8 +82,8 @@ object QrScanner {
                 }
                 delay(DECODE_INTERVAL_MS)
             }
-            // Dibatalkan dari luar - keluar tanpa menyalahkan user.
-            return QrScanResult.Error("Pemindaian dihentikan.")
+            // Dibatalkan dari luar - bukan error, tanpa pesan.
+            return QrScanResult.Cancelled
         } finally {
             jsStopCamera(camera.wrap)
         }
