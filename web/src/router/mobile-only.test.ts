@@ -36,19 +36,7 @@ afterEach(() => {
   authState.authed = true;
 });
 
-describe('guard UA-mobile → /app/ (transisi F5)', () => {
-  it('desktop: /scan, /jadwal, /khs, /irs, /presensi → redirect /', async () => {
-    isMobileMock.mockReturnValue(false);
-    const replace = stubReplace();
-    for (const p of ['/scan', '/jadwal', '/khs', '/irs', '/presensi']) {
-      const router = buildRouter(createMemoryHistory());
-      await router.push(p);
-      await router.isReady();
-      expect(router.currentRoute.value.path, p).toBe('/');
-      expect(replace).not.toHaveBeenCalled();
-    }
-  });
-
+describe('guard UA-mobile → /app/ (pasca-F6)', () => {
   it('mobile UA: rute SPA apa pun di-replace ke /app/', async () => {
     isMobileMock.mockReturnValue(true);
     const replace = stubReplace();
@@ -60,6 +48,14 @@ describe('guard UA-mobile → /app/ (transisi F5)', () => {
     expect(replace).toHaveBeenCalledWith('/app/');
   });
 
+  it('mobile UA: /login juga diarahkan ke /app/ (branch pairing telah pensiun)', async () => {
+    isMobileMock.mockReturnValue(true);
+    const replace = stubReplace();
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/login');
+    expect(replace).toHaveBeenCalledWith('/app/');
+  });
+
   it('mobile UA: /privacy tetap dilayani SPA (halaman publik)', async () => {
     isMobileMock.mockReturnValue(true);
     const replace = stubReplace();
@@ -68,14 +64,5 @@ describe('guard UA-mobile → /app/ (transisi F5)', () => {
     await router.isReady();
     expect(replace).not.toHaveBeenCalled();
     expect(router.currentRoute.value.path).toBe('/privacy');
-  });
-
-  it('mobile UA: /login belum diarahkan selama transisi (branch pairing hidup sampai F6)', async () => {
-    isMobileMock.mockReturnValue(true);
-    authState.authed = false; // tanpa ini, guard auth me-redirect /login → / lalu kena branch mobile
-    const replace = stubReplace();
-    const router = buildRouter(createMemoryHistory());
-    await router.push('/login');
-    expect(replace).not.toHaveBeenCalled();
   });
 });
