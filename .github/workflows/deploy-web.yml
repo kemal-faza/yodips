@@ -63,7 +63,11 @@ jobs:
         run: ./gradlew :app:wasmJsBrowserDistribution --console=plain -q
 
       - name: Install Vercel CLI
-        run: npm install -g vercel@latest
+        # PINNED — jangan @latest: CLI 59.x mengubah perilaku lokasi output
+        # `vercel build` (repo-root vs rootDirectory), yang membuat file /app
+        # yang kita sisipkan pasca-build tidak ikut ter-upload (insiden
+        # 2026-08-26: deploy hijau tapi /app/* jatuh ke fallback SPA).
+        run: npm install -g vercel@54.14.0
 
       - name: Deploy ke Vercel (production)
         env:
@@ -102,9 +106,17 @@ jobs:
 
           # PWA /app/: salin dist wasm ke output prebuilt + generate SW/manifest
           # + gerbang gzip ≤6MB (gagal = job gagal; deviasi terukur dari spec §10).
+          # Lokasi output adaptif: CLI lama menaruh .vercel/output di bawah
+          # rootDirectory (web/), CLI baru di CWD (repo root) — pilih yang ADA.
+          OUT_ROOT="web/.vercel/output"
+          [ -d "$OUT_ROOT/static" ] || OUT_ROOT=".vercel/output"
+          echo "Output prebuilt dipakai: $OUT_ROOT/static"
+          ls "$OUT_ROOT/static" | head -5
           node web/scripts/build-pwa-app.mjs \
             --dist mobile/app/build/dist/wasmJs/productionExecutable \
-            --out web/.vercel/output/static/app
+            --out "$OUT_ROOT/static/app"
+          test -f "$OUT_ROOT/static/app/index.html" \
+            || { echo "FATAL: app/index.html tidak ada di output prebuilt"; exit 1; }
 
           # Tangkap URL deployment yang baru saja dibuat (baris Production).
           DEPLOY_URL=$(npx vercel deploy --prebuilt --prod \
