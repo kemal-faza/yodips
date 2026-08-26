@@ -90,21 +90,12 @@ internal actual fun ScanScreen(repo: SsoRepository) {
             }, enabled = manualToken.isNotBlank() && !scanningBusy) {
                 Text("Kirim")
             }
-        } else {
-            // Kamera belum dicoba/gagal belum terjadi - tampilkan tombol pindai.
+            Spacer(Modifier.height(8.dp))
             Button(onClick = { startScan() }, enabled = !scanningBusy) {
-                Text(if (scanningBusy) "Memindai…" else "Scan QR")
+                Text("Coba Kamera Lagi")
             }
-        }
-
-        if (scanningBusy) {
-            Spacer(Modifier.height(16.dp))
-            CircularProgressIndicator()
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        outcome?.let { o ->
+        } else if (outcome != null) {
+            val o = outcome!!
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -123,12 +114,16 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = {
                         outcome = null
-                        cameraError = null
+                        startScan()
                     }) {
                         Text("Scan Lagi")
                     }
                 }
             }
+        } else if (scanningBusy) {
+            // Scanner DOM overlay fullscreen sedang aktif — konten Compose tertutup.
+            // Tampilkan indikator halus sebagai placeholder (bukan tombol retry).
+            CircularProgressIndicator()
         }
     }
 }
