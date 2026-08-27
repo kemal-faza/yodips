@@ -121,6 +121,17 @@ export class EnvConfig {
   @Min(1000)
   CACHE_TTL_MS: number = 300000;
 
+  // ---- SIAP official API (api.siap.undip.ac.id/index.php) ------------------
+  /** Version-code app resmi SIAP (VERSION_CODE). Version-gate wajib per request. */
+  @IsOptional()
+  @IsString()
+  SIAP_APP_VER: string = '24';
+
+  /** Base URL API resmi SIAP (tanpa trailing slash). */
+  @IsOptional()
+  @IsString()
+  SIAP_API_BASE: string = 'https://api.siap.undip.ac.id/index.php';
+
   @IsOptional()
   @IsString()
   @MinLength(32)
