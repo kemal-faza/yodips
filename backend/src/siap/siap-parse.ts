@@ -29,6 +29,8 @@ export interface SiapProfile {
   emailPribadi?: string;
   alamatAsal?: string;
   alamatSekarang?: string;
+  /** Kurikulum/strata (dari data_mahasiswa API; opsional). */
+  kurikulum?: string;
 }
 
 export interface SiapIrs {
@@ -456,7 +458,8 @@ export function parseApiJadwal(
       hari: str(r.hari) ?? '',
       matakuliah: str(r.nama_mk) ?? '',
       ruang: str(r.nama_ruang),
-      waktu: [start, end].filter(Boolean).join(' - '),
+      // Keep the legacy "s/d" separator the mobile ScheduleScreen regex expects.
+      waktu: [start, end].filter(Boolean).join(' s/d '),
       sks: num(r.sks),
       tanggal: str(r.tanggal_pertemuan),
     };

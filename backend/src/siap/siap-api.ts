@@ -98,9 +98,19 @@ export class SiapApiUpstream {
       this.logger.warn('SIAP fetch: app version gate — update SIAP_APP_VER');
       throw new StaleUpstreamError('Siap', 'api-endpoint');
     }
+    // Auth-class failures (401/403, "Invalid credentials") → api-credential
+    // (client should re-login). Everything else (5xx/429/generic fail) is an
+    // upstream/endpoint problem → api-endpoint, NOT a re-login prompt.
+    const authFailure =
+      res.status === 401 ||
+      res.status === 403 ||
+      String(payload.message).includes('Invalid credentials') ||
+      String(payload.message).includes('Unauthorized');
     if (payload.status === 'fail' || res.status >= 400) {
-      this.logger.warn(`SIAP fetch ${endpoint} failed status=${res.status} msg=${String(payload.message)}`);
-      throw new StaleUpstreamError('Siap', 'api-credential');
+      this.logger.warn(
+        `SIAP fetch ${endpoint} failed status=${res.status} msg=${String(payload.message)} reason=${authFailure ? 'credential' : 'endpoint'}`,
+      );
+      throw new StaleUpstreamError('Siap', authFailure ? 'api-credential' : 'api-endpoint');
     }
     return (payload.data ?? payload) as T;
   }

@@ -254,6 +254,8 @@ export class SiapService {
   /**
    * IRS: mint ONCE, fetch `v2/lihat_irs` per semester (semester_aktif label +
    * angkatan drive the count). Retry the whole batch once on invalid-credential.
+   * Angkatan is resolved from `data_mahasiswa` via the SAME batch token (never
+   * a nested getProfile — that would mint a fresh token and invalidate this one).
    */
   async getIrs(sub?: string): Promise<SiapIrs> {
     if (sub && this.cache) {
@@ -266,9 +268,12 @@ export class SiapService {
     const fetchBatch = async <T>(endpoint: string, form?: Record<string, string>) =>
       this.apiUpstream.fetch<T>(endpoint, token, form, nim);
     const build = async (): Promise<SiapIrs> => {
-      const sem = await fetchBatch<{ nm_smt?: string }>('semester_aktif');
+      const [sem, data] = await Promise.all([
+        fetchBatch<{ nm_smt?: string }>('semester_aktif'),
+        fetchBatch<Record<string, unknown>>('data_mahasiswa'),
+      ]);
       const semester = sem?.nm_smt ?? '';
-      const angkatan = (await this.getProfile(sub)).angkatan;
+      const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
       const count = currentSemesterCount(angkatan, semester);
       let totalSks = 0;
       const mataKuliah: SiapIrs['mataKuliah'] = [];
@@ -375,8 +380,11 @@ export class SiapService {
     const fetchBatch = async <T>(endpoint: string, form?: Record<string, string>) =>
       this.apiUpstream.fetch<T>(endpoint, token, form, nim);
     const build = async (): Promise<{ kode: string; dosen: string }[]> => {
-      const sem = await fetchBatch<{ nm_smt?: string }>('semester_aktif');
-      const angkatan = (await this.getProfile(sub)).angkatan;
+      const [sem, data] = await Promise.all([
+        fetchBatch<{ nm_smt?: string }>('semester_aktif'),
+        fetchBatch<Record<string, unknown>>('data_mahasiswa'),
+      ]);
+      const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
       const count = currentSemesterCount(angkatan, sem?.nm_smt ?? '');
       const entries = new Map<string, { kode: string; dosen: string }>();
       for (let smt = 1; smt <= count; smt++) {
