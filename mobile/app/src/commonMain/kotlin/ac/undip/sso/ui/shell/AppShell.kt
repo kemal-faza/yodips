@@ -12,6 +12,8 @@ import ac.undip.sso.ui.feature.ProfileScreen
 import ac.undip.sso.ui.feature.ScanScreen
 import ac.undip.sso.ui.feature.ScheduleScreen
 import ac.undip.sso.ui.feature.TasksScreen
+import ac.undip.sso.ui.navigation.AppNavigation
+import ac.undip.sso.ui.navigation.LocalAppNavigation
 import ac.undip.sso.ui.theme.Primary
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
@@ -46,6 +48,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -105,10 +108,17 @@ fun AppShell(
             )
         }
 
-    Scaffold(
-        bottomBar = { ShellBottomBar(currentRoute) { route -> navigate(navController, route) } },
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-    ) { pad ->
+    CompositionLocalProvider(
+        LocalAppNavigation provides AppNavigation(
+            onNavigateDashboard = {
+                navigate(navController, Tab.Dashboard.route)
+            },
+        ),
+    ) {
+        Scaffold(
+            bottomBar = { ShellBottomBar(currentRoute) { route -> navigate(navController, route) } },
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        ) { pad ->
         NavHost(
             navController = navController,
             startDestination = Tab.Dashboard.route,
@@ -148,6 +158,7 @@ fun AppShell(
                 } ?: return@LaunchedEffect
             navigate(navController, route)
             onNavConsumed()
+        }
         }
     }
 }
