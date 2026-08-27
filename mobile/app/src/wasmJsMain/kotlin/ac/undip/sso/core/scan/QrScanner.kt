@@ -108,6 +108,28 @@ object QrScanner {
 
     private class CameraHandles(val video: JsAny?, val wrap: JsAny?, val canvas: JsAny?)
 
+    /**
+     * Buka file picker gambar, decode QR dari foto terpilih dengan jsQR.
+     * Dipakai tombol "Pilih dari Galeri" (PWA). Tidak menyentuh kamera.
+     */
+    suspend fun scanFromFile(): QrScanResult {
+        val decoder = try {
+            awaitJs(jsImportJsQr())
+        } catch (e: Throwable) {
+            return QrScanResult.Error("Gagal menyiapkan pembaca QR: ${e.message}")
+        }
+        return try {
+            val text = awaitJs(jsDecodeFile(decoder))?.toString()
+            if (text.isNullOrBlank()) {
+                QrScanResult.Error("Tidak ada QR yang terdeteksi pada foto.")
+            } else {
+                QrScanResult.Success(text.trim())
+            }
+        } catch (e: Throwable) {
+            QrScanResult.Error(e.message ?: "Gagal membaca foto.")
+        }
+    }
+
     private suspend fun awaitJs(promise: JsAny?): JsAny? =
         suspendCancellableCoroutine { cont ->
             jsBindPromise(
@@ -189,7 +211,7 @@ private external fun jsErrText(err: JsAny?): JsString?
         "ctrl.className = 'yd-ctrl';" +
         "var zoomRatio = 1.0; var maxZoom = 3.0;" +
         "var front = false;" +
-        "var flipBtn = document.createElement('button'); flipBtn.className='yd-btn'; flipBtn.innerHTML='<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2\"><path d=\"M9 4l-5 3v12l5-3zM15 20l5-3V5l-5 3z\"/><path d=\"M4 7h9M20 17h-9\"/></svg>'; flipBtn.title='Ganti kamera';" +
+        "var flipBtn = document.createElement('button'); flipBtn.className='yd-btn'; flipBtn.innerHTML='<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"#fff\"><path d=\"M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-5 11.5V13H9v2.5L5.5 12 9 8.5V11h6V8.5l3.5 3.5-3.5 3.5z\"/></svg>'; flipBtn.title='Ganti kamera';" +
         "var zoomInBtn = document.createElement('button'); zoomInBtn.className='yd-btn'; zoomInBtn.textContent='+'; zoomInBtn.title='Perbesar';" +
         "var zoomOutBtn = document.createElement('button'); zoomOutBtn.className='yd-btn'; zoomOutBtn.textContent='−'; zoomOutBtn.title='Perkecil';" +
         "var lvl = document.createElement('div'); lvl.className='yd-lvl'; lvl.textContent='1.0x';" +
@@ -202,9 +224,27 @@ private external fun jsErrText(err: JsAny?): JsString?
         "document.body.appendChild(wrap);" +
         "var frameSize = Math.min(Math.min(wrap.clientWidth, wrap.clientHeight) * 0.7, 280);" +
         "if (frameSize > 0) { frame.style.width = frameSize + 'px'; frame.style.height = frameSize + 'px'; } else { frame.style.width = 'min(72vw,280px)'; frame.style.height = 'min(72vw,280px)'; }" +
+        "var listDevices = function(){ return navigator.mediaDevices.enumerateDevices(); };" +
+        "var applyTrack = function(){ " +
+        "  if (v.srcObject && v.srcObject.getVideoTracks && v.srcObject.getVideoTracks().length) {" +
+        "    v.srcObject.getVideoTracks()[0].stop();" +
+        "  }" +
+        "};" +
+        "flipBtn.onclick = function(){ front = !front; frontLbl.style.display = front ? 'block' : 'none';" +
+        "  listDevices().then(function(devs){" +
+        "    var cams = devs.filter(function(d){ return d.kind === 'videoinput'; });" +
+        "    var target = null;" +
+        "    if (front) { target = cams.find(function(c){ return /front|user/i.test(c.label); }) || cams[0]; }" +
+        "    else { target = cams.filter(function(c){ return !/front|user/i.test(c.label); })[0] || cams[0]; }" +
+        "    if (!cams.length) return;" +
+        "    var constraints = target" +
+        "      ? { video: { deviceId: { exact: target.deviceId } }, audio: false }" +
+        "      : { video: { facingMode: front ? 'user' : 'environment' }, audio: false };" +
+        "    navigator.mediaDevices.getUserMedia(constraints).then(function(s){ applyTrack(); v.srcObject = s; var play = v.play(); if (play && play.catch) play.catch(function(){}); }).catch(function(e){ /* keep current stream on flip failure */ });" +
+        "  }).catch(function(e){ /* enumerate failed - keep current stream */ });" +
+        "};" +
         "var startStream = function(mode){ return navigator.mediaDevices.getUserMedia({ video: { facingMode: mode }, audio: false }); };" +
         "var openStream = function(stream){ v.srcObject = stream; var play = v.play(); if (play && play.catch) play.catch(function(){}); };" +
-        "flipBtn.onclick = function(){ front = !front; frontLbl.style.display = front ? 'block' : 'none'; startStream(front ? 'user' : 'environment').then(function(s){ if (v.srcObject && v.srcObject.getTracks) v.srcObject.getTracks().forEach(function(t){ t.stop(); }); openStream(s); }).catch(function(e){ /* keep current stream on flip failure */ }); };" +
         "startStream(front ? 'user' : 'environment').then(function(stream){" +
         "openStream(stream);" +
         "var c = document.createElement('canvas');" +
@@ -263,3 +303,44 @@ private external fun jsDecodeFrame(decodeFn: JsAny?, canvas: JsAny?, video: JsAn
         "}",
 )
 private external fun jsStopCamera(wrap: JsAny?)
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun(
+    "(decodeFn) => {" +
+        "return new Promise(function(resolve, reject){" +
+        "var input = document.createElement('input');" +
+        "input.type = 'file';" +
+        "input.accept = 'image/*';" +
+        "input.style.display = 'none';" +
+        "document.body.appendChild(input);" +
+        "input.onchange = function(){" +
+        "var file = input.files && input.files[0];" +
+        "if (!file) { input.remove(); resolve(null); return; }" +
+        "var reader = new FileReader();" +
+        "reader.onload = function(ev){" +
+        "var img = new Image();" +
+        "img.onload = function(){" +
+        "try {" +
+        "var c = document.createElement('canvas');" +
+        "var scale = Math.min(1.0, 1600 / Math.max(img.width, img.height));" +
+        "c.width = Math.round(img.width * scale);" +
+        "c.height = Math.round(img.height * scale);" +
+        "var ctx = c.getContext('2d', { willReadFrequently: true });" +
+        "ctx.drawImage(img, 0, 0, c.width, c.height);" +
+        "var d = ctx.getImageData(0, 0, c.width, c.height);" +
+        "var r = decodeFn(d.data, d.width, d.height);" +
+        "input.remove();" +
+        "resolve(r ? r.data : null);" +
+        "} catch (err) { input.remove(); reject(err); }" +
+        "};" +
+        "img.onerror = function(){ input.remove(); reject(new Error('Foto tidak dapat dibaca.')); };" +
+        "img.src = ev.target.result;" +
+        "};" +
+        "reader.onerror = function(){ input.remove(); reject(new Error('Foto tidak dapat dibaca.')); };" +
+        "reader.readAsDataURL(file);" +
+        "};" +
+        "input.click();" +
+        "});" +
+        "}",
+)
+private external fun jsDecodeFile(decodeFn: JsAny?): JsString?
