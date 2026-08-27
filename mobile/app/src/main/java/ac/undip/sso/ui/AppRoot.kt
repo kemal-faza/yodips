@@ -105,6 +105,7 @@ fun AppRoot(
             onLogout = onLogout,
             initialNavTarget = normalizeNavTarget(pendingNavTarget),
             onNavConsumed = onNavConsumed,
+            notificationHistory = PushGraph.history,
         )
     } else {
         LoginScreen(
