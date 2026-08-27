@@ -71,6 +71,9 @@ const mockSiap = {
     valid: true,
     reason: 'ok',
   })),
+  fetchProfile: jest.fn(async () => ({
+    emailSso: 'anonim.sso@students.undip.ac.id',
+  })),
 };
 
 function makeService() {
@@ -593,6 +596,38 @@ describe('AuthService.handleSessionHandoff', () => {
     expect(res.hasSiap).toBe(true);
     const stored = mockSessionStore.get('24060121130000');
     expect(stored.siapCookie).toBe('ci_session_x=VALID');
+  });
+
+  it('populates emailSso from the SIAP fetchProfile when the session is valid', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
+    mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockSiap.fetchProfile.mockResolvedValue({ emailSso: 'anonim.sso@students.undip.ac.id' });
+    const svc = makeService();
+    await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: 'ci_session_x=VALID',
+      identity: '24060121130000',
+    });
+    const stored = mockSessionStore.get('24060121130000');
+    expect(stored.emailSso).toBe('anonim.sso@students.undip.ac.id');
+    expect(mockSiap.fetchProfile).toHaveBeenCalledWith('ci_session_x=VALID');
+  });
+
+  it('tolerates a fetchProfile failure (never fails a Kulon-valid handoff)', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
+    mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockSiap.fetchProfile.mockRejectedValue(new Error('scrape boom'));
+    const svc = makeService();
+    const res = await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: 'ci_session_x=VALID',
+      identity: '24060121130000',
+    });
+    expect(res.hasSiap).toBe(true);
+    const stored = mockSessionStore.get('24060121130000');
+    expect(stored.emailSso).toBeUndefined(); // omitted; resolveSiapIdentity will fallback-scrape
   });
 });
 

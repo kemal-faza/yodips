@@ -266,12 +266,27 @@ export class AuthService {
       await new Promise((r) => setTimeout(r, retryMs));
       siapCheck = await this.siap.checkSessionValid(dto.siapCookie ?? '');
     }
+    // emailSso is required to mint the SIAP API token. Fetch it from the (now
+    // public) scrape of the profile — but ONLY if the SIAP session is valid, and
+    // NEVER let a scrape failure fail the handoff (a stale SIAP session must not
+    // block Kulon-valid logins). A missing emailSso is handled downstream by the
+    // resolveSiapIdentity fallback-scrape.
+    let emailSso = '';
+    if (siapCheck.valid && dto.siapCookie) {
+      try {
+        const profile = await this.siap.fetchProfile(dto.siapCookie);
+        emailSso = profile.emailSso ?? '';
+      } catch {
+        emailSso = ''; // ignore; resolveSiapIdentity will fallback-scrape once
+      }
+    }
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: dto.ssoCookie ?? '',
       microsoftCookie: dto.microsoftCookie ?? '',
       kulonCookie: dto.kulonCookie,
       siapCookie: siapCheck.valid ? dto.siapCookie ?? '' : '',
+      ...(emailSso ? { emailSso } : {}),
       capturedAt: Date.now(),
     });
     const payload = { sub: identity, via: 'handoff' };
