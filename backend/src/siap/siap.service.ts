@@ -1,8 +1,10 @@
 import { Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
 import { SessionStore } from '../session/session-store';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { SiapUpstreamSession } from './siap-upstream.session';
+import { SiapApiUpstream } from './siap-api';
 import type {
   SiapAbsenItem,
   SiapIrs,
@@ -72,16 +74,27 @@ interface SiapJadwalUpstream {
 export class SiapService {
   /** One session seam: probe + authenticated fetch + stale classification. */
   private readonly upstream: SiapUpstreamSession;
+  private readonly apiUpstream: SiapApiUpstream;
   private readonly cache?: DataCache;
   private readonly sessionStore?: SessionStore;
+  private readonly config?: ConfigService;
   constructor(
     @Optional() cache?: DataCache,
     @Optional() upstream?: SiapUpstreamSession,
     @Optional() sessionStore?: SessionStore,
+    @Optional() apiUpstream?: SiapApiUpstream,
+    @Optional() config?: ConfigService,
   ) {
     this.cache = cache;
     this.upstream = upstream ?? new SiapUpstreamSession();
     this.sessionStore = sessionStore;
+    this.config = config;
+    this.apiUpstream =
+      apiUpstream ??
+      new SiapApiUpstream(
+        config?.get('SIAP_API_BASE') ?? 'https://api.siap.undip.ac.id/index.php',
+        config?.get('SIAP_APP_VER') ?? '24',
+      );
   }
 
   private readonly baseUrl = 'https://siap.undip.ac.id';
