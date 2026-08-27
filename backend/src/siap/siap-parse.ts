@@ -396,3 +396,166 @@ export function parseIrsTable(html: string): { kode: string; dosen: string }[] {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Official SIAP API parsers (api.siap.undip.ac.id/index.php/*) — JSON → typed.
+// Kept in the same pure module so the mapping is unit-testable without transport.
+// ---------------------------------------------------------------------------
+
+/** Map API `data_mahasiswa` + `semester_aktif` into SiapProfile */
+export function parseApiProfile(
+  data: Record<string, unknown>,
+  semester?: { nm_smt?: string },
+): SiapProfile {
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  const p: SiapProfile = {
+    nama: str(data.nama) ?? '',
+    nim: str(data.nim) ?? '',
+    prodi: str(data.nama_ps) ?? '',
+    fakultas: str(data.namafak) ?? '',
+    angkatan: str(data.tahun_masuk) ?? '',
+    emailSso: str(data.sso_email) ?? str(data.sso_email_alt),
+    status: str(data.status_terakhir) ?? 'aktif',
+    fotoUrl: str(data.foto),
+    tempatLahir: str(data.tempat_lahir),
+    tanggalLahir: str(data.tanggal_lahir),
+    nik: str(data.no_id),
+    namaIbu: str(data.nama_ibu),
+    kurikulum: str(data.kurikulum),
+    kodeKewarganegaraan: str(data.kode_negara),
+    nomorHp: str(data.hp),
+    jalurMasuk: str(data.jalur_masuk),
+    emailPribadi: str(data.email_pribadi),
+    // Web consumes these (profile Kontak/Alamat groups + IPK summary) — keep
+    // them present even when the API omits them (best-effort; they may be
+    // filled from a scrape in getProfile when absent).
+    ipk: data.ipk != null ? Number(String(data.ipk).replace(',', '.')) : undefined,
+    sksTempuh: data.sks_tempuh != null ? Number(data.sks_tempuh) : undefined,
+    sksLulus: data.sks_lulus != null ? Number(data.sks_lulus) : undefined,
+    alamatAsal: str(data.alamat),
+    alamatSekarang: str(data.alamat_sekarang),
+    semesterBerjalan: semester?.nm_smt,
+  };
+  return p;
+}
+
+/** Map API `jadwal` rows (array) into SiapJadwal[] */
+export function parseApiJadwal(
+  rows: Array<Record<string, unknown>>,
+): SiapJadwal[] {
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  const num = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return rows.map((r) => {
+    const start = str(r.waktu_mulai) ?? '';
+    const end = str(r.waktu_selesai) ?? '';
+    return {
+      kode: str(r.kode_mk),
+      hari: str(r.hari) ?? '',
+      matakuliah: str(r.nama_mk) ?? '',
+      ruang: str(r.nama_ruang),
+      waktu: [start, end].filter(Boolean).join(' - '),
+      sks: num(r.sks),
+      tanggal: str(r.tanggal_pertemuan),
+    };
+  });
+}
+
+/** Map API `v2/lihat_khs` rows into SiapKhsSemester['nilai'] */
+export function parseApiKhs(
+  rows: Array<Record<string, unknown>>,
+): SiapKhsSemester['nilai'] {
+  return rows.map((r) => ({
+    mataKuliah: String(r.nama_mk ?? ''),
+    sks: Number(r.sks_mk) || 0,
+    nilaiHuruf: String(r.nilai_akhir_huruf ?? ''),
+    bobot: Number(r.nilai_bobot) || 0,
+  }));
+}
+
+/** Map API `v2/daftar_khs` rows into ipk + semester metadata list. */
+export function parseApiDaftarKhs(
+  rows: Array<Record<string, unknown>>,
+): { ipk?: number; semesters: { ta: string; smt: string; smtAmbil: string }[] } {
+  const semesters = rows.map((r) => ({
+    ta: String(r.ta ?? ''),
+    smt: String(r.smt ?? ''),
+    smtAmbil: String(r.smt_ambil ?? ''),
+  }));
+  const rawIpk = rows[0]?.ipk;
+  const ipk = rawIpk != null ? Number(String(rawIpk).replace(',', '.')) : undefined;
+  return { ...(ipk != null && Number.isFinite(ipk) ? { ipk } : {}), semesters };
+}
+
+/** Map API `v2/lihat_irs` rows into SiapIrs['mataKuliah'] */
+export function parseApiIrs(
+  rows: Array<Record<string, unknown>>,
+): SiapIrs['mataKuliah'] {
+  return rows.map((r) => ({
+    kode: String(r.kode_mk ?? ''),
+    nama: String(r.nama_mk ?? ''),
+    sks: Number(r.sks_mk) || 0,
+    kelas: (r.nama_kelas as string) || undefined,
+    jadwal: (r.jadwal as string) || undefined,
+    dosen: (r.nama_dosen as string) || undefined,
+    status: 'rencana',
+  }));
+}
+
+const KODE_MK_RE = /^[A-Z]{2,3}\d{5,}$/;
+
+/** Extract lecturer list from `v2/lihat_irs` rows (kode + joined dosen via |). */
+export function lecturersFromIrs(
+  rows: Array<Record<string, unknown>>,
+): { kode: string; dosen: string }[] {
+  const map = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const kode = String(r.kode_mk ?? '');
+    if (!KODE_MK_RE.test(kode)) continue;
+    const dosen = String(r.nama_dosen ?? '').trim();
+    if (!dosen) continue;
+    if (!map.has(kode)) map.set(kode, new Set());
+    map.get(kode)!.add(dosen);
+  }
+  return Array.from(map, ([kode, set]) => ({ kode, dosen: Array.from(set).join(' | ') }));
+}
+
+/** Map API `absen` rows into SiapAbsenItem[], grouped by kode_mk/idjadwal. */
+export function parseApiAbsen(
+  rows: Array<Record<string, unknown>>,
+): SiapAbsenItem[] {
+  const map = new Map<string, SiapAbsenItem>();
+  for (const r of rows) {
+    const kode = String(r.kode_mk ?? '');
+    const idJadwal = String(r.idjadwal ?? '');
+    const nama = String(r.nama_mk ?? '');
+    const key = idJadwal || kode;
+    if (!map.has(key)) {
+      map.set(key, { idJadwal, nama, hadir: 0, total: 0, hadirPct: 0 });
+    }
+    const item = map.get(key)!;
+    item.total += 1;
+    if (String(r.kehadiran ?? '').trim().toLowerCase() === 'hadir') item.hadir += 1;
+  }
+  for (const item of map.values()) {
+    item.hadirPct = item.total > 0 ? Math.round((item.hadir / item.total) * 100) : 0;
+  }
+  return Array.from(map.values());
+}
+
+/** Map API `pengumuman` rows into SiapNotifications */
+export function parseApiNotifications(
+  rows: Array<Record<string, unknown>>,
+): SiapNotifications {
+  const items: SiapNotification[] = rows.map((r) => ({
+    id: String(r.id ?? ''),
+    title: String(r.judul ?? r.title ?? ''),
+    message: String(r.isi ?? r.message ?? ''),
+    timestamp: String(r.created_at ?? r.timestamp ?? ''),
+    read: Boolean(r.read),
+    type: (r.jenis ?? r.type ?? 'info') as SiapNotification['type'],
+  }));
+  return { count: items.length, items };
+}
