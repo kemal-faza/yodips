@@ -69,6 +69,21 @@ describe('SiapApiUpstream', () => {
     expect(init.body).toContain('app_ver=24');
   });
 
+  // RED: live-verified 2026-08-27 — the SIAP API returns 401 "Unauthorized data
+  // access" when the POST body carries app_ver only. The PLAIN nim must be
+  // present as a form field (`nim=<plain>`) on every data-access fetch. This
+  // test pins that contract so the body cannot regress to app_ver-only.
+  it('fetch sends the plain nim as a form field in the POST body', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ status: 'success', data: [] }),
+      text: async () => '{}',
+    });
+    await upstream.fetch('data_mahasiswa', 'JWT.X.Y', {}, '24060124120013');
+    const [, init] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(init.body).toContain('nim=' + encodeURIComponent('24060124120013'));
+  });
+
   it('mintToken throws StaleUpstreamError on Email salah / Unauthorized', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true, status: 200,
