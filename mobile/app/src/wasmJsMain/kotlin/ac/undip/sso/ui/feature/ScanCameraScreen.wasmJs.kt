@@ -50,6 +50,26 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         }
     }
 
+    // Absen via foto galeri (PWA): buka file picker, decode QR dari gambar.
+    fun startGallery() {
+        if (scanningBusy) return
+        scanningBusy = true
+        cameraError = null
+        outcome = null
+        scope.launch {
+            when (val result = QrScanner.scanFromFile()) {
+                is QrScanResult.Success -> {
+                    val submit = repo.markKehadiran(result.token)
+                    outcome = scanOutcome(submit)
+                }
+
+                is QrScanResult.Error -> cameraError = result.message
+                QrScanResult.Cancelled -> Unit
+            }
+            scanningBusy = false
+        }
+    }
+
     // Ukur area konten setelah layout, lalu mulai scan hanya sekali.
     LaunchedEffect(region) {
         if (region != null && !scanningBusy) startScan()
@@ -124,6 +144,10 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                         Button(onClick = { startScan() }, enabled = !scanningBusy) {
                             Text("Coba Kamera Lagi")
                         }
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = { startGallery() }, enabled = !scanningBusy) {
+                            Text("Pilih dari Galeri")
+                        }
                     }
                 }
 
@@ -150,6 +174,13 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                                 startScan()
                             }) {
                                 Text("Scan Lagi")
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = {
+                                outcome = null
+                                startGallery()
+                            }) {
+                                Text("Pilih dari Galeri")
                             }
                         }
                     }

@@ -3,7 +3,12 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.SsoRepository
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -36,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ZoomIn
@@ -73,8 +79,12 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
 
 /**
  * QR presence scanner — Android actual. Live CameraX preview; each frame is
@@ -112,7 +122,10 @@ internal actual fun ScanScreen(repo: SsoRepository) {
             permissionGranted = granted
         }
 
-    // MLKit scanner + frame executor live for the whole screen lifetime.
+    // Absen via foto galeri: user memilih gambar berisi QR, lalu MLKit decode
+    // dari Bitmap. Sama seperti kamera, token hasil decode di-POST ke SIAP.
+    // Scanner MLKit + frame executor dibuat dulu supaya galleryLauncher bisa
+    // memakainya; keduanya hidup sepanjang usia layar.
     val scanner =
         remember {
             BarcodeScanning.getClient(
@@ -122,6 +135,22 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                     .build(),
             )
         }
+    var galleryBusy by remember { mutableStateOf(false) }
+    val galleryLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            if (uri != null) {
+                galleryBusy = true
+                scope.launch {
+                    val token = decodeQrFromGallery(context, scanner, uri)
+                    if (token != null) {
+                        processing.set(true)
+                        outcome = scanOutcome(repo.markKehadiran(token))
+                    }
+                    galleryBusy = false
+                }
+            }
+        }
+
     val scanExecutor = remember { Executors.newSingleThreadExecutor() }
     DisposableEffect(Unit) {
         onDispose {
@@ -190,7 +219,15 @@ internal actual fun ScanScreen(repo: SsoRepository) {
     FeatureScreen(title = "Scan QR") {
         when {
             !permissionGranted -> {
-                PermissionPrompt { permissionLauncher.launch(Manifest.permission.CAMERA) }
+                Column(Modifier.fillMaxSize()) {
+                    PermissionPrompt { permissionLauncher.launch(Manifest.permission.CAMERA) }
+                    GalleryButton(
+                        busy = galleryBusy,
+                        enabled = true,
+                        onClick = { galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 16.dp),
+                    )
+                }
             }
 
             else -> {
@@ -222,6 +259,18 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                             modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
                         )
                     }
+                    // Asisten: pilih foto QR dari galeri (mis. screenshot CCTV dosen),
+                    // tanpa harus menyalakan kamera.
+                    GalleryButton(
+                        busy = galleryBusy,
+                        enabled = true,
+                        onClick = {
+                            galleryLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    )
                 }
                 // Centered result popup over the still-running camera.
                 outcome?.let { o ->
@@ -235,6 +284,29 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                 }
             }
         }
+    }
+}
+
+/** Bottom full-width button to pick a QR photo from the gallery. */
+@Composable
+private fun GalleryButton(
+    busy: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled && !busy,
+        modifier = modifier,
+    ) {
+        Icon(
+            Icons.Filled.PhotoLibrary,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(if (busy) "Memindai foto…" else "Pilih dari Galeri")
     }
 }
 
@@ -429,3 +501,42 @@ private fun decodeQr(
         imageProxy.close()
     }
 }
+
+/**
+ * Decode a QR token from a gallery image picked by the user. Runs MLKit on a
+ * Bitmap read from the content [Uri]; returns the first QR value found, or null
+ * when the image has no readable QR (or could not be loaded). Runs in an IO
+ * context — decoding is CPU+IO and must not touch the main thread.
+ */
+private suspend fun decodeQrFromGallery(
+    context: android.content.Context,
+    scanner: BarcodeScanner,
+    uri: Uri,
+): String? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val bitmap: Bitmap =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    ImageDecoder.decodeBitmap(
+                        ImageDecoder.createSource(context.contentResolver, uri),
+                    ) { decoder, _, _ ->
+                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                        decoder.isMutableRequired = false
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    android.provider.MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                }
+            val input = InputImage.fromBitmap(bitmap, 0)
+            val codes = scanner.process(input).await()
+            codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }?.rawValue
+        }.getOrNull()
+    }
+
+/** Await a google-play-services [com.google.android.gms.tasks.Task] from a coroutine. */
+private suspend fun <T> com.google.android.gms.tasks.Task<T>.await(): T =
+    suspendCancellableCoroutine { cont ->
+        addOnSuccessListener { cont.resume(it) }
+        addOnFailureListener { e -> cont.resumeWith(Result.failure(e)) }
+        addOnCanceledListener { cont.cancel() }
+    }
