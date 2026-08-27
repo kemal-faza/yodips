@@ -812,4 +812,18 @@ describe('API-backed methods', () => {
     expect(apiMock.mintToken).toHaveBeenCalledWith('x@students.undip.ac.id', '24060124120013');
     expect(p.nama).toBe('Budi');
   });
+
+  it('getKehadiran stays on the cookie upstream (scrape), not apiUpstream', async () => {
+    const apiMock2 = { mintToken: jest.fn(), fetch: jest.fn() };
+    const upstreamMock = { fetchText: jest.fn().mockResolvedValue('<html>ok</html>') };
+    const svc = new SiapService(
+      undefined,
+      upstreamMock as any,
+      { get: async () => ({ siapCookie: 's' }) } as any,
+      apiMock2 as SiapApiUpstream,
+    );
+    await svc.getKehadiran('u1', '3747942');
+    expect(upstreamMock.fetchText).toHaveBeenCalled();
+    expect(apiMock2.fetch).not.toHaveBeenCalled();
+  });
 });
