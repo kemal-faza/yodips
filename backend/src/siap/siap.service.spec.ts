@@ -210,9 +210,11 @@ describe('SiapService', () => {
         { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', sks_mk: '5', nama_kelas: 'C', jadwal: 'Senin 07:00', nama_dosen: 'Dosen X' },
         { kode_mk: 'MIK1624103', nama_mk: 'Struktur Diskret', sks_mk: '4', nama_kelas: 'D' },
       ];
-      apiMock.fetch
-        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' }) // semester_aktif
-        .mockResolvedValue(rows); // v2/lihat_irs per semester (5x)
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+        return rows; // v2/lihat_irs per semester (5x)
+      });
       const irs = await irsSvc().getIrs('u1');
       // 5 semesters × (5 + 4 = 9 SKS per semester) = 45 total.
       expect(irs.totalSks).toBe(45);
@@ -227,9 +229,11 @@ describe('SiapService', () => {
 
     it('propagates a stale api-credential as 401', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
-      apiMock.fetch
-        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' })
-        .mockRejectedValue(new StaleUpstreamError('Siap', 'api-credential'));
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+        throw new StaleUpstreamError('Siap', 'api-credential');
+      });
       await expect(irsSvc().getIrs('u1')).rejects.toBeInstanceOf(StaleUpstreamError);
     });
   });
@@ -257,10 +261,12 @@ describe('SiapService', () => {
     });
 
     it('returns [] when every semester IRS has no lecturer', async () => {
-      // semester_aktif drives angkatan/count; getProfile is cache-backed (returns empty angkatan here).
-      apiMock.fetch
-        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' }) // semester_aktif
-        .mockResolvedValue([]); // v2/lihat_irs empty for all 5 semesters
+      // semester_aktif + data_mahasiswa drive angkatan/count; IRS empty across all.
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+        return []; // v2/lihat_irs empty for all 5 semesters
+      });
       expect(await lecturersSvc().getLecturers('u1')).toEqual([]);
     });
 
@@ -270,9 +276,11 @@ describe('SiapService', () => {
         { kode_mk: 'MIK1624105', nama_dosen: 'Dosen Uji Dua' },
         { kode_mk: 'UUW1624002', nama_dosen: 'Dosen Uji Empat' },
       ];
-      apiMock.fetch
-        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' }) // semester_aktif
-        .mockResolvedValue(rows); // v2/lihat_irs per semester
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+        return rows; // v2/lihat_irs per semester
+      });
       const result = await lecturersSvc().getLecturers('u1');
       const byCode = new Map(result.map((r) => [r.kode, r.dosen]));
       expect(byCode.get('MIK1624105')).toBe('Dosen Uji Satu | Dosen Uji Dua');
@@ -283,12 +291,14 @@ describe('SiapService', () => {
 
     it('sends the correct per-semester ta/smt_ambil/smt params', async () => {
       const seen: Array<Record<string, string>> = [];
-      apiMock.fetch
-        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' })
-        .mockImplementation(async (_e: string, token: string, form: Record<string, string>) => {
+      apiMock.fetch.mockImplementation(
+        async (endpoint: string, _token: string, form: Record<string, string>) => {
+          if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+          if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
           seen.push(form);
           return [{ kode_mk: 'MIK1624105', nama_dosen: 'D' }];
-        });
+        },
+      );
       await lecturersSvc().getLecturers('u1');
       expect(seen).toEqual([
         { ta: '2024', smt_ambil: '1', smt: '1' },
