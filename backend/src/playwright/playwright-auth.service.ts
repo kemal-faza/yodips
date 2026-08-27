@@ -10,6 +10,8 @@ export interface CapturedSession {
   microsoftCookie: string;
   kulonCookie: string;
   siapCookie: string;
+  /** Email SSO mahasiswa (dari profil SIAP). Wajib utk mint token API resmi. */
+  emailSso?: string;
   capturedAt: number;
 }
 
