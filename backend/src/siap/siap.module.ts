@@ -6,6 +6,7 @@ import { CacheModule } from '../cache/cache.module';
 import { SiapController } from './siap.controller';
 import { SiapService } from './siap.service';
 import { SiapUpstreamSession } from './siap-upstream.session';
+import { SiapApiUpstream } from './siap-api';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Module({
@@ -21,7 +22,20 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
     }),
   ],
   controllers: [SiapController],
-  providers: [SiapUpstreamSession, SiapService, JwtAuthGuard],
+  providers: [
+    SiapUpstreamSession,
+    {
+      provide: SiapApiUpstream,
+      inject: [ConfigService],
+      useFactory: (c: ConfigService) =>
+        new SiapApiUpstream(
+          c.get<string>('SIAP_API_BASE') ?? 'https://api.siap.undip.ac.id/index.php',
+          c.get<string>('SIAP_APP_VER') ?? '24',
+        ),
+    },
+    SiapService,
+    JwtAuthGuard,
+  ],
   exports: [SiapService, SiapUpstreamSession],
 })
 export class SiapModule {}
