@@ -78,6 +78,10 @@ class PushMessagingService : FirebaseMessagingService() {
         // onMessageReceived hanya menyentuh data-only atau app FOREGROUND.
         val title = message.notification?.title ?: message.data["title"] ?: return
         val body = message.notification?.body ?: message.data["body"] ?: ""
-        showPush(this, title, body, message.data["target"], message.data["payload"])
+        val target = message.data["target"]
+        val payload = message.data["payload"]
+        // Simpan ke riwayat lokal supaya bisa dibuka lagi dari layar Notifikasi.
+        PushGraph.recordReceived(title, body, target, payload)
+        showPush(this, title, body, target, payload)
     }
 }

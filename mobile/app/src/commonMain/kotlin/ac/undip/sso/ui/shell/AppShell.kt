@@ -3,9 +3,13 @@ package ac.undip.sso.ui.shell
 import ac.undip.sso.core.data.TokenStoreLike
 import ac.undip.sso.core.data.PersistentCache
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.core.network.KulonAssignment
+import ac.undip.sso.core.push.NotificationHistoryStore
 import ac.undip.sso.core.push.PushTargets
 import ac.undip.sso.uptimeMs
+import ac.undip.sso.ui.feature.AssignmentDetailScreen
 import ac.undip.sso.ui.feature.DashboardScreen
+import ac.undip.sso.ui.feature.NotificationsScreen
 import ac.undip.sso.ui.feature.IrsScreen
 import ac.undip.sso.ui.feature.KhsScreen
 import ac.undip.sso.ui.feature.ProfileScreen
@@ -96,6 +100,7 @@ fun AppShell(
     onLogout: () -> Unit = {},
     initialNavTarget: String? = null,
     onNavConsumed: () -> Unit = {},
+    notificationHistory: NotificationHistoryStore? = null,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -107,6 +112,9 @@ fun AppShell(
                 tokenStore = tokenStore,
             )
         }
+    // Selected task handed to the detail sub-screen (navigated by id so the
+    // back stack stays light; the screen re-fetches detail from the api).
+    var selectedTask by remember { mutableStateOf<KulonAssignment?>(null) }
 
     CompositionLocalProvider(
         LocalAppNavigation provides AppNavigation(
@@ -138,12 +146,43 @@ fun AppShell(
                     onOpenKhs = { navController.navigate("khs") },
                 )
             }
-            composable(Tab.Tasks.route) { TasksScreen(repo) }
+            composable(Tab.Tasks.route) {
+                TasksScreen(repo, onOpenDetail = { task ->
+                    selectedTask = task
+                    navController.navigate("task/${task.id}")
+                })
+            }
             composable(Tab.Scan.route) { ScanScreen(repo) }
             composable(Tab.Schedule.route) { ScheduleScreen(repo) }
-            composable(Tab.Profile.route) { ProfileScreen(repo, themeController, onLogout = onLogout) }
+            composable(Tab.Profile.route) {
+                ProfileScreen(
+                    repo = repo,
+                    themeController = themeController,
+                    onLogout = onLogout,
+                    onOpenNotifications = {
+                        navController.navigate("notifications")
+                    },
+                    showNotifications = notificationHistory != null,
+                )
+            }
             composable("khs") { KhsScreen(repo, onBack = { navController.popBackStack() }) }
             composable("irs") { IrsScreen(repo, onBack = { navController.popBackStack() }) }
+            composable("notifications") {
+                val history = notificationHistory
+                if (history != null) {
+                    NotificationsScreen(history = history, onBack = { navController.popBackStack() })
+                }
+            }
+            composable("task/{taskId}") {
+                val task = selectedTask
+                if (task != null) {
+                    AssignmentDetailScreen(
+                        repo = repo,
+                        assignment = task,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+            }
         }
 
         // Push tap-navigation: FCM data.target -> tab route. Runs after the

@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -32,9 +33,14 @@ object PushGraph {
     lateinit var registration: PushRegistration
         private set
 
+    /** Riwayat push yang pernah diterima (disimpan lokal, non-PII). */
+    var history: NotificationHistoryStore? = null
+        private set
+
     fun install(context: Context) {
         if (::registration.isInitialized) return
         val appContext = context.applicationContext
+        history = DataStoreNotificationHistoryStore(appContext)
         registration =
             PushRegistration(
                 object : PushRegistration.Ops {
@@ -78,6 +84,27 @@ object PushGraph {
     suspend fun onNewToken(newToken: String, loggedIn: Boolean) {
         val registered = registration.onNewToken(newToken, loggedIn)
         if (registered != null && loggedIn) activeToken = registered
+    }
+
+    /** Simpan notifikasi yang baru diterima ke riwayat lokal (fire-and-forget). */
+    fun recordReceived(
+        title: String,
+        body: String,
+        target: String?,
+        payload: String?,
+    ) {
+        val store = history ?: return
+        ioScope.launch {
+            store.append(
+                StoredNotification(
+                    title = title,
+                    body = body,
+                    target = target.orEmpty(),
+                    payload = payload.orEmpty(),
+                    receivedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
     }
 
     /** Dipanggil AppRoot.onLogout sebelum sesi lokal dihapus. */
