@@ -81,7 +81,15 @@ export class SiapApiUpstream {
     if (nim) {
       headers.Authorization = 'Basic ' + Buffer.from(`${nim}:${token}`).toString('base64');
     }
-    const body = new URLSearchParams({ app_ver: this.appVer, ...form });
+    // Live-verified (2026-08-27): the SIAP API rejects a data-access POST whose
+    // body carries only app_ver — it answers 401 "Unauthorized data access".
+    // The PLAIN nim must ride as a form field (`nim=<nim>`) on every fetch,
+    // in addition to the Basic token. We drop it from `form` first so a
+    // caller-passed nim never conflicts/duplicates.
+    const { nim: _fin, ...rest } = form;
+    const body = new URLSearchParams(
+      nim ? { app_ver: this.appVer, nim, ...rest } : { app_ver: this.appVer, ...rest },
+    );
     const res = await fetch(`${this.apiBase}/${endpoint}`, {
       method: 'POST',
       headers,
