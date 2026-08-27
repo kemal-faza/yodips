@@ -34,6 +34,9 @@ interface SsoApi {
     /** GET /api/kulon/assignments/all */
     suspend fun assignments(): List<KulonAssignment>
 
+    /** GET /api/kulon/assignments/:id/detail?cmid= */
+    suspend fun assignmentDetail(assignmentId: Long, cmid: Long): KulonAssignmentDetail
+
     /** GET /api/kulon/courses */
     suspend fun courses(): List<KulonCourse>
 
