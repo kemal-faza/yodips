@@ -5,6 +5,7 @@ import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
+import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.network.PushDeviceRequest
 import ac.undip.sso.core.network.PushDeviceResponse
@@ -97,6 +98,15 @@ class SsoRepository(
     suspend fun assignments(force: Boolean = false): ApiResult<List<KulonAssignment>> =
         cached("assignments", ListSerializer(KulonAssignment.serializer()), force) {
             refresher.safe(serviceStale = true) { api.assignments() }
+        }
+
+    /** Detail satu tugas — JANGAN di-cache (isi bisa berubah sering, dan payload kecil). */
+    suspend fun assignmentDetail(
+        assignmentId: Long,
+        cmid: Long,
+    ): ApiResult<KulonAssignmentDetail> =
+        refresher.safe(serviceStale = true) {
+            api.assignmentDetail(assignmentId, cmid)
         }
 
     suspend fun courses(force: Boolean = false): ApiResult<List<KulonCourse>> =

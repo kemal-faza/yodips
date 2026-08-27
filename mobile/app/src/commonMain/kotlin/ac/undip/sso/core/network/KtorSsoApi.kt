@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -66,6 +67,13 @@ class KtorSsoApi(
     override suspend fun assignments(): List<KulonAssignment> {
         val resp = client.get("$root/api/kulon/assignments/all")
         return json.decodeFromString<List<KulonAssignment>>(handle(resp))
+    }
+
+    override suspend fun assignmentDetail(assignmentId: Long, cmid: Long): KulonAssignmentDetail {
+        val resp = client.get("$root/api/kulon/assignments/$assignmentId/detail") {
+            parameter("cmid", cmid)
+        }
+        return json.decodeFromString<KulonAssignmentDetail>(handle(resp))
     }
 
     override suspend fun courses(): List<KulonCourse> {

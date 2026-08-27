@@ -6,6 +6,7 @@ import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
+import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.network.PushDeviceRequest
 import ac.undip.sso.core.network.PushDeviceResponse
@@ -58,6 +59,9 @@ private class FakeApi : SsoApi {
     override suspend fun jadwal(): List<SiapJadwal> = throw UnsupportedOperationException()
 
     override suspend fun assignments(): List<KulonAssignment> = throw UnsupportedOperationException()
+
+    override suspend fun assignmentDetail(assignmentId: Long, cmid: Long): KulonAssignmentDetail =
+        throw UnsupportedOperationException()
 
     override suspend fun courses(): List<KulonCourse> = throw UnsupportedOperationException()
 

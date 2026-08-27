@@ -134,6 +134,33 @@ data class KulonAssignment(
     val submissionStatus: String? = null,
 )
 
+/** File lampiran sebuah tugas (dari detail assign Kulon). */
+@Serializable
+data class KulonFile(
+    val name: String = "",
+    val url: String = "",
+)
+
+/** Status submission sebuah tugas (mirror backend KulonSubmission). */
+@Serializable
+data class KulonSubmission(
+    val status: String = "unknown",
+    val submittedAt: Long? = null,
+    val grade: Double? = null,
+    val maxGrade: Double? = null,
+)
+
+/** Detail lengkap satu tugas (GET /api/kulon/assignments/:id/detail?cmid=). */
+@Serializable
+data class KulonAssignmentDetail(
+    val assignmentId: Long = 0,
+    val name: String = "",
+    val descriptionHtml: String = "",
+    val files: List<KulonFile> = emptyList(),
+    val submission: KulonSubmission = KulonSubmission(),
+    val kulonUrl: String = "",
+)
+
 /** Body for `POST /api/siap/kehadiran` (QR absensi proxy). */
 @Serializable
 data class KehadiranRequest(

@@ -97,4 +97,29 @@ class KtorSsoApiTest {
         assertEquals("Tugas 1", list[0].name)
         assertEquals(42L, list[0].id)
     }
+
+    @Test
+    fun `assignmentDetail requests cmid query and parses nested submission`() = runBlocking {
+        val d = api(
+            mockClient(
+                body = """{
+                    "assignmentId": 42,
+                    "name": "Tugas 1",
+                    "descriptionHtml": "<p>Deskripsi</p>",
+                    "files": [{"name":"Berkas.pdf","url":"https://kulon/pluginfile.php/1"}],
+                    "submission": {"status":"submitted","submittedAt":1700000000,"grade":null,"maxGrade":100},
+                    "kulonUrl": "https://kulon2.undip.ac.id/mod/assign/view.php?id=7"
+                }""",
+                assertRequest = { req ->
+                    assertEquals("GET", req.method.value)
+                    assertEquals("7", req.url.parameters["cmid"])
+                    assertEquals("/api/kulon/assignments/42/detail", req.url.encodedPath)
+                },
+            ),
+        ).assignmentDetail(assignmentId = 42, cmid = 7)
+        assertEquals("Tugas 1", d.name)
+        assertEquals(1, d.files.size)
+        assertEquals("Berkas.pdf", d.files[0].name)
+        assertEquals("submitted", d.submission.status)
+    }
 }

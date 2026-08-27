@@ -25,14 +25,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,7 +63,10 @@ private data class CourseCtx(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TasksScreen(repo: SsoRepository) {
+fun TasksScreen(
+    repo: SsoRepository,
+    onOpenDetail: (KulonAssignment) -> Unit = {},
+) {
     var ctx by remember { mutableStateOf(CourseCtx()) }
     FeatureScreen("Tugas") {
         suspend fun loadCtx(force: Boolean) {
@@ -93,9 +100,30 @@ fun TasksScreen(repo: SsoRepository) {
         ) { tasks ->
             var filter by remember { mutableStateOf<TaskBucket?>(TaskBucket.NEED) }
             var showCount by remember { mutableStateOf(TASK_PAGE_SIZE) }
+            var searchQuery by remember { mutableStateOf("") }
             // Switching filter resets the page back to the first chunk.
-            LaunchedEffect(filter) { showCount = TASK_PAGE_SIZE }
+            LaunchedEffect(filter, searchQuery) { showCount = TASK_PAGE_SIZE }
             Column(Modifier.fillMaxSize()) {
+                // Search bar (active on "Semua" and any bucket filter).
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    singleLine = true,
+                    placeholder = { Text("Cari tugas…") },
+                    leadingIcon = {
+                        Icon(Icons.Outlined.Search, contentDescription = null)
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotBlank()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Hapus pencarian")
+                            }
+                        }
+                    },
+                )
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -111,9 +139,10 @@ fun TasksScreen(repo: SsoRepository) {
                 val visible =
                     tasks
                         .filter { filter == null || taskBucket(it, ctx.activeCourseIds) == filter }
+                        .filter { filterTasksByQuery(it, searchQuery) }
                         .sortedBy { it.duedate }
                 if (visible.isEmpty()) {
-                    EmptyTasks(filter)
+                    EmptyTasks(filter, searchQuery)
                 } else {
                     val (page, remaining) = pagedTasks(visible, showCount)
                     LazyColumn(
@@ -122,7 +151,7 @@ fun TasksScreen(repo: SsoRepository) {
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(page, key = { it.id }) { t ->
-                            TaskCard(t, taskBucket(t, ctx.activeCourseIds))
+                            TaskCard(t, taskBucket(t, ctx.activeCourseIds), onClick = { onOpenDetail(t) })
                         }
                         if (remaining > 0) {
                             item(key = "load-more") {
@@ -136,21 +165,23 @@ fun TasksScreen(repo: SsoRepository) {
     }
 }
 
-private fun emptyTasksMessage(filter: TaskBucket?): String =
-    when (filter) {
-        null -> "Tidak ada tugas saat ini."
-        TaskBucket.NEED -> "Tidak ada tugas yang perlu dikerjakan. Kamu sudah beres."
-        TaskBucket.DONE -> "Belum ada tugas yang selesai dikerjakan."
-        TaskBucket.LATE -> "Tidak ada tugas terlambat."
+private fun emptyTasksMessage(filter: TaskBucket?, searchQuery: String = ""): String =
+    when {
+        searchQuery.isNotBlank() -> "Tidak ada tugas yang cocok dengan pencarian."
+        filter == null -> "Tidak ada tugas saat ini."
+        filter == TaskBucket.NEED -> "Tidak ada tugas yang perlu dikerjakan. Kamu sudah beres."
+        filter == TaskBucket.DONE -> "Belum ada tugas yang selesai dikerjakan."
+        filter == TaskBucket.LATE -> "Tidak ada tugas terlambat."
+        else -> "Tidak ada tugas saat ini."
     }
 
 @Composable
-private fun EmptyTasks(filter: TaskBucket?) {
+private fun EmptyTasks(filter: TaskBucket?, searchQuery: String = "") {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Outlined.Inbox, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(56.dp))
             Text(
-                emptyTasksMessage(filter),
+                emptyTasksMessage(filter, searchQuery),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -164,6 +195,7 @@ private fun EmptyTasks(filter: TaskBucket?) {
 private fun TaskCard(
     t: KulonAssignment,
     bucket: TaskBucket?,
+    onClick: () -> Unit = {},
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -173,6 +205,7 @@ private fun TaskCard(
             } else {
                 CardDefaults.cardColors()
             },
+        onClick = onClick,
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -220,6 +253,16 @@ private fun BucketPill(bucket: TaskBucket) {
 
 /** Client-side page size for the tasks list (not all assignments render at once). */
 internal const val TASK_PAGE_SIZE = 15
+
+/** Case-insensitive match on task name or course name; blank query matches all. */
+internal fun filterTasksByQuery(
+    t: KulonAssignment,
+    query: String,
+): Boolean {
+    val q = query.trim()
+    if (q.isEmpty()) return true
+    return t.name.contains(q, ignoreCase = true) || t.course.contains(q, ignoreCase = true)
+}
 
 /** Slice for one page of a sorted task list; returns (shown slice, how many remain).
  *  Kept pure so pagination behavior is unit-testable. */
