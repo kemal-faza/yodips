@@ -1,6 +1,6 @@
 [versions]
 agp = "8.7.3"
-kotlin = "2.3.20"
+kotlin = "2.3.21"
 composeMultiplatform = "1.11.1"
 navigationMultiplatform = "2.9.2"
 coreKtx = "1.13.1"
