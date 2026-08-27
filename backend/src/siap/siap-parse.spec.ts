@@ -166,6 +166,8 @@ describe('parseApiJadwal', () => {
     expect(out[0].matakuliah).toBe('Sistem Informasi');
     expect(out[0].sks).toBe(3);
     expect(out[0].tanggal).toBe('2026-08-30');
+    // Mobile ScheduleScreen/parseWaktu regex requires the literal "s/d" separator.
+    expect(out[0].waktu).toBe('07:00:00 s/d 09:30:00');
   });
 });
 

@@ -236,6 +236,23 @@ describe('SiapService', () => {
       });
       await expect(irsSvc().getIrs('u1')).rejects.toBeInstanceOf(StaleUpstreamError);
     });
+
+    it('resolves angkatan from data_mahasiswa via the batch token (no nested getProfile mint)', async () => {
+      // Regresses the batch-token invalidation bug: getIrs must only mint ONCE and
+      // derive angkatan from data_mahasiswa on the SAME token — never call getProfile
+      // (which would mint a fresh token and invalidate the batch one).
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      const endpoints: string[] = [];
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        endpoints.push(endpoint);
+        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+        return [];
+      });
+      await irsSvc().getIrs('u1');
+      expect(apiMock.mintToken).toHaveBeenCalledTimes(1); // single batch token, no re-mint
+      expect(endpoints).toContain('data_mahasiswa'); // angkatan from the batch
+    });
   });
 
   describe('getLecturers', () => {
