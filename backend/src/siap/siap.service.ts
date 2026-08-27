@@ -18,19 +18,20 @@ import type {
 } from './siap-parse';
 import {
   currentSemesterCount,
-  dataRows,
-  parseAbsenSummary,
+  lecturersFromIrs,
   parseAbsenTable,
-  parseIrsTable,
-  parseKhsNilai,
-  parseKumulatifIpk,
+  parseApiAbsen,
+  parseApiDaftarKhs,
+  parseApiIrs,
+  parseApiJadwal,
+  parseApiKhs,
+  parseApiNotifications,
+  parseApiProfile,
   parseNumber,
   pickProfileValue,
   pickProfileValueHtml,
   profileSection,
   round,
-  rowCells,
-  semesterLabel,
 } from './siap-parse';
 
 // Public data shapes + pure parsing helpers moved to siap-parse.ts —
@@ -99,6 +100,79 @@ export class SiapService {
 
   private readonly baseUrl = 'https://siap.undip.ac.id';
 
+  /** Mint token once per public method (single-use). Resolve identity (nim+emailSso). */
+  private async resolveSiapIdentity(sub?: string): Promise<{ nim: string; emailSso: string }> {
+    const siapCookie = await this.requireSiapCookie(sub);
+    const session = sub ? await this.sessionStore?.get(sub) : null;
+    const nim = session?.identity ?? sub ?? '';
+    let emailSso = session?.emailSso ?? '';
+    if (!emailSso) {
+      // Fallback: scrape private fetchProfile (masih jalur cookie) utk ekstrak emailSso.
+      const prof = await this.fetchProfile(siapCookie);
+      emailSso = prof.emailSso ?? '';
+      if (sub && this.sessionStore) {
+        const existing = await this.sessionStore.get(sub);
+        if (existing) {
+          await this.sessionStore.set(sub, { ...existing, emailSso });
+        }
+      }
+    }
+    if (!emailSso) {
+      throw new StaleUpstreamError('Siap', 'no-emailSso', 'Email SSO tidak tersedia. Silakan login ulang via SSO');
+    }
+    return { nim, emailSso };
+  }
+
+  /** Mint-and-fetch with a single token retry on `Invalid credentials` (spec §5.1).
+   *  A fresh token invalidates the previous one, so an expired-token path is
+   *  simply re-minted once; if it still fails, throw. */
+  private async mintAndFetch<T>(
+    emailSso: string,
+    nim: string,
+    endpoint: string,
+    form: Record<string, string> = {},
+  ): Promise<T> {
+    const { token } = await this.apiUpstream.mintToken(emailSso, nim);
+    try {
+      return await this.apiUpstream.fetch<T>(endpoint, token, form, nim);
+    } catch (e) {
+      // Retry once: the token may have been invalidated by a parallel batch.
+      if (e instanceof StaleUpstreamError) {
+        const { token: fresh } = await this.apiUpstream.mintToken(emailSso, nim);
+        return await this.apiUpstream.fetch<T>(endpoint, fresh, form, nim);
+      }
+      throw e;
+    }
+  }
+
+  /** "YYYY/YYYY Ganjil|Genap" from {ta, smt-within-year} label. */
+  private semesterLabelFromTa(ta: string, smt: string): string {
+    const t = Number(ta);
+    const s = Number(smt);
+    return `${t}/${t + 1} ${s === 2 ? 'Genap' : 'Ganjil'}`;
+  }
+
+  /** Best-effort merge of web-visible profile fields the API may omit (ipk /
+   *  emailPribadi / alamatSekarang) from the scrape fallback. Swallow errors. */
+  private async mergeProfileFallback(
+    profile: SiapProfile,
+    sub?: string,
+  ): Promise<SiapProfile> {
+    if (profile.ipk != null && profile.emailPribadi && profile.alamatSekarang) return profile;
+    try {
+      const cookie = await this.requireSiapCookie(sub);
+      const scraped = await this.fetchProfile(cookie);
+      return {
+        ...profile,
+        ipk: profile.ipk ?? scraped.ipk,
+        emailPribadi: profile.emailPribadi ?? scraped.emailPribadi,
+        alamatSekarang: profile.alamatSekarang ?? scraped.alamatSekarang,
+      };
+    } catch {
+      return profile; // API shape is authoritative; don't fail profile on scrape
+    }
+  }
+
   /**
    * Resolve the stored SIAP cookie for a user. The endpoint-facing API takes
    * only `sub` — cookies never cross module boundaries; a missing session
@@ -122,14 +196,17 @@ export class SiapService {
 
   /** Cached profile entry point (endpoint API takes only `sub`). */
   async getProfile(sub?: string): Promise<SiapProfile> {
-    const siapCookie = await this.requireSiapCookie(sub);
     if (sub && this.cache) {
       const hit = await this.cache.get<SiapProfile>(`${sub}:siap:profile`);
       if (hit) return hit;
     }
-    const profile = await this.fetchProfile(siapCookie);
-    if (sub && this.cache)
-      await this.cache.set(`${sub}:siap:profile`, profile);
+    const { emailSso, nim } = await this.resolveSiapIdentity(sub);
+    const data = await this.mintAndFetch<Record<string, unknown>>(emailSso, nim, 'data_mahasiswa');
+    const sem = await this.mintAndFetch<{ nm_smt?: string }>(emailSso, nim, 'semester_aktif');
+    const base = parseApiProfile(data ?? {}, sem);
+    // Merge web-visible fields the API may omit, from a scrape fallback.
+    const profile = await this.mergeProfileFallback(base, sub);
+    if (sub && this.cache) await this.cache.set(`${sub}:siap:profile`, profile);
     return profile;
   }
 
@@ -137,8 +214,9 @@ export class SiapService {
    * Profile is server-rendered on the dashboard page. `#tabmhs_profile` holds
    * NIM/Nama/Fakultas/Prodi/Angkatan; the summary near the status badge holds
    * the current semester label and status. Parsing lives in siap-parse.
+   * Public so AuthService can call it at handoff to capture `emailSso`.
    */
-  private async fetchProfile(siapCookie: string): Promise<SiapProfile> {
+  async fetchProfile(siapCookie: string): Promise<SiapProfile> {
     const html = await this.upstream.fetchText(
       `${this.baseUrl}/pages/mhs/dashboard`,
       {
@@ -191,158 +269,105 @@ export class SiapService {
   }
 
   /**
-   * IRS: GET /irs/mhs/irs/ajax_irs_diambil returns JSON `{"total_sks":n,"html":"<tr>…"}`.
-   * Each `<tr>` is NO, KODE, NAMA, SKS, kelas, status, …; the KODE/NAMA/SKS are
-   * the contract fields, kelas/status are carried as optional extras.
+   * IRS: mint ONCE, fetch `v2/lihat_irs` per semester (semester_aktif label +
+   * angkatan drive the count). Retry the whole batch once on invalid-credential.
    */
   async getIrs(sub?: string): Promise<SiapIrs> {
-    const siapCookie = await this.requireSiapCookie(sub);
     if (sub && this.cache) {
       const hit = await this.cache.get<SiapIrs>(`${sub}:siap:irs`);
       if (hit) return hit;
     }
-    const data = await this.upstream.fetchJson<{
-      total_sks?: number | string;
-      html?: string;
-    }>(`${this.baseUrl}/irs/mhs/irs/ajax_irs_diambil`, {
-      headers: { Cookie: siapCookie },
-      redirect: 'follow',
-    });
-
-    const mataKuliah = dataRows(data.html ?? '').map((row) => {
-      const c = rowCells(row);
-      return {
-        kode: c[1] ?? '',
-        nama: c[2] ?? '',
-        sks: Number(c[3]) || 0,
-        kelas: c[4] || undefined,
-        status: c[5] ?? '',
-      };
-    });
-
-    const irs: SiapIrs = {
-      // The ajax_irs_diambil payload does not carry the semester label itself.
-      semester: '',
-      totalSks: Number(data.total_sks) || 0,
-      mataKuliah,
+    const { emailSso, nim } = await this.resolveSiapIdentity(sub);
+    // Batch: mint ONCE + reuse for the whole semester loop; retry once on stale.
+    let token = (await this.apiUpstream.mintToken(emailSso, nim)).token;
+    const fetchBatch = async <T>(endpoint: string, form?: Record<string, string>) =>
+      this.apiUpstream.fetch<T>(endpoint, token, form, nim);
+    const build = async (): Promise<SiapIrs> => {
+      const sem = await fetchBatch<{ nm_smt?: string }>('semester_aktif');
+      const semester = sem?.nm_smt ?? '';
+      const angkatan = (await this.getProfile(sub)).angkatan;
+      const count = currentSemesterCount(angkatan, semester);
+      let totalSks = 0;
+      const mataKuliah: SiapIrs['mataKuliah'] = [];
+      for (let smt = 1; smt <= count; smt++) {
+        const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
+        const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+        const rows = await fetchBatch<Array<Record<string, unknown>>>('v2/lihat_irs', {
+          ta: String(ta), smt_ambil: String(smt), smt: String(smtWithinYear),
+        });
+        const mk = parseApiIrs(Array.isArray(rows) ? rows : []);
+        mataKuliah.push(...mk);
+        totalSks += mk.reduce((s, m) => s + m.sks, 0);
+      }
+      return { semester, totalSks, mataKuliah };
     };
-    if (sub && this.cache) await this.cache.set(`${sub}:siap:irs`, irs);
-    return irs;
-  }
-
-  /** Total SKS for a semester via POST get_total_sks; falls back to the KHS tfoot. */
-  private async fetchTotalSks(
-    siapCookie: string,
-    body: string,
-    khsHtml: string,
-  ): Promise<number> {
     try {
-      const data = await this.upstream.fetchJson<{ total_sks?: number | string }>(
-        `${this.baseUrl}/irs/mhs/irs/get_total_sks`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Cookie: siapCookie,
-          },
-          body,
-        },
-      );
-      if (data.total_sks != null) return Number(data.total_sks) || 0;
-    } catch {
-      // fall through to the tfoot total
+      const irs = await build();
+      if (sub && this.cache) await this.cache.set(`${sub}:siap:irs`, irs);
+      return irs;
+    } catch (e) {
+      if (e instanceof StaleUpstreamError) {
+        token = (await this.apiUpstream.mintToken(emailSso, nim)).token;
+        const irs = await build();
+        if (sub && this.cache) await this.cache.set(`${sub}:siap:irs`, irs);
+        return irs;
+      }
+      throw e;
     }
-    // KHS tfoot row: <th>Total</th><th>&nbsp;</th><th>20</th>…
-    const tfoot = khsHtml.match(/<tfoot[\s\S]*?<\/tfoot>/i)?.[0] ?? '';
-    const cells = dataRows(tfoot).flatMap((r) => rowCells(r));
-    return Number(cells[2]) || 0;
   }
 
   /**
-   * KHS: for each semester POST get_khs (ta/smt_ambil/smt) → HTML table of
-   * nilai, and get_total_sks → total SKS. IP per semester = Σ(bobot·sks)/Σ(sks);
-   * IPK = Σ(ip·sks)/Σ(sks) across all semesters. Empty ("-kosong-") semesters
-   * are included with an empty nilai array and ip 0.
+   * KHS: mint ONCE, fetch `v2/daftar_khs` (ipk + semester metadata) then
+   * `v2/lihat_khs` per semester. `smt_ambil` = cumulative index; `smt` =
+   * within-year index the API keys on. Retry the whole batch once on stale.
    */
   async getKhs(sub?: string): Promise<SiapKhs> {
-    const siapCookie = await this.requireSiapCookie(sub);
     if (sub && this.cache) {
       const hit = await this.cache.get<SiapKhs>(`${sub}:siap:khs`);
       if (hit) return hit;
     }
-    const profile = await this.fetchProfile(siapCookie);
-    const count = currentSemesterCount(
-      profile.angkatan,
-      profile.semesterBerjalan,
-    );
-
-    const semesters: SiapKhsSemester[] = [];
-    let totalWeighted = 0;
-    let totalSks = 0;
-    let lastKhsHtml = '';
-
-    for (let smt = 1; smt <= count; smt++) {
-      const ta = Number(profile.angkatan) + Math.floor((smt - 1) / 2);
-      // `smt_ambil` is the cumulative semester index; `smt` is the within-year
-      // index (1 = Ganjil, 2 = Genap) the KHS view keys on — NOT the cumulative
-      // index. Sending the cumulative value works for semesters 1–2 (where the
-      // two coincide) but makes semesters 3+ return "-kosong-"/empty (the idx
-      // has no matching within-year block). Verified live 2026-08-11: sending
-      // smt=3 for 2025/2026 Ganjil returns empty; within-year smt=1 grades.
-      const smtWithinYear = smt % 2 === 1 ? 1 : 2;
-      const body = `ta=${ta}&smt_ambil=${smt}&smt=${smtWithinYear}`;
-
-      const khsHtml = await this.upstream.fetchText(
-        `${this.baseUrl}/irs/mhs/irs/get_khs`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Cookie: siapCookie,
-          },
-          body,
-        },
-      );
-
-      const nilai = parseKhsNilai(khsHtml);
-      const semesterSks = await this.fetchTotalSks(siapCookie, body, khsHtml);
-      lastKhsHtml = khsHtml;
-
-      // Compute the raw (unrounded) per-semester IP for aggregation, and a
-      // rounded copy for display. Rounding the per-semester IP before summing
-      // into the IPK accumulates error (B11) — e.g. 3.6667→3.67 then ×300
-      // drifts the cumulative IPK by a cent.
-      const rawIp = nilai.length
-        ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
-          nilai.reduce((s, n) => s + n.sks, 0)
-        : 0;
-
-      semesters.push({
-        semester: semesterLabel(profile.angkatan, smt),
-        ip: round(rawIp),
-        totalSks: semesterSks,
-        nilai,
-      });
-
-      // A semester counts toward the cumulative IPK only when it has at least one
-      // real letter grade. The current/ungraded term returns enrolled courses
-      // (nilai.length > 0) with empty nilaiHuruf / bobot 0 (rawIp 0) — its SKS must
-      // not inflate the IPK denominator (SIAP itself excludes it: 292/80 vs 292/84).
-      const hasGrades = nilai.some((n) => (n.nilaiHuruf ?? '').trim() !== '');
-      if (hasGrades) {
-        totalWeighted += rawIp * semesterSks;
-        totalSks += semesterSks;
+    const { emailSso, nim } = await this.resolveSiapIdentity(sub);
+    // Batch: mint ONE token for the whole method (spec §2.2). Retry the whole
+    // batch once on an invalid-credential (fresh token invalidates the old).
+    let token = (await this.apiUpstream.mintToken(emailSso, nim)).token;
+    const fetchBatch = async <T>(endpoint: string, form?: Record<string, string>) =>
+      this.apiUpstream.fetch<T>(endpoint, token, form, nim);
+    const build = async (): Promise<SiapKhs> => {
+      const daftar = await fetchBatch<Array<Record<string, unknown>>>('v2/daftar_khs');
+      const list = Array.isArray(daftar) ? daftar : [];
+      const ipk = parseApiDaftarKhs(list).ipk;
+      const semesters: SiapKhsSemester[] = [];
+      for (const d of list) {
+        const ta = String(d.ta ?? '');
+        // smt_ambil = cumulative index; smt = within-year index that v2/lihat_khss keys on.
+        const smtAmbil = String(d.smt_ambil ?? '');
+        const smt = String(d.smt ?? '');
+        const rows = await fetchBatch<Array<Record<string, unknown>>>('v2/lihat_khs', { ta, smt_ambil: smtAmbil, smt });
+        const nilai = parseApiKhs(Array.isArray(rows) ? rows : []);
+        const totalSks = nilai.reduce((s, n) => s + n.sks, 0);
+        const rawIp = nilai.length
+          ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) / nilai.reduce((s, n) => s + n.sks, 0)
+          : 0;
+        // Label always from the TA + within-year smt (NOT semesterLabel('',…)).
+        const label = this.semesterLabelFromTa(ta, smt);
+        semesters.push({ semester: label, ip: round(rawIp), totalSks, nilai });
       }
+      return { ipk: ipk ?? 0, semesters }; // ipk REQUIRED on SiapKhs
+    };
+    try {
+      const khs = await build();
+      if (sub && this.cache) await this.cache.set(`${sub}:siap:khs`, khs);
+      return khs;
+    } catch (e) {
+      // Retry once on invalid-credential: re-mint a fresh token.
+      if (e instanceof StaleUpstreamError) {
+        token = (await this.apiUpstream.mintToken(emailSso, nim)).token;
+        const khs = await build();
+        if (sub && this.cache) await this.cache.set(`${sub}:siap:khs`, khs);
+        return khs;
+      }
+      throw e;
     }
-
-    const officialIpk = lastKhsHtml
-      ? parseKumulatifIpk(lastKhsHtml)
-      : undefined;
-    const ipk =
-      officialIpk ?? (totalSks > 0 ? round(totalWeighted / totalSks) : 0);
-    const khs: SiapKhs = { ipk, semesters };
-    if (sub && this.cache) await this.cache.set(`${sub}:siap:khs`, khs);
-    return khs;
   }
 
   /**
@@ -362,43 +387,36 @@ export class SiapService {
   async getLecturers(
     sub?: string,
   ): Promise<{ kode: string; dosen: string }[]> {
-    const siapCookie = await this.requireSiapCookie(sub);
-    const profile = await this.fetchProfile(siapCookie);
-    const count = currentSemesterCount(
-      profile.angkatan,
-      profile.semesterBerjalan,
-    );
-
-    const entries = new Map<string, string>();
-    const results = await Promise.allSettled(
-      Array.from({ length: count }, (_, i) => {
-        const smt = i + 1;
-        const ta = Number(profile.angkatan) + Math.floor((smt - 1) / 2);
+    const { emailSso, nim } = await this.resolveSiapIdentity(sub);
+    let token = (await this.apiUpstream.mintToken(emailSso, nim)).token;
+    const fetchBatch = async <T>(endpoint: string, form?: Record<string, string>) =>
+      this.apiUpstream.fetch<T>(endpoint, token, form, nim);
+    const build = async (): Promise<{ kode: string; dosen: string }[]> => {
+      const sem = await fetchBatch<{ nm_smt?: string }>('semester_aktif');
+      const angkatan = (await this.getProfile(sub)).angkatan;
+      const count = currentSemesterCount(angkatan, sem?.nm_smt ?? '');
+      const entries = new Map<string, { kode: string; dosen: string }>();
+      for (let smt = 1; smt <= count; smt++) {
+        const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
         const smtWithinYear = smt % 2 === 1 ? 1 : 2;
-        const body = `ta=${ta}&smt_ambil=${smt}&smt=${smtWithinYear}`;
-        return this.upstream
-          .fetchText(`${this.baseUrl}/irs/mhs/irs/get_irs`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              Cookie: siapCookie,
-            },
-            body,
-          })
-          .then((html) => parseIrsTable(html));
-      }),
-    );
-
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        for (const { kode, dosen } of r.value) {
-          if (!entries.has(kode)) entries.set(kode, dosen);
+        const rows = await fetchBatch<Array<Record<string, unknown>>>('v2/lihat_irs', {
+          ta: String(ta), smt_ambil: String(smt), smt: String(smtWithinYear),
+        });
+        for (const { kode, dosen } of lecturersFromIrs(Array.isArray(rows) ? rows : [])) {
+          if (!entries.has(kode)) entries.set(kode, { kode, dosen });
         }
       }
-      // Rejected semesters (stale/upstream) are skipped so one bad semester does
-      // not wipe out every lecturer.
+      return Array.from(entries.values());
+    };
+    try {
+      return await build();
+    } catch (e) {
+      if (e instanceof StaleUpstreamError) {
+        token = (await this.apiUpstream.mintToken(emailSso, nim)).token;
+        return await build();
+      }
+      throw e;
     }
-    return Array.from(entries, ([kode, dosen]) => ({ kode, dosen }));
   }
 
   /**
@@ -412,29 +430,15 @@ export class SiapService {
    * `{"status":"ok","data":{"_timestamp":"...","count":"0"}}` (count as a STRING).
    */
   async getNotifications(sub?: string): Promise<SiapNotifications> {
-    const siapCookie = await this.requireSiapCookie(sub);
-    const data = await this.upstream.fetchJson<{
-      status?: string;
-      data?: {
-        _timestamp?: string;
-        count?: string | number;
-        items?: SiapNotification[];
-      };
-    }>(`${this.baseUrl}/pages/mhs/dashboard/ajax/notifications`, {
-      headers: {
-        Cookie: siapCookie,
-        // SIAP is CodeIgniter-based; this /ajax/ route is guarded by CI's
-        // is_ajax_request() which requires the XMLHttpRequest header. Without
-        // it the endpoint returns "This endpoint cannot be accessed directly."
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-      redirect: 'follow',
-    });
-    const raw = data?.data;
-    const items: SiapNotification[] = Array.isArray(raw?.items)
-      ? raw.items
-      : [];
-    return { count: Number(raw?.count) || items.length, items };
+    if (sub && this.cache) {
+      const hit = await this.cache.get<SiapNotifications>(`${sub}:siap:notifications`);
+      if (hit) return hit;
+    }
+    const { emailSso, nim } = await this.resolveSiapIdentity(sub);
+    const raw = await this.mintAndFetch<Array<Record<string, unknown>>>(emailSso, nim, 'pengumuman');
+    const items = parseApiNotifications(Array.isArray(raw) ? raw : []);
+    if (sub && this.cache) await this.cache.set(`${sub}:siap:notifications`, items);
+    return items;
   }
 
   /**
@@ -471,39 +475,13 @@ export class SiapService {
    * flat `SiapJadwal[]`.
    */
   async getJadwal(sub?: string): Promise<SiapJadwal[]> {
-    const siapCookie = await this.requireSiapCookie(sub);
     if (sub && this.cache) {
       const hit = await this.cache.get<SiapJadwal[]>(`${sub}:siap:jadwal`);
       if (hit) return hit;
     }
-    const data = await this.upstream.fetchJson<
-      Record<string, SiapJadwalUpstream>
-    >(`${this.baseUrl}/jadwal_mahasiswa/mhs/jadwal/get_jadwal`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Cookie: siapCookie,
-        // SIAP is CodeIgniter-based; /jadwal_mahasiswa/* AJAX routes are
-        // guarded by CI's is_ajax_request() which requires this header.
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-      redirect: 'follow',
-    });
-    const out: SiapJadwal[] = [];
-    for (const k of Object.keys(data ?? {})) {
-      const e = data[k];
-      if (!e) continue;
-      const sks = Number(e.sks) || 0;
-      out.push({
-        kode: e.kode_mk || undefined,
-        hari: e.hari || '',
-        matakuliah: e.nama_mk || '',
-        ruang: e.nama_ruang || undefined,
-        waktu: `${e.waktu_mulai ?? ''} s/d ${e.waktu_selesai ?? ''}`.trim(),
-        sks,
-        tanggal: e.tanggal_pertemuan || undefined,
-      });
-    }
+    const { emailSso, nim } = await this.resolveSiapIdentity(sub);
+    const rows = await this.mintAndFetch<Array<Record<string, unknown>>>(emailSso, nim, 'jadwal');
+    const out = parseApiJadwal(Array.isArray(rows) ? rows : []);
     if (sub && this.cache) {
       await this.cache.set(`${sub}:siap:jadwal`, out);
     }
@@ -511,63 +489,24 @@ export class SiapService {
   }
 
   /**
-   * Ringkasan hadir (%) per matakuliah dari halaman index jadwal
-   * (`GET /jadwal_mahasiswa/mhs/jadwal/`). Murah (1 GET) untuk progres
-   * ringkas; detail per pertemuan ada di [getKehadiran].
+   * Ringkasan hadir (%) per matakuliah dari API `absen` (per-pertemuan rows
+   * grouped by kode_mk/idjadwal). No `get_absen` detail — the API carries the
+   * kehadiran per pertemuan, so hadir/total is computed inline.
    */
   async getAbsen(sub?: string): Promise<SiapAbsenItem[]> {
-    const siapCookie = await this.requireSiapCookie(sub);
     if (sub && this.cache) {
       const hit = await this.cache.get<SiapAbsenItem[]>(
         `${sub}:siap:absen`,
       );
       if (hit) return hit;
     }
-    const html = await this.upstream.fetchText(
-      `${this.baseUrl}/jadwal_mahasiswa/mhs/jadwal/`,
-      {
-        headers: { Cookie: siapCookie },
-        redirect: 'follow',
-      },
-    );
-    const items = parseAbsenSummary(html);
-    await this.enrichAbsenCounts(items, siapCookie);
+    const { emailSso, nim } = await this.resolveSiapIdentity(sub);
+    const rows = await this.mintAndFetch<Array<Record<string, unknown>>>(emailSso, nim, 'absen');
+    const items = parseApiAbsen(Array.isArray(rows) ? rows : []);
     if (sub && this.cache) {
       await this.cache.set(`${sub}:siap:absen`, items);
     }
     return items;
-  }
-
-  /**
-   * Lengkapi ringkasan index (hanya hadirPct) dengan hitungan hadir/total per
-   * matakuliah dari detil `get_absen`. Verified live 2026-08-19: SIAP `get_absen`
-   * menerima `idjadwal` (data-id dari halaman index) — BUKAN `id_trx_pertemuan`
-   * dari get_jadwal (yang menjawab "Specified schedule cannot be found").
-   * Best-effort: matkul yang gagal di-fetch tetap di-return (hadir/total = 0).
-   */
-  private async enrichAbsenCounts(
-    items: SiapAbsenItem[],
-    siapCookie: string,
-  ): Promise<void> {
-    if (items.length === 0) return;
-    // Per matkul: 1 GET get_absen(idjadwal) utk hitung hadir/total.
-    for (const item of items) {
-      const id = item.idJadwal;
-      if (!id) continue;
-      try {
-        const det = await this.fetchKehadiran(siapCookie, id);
-        item.hadir = 0;
-        item.total = 0;
-        for (const sec of det.sections) {
-          for (const row of sec.rows) {
-            item.total += 1;
-            if (row.kehadiran.trim().toLowerCase() === 'hadir') item.hadir += 1;
-          }
-        }
-      } catch {
-        // Biarkan hadir/total default 0 untuk matkul ini.
-      }
-    }
   }
 
   /**

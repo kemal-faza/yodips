@@ -4,6 +4,7 @@ import { join } from 'path';
 import { HttpException } from '@nestjs/common';
 import { SiapService } from './siap.service';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
+import type { SiapApiUpstream } from './siap-api';
 
 function fixture(name: string): string {
   return readFileSync(
@@ -72,34 +73,36 @@ describe('SiapService', () => {
   });
 
   describe('sub-based session resolution (endpoint API)', () => {
-    const sessionStore = { get: jest.fn() };
-    const authedDashboard =
-      '<html><div id="tabmhs_profile"><b>Nama Lengkap</b>:</div>' +
-      '<div class="col-sm-9">Budi</div></html>';
+    const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
 
     beforeEach(() => {
-      sessionStore.get.mockReset();
+      apiMock.mintToken.mockReset();
+      apiMock.fetch.mockReset();
     });
 
     function svcWith(cookie: string | undefined): SiapService {
       return new SiapService(
         undefined,
         undefined,
-        { get: jest.fn().mockResolvedValue(cookie ? { siapCookie: cookie } : null) } as any,
+        {
+          get: jest.fn().mockResolvedValue(
+            cookie ? { siapCookie: cookie, identity: '24060124120013', emailSso: 'x@students.undip.ac.id' } : null,
+          ),
+          set: jest.fn(),
+        } as any,
+        apiMock as any,
       );
     }
 
-    it('resolves the SIAP cookie from SessionStore by sub and forwards it', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: PROBE_URL,
-        text: async () => authedDashboard,
-      });
+    it('resolves the SIAP identity from SessionStore by sub and drives the API', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch
+        .mockResolvedValueOnce({ nama: 'Budi', nim: '24060124120013', nama_ps: 'TI', namafak: 'FSM', tahun_masuk: '2024', sso_email: 'x@students.undip.ac.id', status_terakhir: 'Aktif' })
+        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' });
       const out = await svcWith('ci_session_x=K').getProfile('u1');
       expect(out.nama).toBe('Budi');
-      const [, init] = (global.fetch as jest.Mock).mock.calls[0];
-      expect(init.headers.Cookie).toBe('ci_session_x=K');
-      expect(sessionStore.get).not.toHaveBeenCalled(); // svc owns its own store
+      // The identity passed to the API is the session's, not a cookie.
+      expect(apiMock.mintToken).toHaveBeenCalledWith('x@students.undip.ac.id', '24060124120013');
     });
 
     it('throws a typed stale 401 when no SIAP session exists for sub', async () => {
@@ -111,17 +114,6 @@ describe('SiapService', () => {
       await expect(
         svcWith(undefined).getProfile('u1'),
       ).rejects.toThrow('SIAP session belum ada. Silakan login ulang via SSO');
-    });
-
-    it('propagates a stale upstream session as StaleUpstreamError (401)', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/login',
-        text: async () => '<html>login</html>',
-      });
-      await expect(svcWith('ci_session_x=OLD').getProfile('u1')).rejects.toBeInstanceOf(
-        StaleUpstreamError,
-      );
     });
   });
 
@@ -180,253 +172,165 @@ describe('SiapService', () => {
       expect(cache.get).toHaveBeenCalledWith('u1:siap:profile');
       expect(out.nama).toBe('Budi');
     });
-
-    it('parses the server-rendered profile from the dashboard fixture', async () => {
-      mockFetchRouting([
-        { match: '/pages/mhs/dashboard', body: fixture('profile.html') },
-      ]);
-      const profile = await svc.getProfile('u1');
-      expect(profile.nama).toBe('NAMA UJI ANONIM');
-      expect(profile.nim).toBe('20999999999999');
-      expect(profile.fakultas).toBe('FAKULTAS UJI');
-      expect(profile.prodi).toBe('Informatika Uji S1');
-      expect(profile.angkatan).toBe('2099');
-      expect(profile.status).toBe('AKTIF');
-      expect(profile.semesterBerjalan).toBe('2099/2100 Ganjil');
-      // Biodata detail fields (Task 1)
-      expect(profile.fotoUrl).toContain('disk.undip.ac.id');
-      expect(profile.tempatLahir).toBe('KOTA UJI');
-      expect(profile.tanggalLahir).toBe('1 Januari 2099');
-      expect(profile.nik).toBe('999999 999999 9999');
-      expect(profile.namaIbu).toBe('IBU UJI ANONIM');
-      expect(profile.kodeKewarganegaraan).toBe('ID');
-      expect(profile.nomorHp).toBe('089999999999');
-      expect(profile.emailSso).toBe('anonim.sso@students.undip.ac.id');
-      expect(profile.emailPribadi).toBe('anonim.uji@contoh.test');
-      expect(profile.alamatAsal).toContain('Jalan Uji Panduan');
-      expect(profile.alamatSekarang).toContain('Kota Uji');
-    });
   });
 
   describe('getIrs', () => {
-    it('parses the IRS JSON rows from the ajax_irs_diambil fixture', async () => {
-      mockFetchRouting([
-        { match: '/irs/mhs/irs/ajax_irs_diambil', body: fixture('irs.json') },
-      ]);
-      const irs = await svc.getIrs('u1');
-      expect(irs.totalSks).toBe(23);
-      expect(irs.mataKuliah.length).toBe(8);
+    const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+    const sessionStore = {
+      get: async () => ({
+        siapCookie: 's',
+        identity: '2024',
+        emailSso: 'x@students.undip.ac.id',
+      }),
+      set: jest.fn(),
+    };
+    // getIrs resolves angkatan via this.getProfile(sub); short-circuit it through
+    // the cache so the batch-token assertions are deterministic. The cache
+    // returns the profile for `:siap:profile` and null for `:siap:irs` (so getIrs
+    // doesn't short-circuit on its own cache hit).
+    const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+
+    function irsSvc(): SiapService {
+      cache.get.mockImplementation((key: string) =>
+        key.endsWith(':siap:profile') ? Promise.resolve({ angkatan: '2024' }) : Promise.resolve(null),
+      );
+      return new SiapService(cache, undefined, sessionStore as any, apiMock as any);
+    }
+
+    beforeEach(() => {
+      apiMock.mintToken.mockReset();
+      apiMock.fetch.mockReset();
+      cache.get.mockReset();
+    });
+
+    it('maps v2/lihat_irs rows into mataKuliah + computes totalSks (one token batch)', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      // getIrs mints once for semester_aktif then reuses the token for N×lihat_irs.
+      const rows = [
+        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', sks_mk: '5', nama_kelas: 'C', jadwal: 'Senin 07:00', nama_dosen: 'Dosen X' },
+        { kode_mk: 'MIK1624103', nama_mk: 'Struktur Diskret', sks_mk: '4', nama_kelas: 'D' },
+      ];
+      apiMock.fetch
+        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' }) // semester_aktif
+        .mockResolvedValue(rows); // v2/lihat_irs per semester (5x)
+      const irs = await irsSvc().getIrs('u1');
+      // 5 semesters × (5 + 4 = 9 SKS per semester) = 45 total.
+      expect(irs.totalSks).toBe(45);
+      expect(irs.mataKuliah.length).toBe(10); // 2 rows × 5 semesters
       expect(irs.mataKuliah[0].kode).toBe('MIK1624503');
-      // Name has a leading space in the fixture; must be trimmed.
       expect(irs.mataKuliah[0].nama).toBe('Sistem Informasi');
       expect(irs.mataKuliah[0].sks).toBe(5);
       expect(irs.mataKuliah[0].kelas).toBe('C');
-      expect(irs.mataKuliah[0].status).toBe('B');
-      // Row 6 (index 5) = Basis Data, 3 SKS, "Ulang" status.
-      expect(irs.mataKuliah[5].nama).toBe('Basis Data');
-      expect(irs.mataKuliah[5].sks).toBe(3);
-      expect(irs.mataKuliah[5].status).toBe('U');
+      // mint once for the whole batch (spec §2.2).
+      expect(apiMock.mintToken).toHaveBeenCalledTimes(1);
     });
 
-    it('throws 401 when the final URL is a login page', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/login',
-        text: async () => '<html>login</html>',
-      });
-      await expect(svc.getIrs('u1')).rejects.toMatchObject({
-        status: 401,
-      });
-    });
-
-    it('throws 401 when a stale session returns HTML instead of JSON (same URL)', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
-        headers: {
-          get: (k: string) =>
-            k.toLowerCase() === 'content-type'
-              ? 'text/html; charset=utf-8'
-              : null,
-        },
-        text: async () => '<!DOCTYPE html><html><body>login</body></html>',
-        json: async () => {
-          throw new SyntaxError("Unexpected token '<'");
-        },
-      });
-      await expect(svc.getIrs('u1')).rejects.toMatchObject({
-        status: 401,
-      });
-    });
-
-    it('throws 401 when Content-Type is missing and the body is HTML (hard parse guard)', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
-        headers: { get: () => null },
-        text: async () => '<!DOCTYPE html><html><body>login</body></html>',
-        json: async () => {
-          throw new SyntaxError("Unexpected token '<'");
-        },
-      });
-      await expect(svc.getIrs('u1')).rejects.toMatchObject({
-        status: 401,
-      });
-    });
-
-    it('accepts JSON with a non-HTML content-type (e.g. text/plain)', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
-        headers: {
-          get: (k: string) =>
-            k.toLowerCase() === 'content-type'
-              ? 'text/plain; charset=utf-8'
-              : null,
-        },
-        json: async () => ({ total_sks: 23, html: '' }),
-      });
-      const irs = await svc.getIrs('u1');
-      expect(irs.totalSks).toBe(23);
-    });
-
-    it('parses a JSON body even when Content-Type claims text/html (real SIAP transport)', async () => {
-      // Verified live: SIAP returns a VALID JSON body with a misleading
-      // `Content-Type: text/html; charset=UTF-8`. The JSON must be parsed, not
-      // rejected as a stale session (which surfaced as a false 401 on /api/siap/irs).
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/irs/mhs/irs/ajax_irs_diambil',
-        headers: {
-          get: (k: string) =>
-            k.toLowerCase() === 'content-type'
-              ? 'text/html; charset=UTF-8'
-              : null,
-        },
-        text: async () => '{"total_sks":23,"html":""}',
-        json: async () => ({ total_sks: 23, html: '' }),
-      });
-      const irs = await svc.getIrs('u1');
-      expect(irs.totalSks).toBe(23);
+    it('propagates a stale api-credential as 401', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch
+        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' })
+        .mockRejectedValue(new StaleUpstreamError('Siap', 'api-credential'));
+      await expect(irsSvc().getIrs('u1')).rejects.toBeInstanceOf(StaleUpstreamError);
     });
   });
 
   describe('getLecturers', () => {
-    const GET_IRS = '/irs/mhs/irs/get_irs';
+    const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+    const sessionStore = {
+      get: async () => ({ siapCookie: 's', identity: '2024', emailSso: 'x@students.undip.ac.id' }),
+      set: jest.fn(),
+    };
+    const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
 
-    it('returns [] when every semester IRS is empty/not approved', async () => {
-      mockFetchRouting([
-        { match: '/pages/mhs/dashboard', body: PROFILE_2024_5_SEM },
-        { match: GET_IRS, body: '<html>belum disetujui</html>' },
-      ]);
-      expect(await svc.getLecturers('u1')).toEqual([]);
+    function lecturersSvc(): SiapService {
+      cache.get.mockImplementation((key: string) =>
+        key.endsWith(':siap:profile') ? Promise.resolve({ angkatan: '2024' }) : Promise.resolve(null),
+      );
+      return new SiapService(cache, undefined, sessionStore as any, apiMock as any);
+    }
+
+    beforeEach(() => {
+      apiMock.mintToken.mockReset();
+      apiMock.fetch.mockReset();
+      cache.get.mockReset();
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
     });
 
-    it('POSTs get_irs per semester and parses kode + dosen from the 8-column table (deduped)', async () => {
-      mockFetchRouting([
-        { match: '/pages/mhs/dashboard', body: PROFILE_2024_5_SEM },
-        { match: GET_IRS, body: fixture('irs_get.html') },
-      ]);
-      const result = await svc.getLecturers('u1');
+    it('returns [] when every semester IRS has no lecturer', async () => {
+      // semester_aktif drives angkatan/count; getProfile is cache-backed (returns empty angkatan here).
+      apiMock.fetch
+        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' }) // semester_aktif
+        .mockResolvedValue([]); // v2/lihat_irs empty for all 5 semesters
+      expect(await lecturersSvc().getLecturers('u1')).toEqual([]);
+    });
 
-      // angkatan 2024 + "2026/2027 Ganjil" => 5 semesters; the fixture table is
-      // returned for each, so results must be deduped by kode.
-      const kodes = result.map((r) => r.kode);
-      expect(new Set(kodes).size).toBe(kodes.length);
-
+    it('maps v2/lihat_irs rows to kode/dosen (deduped, joined by |)', async () => {
+      const rows = [
+        { kode_mk: 'MIK1624105', nama_dosen: 'Dosen Uji Satu' },
+        { kode_mk: 'MIK1624105', nama_dosen: 'Dosen Uji Dua' },
+        { kode_mk: 'UUW1624002', nama_dosen: 'Dosen Uji Empat' },
+      ];
+      apiMock.fetch
+        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' }) // semester_aktif
+        .mockResolvedValue(rows); // v2/lihat_irs per semester
+      const result = await lecturersSvc().getLecturers('u1');
       const byCode = new Map(result.map((r) => [r.kode, r.dosen]));
-      // <br>-separated names become pipe (|)-separated for a cleaner card line.
-      expect(byCode.get('MIK1624105')).toBe(
-        'Dosen Uji Satu | Dosen Uji Dua | Dosen Uji Tiga',
-      );
+      expect(byCode.get('MIK1624105')).toBe('Dosen Uji Satu | Dosen Uji Dua');
       expect(byCode.get('UUW1624002')).toBe('Dosen Uji Empat');
-      expect(byCode.get('MIK1624104')).toBe('Dosen Uji Lima | Dosen Uji Enam');
+      // mint token once for the whole batch.
+      expect(apiMock.mintToken).toHaveBeenCalledTimes(1);
     });
 
-    it('POSTs get_irs with the correct per-semester ta/smt_ambil/smt params', async () => {
-      const seen: string[] = [];
-      (global.fetch as jest.Mock).mockImplementation(
-        async (input: any, init?: any) => {
-          const url = typeof input === 'string' ? input : input.url;
-          if (url.includes('/pages/mhs/dashboard')) {
-            return {
-              ok: true,
-              url,
-              headers: { get: () => 'application/json' },
-              text: async () => PROFILE_2024_5_SEM,
-              json: async () => JSON.parse(PROFILE_2024_5_SEM),
-            };
-          }
-          if (url.includes(GET_IRS)) {
-            seen.push(init?.body ?? '');
-            return {
-              ok: true,
-              url,
-              headers: { get: () => 'application/json' },
-              text: async () => fixture('irs_get.html'),
-              json: async () => JSON.parse(fixture('irs_get.html')),
-            };
-          }
-          throw new Error(`unmocked fetch: ${url}`);
-        },
-      );
-      await svc.getLecturers('u1');
-      // 5 semesters for angkatan 2024: smt 1..5, within-year smt toggles 1/2.
+    it('sends the correct per-semester ta/smt_ambil/smt params', async () => {
+      const seen: Array<Record<string, string>> = [];
+      apiMock.fetch
+        .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' })
+        .mockImplementation(async (_e: string, token: string, form: Record<string, string>) => {
+          seen.push(form);
+          return [{ kode_mk: 'MIK1624105', nama_dosen: 'D' }];
+        });
+      await lecturersSvc().getLecturers('u1');
       expect(seen).toEqual([
-        'ta=2024&smt_ambil=1&smt=1',
-        'ta=2024&smt_ambil=2&smt=2',
-        'ta=2025&smt_ambil=3&smt=1',
-        'ta=2025&smt_ambil=4&smt=2',
-        'ta=2026&smt_ambil=5&smt=1',
+        { ta: '2024', smt_ambil: '1', smt: '1' },
+        { ta: '2024', smt_ambil: '2', smt: '2' },
+        { ta: '2025', smt_ambil: '3', smt: '1' },
+        { ta: '2025', smt_ambil: '4', smt: '2' },
+        { ta: '2026', smt_ambil: '5', smt: '1' },
       ]);
     });
   });
 
   describe('getNotifications', () => {
-    it('normalizes the list payload', async () => {
-      mockFetchRouting([
-        {
-          match: '/pages/mhs/dashboard/ajax/notifications',
-          body: fixture('notifications.json'),
-        },
+    const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+    const sessionStore = {
+      get: async () => ({ siapCookie: 's', identity: '24060124120013', emailSso: 'x@students.undip.ac.id' }),
+      set: jest.fn(),
+    };
+
+    function notifSvc(): SiapService {
+      return new SiapService(undefined, undefined, sessionStore as any, apiMock as any);
+    }
+
+    beforeEach(() => {
+      apiMock.mintToken.mockReset();
+      apiMock.fetch.mockReset();
+    });
+
+    it('normalizes the list payload from pengumuman', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch.mockResolvedValue([
+        { id: '1', judul: 'Pengumuman', isi: 'Isi', created_at: '2026-08-01', read: false, jenis: 'info' },
       ]);
-      const res = await svc.getNotifications('u1');
+      const res = await notifSvc().getNotifications('u1');
       expect(Array.isArray(res.items)).toBe(true);
-      expect(res.count).toBeGreaterThanOrEqual(0);
+      expect(res.count).toBe(1);
+      expect(res.items[0].title).toBe('Pengumuman');
     });
 
-    it('sends the CI is_ajax_request() guard header', async () => {
-      const fetchMock = jest.fn();
-      (global.fetch as jest.Mock) = fetchMock;
-      fetchMock.mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/pages/mhs/dashboard/ajax/notifications',
-        headers: { get: () => 'application/json' },
-        text: async () => '{"status":"ok","data":{"count":"0"}}',
-        json: async () => ({ status: 'ok', data: { count: '0' } }),
-      });
-      await svc.getNotifications('u1');
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('/ajax/notifications'),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'X-Requested-With': 'XMLHttpRequest',
-          }),
-        }),
-      );
-    });
-
-    it('throws 401 on a stale session', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/login',
-        headers: { get: () => 'text/html' },
-        text: async () => '<html>login page</html>',
-        json: async () => {
-          throw new Error('no json');
-        },
-      });
-      await expect(svc.getNotifications('u1')).rejects.toMatchObject({
+    it('throws 401 on a stale api-credential', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch.mockRejectedValue(new StaleUpstreamError('Siap', 'api-credential'));
+      await expect(notifSvc().getNotifications('u1')).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -459,26 +363,36 @@ describe('SiapService', () => {
   });
 
   describe('getJadwal', () => {
-    it('maps the get_jadwal JSON feed to SiapJadwal[]', async () => {
-      mockFetchRouting([
-        {
-          match: '/jadwal_mahasiswa/mhs/jadwal/get_jadwal',
-          body: fixture('get_jadwal.json'),
-        },
+    const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+    const sessionStore = {
+      get: async () => ({ siapCookie: 's', identity: '24060124120013', emailSso: 'x@students.undip.ac.id' }),
+      set: jest.fn(),
+    };
+
+    function jadwalSvc(): SiapService {
+      return new SiapService(undefined, undefined, sessionStore as any, apiMock as any);
+    }
+
+    beforeEach(() => {
+      apiMock.mintToken.mockReset();
+      apiMock.fetch.mockReset();
+    });
+
+    it('maps the API jadwal rows to SiapJadwal[]', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch.mockResolvedValue([
+        { hari: 'senin', nama_mk: 'Sistem Informasi', nama_ruang: 'A301', waktu_mulai: '09:40:00', waktu_selesai: '12:10:00', sks: '3', tanggal_pertemuan: '2026-08-31' },
       ]);
-      const res = await svc.getJadwal('u1');
+      const res = await jadwalSvc().getJadwal('u1');
       expect(Array.isArray(res)).toBe(true);
       expect(res.length).toBeGreaterThan(0);
-      // Fixture sample (real 2026-08-17 semester-1 data): Sistem Informasi, senin, A301.
       const first = res[0];
       expect(first.matakuliah).toBe('Sistem Informasi');
       expect(first.hari).toMatch(/senin|selasa/i);
-      expect(first.ruang).toBeTruthy();
+      expect(first.ruang).toBe('A301');
       expect(first.waktu).toContain('09:40:00');
       expect(first.sks).toBe(3);
-      // Per-pertemuan date (yyyy-MM-dd) is carried through for the mobile calendar.
       expect(first.tanggal).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      // Every entry has the required SiapJadwal fields.
       for (const j of res) {
         expect(j.hari).toBeTruthy();
         expect(j.matakuliah).toBeTruthy();
@@ -487,104 +401,53 @@ describe('SiapService', () => {
       }
     });
 
-    it('POSTs to get_jadwal with the CI guard header + session cookie', async () => {
-      const fetchMock = jest.fn();
-      (global.fetch as jest.Mock) = fetchMock;
-      fetchMock.mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/jadwal_mahasiswa/mhs/jadwal/get_jadwal',
-        headers: { get: () => 'application/json' },
-        text: async () => '{}',
-        json: async () => ({}),
-      });
-      await svc.getJadwal('u1');
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('/jadwal_mahasiswa/mhs/jadwal/get_jadwal'),
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            'X-Requested-With': 'XMLHttpRequest',
-            Cookie: 'sia_app_session=TEST',
-          }),
-        }),
-      );
-    });
-
-    it('throws 401 on a stale session', async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        url: 'https://siap.undip.ac.id/login',
-        headers: { get: () => 'text/html' },
-        text: async () => '<html>login page</html>',
-        json: async () => {
-          throw new Error('no json');
-        },
-      });
-      await expect(svc.getJadwal('u1')).rejects.toMatchObject({
+    it('throws 401 on a stale api-credential', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch.mockRejectedValue(new StaleUpstreamError('Siap', 'api-credential'));
+      await expect(jadwalSvc().getJadwal('u1')).rejects.toMatchObject({
         status: 401,
       });
     });
   });
 
   describe('getAbsen', () => {
-    it('parses hadir percent + idjadwal per row from the jadwal index page', async () => {
-      mockFetchRouting([
-        {
-          match: '/jadwal_mahasiswa/mhs/jadwal/',
-          body: fixture('absen_index.html'),
-        },
-      ]);
-      const res = await svc.getAbsen('u1');
-      expect(res.length).toBe(2);
-      expect(res[0]).toMatchObject({
-        idJadwal: '216328',
-        nama: 'Sistem Informasi',
-        hadirPct: 0,
-      });
-      expect(res[1]).toMatchObject({
-        idJadwal: '216387',
-        nama: 'Komputasi Tersebar dan Pararel',
-        hadirPct: 7.1,
-      });
+    const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+    const sessionStore = {
+      get: async () => ({ siapCookie: 's', identity: '24060124120013', emailSso: 'x@students.undip.ac.id' }),
+      set: jest.fn(),
+    };
+
+    function absenSvc(): SiapService {
+      return new SiapService(undefined, undefined, sessionStore as any, apiMock as any);
+    }
+
+    beforeEach(() => {
+      apiMock.mintToken.mockReset();
+      apiMock.fetch.mockReset();
     });
 
-    it('gets the jadwal index page with the session cookie', async () => {
-      const fetched: string[] = [];
-      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
-        fetched.push(typeof input === 'string' ? input : input.url);
-        return {
-          ok: true,
-          headers: { get: () => 'text/html' },
-          text: async () => fixture('absen_index.html'),
-        };
-      });
-      await svc.getAbsen('u1');
-      expect(
-        fetched.some((u) => u.includes('/jadwal_mahasiswa/mhs/jadwal/')),
-      ).toBe(true);
+    it('parses hadir + total per matkul from the API absen rows (grouped)', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch.mockResolvedValue([
+        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
+        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'Hadir' },
+        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'alpa' },
+        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
+        { kode_mk: 'MIK1624103', nama_mk: 'Komputasi Tersebar dan Pararel', idjadwal: '216387', kehadiran: 'hadir' },
+      ]);
+      const res = await absenSvc().getAbsen('u1');
+      expect(res.length).toBe(2);
+      const si = res.find((r) => r.idJadwal === '216328')!;
+      expect(si.nama).toBe('Sistem Informasi');
+      expect(si.hadir).toBe(3);
+      expect(si.total).toBe(4);
+      expect(si.hadirPct).toBe(Math.round((3 / 4) * 100));
     });
 
-    it('enriches hadir/total per matkul from the get_absen detail feed', async () => {
-      mockFetchRouting([
-        {
-          // Exact index page (trailing slash). Must precede any /get_absen route
-          // since "/jadwal_mahasiswa/mhs/jadwal" is a prefix of it too.
-          match: /\/jadwal_mahasiswa\/mhs\/jadwal\/$/,
-          body: fixture('absen_index.html'),
-        },
-        {
-          match: /get_absen/,
-          body: fixture('get_absen_3.html'),
-        },
-      ]);
-      const res = await svc.getAbsen('u1');
-      // idjadwal dari index (216328/216387) langsung dipakai ke get_absen;
-      // fixture get_absen_3 = 2 Hadir + 1 Alpa -> hadir 2, total 3.
-      expect(res.length).toBe(2);
-      for (const r of res) {
-        expect(r.hadir).toBe(2);
-        expect(r.total).toBe(3);
-      }
+    it('throws 401 on a stale api-credential', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch.mockRejectedValue(new StaleUpstreamError('Siap', 'api-credential'));
+      await expect(absenSvc().getAbsen('u1')).rejects.toMatchObject({ status: 401 });
     });
   });
 
@@ -729,338 +592,224 @@ describe('SiapService', () => {
   });
 
   describe('getKhs', () => {
-    it('parses IPK and per-semester nilai from the khs fixtures', async () => {
-      // Inline profile (angkatan 2024 + semester '2026/2027 Ganjil') drives a
-      // 5-semester loop deterministically, independent of the profile fixture.
-      const profileHtml =
-        '<html><div id="tabmhs_profile">' +
-        '<b>NIM</b>:</div><div class="col-sm-9">20999999999999</div>' +
-        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
-        '<p class="text-muted">2026/2027 Ganjil</p>' +
-        '<p><span class="badge badge-success">AKTIF</span></p>' +
-        '</div></html>';
-      mockFetchRouting([
-        { match: '/pages/mhs/dashboard', body: profileHtml },
-        { match: '/irs/mhs/irs/get_khs', body: fixture('khs.html') },
-        {
-          match: '/irs/mhs/irs/get_total_sks',
-          body: fixture('khs_total_sks.json'),
-        },
-      ]);
-      const khs = await svc.getKhs('u1');
-      // angkatan 2024 + semesterBerjalan "2026/2027 Ganjil" => 5 semesters.
-      expect(khs.semesters.length).toBe(5);
+    const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+    const sessionStore = {
+      get: async () => ({ siapCookie: 's', identity: '24060124120013', emailSso: 'x@students.undip.ac.id' }),
+      set: jest.fn(),
+    };
+
+    function khsSvc(): SiapService {
+      return new SiapService(undefined, undefined, sessionStore as any, apiMock as any);
+    }
+
+    beforeEach(() => {
+      apiMock.mintToken.mockReset();
+      apiMock.fetch.mockReset();
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    });
+
+    it('parses v2/daftar_khs (ipk) + v2/lihat_khs per semester into SiapKhs', async () => {
+      const daftar = [
+        { ta: '2024', smt: '1', smt_ambil: '1', ipk: '3.65' },
+        { ta: '2024', smt: '2', smt_ambil: '2', ipk: '3.70' },
+      ];
+      apiMock.fetch
+        .mockResolvedValueOnce(daftar) // v2/daftar_khs
+        .mockResolvedValue([
+          // v2/lihat_khs rows (reused for both semesters in the mock)
+          { nama_mk: 'MATKUL UJI 1', sks_mk: '3', nilai_akhir_huruf: 'A', nilai_bobot: '4' },
+          { nama_mk: 'MATKUL UJI 2', sks_mk: '3', nilai_akhir_huruf: 'A', nilai_bobot: '4' },
+        ]);
+      const khs = await khsSvc().getKhs('u1');
+      expect(khs.semesters.length).toBe(2);
+      expect(khs.ipk).toBe(3.65); // official IPK from daftar_khs
       expect(khs.semesters[0].semester).toBe('2024/2025 Ganjil');
-      expect(khs.semesters[4].semester).toBe('2026/2027 Ganjil');
-      expect(khs.semesters[0].totalSks).toBe(20);
-      expect(khs.semesters[0].ip).toBe(3.95);
-      expect(khs.semesters[0].nilai.length).toBe(8);
+      expect(khs.semesters[1].semester).toBe('2024/2025 Genap');
+      expect(khs.semesters[0].totalSks).toBe(6);
+      expect(khs.semesters[0].ip).toBe(4.0);
       expect(khs.semesters[0].nilai[0].mataKuliah).toBe('MATKUL UJI 1');
       expect(khs.semesters[0].nilai[0].nilaiHuruf).toBe('A');
       expect(khs.semesters[0].nilai[0].sks).toBe(3);
-      expect(khs.semesters[0].nilai[0].bobot).toBe(4);
-      // footer now supplies SIAP's official cumulative IPK (3.65), not the per-fixture aggregation.
-      expect(khs.ipk).toBe(3.65);
+      // mint ONCE for the whole batch.
+      expect(apiMock.mintToken).toHaveBeenCalledTimes(1);
     });
 
-    it('computes IPK from RAW per-semester sums, not pre-rounded semester IPs (B11)', async () => {
-      const row = (kode: string, sks: number, bobot: number, huruf: string) =>
-        '<tr><td>1</td><td>' +
-        kode +
-        '</td><td>MK</td><td>TIU</td><td>TI</td>' +
-        `<td>${sks}</td><td>${huruf}</td><td>${bobot}</td></tr>`;
-      // Semester 1: 200×1sks bobot4 + 100×1sks bobot3 => Σ(b·sks)=1100, Σsks=300,
-      //   raw IP = 1100/300 = 3.6667 (rounds to 3.67 for display).
-      let sem1Rows = '';
-      for (let i = 0; i < 200; i++) sem1Rows += row('S1x' + i, 1, 4, 'A');
-      for (let i = 0; i < 100; i++) sem1Rows += row('S1y' + i, 1, 3, 'B');
-      const sem1 = '<table>' + sem1Rows + '</table>';
-      // Semester 2: 300×1sks bobot4 => Σ=1200, Σsks=300, raw IP = 4.0.
-      let sem2Rows = '';
-      for (let i = 0; i < 300; i++) sem2Rows += row('S2x' + i, 1, 4, 'A');
-      const sem2 = '<table>' + sem2Rows + '</table>';
-
-      // Profile: angkatan 2024, semester berjalan "2024/2025 Genap" => 2 semesters.
-      const profileHtml =
-        '<html><div id="tabmhs_profile">' +
-        '<b>NIM</b>:</div><div class="col-sm-9">24060124120013</div>' +
-        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
-        '<p class="text-muted">2024/2025 Genap</p>' +
-        '</div></html>';
-      let khsCalls = 0;
-      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
-        const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard'))
-          return {
-            ok: true,
-            url,
-            headers: { get: () => null },
-            text: async () => profileHtml,
-            json: async () => ({}),
-            status: 200,
-          };
-        if (url.includes('/get_khs')) {
-          khsCalls++;
-          return {
-            ok: true,
-            url,
-            headers: { get: () => null },
-            text: async () => (khsCalls === 1 ? sem1 : sem2),
-            json: async () => ({}),
-            status: 200,
-          };
-        }
-        if (url.includes('/get_total_sks'))
-          return {
-            ok: true,
-            url,
-            headers: {
-              get: (k: string) =>
-                k.toLowerCase() === 'content-type' ? 'application/json' : null,
-            },
-            text: async () => JSON.stringify({ total_sks: 300 }),
-            json: async () => ({ total_sks: 300 }),
-            status: 200,
-          };
-        throw new Error('unmocked: ' + url);
-      });
-
-      const khs = await svc.getKhs('u1');
-      expect(khs.semesters.length).toBe(2);
-      expect(khs.semesters[0].ip).toBe(3.67); // display uses rounded per-semester IP
-      // IPK from RAW sums: Σ(b·sks)=1100+1200=2300, Σsks=600 => 2300/600 = 3.8333 => 3.83.
-      // (Per-semester rounding: 3.67*300 + 4.0*300 = 2301 => 2301/600 = 3.835 => 3.84 — the bug.)
-      expect(khs.ipk).toBe(3.83);
-    });
-
-    it('sends the within-year `smt` (1 Ganjil / 2 Genap) so later semesters grade', async () => {
-      // Profile: angkatan 2024, semester berjalan "2025/2026 Ganjil" => 3 semesters,
-      // i.e. the third semester is 2025/2026 Ganjil (within-year smt=1), NOT smt=3.
-      const profileHtml =
-        '<html><div id="tabmhs_profile">' +
-        '<b>NIM</b>:</div><div class="col-sm-9">24060124120013</div>' +
-        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
-        '<p class="text-muted">2025/2026 Ganjil</p>' +
-        '</div></html>';
-      const bodies: string[] = [];
-      (global.fetch as jest.Mock).mockImplementation(
-        async (input: any, init?: any) => {
-          const url = typeof input === 'string' ? input : input.url;
-          if (url.includes('/pages/mhs/dashboard'))
-            return {
-              ok: true,
-              url,
-              headers: { get: () => null },
-              text: async () => profileHtml,
-              status: 200,
-            };
-          if (url.includes('/get_khs')) {
-            bodies.push(init?.body ?? '');
-            return {
-              ok: true,
-              url,
-              headers: { get: () => null },
-              text: async () => fixture('khs.html'),
-              status: 200,
-            };
-          }
-          if (url.includes('/get_total_sks'))
-            return {
-              ok: true,
-              url,
-              headers: {
-                get: (k: string) =>
-                  k.toLowerCase() === 'content-type'
-                    ? 'application/json'
-                    : null,
-              },
-              text: async () => JSON.stringify({ total_sks: 20 }),
-              status: 200,
-            };
-          throw new Error('unmocked: ' + url);
-        },
-      );
-
-      await svc.getKhs('u1');
-      // smt_ambil stays cumulative; smt must be the within-year index (1 Ganjil / 2 Genap).
-      expect(bodies).toEqual([
-        'ta=2024&smt_ambil=1&smt=1',
-        'ta=2024&smt_ambil=2&smt=2',
-        'ta=2025&smt_ambil=3&smt=1', // 2025/2026 Ganjil → within-year 1, NOT 3
+    it('sends the within-year `smt` param per semester (NOT cumulative)', async () => {
+      const seen: Array<Record<string, string>> = [];
+      apiMock.fetch
+        .mockResolvedValueOnce([
+          { ta: '2024', smt: '1', smt_ambil: '1', ipk: '3.5' },
+          { ta: '2024', smt: '2', smt_ambil: '2', ipk: '3.5' },
+          { ta: '2025', smt: '1', smt_ambil: '3', ipk: '3.5' },
+        ])
+        .mockImplementation(async (_e: string, _t: string, form: Record<string, string>) => {
+          seen.push(form);
+          return [];
+        });
+      await khsSvc().getKhs('u1');
+      // 3 semesters: within-year smt toggles 1/2 (2025/2026 Ganjil → within-year 1).
+      expect(seen).toEqual([
+        { ta: '2024', smt_ambil: '1', smt: '1' },
+        { ta: '2024', smt_ambil: '2', smt: '2' },
+        { ta: '2025', smt_ambil: '3', smt: '1' },
       ]);
     });
 
-    it('excludes the current (ungraded) semester from the IPK denominator', async () => {
-      // Profile: angkatan 2024, semester berjalan "2026/2027 Ganjil" => 5 semesters.
-      // Semesters 1-4 return graded courses; semester 5 (current) returns enrolled
-      // courses with EMPTY nilaiHuruf / bobot 0 (rawIp 0) — its SKS must NOT count.
-      const profileHtml =
-        '<html><div id="tabmhs_profile">' +
-        '<b>NIM</b>:</div><div class="col-sm-9">24060124120013</div>' +
-        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
-        '<p class="text-muted">2026/2027 Ganjil</p>' +
-        '</div></html>';
-      const gradedRow = (kode: string, bobot: number) =>
-        '<tr><td>1</td><td>' +
-        kode +
-        '</td><td>MK</td><td>TIU</td><td>TI</td>' +
-        `<td>3</td><td>A</td><td>${bobot}</td></tr>`;
-      const gradedHtml =
-        '<table>' + gradedRow('G1', 4) + gradedRow('G2', 4) + '</table>';
-      // Ungraded semester: courses present but EMPTY nilaiHuruf (cell 6 blank) and bobot 0.
-      const ungradedRow = (kode: string) =>
-        '<tr><td>1</td><td>' +
-        kode +
-        '</td><td>MK</td><td>TIU</td><td>TI</td>' +
-        '<td>3</td><td></td><td>0</td></tr>';
-      const ungradedHtml = '<table>' + ungradedRow('U1') + '</table>';
-      let khsCalls = 0;
-      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
-        const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard'))
-          return {
-            ok: true,
-            url,
-            headers: { get: () => null },
-            text: async () => profileHtml,
-            status: 200,
-          };
-        if (url.includes('/get_khs')) {
-          khsCalls++;
-          // Semesters 1-4 graded (identical), semester 5 ungraded.
-          const body = khsCalls <= 4 ? gradedHtml : ungradedHtml;
-          return {
-            ok: true,
-            url,
-            headers: { get: () => null },
-            text: async () => body,
-            status: 200,
-          };
-        }
-        if (url.includes('/get_total_sks'))
-          return {
-            ok: true,
-            url,
-            headers: {
-              get: (k: string) =>
-                k.toLowerCase() === 'content-type' ? 'application/json' : null,
-            },
-            text: async () => JSON.stringify({ total_sks: 3 }),
-            json: async () => ({ total_sks: 3 }),
-            status: 200,
-          };
-        throw new Error('unmocked: ' + url);
-      });
-
-      const khs = await svc.getKhs('u1');
-      expect(khs.semesters.length).toBe(5);
-      // 4 graded semesters each: rawIp = (4·3 + 4·3)/(3+3) = 4.0, semesterSks 3.
-      // IPK = Σ(4.0·3)/Σ(3) over the GRADED terms = 48/12 = 4.0. Ungraded sem 5 excluded.
+    it('retries the whole batch once on an invalid-credential', async () => {
+      apiMock.mintToken
+        .mockResolvedValueOnce({ token: 'T1', data: {} })
+        .mockResolvedValueOnce({ token: 'T2', data: {} });
+      const stale = new StaleUpstreamError('Siap', 'api-credential');
+      apiMock.fetch
+        .mockRejectedValueOnce(stale) // v2/daftar_khs fails
+        .mockResolvedValueOnce([
+          { ta: '2024', smt: '1', smt_ambil: '1', ipk: '4.0' },
+        ]) // retry daftar_khs succeeds
+        .mockResolvedValue([]); // v2/lihat_khs returns empty
+      const khs = await khsSvc().getKhs('u1');
       expect(khs.ipk).toBe(4.0);
-      // The ungraded semester's per-semester totalSks is still reported.
-      expect(khs.semesters[4].totalSks).toBe(3);
-      expect(khs.semesters[4].ip).toBe(0);
+      expect(khs.semesters).toHaveLength(1);
+      expect(apiMock.mintToken).toHaveBeenCalledTimes(2); // initial + retry
     });
 
-    it('reads the official cumulative IPK from the KHS footer (IP. Kumulatif)', async () => {
-      // The real get_khs HTML prints the cumulative IPK in a summary row:
-      //   IP. Kumulatif ... : 3,65  (SIAP's own 292/80, not a manual recompute).
-      const footerHtml =
-        '<table><tbody>' +
-        '<tr><th class="align-top">IP. Semester<br><span class="grey font-small-3">79 / 20</span></th>' +
-        '<th class="align-top">:</th><th class="align-top">3,95</th></tr>' +
-        '<tr><th class="align-top">IP. Kumulatif<br><span class="grey font-small-3">292 / 80</span></th>' +
-        '<th class="align-top">:</th><th class="align-top">3,65</th></tr>' +
-        '</tbody></table>';
-      const profileHtml =
-        '<html><div id="tabmhs_profile">' +
-        '<b>NIM</b>:</div><div class="col-sm-9">24060124120013</div>' +
-        '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
-        '<p class="text-muted">2026/2027 Ganjil</p>' +
-        '</div></html>';
-      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
-        const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard'))
-          return {
-            ok: true,
-            url,
-            headers: { get: () => null },
-            text: async () => profileHtml,
-            status: 200,
-          };
-        if (url.includes('/get_khs'))
-          return {
-            ok: true,
-            url,
-            headers: { get: () => null },
-            text: async () => footerHtml,
-            status: 200,
-          };
-        if (url.includes('/get_total_sks'))
-          return {
-            ok: true,
-            url,
-            headers: {
-              get: (k: string) =>
-                k.toLowerCase() === 'content-type' ? 'application/json' : null,
-            },
-            text: async () => JSON.stringify({ total_sks: 20 }),
-            json: async () => ({ total_sks: 20 }),
-            status: 200,
-          };
-        throw new Error('unmocked: ' + url);
-      });
-
-      const khs = await svc.getKhs('u1');
-      expect(khs.ipk).toBe(3.65); // official value from the footer, comma→dot
+    it('propagates a non-stale error', async () => {
+      apiMock.fetch.mockRejectedValue(new Error('network'));
+      await expect(khsSvc().getKhs('u1')).rejects.toThrow('network');
+      expect(apiMock.mintToken).toHaveBeenCalledTimes(1);
     });
+  });
+});
 
-    it('falls back to manual IPK aggregation when the footer IP. Kumulatif is absent', async () => {
-      // No IP. Kumulatif block — must fall back to the server-side aggregate over
-      // graded semesters (so a SIAP layout change never empties the IPK card).
-      const row = (bobot: number) =>
-        '<tr><td>1</td><td>K</td><td>MK</td><td>TIU</td><td>TI</td><td>3</td><td>A</td><td>' +
-        bobot +
-        '</td></tr>';
-      const gradedHtml = '<table>' + row(4) + '</table>'; // no footer summary table
-      const profileHtml =
-        '<html><div id="tabmhs_profile"><b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
-        '<p class="text-muted">2024/2025 Genap</p></div></html>';
-      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
-        const url = typeof input === 'string' ? input : input.url;
-        if (url.includes('/pages/mhs/dashboard'))
-          return {
-            ok: true,
-            url,
-            headers: { get: () => null },
-            text: async () => profileHtml,
-            status: 200,
-          };
-        if (url.includes('/get_khs'))
-          return {
-            ok: true,
-            url,
-            headers: { get: () => null },
-            text: async () => gradedHtml,
-            status: 200,
-          };
-        if (url.includes('/get_total_sks'))
-          return {
-            ok: true,
-            url,
-            headers: {
-              get: (k: string) =>
-                k.toLowerCase() === 'content-type' ? 'application/json' : null,
-            },
-            text: async () => JSON.stringify({ total_sks: 3 }),
-            json: async () => ({ total_sks: 3 }),
-            status: 200,
-          };
-        throw new Error('unmocked: ' + url);
-      });
+// Session resolver whose store carries emailSso (the API path needs it directly
+// without a scrape fallback). cookie value is irrelevant to the apiMock below.
+function makeApiSvc(
+  apiMock: Partial<SiapApiUpstream>,
+  cache?: any,
+): SiapService {
+  return new SiapService(
+    cache,
+    undefined,
+    {
+      get: async () => ({
+        siapCookie: 'sia_app_session=TEST',
+        identity: '24060124120013',
+        emailSso: 'kemalfaza26@students.undip.ac.id',
+      }),
+    } as any,
+    apiMock as SiapApiUpstream,
+  );
+}
 
-      const khs = await svc.getKhs('u1');
-      expect(khs.ipk).toBe(4.0); // manual fallback: rawIp=4.0 over the (2) graded semesters
-    });
+describe('API-backed methods', () => {
+  const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+
+  beforeEach(() => {
+    apiMock.mintToken.mockReset();
+    apiMock.fetch.mockReset();
+  });
+
+  it('getProfile mints token + fetches data_mahasiswa + semester_aktif', async () => {
+    apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    apiMock.fetch
+      .mockResolvedValueOnce({
+        nama: 'Budi',
+        nim: '24060124120013',
+        nama_ps: 'Informatika',
+        namafak: 'FSM',
+        tahun_masuk: '2024',
+        sso_email: 'b@students.undip.ac.id',
+        status_terakhir: 'Aktif',
+      })
+      .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' });
+    const svc = makeApiSvc(apiMock);
+    const p = await svc.getProfile('u1');
+    expect(apiMock.mintToken).toHaveBeenCalled();
+    expect(p.nama).toBe('Budi');
+    expect(p.prodi).toBe('Informatika');
+  });
+
+  it('getJadwal maps API rows', async () => {
+    apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    apiMock.fetch.mockResolvedValue([
+      { hari: 'senin', nama_mk: 'X', sks: '3', tanggal_pertemuan: '2026-08-30' },
+    ]);
+    const svc = makeApiSvc(apiMock);
+    const j = await svc.getJadwal('u1');
+    expect(j).toHaveLength(1);
+    expect(j[0].matakuliah).toBe('X');
+    expect(j[0].sks).toBe(3);
+  });
+
+  it('retries mintToken once on Invalid credentials (spec §5.1)', async () => {
+    apiMock.mintToken
+      .mockResolvedValueOnce({ token: 'T1', data: {} })
+      .mockResolvedValueOnce({ token: 'T2', data: {} });
+    const stale = new StaleUpstreamError('Siap', 'api-credential');
+    apiMock.fetch
+      .mockRejectedValueOnce(stale) // first attempt fails (token invalidated)
+      .mockResolvedValueOnce([{ hari: 'senin', nama_mk: 'Y', sks: '3' }]); // retry succeeds
+    const svc = makeApiSvc(apiMock);
+    const j = await svc.getJadwal('u1');
+    expect(j).toHaveLength(1);
+    expect(apiMock.mintToken).toHaveBeenCalledTimes(2); // initial + retry
+    expect(apiMock.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry on a non-stale error', async () => {
+    apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    apiMock.fetch.mockRejectedValue(new Error('network'));
+    const svc = makeApiSvc(apiMock);
+    await expect(svc.getJadwal('u1')).rejects.toThrow('network');
+    expect(apiMock.mintToken).toHaveBeenCalledTimes(1); // no retry
+  });
+
+  it('getNotifications uses the API (pengumuman) and caches', async () => {
+    const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+    cache.get.mockResolvedValue({ count: 1, items: [{ id: '1' }] });
+    const svc = makeApiSvc(apiMock, cache);
+    const n = await svc.getNotifications('u1');
+    expect(n.count).toBe(1);
+    expect(cache.get).toHaveBeenCalledWith('u1:siap:notifications');
+  });
+
+  it('getAbsen parses API rows (group-by) into SiapAbsenItem[]', async () => {
+    apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    apiMock.fetch.mockResolvedValue([
+      { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
+      { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'alpa' },
+    ]);
+    const svc = makeApiSvc(apiMock);
+    const a = await svc.getAbsen('u1');
+    expect(a).toHaveLength(1);
+    expect(a[0].idJadwal).toBe('216328');
+    expect(a[0].hadir).toBe(1);
+    expect(a[0].total).toBe(2);
+  });
+
+  it('fallback-scrapes emailSso from fetchProfile when session lacks it', async () => {
+    // No emailSso in the session → resolveSiapIdentity calls fetchProfile (scrape)
+    // via this.upstream.fetchText, then mints the token.
+    const svc = new SiapService(
+      undefined,
+      {
+        fetchText: jest.fn().mockResolvedValue(
+          '<html><div id="tabmhs_profile">' +
+            '<b>Email SSO</b>:</div><div class="col-sm-9">x@students.undip.ac.id</div>' +
+            '</div></html>',
+        ),
+      } as any,
+      {
+        get: async () => ({ siapCookie: 's', identity: '24060124120013' }),
+        set: jest.fn(),
+      } as any,
+      apiMock as SiapApiUpstream,
+    );
+    apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    apiMock.fetch
+      .mockResolvedValueOnce({ nama: 'Budi', nim: '24060124120013', sso_email: 'x@students.undip.ac.id' })
+      .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' });
+    const p = await svc.getProfile('u1');
+    expect(apiMock.mintToken).toHaveBeenCalledWith('x@students.undip.ac.id', '24060124120013');
+    expect(p.nama).toBe('Budi');
   });
 });
