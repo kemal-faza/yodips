@@ -12,7 +12,6 @@ import type {
   SiapKehadiran,
   SiapKhs,
   SiapKhsSemester,
-  SiapNotification,
   SiapNotifications,
   SiapProfile,
 } from './siap-parse';
@@ -53,22 +52,6 @@ export type {
 export interface SiapSessionCheck {
   valid: boolean;
   reason: 'ok' | 'no-cookie' | 'stale';
-}
-
-/** Raw entry from SIAP's `get_jadwal` feed (keyed by uuid_pertemuan). */
-interface SiapJadwalUpstream {
-  id_trx_pertemuan?: string;
-  idjadwal?: string;
-  hari?: string;
-  waktu_mulai?: string;
-  waktu_selesai?: string;
-  nama_ruang?: string;
-  kode_mk?: string;
-  nama_mk?: string;
-  jenis_perkuliahan?: string;
-  sks?: string | number;
-  tanggal_pertemuan?: string;
-  uuid_pertemuan?: string;
 }
 
 @Injectable()
