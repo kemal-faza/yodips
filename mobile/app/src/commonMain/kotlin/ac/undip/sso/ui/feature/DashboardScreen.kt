@@ -21,9 +21,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ListAlt
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,6 +52,7 @@ fun DashboardScreen(
     repo: SsoRepository,
     onOpenIrs: () -> Unit,
     onOpenKhs: () -> Unit,
+    onOpenNotifications: () -> Unit = {},
 ) {
     var refreshTick by remember { mutableIntStateOf(0) }
     RefreshableLoadableData(
@@ -60,7 +63,7 @@ fun DashboardScreen(
         },
         emptyMessage = "Belum ada data",
     ) { profile ->
-        DashboardContent(profile, repo, onOpenIrs, onOpenKhs, refreshTick)
+        DashboardContent(profile, repo, onOpenIrs, onOpenKhs, onOpenNotifications, refreshTick)
     }
 }
 
@@ -70,6 +73,7 @@ private fun DashboardContent(
     repo: SsoRepository,
     onOpenIrs: () -> Unit,
     onOpenKhs: () -> Unit,
+    onOpenNotifications: () -> Unit,
     refreshTick: Int,
 ) {
     Column(
@@ -79,17 +83,32 @@ private fun DashboardContent(
             .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = DashboardContentBottomPadding.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(
-            if (profile.nama.isBlank()) "Selamat datang" else "Halo, ${profile.nama.split(' ').firstOrNull() ?: profile.nama}!",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = accentForeground(),
-        )
-        Text(
-            "${profile.prodi} · ${profile.nim}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (profile.nama.isBlank()) "Selamat datang" else "Halo, ${profile.nama.split(' ').firstOrNull() ?: profile.nama}!",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = accentForeground(),
+                )
+                Text(
+                    "${profile.prodi} · ${profile.nim}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onOpenNotifications) {
+                Icon(
+                    Icons.Outlined.Notifications,
+                    contentDescription = "Notifikasi",
+                    tint = accentForeground(),
+                )
+            }
+        }
 
         AcademicStats(repo)
 
