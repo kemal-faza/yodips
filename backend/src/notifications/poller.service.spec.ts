@@ -4,7 +4,6 @@ import { NotificationsPoller } from './poller.service';
 import { InMemoryNotificationStore } from './notification-store';
 import { KulonAssignment } from '../kulon/kulon.service';
 import { SiapJadwal } from '../siap/siap.service';
-
 const NOW = 1_756_000_000_000;
 // Di luar jendela deadline 24 jam — dipakai test yang BUKAN tentang deadline
 // agar findDueSoon tidak menambah push "Deadline 24 jam" ke f.sent.
@@ -41,15 +40,25 @@ function makeFakes() {
       return { invalidTokens: [] };
     },
   };
+  const webSent: Array<{ subs: unknown[]; title: string }> = [];
+  const webPush = {
+    configured: false,
+    publicKey: '',
+    send: async (subs: unknown[], msg: { title: string }) => {
+      webSent.push({ subs, title: msg.title });
+      return { invalid: [] };
+    },
+  };
   const poller = new NotificationsPoller(
     store,
     kulon as any,
     siap as any,
     fcm as any,
+    webPush as any,
     { get: () => undefined } as any, // ConfigService — tak dipakai runCycle
     {} as any,                       // SchedulerRegistry — tak dipakai runCycle
   );
-  return { store, kulon, siap, sent, fcm, poller };
+  return { store, kulon, siap, sent, fcm, webSent, webPush, poller };
 }
 
 describe('NotificationsPoller.runCycle', () => {
@@ -183,5 +192,97 @@ describe('NotificationsPoller.runCycle', () => {
     const sum = await f.poller.runCycle(NOW);
     expect(sum.usersChecked).toBe(0);
     f.poller.running = false;
+  });
+
+  it('web-only user (0 FCM token, 1 web sub) TIDAK early-return -> webPush.send dipanggil', async () => {
+    const f = makeFakes();
+    (f as any).webPush.configured = true;
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    await f.store.addWebSubscription('u1', {
+      endpoint: 'https://pusher/abc',
+      p256dh: 'pk',
+      auth: 'auth',
+    });
+    await f.poller.runCycle(NOW); // baseline
+
+    f.kulon.getAllAssignments = async () => [
+      A(1, { duedate: DUE_FAR_SEC }),
+      A(2, { duedate: DUE_FAR_SEC }),
+    ];
+    const sum = await f.poller.runCycle(NOW);
+
+    expect(sum.usersChecked).toBe(1);
+    expect(f.webSent).toHaveLength(1);
+    expect(f.webSent[0].subs).toHaveLength(1);
+    expect(f.webSent[0].title).toBe('Tugas baru');
+    // FCM OK dipanggil namun template kosong (tidak ada token); real impl no-op.
+    expect(f.sent[0].tokens).toEqual([]);
+  });
+
+  it('user dgn kedua token + web sub -> FCM & web sama-sama terkirim', async () => {
+    const f = makeFakes();
+    (f as any).webPush.configured = true;
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    await f.store.addDeviceToken('u1', 'tok');
+    await f.store.addWebSubscription('u1', {
+      endpoint: 'https://pusher/abc',
+      p256dh: 'pk',
+      auth: 'auth',
+    });
+    await f.poller.runCycle(NOW); // baseline
+
+    f.kulon.getAllAssignments = async () => [
+      A(1, { duedate: DUE_FAR_SEC }),
+      A(2, { duedate: DUE_FAR_SEC }),
+    ];
+    const sum = await f.poller.runCycle(NOW);
+
+    expect(sum.pushesSent).toBe(1);
+    expect(f.sent).toHaveLength(1);
+    expect(f.sent[0].tokens).toEqual(['tok']);
+    expect(f.webSent).toHaveLength(1);
+    expect(f.webSent[0].subs).toHaveLength(1);
+  });
+
+  it('invalid web sub (statusCode 410) -> removeWebSubscription dipanggil', async () => {
+    const f = makeFakes();
+    (f as any).webPush.configured = true;
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    const sub1 = { endpoint: 'https://pusher/bad', p256dh: 'pk', auth: 'auth' };
+    const sub2 = { endpoint: 'https://pusher/ok', p256dh: 'pk', auth: 'auth' };
+    await f.store.addWebSubscription('u1', sub1);
+    await f.store.addWebSubscription('u1', sub2);
+    await f.poller.runCycle(NOW); // baseline
+
+    f.kulon.getAllAssignments = async () => [
+      A(1, { duedate: DUE_FAR_SEC }),
+      A(2, { duedate: DUE_FAR_SEC }),
+    ];
+    (f as any).webPush.send = async () => ({ invalid: [sub1] });
+    await f.poller.runCycle(NOW);
+
+    expect(await f.store.getWebSubscriptions('u1')).toEqual([sub2]);
+    expect(await f.store.listSubsWithWeb()).toEqual(['u1']);
+  });
+
+  it('web-only user tanpa webPush.configured -> web tidak dikirim (no-op)', async () => {
+    const f = makeFakes();
+    (f as any).webPush.configured = false;
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    await f.store.addWebSubscription('u1', {
+      endpoint: 'https://pusher/abc',
+      p256dh: 'pk',
+      auth: 'auth',
+    });
+    await f.poller.runCycle(NOW);
+
+    f.kulon.getAllAssignments = async () => [
+      A(1, { duedate: DUE_FAR_SEC }),
+      A(2, { duedate: DUE_FAR_SEC }),
+    ];
+    const sum = await f.poller.runCycle(NOW);
+
+    expect(sum.usersChecked).toBe(1);
+    expect(f.webSent).toHaveLength(0);
   });
 });

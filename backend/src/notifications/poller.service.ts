@@ -15,11 +15,12 @@ import {
 import { isStaleUpstreamError } from '../upstream/upstream-fetch';
 import { KulonService } from '../kulon/kulon.service';
 import { eventToPush, PushCopy } from './push-copy';
-import { NotificationStore } from './notification-store';
+import { NotificationStore, WebSubscriptionRecord } from './notification-store';
 import { SiapService } from '../siap/siap.service';
 import { FcmService } from './fcm.service';
 import { KulonAssignment } from '../kulon/kulon.service';
 import { SiapJadwal } from '../siap/siap.service';
+import { WebPushService } from './web-push.service';
 
 export interface CycleSummary {
   usersChecked: number;
@@ -44,6 +45,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     private readonly kulon: KulonService,
     private readonly siap: SiapService,
     private readonly fcm: FcmService,
+    private readonly webPush: WebPushService,
     private readonly config: ConfigService,
     private readonly schedulerRegistry: SchedulerRegistry,
   ) {}
@@ -79,7 +81,9 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     if (!locked) return summary;
     this.running = true;
     try {
-      const subs = await this.store.listSubsWithTokens();
+      const fcmSubs = await this.store.listSubsWithTokens();
+      const webSubs = await this.store.listSubsWithWeb();
+      const subs = [...new Set([...fcmSubs, ...webSubs])];
       for (let i = 0; i < subs.length; i += CHUNK_SIZE) {
         await Promise.all(
           subs.slice(i, i + CHUNK_SIZE).map(async (sub) => {
@@ -112,7 +116,8 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     deadlineWindowMs?: number,
   ): Promise<void> {
     const tokens = await this.store.getDeviceTokens(sub);
-    if (tokens.length === 0) return;
+    const webSubs = await this.store.getWebSubscriptions(sub);
+    if (tokens.length === 0 && webSubs.length === 0) return;
 
     // Services resolve their own upstream sessions from `sub`; a missing or
     // expired session surfaces as a typed stale 401 -> re-login push (catch
@@ -140,7 +145,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
 
     const events: NotifEvent[] = [...newRes.events, ...resched.events, ...due.events];
     for (const ev of events) {
-      await this.deliver(sub, tokens, eventToPush(ev), summary);
+      await this.deliver(sub, tokens, webSubs, eventToPush(ev), summary);
     }
 
     // Persist state — snapshot hanya saat fetch tampak sehat (guard detector).
@@ -157,6 +162,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
   private async deliver(
     sub: string,
     tokens: string[],
+    webSubs: WebSubscriptionRecord[],
     copy: PushCopy,
     summary: CycleSummary,
   ): Promise<void> {
@@ -164,6 +170,12 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     summary.pushesSent += 1;
     for (const bad of invalidTokens) {
       await this.store.removeDeviceToken(sub, bad);
+    }
+    if (webSubs.length > 0 && this.webPush.configured) {
+      const { invalid } = await this.webPush.send(webSubs, copy);
+      for (const bad of invalid) {
+        await this.store.removeWebSubscription(sub, bad);
+      }
     }
   }
 
@@ -174,13 +186,15 @@ export class NotificationsPoller implements OnApplicationBootstrap {
   ): Promise<void> {
     if (await this.store.getReloginFlagged(sub)) return;
     const tokens = await this.store.getDeviceTokens(sub);
-    if (tokens.length === 0) {
+    const webSubs = await this.store.getWebSubscriptions(sub);
+    if (tokens.length === 0 && webSubs.length === 0) {
       await this.store.setReloginFlagged(sub, true);
       return;
     }
     await this.deliver(
       sub,
       tokens,
+      webSubs,
       {
         title: 'Sesi berakhir',
         body: 'Login ulang lewat web atau extension supaya notifikasi tetap aktif.',

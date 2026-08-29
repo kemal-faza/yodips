@@ -7,6 +7,17 @@ export const RELOGIN_TTL_MS = 30 * 24 * 3600 * 1000;
 export const LOCK_TTL_S = 900;
 
 /**
+ * Web Push subscription yang disimpan per-user (mirror PushSubscription).
+ * Store hanya menyimpan objek { endpoint, p256dh, auth } — tidak menyimpan
+ * seluruh browser subscription/options.
+ */
+export interface WebSubscriptionRecord {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}
+
+/**
  * State notifikasi per-user (registry token FCM, snapshot diff, dedup, flag
  * re-login, lock siklus). Pola ala SessionStore: InMemory dev/test, Redis prod.
  */
@@ -15,6 +26,11 @@ export abstract class NotificationStore {
   abstract removeDeviceToken(sub: string, token: string): Promise<void>;
   abstract getDeviceTokens(sub: string): Promise<string[]>;
   abstract listSubsWithTokens(): Promise<string[]>;
+
+  abstract addWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void>;
+  abstract removeWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void>;
+  abstract getWebSubscriptions(sub: string): Promise<WebSubscriptionRecord[]>;
+  abstract listSubsWithWeb(): Promise<string[]>;
 
   abstract getSnapshot<T>(sub: string, key: SnapshotKey): Promise<T | null>;
   abstract setSnapshot<T>(sub: string, key: SnapshotKey, value: T): Promise<void>;
@@ -38,6 +54,7 @@ interface Entry {
 export class InMemoryNotificationStore extends NotificationStore {
   private readonly kv = new Map<string, Entry>();
   private readonly subs = new Map<string, string[]>();
+  private readonly web = new Map<string, WebSubscriptionRecord[]>();
   private lockedUntil = 0;
 
   constructor(private readonly now: () => number = Date.now) {
@@ -62,6 +79,27 @@ export class InMemoryNotificationStore extends NotificationStore {
 
   async listSubsWithTokens(): Promise<string[]> {
     return [...this.subs.keys()];
+  }
+
+  async addWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void> {
+    const cur = this.web.get(sub) ?? [];
+    if (!cur.some((e) => e.endpoint === s.endpoint)) cur.push(s);
+    this.web.set(sub, cur);
+  }
+
+  async removeWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void> {
+    const cur = this.web.get(sub) ?? [];
+    const rest = cur.filter((e) => e.endpoint !== s.endpoint);
+    if (rest.length === 0) this.web.delete(sub);
+    else this.web.set(sub, rest);
+  }
+
+  async getWebSubscriptions(sub: string): Promise<WebSubscriptionRecord[]> {
+    return this.web.get(sub) ?? [];
+  }
+
+  async listSubsWithWeb(): Promise<string[]> {
+    return [...this.web.keys()];
   }
 
   async getSnapshot<T>(sub: string, key: SnapshotKey): Promise<T | null> {
