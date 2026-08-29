@@ -49,7 +49,8 @@ describe('DetailPanel', () => {
     getAssignmentDetailMock.mockResolvedValue({
       assignmentId: 42,
       name: 'Tugas 1',
-      descriptionHtml: '<p>Kerjakan laporan.</p>',
+      descriptionHtml: '',
+      descriptionMarkdown: '# Judul\n\n**Bold text**',
       files: [{ name: 'a.pdf', url: 'https://kulon2.undip.ac.id/x/a.pdf' }],
       submission: { status: 'graded', grade: 85, maxGrade: 100 },
       kulonUrl: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
@@ -63,7 +64,24 @@ describe('DetailPanel', () => {
     expect(bodyText()).toContain('Deskripsi');
     expect(bodyText()).toContain('File');
     expect(bodyText()).toContain('Submission');
-    expect(bodyText()).toContain('Kerjakan laporan.');
+    expect(bodyText()).toContain('Bold text');
+  });
+
+  it('renders description as markdown (heading + bold)', async () => {
+    getAssignmentDetailMock.mockResolvedValue({
+      assignmentId: 42,
+      name: 'Tugas 1',
+      descriptionHtml: '',
+      descriptionMarkdown: '# Judul\n\n**Bold text**',
+      files: [],
+      submission: { status: 'not_submitted' },
+      kulonUrl: 'https://kulon2.undip.ac.id/',
+    });
+    mountPanel({ assignment, open: true });
+    await flushPromises();
+    expect(bodyEls('h1')[0]?.textContent).toContain('Judul');
+    expect(bodyEls('strong').length).toBeGreaterThan(0);
+    expect(bodyText()).toContain('Bold text');
   });
 
   it('shows files in File tab when selected', async () => {
