@@ -35,7 +35,8 @@ fun AppRoot(themeController: ThemeController) {
 
     // Live push/nav dari service worker (postMessage):
     //  - {type:'sso_push', toast} -> tambahkan ke riwayat IDB (tab memang terbuka,
-    //    SW menyimpan juga — dedup di mergeNotification tetap berlaku);
+    //    SW menyimpan juga — dedup di mergeNotification tetap berlaku karena id
+    //    'title|body' dari toast SW ikut ter-decode dan dipertahankan);
     //  - {type:'sso_nav', target} -> arahkan tab ke tugas/jadwal seketika.
     // Listener didaftarkan sekali untuk umur app (root tidak pernah di-leave);
     // wasm single-threaded, jadi mutasi state dari event handler aman.
@@ -117,14 +118,19 @@ private val pushToastJson = Json {
 
 /**
  * Daftarkan satu `message` listener untuk pesan dari service worker
- * (`self.clients.postMessage`). Callback menerima (kind, payload):
+ * (`self.clients...postMessage`). Per spec Service Workers, pesan yang dikirim
+ * `client.postMessage()` diantarkan sebagai event `message` DI
+ * `ServiceWorkerContainer` — bukan di `window` — jadi listener didaftarkan di
+ * `navigator.serviceWorker` (tanpa ini kanal sso_push/sso_nav mati total).
+ * Callback menerima (kind, payload):
  *  - ('push', JSON.stringify(toast))  — toast = {id,title,body,target,payload,receivedAt}
  *  - ('nav', target)                  — target = 'tasks' | 'schedule' | ''
  */
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
     "(cb) => {" +
-        "window.addEventListener('message', function (ev) {" +
+        "if (!navigator.serviceWorker) return;" +
+        "navigator.serviceWorker.addEventListener('message', function (ev) {" +
         "  var d = ev.data;" +
         "  if (!d || typeof d !== 'object' || !d.type) return;" +
         "  if (d.type === 'sso_push' && d.toast) cb('push', JSON.stringify(d.toast));" +
