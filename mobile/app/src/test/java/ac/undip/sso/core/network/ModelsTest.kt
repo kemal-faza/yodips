@@ -57,6 +57,28 @@ class ModelsTest {
         assertEquals("disetujui", irs.mataKuliah[0].statusText)
     }
 
+    // RED (fix indikator kehadiran): backend kini menyertakan kode MIK pada
+    // item absen agar mobile bisa join by kode (fallback nama).
+    @Test
+    fun `parses SiapAbsen with kode`() {
+        val s =
+            """[{"idJadwal":"216328","kode":"MIK1624503","nama":"Sistem Informasi","hadirPct":75.0,"hadir":3,"total":4}]"""
+        val arr = lenientJson.decodeFromString<List<SiapAbsen>>(s)
+        assertEquals(1, arr.size)
+        assertEquals("MIK1624503", arr[0].kode)
+        assertEquals("Sistem Informasi", arr[0].nama)
+        assertEquals(3, arr[0].hadir)
+        assertEquals(4, arr[0].total)
+    }
+
+    @Test
+    fun `SiapAbsen without kode still parses (older backend)`() {
+        val s =
+            """[{"idJadwal":"216328","nama":"Sistem Informasi","hadirPct":0.0,"hadir":0,"total":0}]"""
+        val arr = lenientJson.decodeFromString<List<SiapAbsen>>(s)
+        assertEquals("", arr[0].kode)
+    }
+
     @Test
     fun `handoff body quotes cookie values as valid JSON`() {
         val one = handoffBody("abc123def", null)

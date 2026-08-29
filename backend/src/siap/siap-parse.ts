@@ -94,6 +94,8 @@ export interface SiapJadwal {
 /** Ringkasan kehadiran per matakuliah dari halaman index jadwal SIAP. */
 export interface SiapAbsenItem {
   idJadwal: string;
+  /** Kode MIK matkul — kunci join yang lebih stabil daripada nama. */
+  kode: string;
   nama: string;
   hadirPct: number;
   /** Jumlah pertemuan yang tercatat hadir (dari detil get_absen per matkul). */
@@ -536,7 +538,7 @@ export function parseApiAbsen(
     const nama = String(r.nama_mk ?? '');
     const key = idJadwal || kode;
     if (!map.has(key)) {
-      map.set(key, { idJadwal, nama, hadir: 0, total: 0, hadirPct: 0 });
+      map.set(key, { idJadwal, kode, nama, hadir: 0, total: 0, hadirPct: 0 });
     }
     const item = map.get(key)!;
     item.total += 1;

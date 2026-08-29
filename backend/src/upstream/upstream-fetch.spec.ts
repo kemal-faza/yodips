@@ -95,6 +95,41 @@ describe('StaleUpstreamError', () => {
       'Kulon mengalami gangguan. Silakan login ulang via SSO',
     );
   });
+
+  // RED (fix relogin-loop): gangguan upstream yang SEMENTARA bukan sesi mati —
+  // klien tidak boleh dipaksa re-login karena 401 palsu. Transport memetakan
+  // reason transient ke 502 sedangkan bukti sesi mati tetap 401.
+  it('maps transient reasons (fetch-threw, api-endpoint) to 502', () => {
+    expect(new StaleUpstreamError('Siap', 'fetch-threw').getStatus()).toBe(
+      HttpStatus.BAD_GATEWAY,
+    );
+    expect(new StaleUpstreamError('Siap', 'api-endpoint').getStatus()).toBe(
+      HttpStatus.BAD_GATEWAY,
+    );
+  });
+
+  it('maps upstream 5xx (http-not-ok) to 502, upstream 4xx stays 401', () => {
+    const e5xx = new StaleUpstreamError('Siap', 'http-not-ok', 'msg', {
+      status: 503,
+    } as Response);
+    expect(e5xx.getStatus()).toBe(HttpStatus.BAD_GATEWAY);
+    const e4xx = new StaleUpstreamError('Siap', 'http-not-ok', 'msg', {
+      status: 403,
+    } as Response);
+    expect(e4xx.getStatus()).toBe(HttpStatus.UNAUTHORIZED);
+  });
+
+  it('keeps dead-session evidence at 401 (login-redirect, no-cookie, api-credential)', () => {
+    expect(new StaleUpstreamError('Siap', 'login-redirect').getStatus()).toBe(
+      HttpStatus.UNAUTHORIZED,
+    );
+    expect(new StaleUpstreamError('Siap', 'no-cookie').getStatus()).toBe(
+      HttpStatus.UNAUTHORIZED,
+    );
+    expect(new StaleUpstreamError('Siap', 'api-credential').getStatus()).toBe(
+      HttpStatus.UNAUTHORIZED,
+    );
+  });
 });
 
 describe('isStaleUpstreamError', () => {

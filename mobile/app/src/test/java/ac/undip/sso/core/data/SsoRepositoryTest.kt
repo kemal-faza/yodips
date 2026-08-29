@@ -296,7 +296,7 @@ class SsoRepositoryTest {
             refreshToken = { refreshAttempts++; "new-jwt" },
         )
         val r = repo.markKehadiran("qr") // upstream-scraped POST: stale, not dead-JWT
-        assertEquals(1, notified)
+        assertEquals(0, notified) // fix relogin-loop: upstream-stale ≠ sesi mati
         assertEquals(0, refreshAttempts) // POST never refreshes
         assertTrue(r is ApiResult.Error && r.type == ErrorType.STALE_SESSION)
     }
