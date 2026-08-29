@@ -65,20 +65,46 @@ export function isRedirectLoopCause(e: unknown): boolean {
 }
 
 /**
- * Uniform stale-session error (401) so controllers surface a friendly
- * "login ulang" prompt and the poller pushes its re-login notification.
+ * Uniform stale-session error so controllers surface a friendly "login ulang"
+ * prompt and the poller pushes its re-login notification.
+ *
+ * STATUS POLICY (fix relogin-loop): bukti sesi mati (login-redirect, no-cookie,
+ * api-credential, …) tetap 401 — hanya re-login yang memperbaiki. Gangguan
+ * upstream SEMENTARA (fetch-threw, api-endpoint, upstream 5xx) memakai 502
+ * supaya klien tidak salah mengira sesinya mati dan terjebak loop re-login.
  */
 export class StaleUpstreamError extends HttpException {
   /** Machine-readable why (see UpstreamStaleReason), for logs/diagnostics. */
   readonly reason: string;
 
-  constructor(service: string, reason = 'stale', customMessage?: string) {
+  constructor(
+    service: string,
+    reason = 'stale',
+    customMessage?: string,
+    res?: Response,
+  ) {
     const label = SERVICE_DISPLAY[service] ?? service;
     const message =
       customMessage ?? `Session ${label} expired. Silakan login ulang via SSO`;
-    super({ message }, HttpStatus.UNAUTHORIZED);
+    super({ message }, statusForStaleReason(reason, res));
     this.reason = reason;
   }
+}
+
+/** Reason codes whose failure is transient (upstream trouble, not the session). */
+const TRANSIENT_STALE_REASONS = new Set(['fetch-threw', 'api-endpoint']);
+
+/** 401 only for genuine dead-session evidence; 502 for transient upstream. */
+function statusForStaleReason(reason: string, res?: Response): HttpStatus {
+  if (TRANSIENT_STALE_REASONS.has(reason)) return HttpStatus.BAD_GATEWAY;
+  if (
+    reason === 'http-not-ok' &&
+    res &&
+    res.status >= HttpStatus.INTERNAL_SERVER_ERROR
+  ) {
+    return HttpStatus.BAD_GATEWAY;
+  }
+  return HttpStatus.UNAUTHORIZED;
 }
 
 /**
@@ -137,7 +163,7 @@ function throwStale(
   notOkMessage?: string,
 ): never {
   opts?.onStale?.(reason, res, extra);
-  throw new StaleUpstreamError(service, reason, notOkMessage);
+  throw new StaleUpstreamError(service, reason, notOkMessage, res ?? undefined);
 }
 
 /**

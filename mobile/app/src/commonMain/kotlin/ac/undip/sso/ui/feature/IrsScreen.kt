@@ -70,6 +70,15 @@ internal fun irsJadwal(mk: SiapIrsMataKuliah, jadwalByNama: Map<String, SiapJadw
     )
 }
 
+/**
+ * Kartu IRS di-dedupe by kode MIK (fallback nama): payload backend adalah
+ * gabungan IRS semua semester, jadi kursus yang mengulang — dan baris ganda
+ * upstream — muncul berulang di layar (mirror web `dedupeSchedule`).
+ * Occurrence pertama (semester terlama) menang.
+ */
+internal fun dedupeIrsMk(list: List<SiapIrsMataKuliah>): List<SiapIrsMataKuliah> =
+    list.distinctBy { it.kode.ifBlank { it.nama }.trim().lowercase() }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IrsScreen(
@@ -81,6 +90,7 @@ fun IrsScreen(
     var lecturerByKode by remember { mutableStateOf(emptyMap<String, String>()) }
     var jadwalByNama by remember { mutableStateOf(emptyMap<String, SiapJadwal>()) }
     var absenByNama by remember { mutableStateOf(emptyMap<String, SiapAbsen>()) }
+    var absenByKode by remember { mutableStateOf(emptyMap<String, SiapAbsen>()) }
     FeatureScreen("IRS", onBack = onBack) {
         var refreshTick by remember { mutableIntStateOf(0) }
         var isRefreshing by remember { mutableStateOf(false) }
@@ -160,6 +170,11 @@ fun IrsScreen(
                         when (val r = repo.absen()) {
                             is ApiResult.Success -> {
                                 absenByNama = r.data.associate { it.nama.trim().lowercase() to it }
+                                // Join by kode MIK lebih tahan terhadap perbedaan
+                                // format nama antar payload SIAP; nama tetap
+                                // dipakai sebagai fallback (backend lama).
+                                absenByKode =
+                                    r.data.filter { it.kode.isNotBlank() }.associate { it.kode to it }
                             }
 
                             is ApiResult.Error -> {
@@ -171,9 +186,10 @@ fun IrsScreen(
                     emptyMessage = "Belum ada IRS",
                     refreshTrigger = refreshTick,
                 ) { irs ->
+                    val mks = dedupeIrsMk(irs.mataKuliah)
                     Card(Modifier.fillMaxWidth()) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("${irs.mataKuliah.size} mata kuliah", style = MaterialTheme.typography.bodyMedium)
+                            Text("${mks.size} mata kuliah", style = MaterialTheme.typography.bodyMedium)
                             Text(
                                 "Total SKS ${formatSks(irs.totalSks)}",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -182,11 +198,11 @@ fun IrsScreen(
                         }
                     }
                     Spacer(Modifier.height(4.dp))
-                    irs.mataKuliah.forEach { mk ->
+                    mks.forEach { mk ->
                         ScheduleCard(
                             j = irsJadwal(mk, jadwalByNama),
                             lecturer = lecturerByKode[mk.kode] ?: mk.dosen,
-                            absen = absenByNama[mk.nama.trim().lowercase()],
+                            absen = absenByKode[mk.kode] ?: absenByNama[mk.nama.trim().lowercase()],
                             kode = mk.kode,
                         )
                         Spacer(Modifier.height(12.dp))

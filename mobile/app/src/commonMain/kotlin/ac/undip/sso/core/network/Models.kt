@@ -56,6 +56,8 @@ data class SiapLecturer(
 @Serializable
 data class SiapAbsen(
     val idJadwal: String = "",
+    /** Kode MIK — kunci join yang lebih stabil daripada nama (fallback lama). */
+    val kode: String = "",
     val nama: String = "",
     val hadirPct: Double = 0.0,
     val hadir: Int = 0,

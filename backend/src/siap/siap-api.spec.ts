@@ -105,4 +105,46 @@ describe('SiapApiUpstream', () => {
       upstream.fetch('semester_aktif', 'X', {}, '24060124120013'),
     ).rejects.toBeInstanceOf(StaleUpstreamError);
   });
+
+  // RED (fix relogin-loop): kegagalan non-credential dari API SIAP (5xx/429/
+  // fail generik/gate versi) adalah masalah upstream — status ke klien harus
+  // 502 (bukan 401) supaya klien tidak memicu paksa re-login.
+  it('fetch maps generic upstream fail to 502', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false, status: 500,
+      json: async () => ({ status: 'error', message: 'Server error' }),
+      text: async () => '{"status":"error","message":"Server error"}',
+    });
+    const err = await upstream
+      .fetch('absen', 'X', {}, '24060124120013')
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(StaleUpstreamError);
+    expect(err.getStatus()).toBe(502);
+  });
+
+  it('fetch maps the app-version gate to 502 (server-side fix, not re-login)', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ status: 'fail', message: 'Silakan update aplikasi' }),
+      text: async () => '{}',
+    });
+    const err = await upstream
+      .fetch('absen', 'X', {}, '24060124120013')
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(StaleUpstreamError);
+    expect(err.getStatus()).toBe(502);
+  });
+
+  it('fetch keeps credential-class failures at 401', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false, status: 401,
+      json: async () => ({ status: 'error', message: 'Invalid credentials' }),
+      text: async () => '{"status":"error","message":"Invalid credentials"}',
+    });
+    const err = await upstream
+      .fetch('absen', 'X', {}, '24060124120013')
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(StaleUpstreamError);
+    expect(err.getStatus()).toBe(401);
+  });
 });

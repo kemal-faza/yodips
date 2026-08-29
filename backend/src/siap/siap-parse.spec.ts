@@ -235,6 +235,7 @@ describe('parseApiAbsen', () => {
     expect(out).toHaveLength(2);
     const si = out.find((o) => o.idJadwal === '216328')!;
     expect(si.nama).toBe('Sistem Informasi');
+    expect(si.kode).toBe('MIK1624503');
     expect(si.hadir).toBe(2);
     expect(si.total).toBe(3);
     expect(si.hadirPct).toBe(Math.round((2 / 3) * 100));
