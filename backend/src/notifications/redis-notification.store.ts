@@ -7,9 +7,11 @@ import {
   SentKind,
   SNAPSHOT_TTL_MS,
   SnapshotKey,
+  WebSubscriptionRecord,
 } from './notification-store';
 
 const SUBS_KEY = 'notif:subs';
+const SUBS_WEB_KEY = 'notif:subs:web';
 const LOCK_KEY = 'notif:cycle-lock';
 const seconds = (ms: number) => Math.floor(ms / 1000);
 
@@ -50,6 +52,39 @@ export class RedisNotificationStore extends NotificationStore {
 
   async listSubsWithTokens(): Promise<string[]> {
     return this.client.smembers(SUBS_KEY);
+  }
+
+  async addWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void> {
+    const key = `notif:web:${sub}`;
+    const raw = await this.client.get(key);
+    const list: WebSubscriptionRecord[] = raw ? JSON.parse(raw) : [];
+    if (!list.some((e) => e.endpoint === s.endpoint)) list.push(s);
+    await this.client.set(key, JSON.stringify(list));
+    await this.client.sadd(SUBS_WEB_KEY, sub);
+  }
+
+  async removeWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void> {
+    const key = `notif:web:${sub}`;
+    const raw = await this.client.get(key);
+    if (!raw) return;
+    const rest: WebSubscriptionRecord[] = JSON.parse(raw).filter(
+      (e: WebSubscriptionRecord) => e.endpoint !== s.endpoint,
+    );
+    if (rest.length === 0) {
+      await this.client.del(key);
+      await this.client.srem(SUBS_WEB_KEY, sub);
+    } else {
+      await this.client.set(key, JSON.stringify(rest));
+    }
+  }
+
+  async getWebSubscriptions(sub: string): Promise<WebSubscriptionRecord[]> {
+    const raw = await this.client.get(`notif:web:${sub}`);
+    return raw ? JSON.parse(raw) : [];
+  }
+
+  async listSubsWithWeb(): Promise<string[]> {
+    return this.client.smembers(SUBS_WEB_KEY);
   }
 
   async getSnapshot<T>(sub: string, key: SnapshotKey): Promise<T | null> {

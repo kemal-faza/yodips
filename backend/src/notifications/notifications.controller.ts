@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpException,
   HttpStatus,
   Post,
@@ -15,6 +16,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { NotificationStore } from './notification-store';
 import { NotificationsPoller } from './poller.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
+import { WebDeviceDto } from './dto/web-device.dto';
+import { WebPushService } from './web-push.service';
 
 interface AuthedRequest {
   user?: { sub?: string };
@@ -27,6 +30,7 @@ export class NotificationsController {
     private readonly store: NotificationStore,
     private readonly poller: NotificationsPoller,
     private readonly config: ConfigService,
+    private readonly webPush: WebPushService,
   ) {}
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -55,6 +59,48 @@ export class NotificationsController {
     }
     await this.store.removeDeviceToken(sub, dto.token);
     return { ok: true };
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('web-device')
+  async registerWeb(@Req() req: AuthedRequest, @Body() dto: WebDeviceDto) {
+    const sub = req.user?.sub;
+    if (!sub) {
+      throw new HttpException(
+        { message: 'Token tidak valid' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    await this.store.addWebSubscription(sub, {
+      endpoint: dto.endpoint,
+      p256dh: dto.p256dh,
+      auth: dto.auth,
+    });
+    return { ok: true };
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Delete('web-device')
+  async removeWeb(@Req() req: AuthedRequest, @Body() dto: WebDeviceDto) {
+    const sub = req.user?.sub;
+    if (!sub) {
+      throw new HttpException(
+        { message: 'Token tidak valid' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    await this.store.removeWebSubscription(sub, {
+      endpoint: dto.endpoint,
+      p256dh: dto.p256dh,
+      auth: dto.auth,
+    });
+    return { ok: true };
+  }
+
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Get('vapid-public-key')
+  async vapidPublicKey() {
+    return { publicKey: this.webPush.publicKey };
   }
 
   /**

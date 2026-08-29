@@ -158,6 +158,23 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   NOTIF_POLL_CRON?: string;
+
+  // ---- Web Push (VAPID) ----------------------------------------------------
+  @IsOptional()
+  @IsBoolean()
+  WEB_PUSH_ENABLED?: boolean;
+
+  @IsOptional()
+  @IsString()
+  WEB_PUSH_VAPID_PUBLIC_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  WEB_PUSH_VAPID_PRIVATE_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  WEB_PUSH_SUBJECT?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvConfig {

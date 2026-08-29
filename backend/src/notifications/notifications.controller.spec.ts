@@ -6,6 +6,7 @@ import { NotificationStore } from './notification-store';
 class StoreMock implements Partial<NotificationStore> {
   tokens: Record<string, string[]> = {};
   subs = new Set<string>();
+  web: Record<string, Array<{ endpoint: string; p256dh: string; auth: string }>> = {};
   async addDeviceToken(sub: string, token: string) {
     const list = this.tokens[sub] ?? (this.tokens[sub] = []);
     if (!list.includes(token)) list.push(token);
@@ -19,9 +20,22 @@ class StoreMock implements Partial<NotificationStore> {
   async getDeviceTokens(sub: string) {
     return this.tokens[sub] ?? [];
   }
+  async addWebSubscription(sub: string, s: { endpoint: string; p256dh: string; auth: string }) {
+    const list = this.web[sub] ?? (this.web[sub] = []);
+    if (!list.some((e) => e.endpoint === s.endpoint)) list.push(s);
+  }
+  async removeWebSubscription(sub: string, s: { endpoint: string; p256dh: string; auth: string }) {
+    const list = this.web[sub] ?? [];
+    const rest = list.filter((e) => e.endpoint !== s.endpoint);
+    if (rest.length === 0) delete this.web[sub];
+    else this.web[sub] = rest;
+  }
+  async getWebSubscriptions(sub: string) {
+    return this.web[sub] ?? [];
+  }
 }
 
-function makeController(opts: { nodeEnv?: string } = {}) {
+function makeController(opts: { nodeEnv?: string; vapidPublicKey?: string } = {}) {
   const store = new StoreMock();
   const fakePoller = {
     runCycle: async () => ({ usersChecked: 0, pushesSent: 0 }),
@@ -35,12 +49,17 @@ function makeController(opts: { nodeEnv?: string } = {}) {
   const fakeConfig = {
     get: (k: string) => (k === 'NODE_ENV' ? opts.nodeEnv ?? 'development' : undefined),
   };
+  const fakeWebPush = {
+    publicKey: opts.vapidPublicKey ?? '',
+    send: async () => ({ invalid: [] }),
+  };
   const controller = new NotificationsController(
     store,
     fakePoller as any,
     fakeConfig as any,
+    fakeWebPush as any,
   );
-  return { store, fakePoller, controller };
+  return { store, fakePoller, fakeWebPush, controller };
 }
 
 describe('NotificationsController', () => {
@@ -83,5 +102,45 @@ describe('NotificationsController', () => {
     const err = await controller.devRunCycle().catch((e) => e);
     expect(err).toBeInstanceOf(HttpException);
     expect((err as HttpException).getStatus()).toBe(HttpStatus.FORBIDDEN);
+  });
+
+  it('POST web-device menyimpan web subscription utk req.user.sub', async () => {
+    const { store, controller } = makeController();
+    await controller.registerWeb(
+      { user: { sub: 'u1' } },
+      { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' },
+    );
+    expect(await store.getWebSubscriptions('u1')).toEqual([
+      { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' },
+    ]);
+  });
+
+  it('POST web-device tanpa sub -> 401', async () => {
+    const { controller } = makeController();
+    const err = await controller
+      .registerWeb({}, { endpoint: 'e', p256dh: 'p', auth: 'a' })
+      .catch((e) => e);
+    expect((err as HttpException).getStatus()).toBe(HttpStatus.UNAUTHORIZED);
+  });
+
+  it('DELETE web-device menghapus subscription', async () => {
+    const { store, controller } = makeController();
+    const sub = { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' };
+    await controller.registerWeb({ user: { sub: 'u1' } }, sub);
+    await controller.removeWeb({ user: { sub: 'u1' } }, sub);
+    expect(await store.getWebSubscriptions('u1')).toEqual([]);
+  });
+
+  it('DELETE web-device tanpa sub -> 401', async () => {
+    const { controller } = makeController();
+    const err = await controller
+      .removeWeb({}, { endpoint: 'e', p256dh: 'p', auth: 'a' })
+      .catch((e) => e);
+    expect((err as HttpException).getStatus()).toBe(HttpStatus.UNAUTHORIZED);
+  });
+
+  it('GET vapid-public-key mengembalikan publicKey dari WebPushService', async () => {
+    const { controller } = makeController({ vapidPublicKey: 'vapid-pub' });
+    expect(await controller.vapidPublicKey()).toEqual({ publicKey: 'vapid-pub' });
   });
 });

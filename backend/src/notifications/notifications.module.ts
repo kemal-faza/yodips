@@ -10,6 +10,7 @@ import { createNotificationStore } from './notification-store.factory';
 import { NotificationStore } from './notification-store';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsPoller } from './poller.service';
+import { WebPushService } from './web-push.service';
 
 // NOTE(deviation from plan): the plan registered its own bare JwtModule here
 // (Kulon/Siap pattern) + a local JwtAuthGuard provider. A 4th JwtService
@@ -30,6 +31,7 @@ import { NotificationsPoller } from './poller.service';
   controllers: [NotificationsController],
   providers: [
     FcmService,
+    WebPushService,
     {
       provide: NotificationStore,
       inject: [ConfigService],
@@ -37,6 +39,6 @@ import { NotificationsPoller } from './poller.service';
     },
     NotificationsPoller,
   ],
-  exports: [FcmService, NotificationStore],
+  exports: [FcmService, NotificationStore, WebPushService],
 })
 export class NotificationsModule {}
