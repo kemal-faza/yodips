@@ -48,6 +48,7 @@ export interface KulonAssignmentDetail {
   assignmentId: number;
   name: string;
   descriptionHtml: string;
+  descriptionMarkdown: string;
   files: KulonFile[];
   submission: KulonSubmission;
   kulonUrl: string;
