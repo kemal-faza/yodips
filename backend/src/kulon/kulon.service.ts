@@ -440,11 +440,12 @@ export class KulonService {
     if (res.status === 404) throw new Error('ASSIGNMENT_NOT_FOUND');
     if (!res.ok) throw new Error(`Kulon assignment page failed: ${res.status}`);
     const html = await res.text();
+    const descriptionHtml = extractDescription(html);
     const detail = {
       assignmentId,
       name: extractName(html),
-      descriptionHtml: extractDescription(html),
-      descriptionMarkdown: htmlToMarkdown(extractDescription(html)),
+      descriptionHtml,
+      descriptionMarkdown: htmlToMarkdown(descriptionHtml),
       files: extractFiles(html),
       submission: parseSubmissionFromHtml(html),
       kulonUrl: pageUrl,

@@ -13,6 +13,7 @@ import ac.undip.sso.ui.theme.ThemeController
 import androidx.compose.runtime.*
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 @Composable
@@ -62,12 +63,15 @@ fun AppRoot(themeController: ThemeController) {
     LaunchedEffect(hasToken) {
         if (!hasToken) return@LaunchedEffect
         pendingNav = normalizeNavTarget(runCatching { history.consumePendingNav() }.getOrNull())
-        runCatching {
-            if (!PushSubscriptionManager.isSupported()) return@runCatching
-            val vapid = Backend.api.vapidPublicKey().publicKey
-            if (vapid.isBlank()) return@runCatching
-            PushSubscriptionManager.subscribe(vapid)?.let { Backend.api.registerWebPushDevice(it) }
-        }
+            runCatching {
+                if (!PushSubscriptionManager.isSupported()) return@runCatching
+                val vapid = Backend.api.vapidPublicKey().publicKey
+                if (vapid.isBlank()) return@runCatching
+                // `navigator.serviceWorker.ready` never settles bila tidak ada SW
+                // terdaftar — beri timeout supaya login tidak menggantung.
+                val sub = withTimeoutOrNull(10_000) { PushSubscriptionManager.subscribe(vapid) }
+                sub?.let { Backend.api.registerWebPushDevice(it) }
+            }
     }
 
     if (!checked) return
@@ -87,6 +91,9 @@ fun AppRoot(themeController: ThemeController) {
                             ?.let { Backend.api.unregisterWebPushDevice(it) }
                         PushSubscriptionManager.unsubscribe()
                     }
+                    // Privasi: riwayat notifikasi IDB global (bukan per-NIM) — user B
+                    // tidak boleh melihat notifikasi user A. Kosongkan di logout.
+                    runCatching { history.clear() }
                     Backend.authToken = null
                     tokenStore.clear()
                     hasToken = false
@@ -125,17 +132,25 @@ private val pushToastJson = Json {
  * Callback menerima (kind, payload):
  *  - ('push', JSON.stringify(toast))  — toast = {id,title,body,target,payload,receivedAt}
  *  - ('nav', target)                  — target = 'tasks' | 'schedule' | ''
+ *
+ * Idempotent: dev hot-reload / re-registration me-remove handler lama di
+ * `window.__ssoPushMsgHandler` sebelum menambah yang baru, jadi listener
+ * tidak pernah menumpuk (setiap pesan SW hanya diproses sekali).
  */
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
     "(cb) => {" +
         "if (!navigator.serviceWorker) return;" +
-        "navigator.serviceWorker.addEventListener('message', function (ev) {" +
+        "var prev = window.__ssoPushMsgHandler;" +
+        "if (prev) navigator.serviceWorker.removeEventListener('message', prev);" +
+        "var fn = function (ev) {" +
         "  var d = ev.data;" +
         "  if (!d || typeof d !== 'object' || !d.type) return;" +
         "  if (d.type === 'sso_push' && d.toast) cb('push', JSON.stringify(d.toast));" +
         "  else if (d.type === 'sso_nav') cb('nav', d.target ? String(d.target) : '');" +
-        "});" +
+        "};" +
+        "window.__ssoPushMsgHandler = fn;" +
+        "navigator.serviceWorker.addEventListener('message', fn);" +
         "}",
 )
 private external fun jsListenPushMessages(cb: (JsAny?, JsAny?) -> Unit)

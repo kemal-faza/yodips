@@ -128,11 +128,7 @@ private fun DescriptionCard(descriptionMarkdown: String) {
                 color = accentForeground(),
             )
             Spacer(Modifier.height(8.dp))
-            if (descriptionMarkdown.trim().isEmpty()) {
-                Text("Tidak ada deskripsi.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                Markdown(content = descriptionMarkdown, modifier = Modifier.fillMaxWidth())
-            }
+            Markdown(content = descriptionMarkdown, modifier = Modifier.fillMaxWidth())
         }
     }
 }

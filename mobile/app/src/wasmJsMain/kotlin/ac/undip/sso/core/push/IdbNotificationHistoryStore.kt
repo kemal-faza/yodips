@@ -50,9 +50,6 @@ class IdbNotificationHistoryStore : NotificationHistoryStore {
         runCatching { idbOp(MODE_CLEAR_LIST, null) }
     }
 
-    /** Baca target navigasi yang ditulis SW (notificationclick) — tanpa menghapus. */
-    suspend fun readPendingNav(): String? = runCatching { idbOp(MODE_READ_PENDING, null) }.getOrNull()
-
     /** Baca DAN hapus sekali-pakai (semantik `sso_pending_nav` lama). */
     suspend fun consumePendingNav(): String? = runCatching { idbOp(MODE_CONSUME_PENDING, null) }.getOrNull()
 
@@ -81,7 +78,6 @@ class IdbNotificationHistoryStore : NotificationHistoryStore {
         const val MODE_READ_LIST = "readList"
         const val MODE_PUT_LIST = "putList"
         const val MODE_CLEAR_LIST = "clearList"
-        const val MODE_READ_PENDING = "readPending"
         const val MODE_CONSUME_PENDING = "consumePending"
     }
 }
@@ -93,9 +89,8 @@ class IdbNotificationHistoryStore : NotificationHistoryStore {
  *  - readList         -> JSON string array items, atau null bila belum ada
  *  - putList          -> value = JSON string array items; put {id:'list', items}
  *  - clearList        -> delete record 'list'
- *  - readPending      -> target 'pendingNav', atau null
  *  - consumePending   -> target 'pendingNav' LALU delete record tsb
- * Di luar 5 mode itu => onFail. Semua kegagalan IDB dilaporkan lewat onFail
+ * Di luar 4 mode itu => onFail. Semua kegagalan IDB dilaporkan lewat onFail
  * (Kotlin mengubahnya jadi exception yang di-runCatching).
  */
 @OptIn(ExperimentalWasmJsInterop::class)
@@ -150,17 +145,19 @@ class IdbNotificationHistoryStore : NotificationHistoryStore {
         "    p = putRecord(db, { id: 'list', items: arr }).then(function () { return null; });" +
         "  } else if (mode === 'clearList') {" +
         "    p = delRecord(db, 'list').then(function () { return null; });" +
-        "  } else if (mode === 'readPending' || mode === 'consumePending') {" +
+        "  } else if (mode === 'consumePending') {" +
         "    p = new Promise(function (resolve, reject) {" +
-        "      var tx = db.transaction('history', mode === 'consumePending' ? 'readwrite' : 'readonly');" +
+        "      var tx = db.transaction('history', 'readwrite');" +
         "      var store = tx.objectStore('history');" +
+        "      var target = null;" +
         "      var req = store.get('pendingNav');" +
         "      req.onsuccess = function () {" +
-        "        var target = req.result && req.result.target ? String(req.result.target) : null;" +
-        "        if (mode === 'consumePending') store.delete('pendingNav');" +
-        "        resolve(target);" +
+        "        target = req.result && req.result.target ? String(req.result.target) : null;" +
+        "        store.delete('pendingNav');" +
         "      };" +
         "      req.onerror = function () { reject(req.error); };" +
+        "      tx.oncomplete = function () { resolve(target); };" +
+        "      tx.onerror = function () { reject(tx.error); };" +
         "    });" +
         "  } else {" +
         "    db.close(); onFail('unknown idb mode: ' + mode); return;" +
