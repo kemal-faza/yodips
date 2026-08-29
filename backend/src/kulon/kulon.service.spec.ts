@@ -659,6 +659,7 @@ describe('KulonService', () => {
     expect(detail.assignmentId).toBe(42);
     expect(detail.name).toBe('Tugas Kelompok I');
     expect(detail.descriptionHtml).toContain('Kerjakan laporan kelompok.');
+    expect(detail.descriptionMarkdown).toBe('Kerjakan laporan kelompok.');
     expect(detail.submission.status).toBe('graded');
     expect(detail.submission.grade).toBe(85);
     expect(detail.submission.maxGrade).toBe(100);

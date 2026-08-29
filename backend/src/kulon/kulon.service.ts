@@ -28,6 +28,7 @@ import {
   parseSemester,
   parseSubmissionFromHtml,
 } from './kulon-parse';
+import { htmlToMarkdown } from './html-to-markdown';
 
 // Public data shapes + pure parsing helpers moved to kulon-parse.ts —
 // re-exported so existing imports keep working.
@@ -443,6 +444,7 @@ export class KulonService {
       assignmentId,
       name: extractName(html),
       descriptionHtml: extractDescription(html),
+      descriptionMarkdown: htmlToMarkdown(extractDescription(html)),
       files: extractFiles(html),
       submission: parseSubmissionFromHtml(html),
       kulonUrl: pageUrl,
