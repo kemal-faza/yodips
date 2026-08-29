@@ -73,11 +73,11 @@ describe('buildManifest', () => {
 });
 
 describe('gzipTotalBytes', () => {
-  it('menjumlahkan gzip dan konstanta gate = 6 MB', async () => {
+  it('menjumlahkan gzip dan konstanta gate = 7.5 MB (deviasi terukur #2)', async () => {
     writeFileSync(join(dir, 'a.txt'), 'x'.repeat(1000)); // teks repetitif → gzip kecil
     const total = await gzipTotalBytes([{ abs: join(dir, 'a.txt') }]);
     expect(total).toBeGreaterThan(0);
     expect(total).toBeLessThan(1000);
-    expect(GZIP_GATE_BYTES).toBe(6_000_000);
+    expect(GZIP_GATE_BYTES).toBe(7_500_000);
   });
 });
