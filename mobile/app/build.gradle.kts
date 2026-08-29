@@ -137,6 +137,8 @@ kotlin {
             implementation(libs.navigation.multiplatform)
             // Ktor client (F2) — core engine
             implementation(libs.ktor.client.core)
+            // Kulon assignment description Markdown rendering (T5):
+            implementation(libs.multiplatform.markdown.m3)
         }
         androidMain.dependencies {
             implementation(libs.androidx.core.ktx)

@@ -106,6 +106,7 @@ class KtorSsoApiTest {
                     "assignmentId": 42,
                     "name": "Tugas 1",
                     "descriptionHtml": "<p>Deskripsi</p>",
+                    "descriptionMarkdown": "Deskripsi",
                     "files": [{"name":"Berkas.pdf","url":"https://kulon/pluginfile.php/1"}],
                     "submission": {"status":"submitted","submittedAt":1700000000,"grade":null,"maxGrade":100},
                     "kulonUrl": "https://kulon2.undip.ac.id/mod/assign/view.php?id=7"
@@ -121,5 +122,6 @@ class KtorSsoApiTest {
         assertEquals(1, d.files.size)
         assertEquals("Berkas.pdf", d.files[0].name)
         assertEquals("submitted", d.submission.status)
+        assertEquals("Deskripsi", d.descriptionMarkdown)
     }
 }
