@@ -16,6 +16,9 @@ package ac.undip.sso.core.network
  *   GET  /api/siap/absen
  *   POST /api/notifications/device
  *   DELETE /api/notifications/device
+ *   GET  /api/notifications/vapid-public-key
+ *   POST /api/notifications/web-device
+ *   DELETE /api/notifications/web-device
  *   POST /api/siap/kehadiran
  */
 interface SsoApi {
@@ -51,6 +54,15 @@ interface SsoApi {
 
     /** DELETE /api/notifications/device */
     suspend fun unregisterPushDevice(body: PushDeviceRequest): PushDeviceResponse
+
+    /** GET /api/notifications/vapid-public-key */
+    suspend fun vapidPublicKey(): VapidPublicKeyResponse
+
+    /** POST /api/notifications/web-device (daftarkan subscription Web Push PWA) */
+    suspend fun registerWebPushDevice(body: WebPushDeviceRequest): PushDeviceResponse
+
+    /** DELETE /api/notifications/web-device (cabut subscription Web Push PWA) */
+    suspend fun unregisterWebPushDevice(body: WebPushDeviceRequest): PushDeviceResponse
 
     /** POST /api/siap/kehadiran */
     suspend fun markKehadiran(body: KehadiranRequest): KehadiranResponse

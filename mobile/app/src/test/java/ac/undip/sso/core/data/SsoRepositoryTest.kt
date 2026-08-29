@@ -10,6 +10,8 @@ import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.network.PushDeviceRequest
 import ac.undip.sso.core.network.PushDeviceResponse
+import ac.undip.sso.core.network.VapidPublicKeyResponse
+import ac.undip.sso.core.network.WebPushDeviceRequest
 import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapJadwal
@@ -75,6 +77,15 @@ private class FakeApi : SsoApi {
         registerPushDeviceStub(body)
 
     override suspend fun unregisterPushDevice(body: PushDeviceRequest): PushDeviceResponse =
+        throw UnsupportedOperationException()
+
+    override suspend fun vapidPublicKey(): VapidPublicKeyResponse =
+        throw UnsupportedOperationException()
+
+    override suspend fun registerWebPushDevice(body: WebPushDeviceRequest): PushDeviceResponse =
+        throw UnsupportedOperationException()
+
+    override suspend fun unregisterWebPushDevice(body: WebPushDeviceRequest): PushDeviceResponse =
         throw UnsupportedOperationException()
 }
 

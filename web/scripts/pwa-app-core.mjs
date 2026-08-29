@@ -59,6 +59,39 @@ self.addEventListener('fetch', (event) => {
   }
   event.respondWith(caches.match(req).then((r) => r || fetch(req)));
 });
+
+// ---- Web Push (Task 6): simpan ke riwayat localStorage + tampilkan ----
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { title: 'Notifikasi', body: event.data ? event.data.text() : '' }; }
+  const title = data.title || 'Notifikasi';
+  const body = data.body || '';
+  const id = title + '|' + body;
+  const toast = { id, title, body, target: data.data?.target || '', payload: JSON.stringify(data.data || {}), receivedAt: Date.now() };
+  const key = 'sso_notif_history';
+  if (self.localStorage) {
+    try {
+      const raw = self.localStorage.getItem(key);
+      const arr = raw ? JSON.parse(raw) : [];
+      arr.unshift(toast);
+      const dedup = []; const seen = {};
+      for (const n of arr) { if (!seen[n.id]) { seen[n.id] = 1; dedup.push(n); } }
+      self.localStorage.setItem(key, JSON.stringify(dedup.slice(0, 100)));
+    } catch (e) { /* localStorage gagal — tetap tampilkan notifikasi */ }
+  }
+  event.waitUntil(self.registration.showNotification(title, { body, icon: '/app/favicon-192.png', badge: '/app/favicon-192.png', data: data.data || {} }));
+});
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = event.notification.data?.target;
+  try {
+    if (self.localStorage) self.localStorage.setItem('sso_pending_nav', (target === 'schedule' ? 'schedule' : 'tasks'));
+  } catch (e) {}
+  event.waitUntil(clients.matchAll({ type: 'window' }).then((list) => {
+    for (const c of list) { if ('focus' in c) return c.focus(); }
+    if (clients.openWindow) return clients.openWindow('/app/');
+  }));
+});
 `;
 }
 

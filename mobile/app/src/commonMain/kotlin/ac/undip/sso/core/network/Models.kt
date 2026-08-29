@@ -180,3 +180,15 @@ data class PushDeviceRequest(val token: String)
 
 @Serializable
 data class PushDeviceResponse(val ok: Boolean = true)
+
+/** Body POST/DELETE /api/notifications/web-device (PWA Web Push subscription). */
+@Serializable
+data class WebPushDeviceRequest(
+    val endpoint: String = "",
+    val p256dh: String = "",
+    val auth: String = "",
+)
+
+/** Response GET /api/notifications/vapid-public-key (kosong bila backend belum dikonfigurasi). */
+@Serializable
+data class VapidPublicKeyResponse(val publicKey: String = "")
