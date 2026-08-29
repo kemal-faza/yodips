@@ -40,6 +40,17 @@ describe('buildSwSource', () => {
     // cache-name berubah bila daftar aset berubah → invalidasi otomatis
     expect(buildSwSource([{ url: '/app/c.js' }])).not.toBe(src1);
   });
+
+  it('SW memuat handler push + notificationclick + riwayat localStorage', () => {
+    const src = buildSwSource([{ url: '/app/a.js' }]);
+    expect(src).toContain("self.addEventListener('push'");
+    expect(src).toContain("self.addEventListener('notificationclick'");
+    expect(src).toContain("'sso_notif_history'");
+    expect(src).toContain("'sso_pending_nav'");
+    expect(src).toContain('self.registration.showNotification');
+    // UI js berisi backtick/${} akan merusak template literal — SW source harus aman.
+    expect(src).not.toContain('${');
+  });
 });
 
 describe('buildManifest', () => {

@@ -87,6 +87,66 @@ class KtorSsoApiTest {
     }
 
     @Test
+    fun `registerWebPushDevice posts web subscription and parses ok`() = runBlocking {
+        val resp = api(
+            mockClient(
+                body = """{"ok":true}""",
+                assertRequest = { req ->
+                    assertEquals("POST", req.method.value)
+                    assertEquals("/api/notifications/web-device", req.url.encodedPath)
+                    assertTrue("content-type present",
+                        req.body.contentType != null &&
+                        req.body.contentType.toString().startsWith("application/json"))
+                    val bytes = (req.body as io.ktor.http.content.OutgoingContent.ByteArrayContent).bytes()
+                    val sent = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                        .decodeFromString<WebPushDeviceRequest>(bytes.decodeToString())
+                    assertEquals("https://push.example/abc", sent.endpoint)
+                    assertEquals("BASE64URL_P256DH", sent.p256dh)
+                    assertEquals("BASE64URL_AUTH", sent.auth)
+                },
+            ),
+        ).registerWebPushDevice(
+            WebPushDeviceRequest(
+                endpoint = "https://push.example/abc",
+                p256dh = "BASE64URL_P256DH",
+                auth = "BASE64URL_AUTH",
+            ),
+        )
+        assertEquals(true, resp.ok)
+    }
+
+    @Test
+    fun `unregisterWebPushDevice sends DELETE with subscription body`() = runBlocking {
+        val resp = api(
+            mockClient(
+                body = """{"ok":true}""",
+                assertRequest = { req ->
+                    assertEquals("DELETE", req.method.value)
+                    assertEquals("/api/notifications/web-device", req.url.encodedPath)
+                    assertTrue("content-type present",
+                        req.body.contentType != null &&
+                        req.body.contentType.toString().startsWith("application/json"))
+                },
+            ),
+        ).unregisterWebPushDevice(WebPushDeviceRequest(endpoint = "https://push.example/abc"))
+        assertEquals(true, resp.ok)
+    }
+
+    @Test
+    fun `vapidPublicKey parses public key`() = runBlocking {
+        val v = api(
+            mockClient(
+                body = """{"publicKey":"BEl62_VAPID_KEY_DUMMY"}""",
+                assertRequest = { req ->
+                    assertEquals("GET", req.method.value)
+                    assertEquals("/api/notifications/vapid-public-key", req.url.encodedPath)
+                },
+            ),
+        ).vapidPublicKey()
+        assertEquals("BEl62_VAPID_KEY_DUMMY", v.publicKey)
+    }
+
+    @Test
     fun `assignments decodes list with unknown fields ignored`() = runBlocking {
         val list = api(
             mockClient(

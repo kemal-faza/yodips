@@ -115,4 +115,26 @@ class KtorSsoApi(
         }
         return json.decodeFromString<PushDeviceResponse>(handle(resp))
     }
+
+    override suspend fun vapidPublicKey(): VapidPublicKeyResponse {
+        val resp = client.get("$root/api/notifications/vapid-public-key")
+        return json.decodeFromString<VapidPublicKeyResponse>(handle(resp))
+    }
+
+    override suspend fun registerWebPushDevice(body: WebPushDeviceRequest): PushDeviceResponse {
+        val resp = client.post("$root/api/notifications/web-device") {
+            setBody(json.encodeToString(body))
+            contentType(ContentType.Application.Json)
+        }
+        return json.decodeFromString<PushDeviceResponse>(handle(resp))
+    }
+
+    override suspend fun unregisterWebPushDevice(body: WebPushDeviceRequest): PushDeviceResponse {
+        val resp = client.request("$root/api/notifications/web-device") {
+            method = HttpMethod.Delete
+            setBody(json.encodeToString(body))
+            contentType(ContentType.Application.Json)
+        }
+        return json.decodeFromString<PushDeviceResponse>(handle(resp))
+    }
 }
