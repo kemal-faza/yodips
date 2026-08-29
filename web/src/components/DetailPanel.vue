@@ -22,7 +22,7 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 
 const md = new MarkdownIt({ html: false, linkify: false });
-const descriptionHtml = computed(() =>
+const renderedDescriptionHtml = computed(() =>
   detail.value?.descriptionMarkdown ? md.render(detail.value.descriptionMarkdown) : '',
 );
 
@@ -205,9 +205,9 @@ watch(
             <template v-else-if="detail">
               <TabsContent value="description">
                 <div
-                  v-if="descriptionHtml && descriptionHtml.trim()"
+                  v-if="renderedDescriptionHtml && renderedDescriptionHtml.trim()"
                   class="text-sm leading-relaxed text-foreground"
-                  v-html="descriptionHtml"
+                  v-html="renderedDescriptionHtml"
                 />
                 <p v-else class="text-muted-foreground">Tidak ada deskripsi.</p>
               </TabsContent>

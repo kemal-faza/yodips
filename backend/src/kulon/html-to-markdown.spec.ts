@@ -54,4 +54,11 @@ describe('htmlToMarkdown', () => {
     expect(htmlToMarkdown('<p><u>urus</u> dan <s>coret</s></p>')).toBe('urus dan ~~coret~~');
     expect(htmlToMarkdown('<p><sub>2</sub> dan <sup>3</sup></p>')).toBe('2 dan 3');
   });
+
+  // Div is NOT in the sanitizer allowlist (sanitize-description.ts) so it never
+  // reaches turndown in production; this documents the fallback behavior:
+  // an out-of-allowlist block element collapses to its plain text content.
+  it('collapses unknown block (div) to plain text', () => {
+    expect(htmlToMarkdown('<div>x</div>')).toBe('x');
+  });
 });

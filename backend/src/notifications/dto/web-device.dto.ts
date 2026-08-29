@@ -1,8 +1,9 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, Matches } from 'class-validator';
 
 export class WebDeviceDto {
   @IsString()
   @IsNotEmpty()
+  @Matches(/^https:\/\//i, { message: 'endpoint harus https' })
   endpoint!: string;
 
   @IsString()

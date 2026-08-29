@@ -11,19 +11,25 @@ import TurndownService from 'turndown';
  * turndown@7.2.4 is CommonJS (main: lib/turndown.cjs.js, dep @mixmark-io/domino)
  * so it loads under the CommonJS ts-jest runner (AGENTS.md forbids ESM-only
  * DOM parsers). Custom rules keep em-dash/underline/sub/sup output stable.
+ *
+ * Note: `div` (and any other non-whitelisted element) is stripped by
+ * sanitize-description.ts BEFORE the markup reaches turndown — the sanitizer's
+ * allowlist has no `div`, so the tokenizer drops the tag and keeps the text
+ * content. Turndown therefore never sees block elements outside its rule set.
  */
+const td = new TurndownService({
+  headingStyle: 'atx',
+  codeBlockStyle: 'fenced',
+  bulletListMarker: '-',
+  emDelimiter: '*',
+  strongDelimiter: '**',
+});
+td.addRule('strikethrough', { filter: ['s', 'del'], replacement: (content: string) => `~~${content}~~` });
+td.addRule('subsup', { filter: ['sub', 'sup'], replacement: (content: string) => content });
+td.addRule('underline', { filter: 'u', replacement: (content: string) => content });
+
 export function htmlToMarkdown(html: string): string {
   if (!html || !html.trim()) return '';
-  const td = new TurndownService({
-    headingStyle: 'atx',
-    codeBlockStyle: 'fenced',
-    bulletListMarker: '-',
-    emDelimiter: '*',
-    strongDelimiter: '**',
-  });
-  td.addRule('strikethrough', { filter: ['s', 'del'], replacement: (content: string) => `~~${content}~~` });
-  td.addRule('subsup', { filter: ['sub', 'sup'], replacement: (content: string) => content });
-  td.addRule('underline', { filter: 'u', replacement: (content: string) => content });
   return normalize(td.turndown(html));
 }
 
