@@ -286,3 +286,61 @@ describe('NotificationsPoller.runCycle', () => {
     expect(f.webSent).toHaveLength(0);
   });
 });
+
+describe('NotificationsPoller.onApplicationBootstrap', () => {
+  function makeBootstrapPoller(opts: {
+    fcmConfigured: boolean;
+    webPushConfigured: boolean;
+    sched?: { addCronJob: jest.Mock };
+  }) {
+    const f = makeFakes();
+    (f as any).fcm.configured = opts.fcmConfigured;
+    (f as any).webPush.configured = opts.webPushConfigured;
+    const addCronJob = opts.sched?.addCronJob ?? jest.fn();
+    const poller = new NotificationsPoller(
+      f.store,
+      f.kulon as any,
+      f.siap as any,
+      f.fcm as any,
+      f.webPush as any,
+      {
+        get: (key: string) =>
+          key === 'NOTIFICATIONS_ENABLED' ? true : undefined,
+      } as any,
+      { addCronJob } as any,
+    );
+    return { f, addCronJob, poller };
+  }
+
+  it('poller mati bila FCM & Web Push sama-sama belum configured', () => {
+    const { addCronJob, poller } = makeBootstrapPoller({
+      fcmConfigured: false,
+      webPushConfigured: false,
+    });
+    poller.onApplicationBootstrap();
+    expect(addCronJob).not.toHaveBeenCalled();
+  });
+
+  it('poller mulai bila webPush configured meski FCM tidak', () => {
+    const { addCronJob, poller } = makeBootstrapPoller({
+      fcmConfigured: false,
+      webPushConfigured: true,
+    });
+    poller.onApplicationBootstrap();
+    expect(addCronJob).toHaveBeenCalledTimes(1);
+    // hentikan cron real supaya tak ada timer menggantung
+    const job = addCronJob.mock.calls[0][1];
+    job.stop();
+  });
+
+  it('poller mulai bila FCM configured (regresi) — cron dijadwalkan', () => {
+    const { addCronJob, poller } = makeBootstrapPoller({
+      fcmConfigured: true,
+      webPushConfigured: false,
+    });
+    poller.onApplicationBootstrap();
+    expect(addCronJob).toHaveBeenCalledTimes(1);
+    const job = addCronJob.mock.calls[0][1];
+    job.stop();
+  });
+});

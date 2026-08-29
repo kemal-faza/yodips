@@ -55,8 +55,8 @@ export class NotificationsPoller implements OnApplicationBootstrap {
       this.logger.warn('NOTIFICATIONS_ENABLED false — poller mati');
       return;
     }
-    if (!this.fcm.configured) {
-      this.logger.warn('FCM belum configured — poller mati');
+    if (!this.fcm.configured && !this.webPush.configured) {
+      this.logger.warn('FCM & Web Push belum configured — poller mati');
       return;
     }
     const expr =
