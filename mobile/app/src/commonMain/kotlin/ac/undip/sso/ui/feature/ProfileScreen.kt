@@ -58,8 +58,6 @@ fun ProfileScreen(
     repo: SsoRepository,
     themeController: ThemeController,
     onLogout: () -> Unit,
-    onOpenNotifications: () -> Unit = {},
-    showNotifications: Boolean = false,
 ) {
     val darkTheme = themeController.dark
     FeatureScreen(
@@ -77,7 +75,7 @@ fun ProfileScreen(
         RefreshableLoadableData(load = {
             repo.profile()
         }, onRefresh = { repo.profile(force = true) }, emptyMessage = "Profil belum tersedia") { p ->
-            ProfileContent(p, onLogout, onOpenNotifications, showNotifications)
+            ProfileContent(p, onLogout)
         }
     }
 }
@@ -86,8 +84,6 @@ fun ProfileScreen(
 private fun ProfileContent(
     p: SiapProfile,
     onLogout: () -> Unit,
-    onOpenNotifications: () -> Unit,
-    showNotifications: Boolean,
 ) {
     var showNamaIbu by remember { mutableStateOf(false) }
     val groups =
@@ -171,15 +167,6 @@ private fun ProfileContent(
 
         groups.forEach { group ->
             FieldGroup(group, maskShown = showNamaIbu, onToggleMask = { showNamaIbu = !showNamaIbu })
-        }
-
-        if (showNotifications) {
-            Button(
-                onClick = onOpenNotifications,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Notifikasi")
-            }
         }
 
         Button(

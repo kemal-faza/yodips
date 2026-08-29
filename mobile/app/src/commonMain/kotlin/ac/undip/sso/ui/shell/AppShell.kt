@@ -144,6 +144,7 @@ fun AppShell(
                     repo = repo,
                     onOpenIrs = { navController.navigate("irs") },
                     onOpenKhs = { navController.navigate("khs") },
+                    onOpenNotifications = { navController.navigate("notifications") },
                 )
             }
             composable(Tab.Tasks.route) {
@@ -159,10 +160,6 @@ fun AppShell(
                     repo = repo,
                     themeController = themeController,
                     onLogout = onLogout,
-                    onOpenNotifications = {
-                        navController.navigate("notifications")
-                    },
-                    showNotifications = notificationHistory != null,
                 )
             }
             composable("khs") { KhsScreen(repo, onBack = { navController.popBackStack() }) }
