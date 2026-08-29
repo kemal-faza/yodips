@@ -41,13 +41,22 @@ describe('buildSwSource', () => {
     expect(buildSwSource([{ url: '/app/c.js' }])).not.toBe(src1);
   });
 
-  it('SW memuat handler push + notificationclick + riwayat localStorage', () => {
+  it('SW memuat handler push + notificationclick + IndexedDB (tanpa localStorage)', () => {
     const src = buildSwSource([{ url: '/app/a.js' }]);
     expect(src).toContain("self.addEventListener('push'");
     expect(src).toContain("self.addEventListener('notificationclick'");
-    expect(src).toContain("'sso_notif_history'");
-    expect(src).toContain("'sso_pending_nav'");
-    expect(src).toContain('self.registration.showNotification');
+    expect(src).toContain("indexedDB.open('sso_notif'");
+    expect(src).toContain("createObjectStore('history'");
+    expect(src).toContain("idbNotifyClients({ type: 'sso_push', toast })");
+    expect(src).toContain("c.postMessage({ type: 'sso_nav', target: navTarget })");
+    expect(src).toContain("self.registration.showNotification");
+    expect(src).toContain("openWindow('/app/')");
+    // SW tidak punya Web Storage — harus bebas dari pemakaian self.localStorage.
+    expect(src).not.toContain('self.localStorage');
+    expect(src).not.toContain('sso_notif_history');
+    expect(src).not.toContain('sso_pending_nav');
+    // Source harus valid JS (parse-able via Function constructor).
+    expect(() => new Function(src)).not.toThrow();
     // UI js berisi backtick/${} akan merusak template literal — SW source harus aman.
     expect(src).not.toContain('${');
   });
