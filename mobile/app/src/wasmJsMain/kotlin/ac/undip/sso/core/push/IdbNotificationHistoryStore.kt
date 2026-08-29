@@ -20,10 +20,13 @@ import kotlin.coroutines.resume
  * Konsumen dan penulis kedua record adalah service worker yang di-generate
  * `web/scripts/pwa-app-core.mjs` — jaga nama DB/store/key tetap sinkron.
  *
- * Catatan dedup: SW menulis `id = title + '|' + body` (di generator),
- * sedangkan `mergeNotification` memakai `notificationId()` (hashCode). Mismatch
- * ini sudah disadari & diterima (idi di task review), jadi repeat-push yang sama
- * bisa tampil dua kali bila dicampur SW+live-append — tidak mengubah data lain.
+ * Catatan dedup: SW menulis `id = title + '|' + body` (di generator), dan
+ * `mergeNotification` (commonMain) MEMPERTAHANKAN id non-blank itu
+ * (`id.ifBlank { notificationId(...) }`) — hash `notificationId()` hanya
+ * dipakai bila id kosong. Karena live `sso_push` append menerima toast yang
+ * sama persis (id `title+'|'+body` ikut ter-decode dari JSON), dedup SW + live
+ * memakai id yang SAMA → repeat-push saat app terbuka hanya satu entri di
+ * riwayat (bukan ganda).
  */
 class IdbNotificationHistoryStore : NotificationHistoryStore {
     private val json = Json {
