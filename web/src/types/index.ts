@@ -23,6 +23,7 @@ export interface AssignmentDetail {
   assignmentId: number;
   name: string;
   descriptionHtml: string;
+  descriptionMarkdown: string;
   files: AssignmentFile[];
   submission: {
     status: SubmissionStatus;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import MarkdownIt from 'markdown-it';
 import { useMediaQuery } from '@vueuse/core';
 import { X } from '@lucide/vue';
 import { getAssignmentDetail } from '../api/client';
@@ -19,6 +20,11 @@ const side = computed(() => (isDesktop.value ? 'right' : 'bottom'));
 const detail = ref<AssignmentDetail | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
+
+const md = new MarkdownIt({ html: false, linkify: false });
+const descriptionHtml = computed(() =>
+  detail.value?.descriptionMarkdown ? md.render(detail.value.descriptionMarkdown) : '',
+);
 
 const tabs = [
   { key: 'description', label: 'Deskripsi' },
@@ -199,9 +205,9 @@ watch(
             <template v-else-if="detail">
               <TabsContent value="description">
                 <div
-                  v-if="detail.descriptionHtml"
+                  v-if="descriptionHtml && descriptionHtml.trim()"
                   class="text-sm leading-relaxed text-foreground"
-                  v-html="detail.descriptionHtml"
+                  v-html="descriptionHtml"
                 />
                 <p v-else class="text-muted-foreground">Tidak ada deskripsi.</p>
               </TabsContent>
