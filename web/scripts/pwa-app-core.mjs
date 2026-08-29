@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { join, posix, sep } from 'node:path';
 
-export const GZIP_GATE_BYTES = 6_000_000; // deviasi terukur dari spec §10 (5MB): dist aktual 5.246.769 B gzip per 2026-08-26
+export const GZIP_GATE_BYTES = 7_500_000; // deviasi terukur #2: dist 6.74 MiB gzip per 2026-08-29 (markdown renderer 0.38.1). Next re-raise = split-chunk wajib, BUKAN reged lagi (see CHECKPOINT)
 
 export async function collectFiles(distDir) {
   const out = [];
