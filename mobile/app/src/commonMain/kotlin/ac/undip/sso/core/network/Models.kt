@@ -156,6 +156,7 @@ data class KulonAssignmentDetail(
     val assignmentId: Long = 0,
     val name: String = "",
     val descriptionHtml: String = "",
+    val descriptionMarkdown: String = "",
     val files: List<KulonFile> = emptyList(),
     val submission: KulonSubmission = KulonSubmission(),
     val kulonUrl: String = "",
