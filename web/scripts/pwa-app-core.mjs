@@ -60,37 +60,100 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(caches.match(req).then((r) => r || fetch(req)));
 });
 
-// ---- Web Push (Task 6): simpan ke riwayat localStorage + tampilkan ----
+// ---- IndexedDB helpers (SW tidak punya localStorage — lihat finding Task 6) ----
+// DB 'sso_notif', store 'history' (keyPath 'id'). Records: {id:'list', items:[...]}
+// (riwayat push, array StoredNotification) dan {id:'pendingNav', target} (navigasi tap).
+function idbOpen() {
+  return new Promise(function (resolve, reject) {
+    const req = indexedDB.open('sso_notif', 1);
+    req.onupgradeneeded = function () {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: 'id' });
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+function idbReadList(db) {
+  return new Promise(function (resolve, reject) {
+    const tx = db.transaction('history', 'readonly');
+    const req = tx.objectStore('history').get('list');
+    req.onsuccess = function () { const r = req.result; resolve(r && Array.isArray(r.items) ? r.items : []); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+function idbWriteList(db, items) {
+  return new Promise(function (resolve, reject) {
+    const tx = db.transaction('history', 'readwrite');
+    tx.objectStore('history').put({ id: 'list', items });
+    tx.oncomplete = function () { resolve(); };
+    tx.onerror = function () { reject(tx.error); };
+  });
+}
+function idbWritePending(db, target) {
+  return new Promise(function (resolve, reject) {
+    const tx = db.transaction('history', 'readwrite');
+    tx.objectStore('history').put({ id: 'pendingNav', target });
+    tx.oncomplete = function () { resolve(); };
+    tx.onerror = function () { reject(tx.error); };
+  });
+}
+function idbNotifyClients(message) {
+  if (!self.clients || !self.clients.matchAll) return Promise.resolve();
+  return self.clients.matchAll({ type: 'window' }).then(function (cs) {
+    for (const c of cs) { try { c.postMessage(message); } catch (e) { /* window ditutup */ } }
+  });
+}
+
+// ---- Web Push (Task 6): riwayat IndexedDB + showNotification + postMessage ----
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = { title: 'Notifikasi', body: event.data ? event.data.text() : '' }; }
   const title = data.title || 'Notifikasi';
   const body = data.body || '';
-  const id = title + '|' + body;
-  const toast = { id, title, body, target: data.data?.target || '', payload: JSON.stringify(data.data || {}), receivedAt: Date.now() };
-  const key = 'sso_notif_history';
-  if (self.localStorage) {
+  const toast = {
+    id: title + '|' + body,
+    title,
+    body,
+    target: (data.data && data.data.target) || '',
+    payload: JSON.stringify(data.data || {}),
+    receivedAt: Date.now(),
+  };
+  event.waitUntil((async () => {
     try {
-      const raw = self.localStorage.getItem(key);
-      const arr = raw ? JSON.parse(raw) : [];
-      arr.unshift(toast);
+      const db = await idbOpen();
+      const list = await idbReadList(db);
+      list.unshift(toast);
+      // Merge policy sama seperti sebelumnya: prepend terbaru, dedup id, cap 100.
       const dedup = []; const seen = {};
-      for (const n of arr) { if (!seen[n.id]) { seen[n.id] = 1; dedup.push(n); } }
-      self.localStorage.setItem(key, JSON.stringify(dedup.slice(0, 100)));
-    } catch (e) { /* localStorage gagal — tetap tampilkan notifikasi */ }
-  }
-  event.waitUntil(self.registration.showNotification(title, { body, icon: '/app/favicon-192.png', badge: '/app/favicon-192.png', data: data.data || {} }));
+      for (const n of list) { if (!seen[n.id]) { seen[n.id] = 1; dedup.push(n); } }
+      await idbWriteList(db, dedup.slice(0, 100));
+      db.close();
+    } catch (e) { /* IndexedDB gagal — tetap tampilkan notifikasi */ }
+    await idbNotifyClients({ type: 'sso_push', toast });
+    await self.registration.showNotification(title, { body, icon: '/app/favicon-192.png', badge: '/app/favicon-192.png', data: data.data || {} });
+  })());
 });
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = event.notification.data?.target;
-  try {
-    if (self.localStorage) self.localStorage.setItem('sso_pending_nav', (target === 'schedule' ? 'schedule' : 'tasks'));
-  } catch (e) {}
-  event.waitUntil(clients.matchAll({ type: 'window' }).then((list) => {
-    for (const c of list) { if ('focus' in c) return c.focus(); }
-    if (clients.openWindow) return clients.openWindow('/app/');
-  }));
+  const target = event.notification.data && event.notification.data.target;
+  const navTarget = target === 'schedule' ? 'schedule' : 'tasks';
+  event.waitUntil((async () => {
+    try {
+      const db = await idbOpen();
+      await idbWritePending(db, navTarget);
+      db.close();
+    } catch (e) { /* IndexedDB gagal — navigasi live tetap mungkin */ }
+    if (self.clients && self.clients.matchAll) {
+      const list = await self.clients.matchAll({ type: 'window' });
+      let focused = false;
+      for (const c of list) {
+        try { c.postMessage({ type: 'sso_nav', target: navTarget }); } catch (e) {}
+        if (!focused && typeof c.focus === 'function') { try { c.focus(); } catch (e) {} focused = true; }
+      }
+      if (!focused && self.clients.openWindow) return self.clients.openWindow('/app/');
+    }
+  })());
 });
 `;
 }
