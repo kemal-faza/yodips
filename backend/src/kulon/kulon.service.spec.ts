@@ -139,11 +139,14 @@ describe('sub-based session resolution (endpoint API)', () => {
     kulonCookie?: string;
     siapCookie?: string;
   }): KulonService {
+    const store = { get: jest.fn().mockResolvedValue(session ?? null) } as any;
+    // Real seam wired with the same session-store fake: getContext resolves
+    // the cookie from the store, fetchSesskeyOrThrow probes via global.fetch.
     return new KulonService(
       undefined,
       undefined,
-      undefined,
-      { get: jest.fn().mockResolvedValue(session ?? null) } as any,
+      new KulonUpstreamSession(store),
+      store,
     );
   }
 
@@ -201,11 +204,22 @@ describe('sub-based session resolution (endpoint API)', () => {
  * Service whose endpoint API resolves `sub` via a fixed session; the sesskey
  * probe is stubbed (probe behaviour is covered by kulon-upstream + sub-based
  * specs) while AJAX transport stays real against the mocked global.fetch.
+ * The REAL seam is wired with the same session-store fake so getContext can
+ * resolve the cookie from it; its own fetchSesskeyOrThrow is overridden at
+ * the instance level so no /my/ probe hits global.fetch (sesskey is canned).
  */
 function makeAuthedKulonSvc(opts: { cache?: any; siap?: any } = {}): KulonService {
-  const real = new KulonUpstreamSession();
+  const store = {
+    get: async () => ({
+      kulonCookie: 'session-cookie',
+      siapCookie: 'siap-cookie',
+    }),
+  } as any;
+  const real = new KulonUpstreamSession(store);
+  (real as any).fetchSesskeyOrThrow = async () => 'sesskey123';
   const upstream = {
     fetchSesskeyOrThrow: async () => 'sesskey123',
+    getContext: (sub?: string) => real.getContext(sub),
     ajax: (...args: Parameters<KulonUpstreamSession['ajax']>) =>
       real.ajax(...args),
     checkSessionValid: (cookie: string) => real.checkSessionValid(cookie),
@@ -214,12 +228,7 @@ function makeAuthedKulonSvc(opts: { cache?: any; siap?: any } = {}): KulonServic
     opts.cache,
     opts.siap,
     upstream as any,
-    {
-      get: async () => ({
-        kulonCookie: 'session-cookie',
-        siapCookie: 'siap-cookie',
-      }),
-    } as any,
+    store,
   );
 }
 
@@ -446,6 +455,30 @@ describe('KulonService', () => {
     expect(courses.find((c) => c.id === 1)?.timelineStatus).toBe('inprogress');
     expect(courses.find((c) => c.id === 2)?.timelineStatus).toBe('past');
     expect(courses.find((c) => c.id === 3)?.timelineStatus).toBe('past');
+  });
+
+  it('resolves session context once and reuses it for course fetches', async () => {
+    const upstreamMock = {
+      getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      checkSessionValid: jest.fn(),
+      ajax: jest.fn(),
+      fetchSesskeyOrThrow: jest.fn().mockResolvedValue('sk1'),
+    };
+    upstreamMock.getContext = jest
+      .fn()
+      .mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' });
+    upstreamMock.ajax
+      .mockResolvedValueOnce({ courses: [] }) // classification 'all'
+      .mockResolvedValueOnce({ courses: [] }) // 'inprogress'
+      .mockResolvedValueOnce({ courses: [] }); // 'hidden'
+    const service = new KulonService(
+      undefined,
+      undefined,
+      upstreamMock as any,
+      undefined,
+    );
+    await service.getCourses('2304012012345');
+    expect(upstreamMock.getContext).toHaveBeenCalledTimes(1);
   });
 
   it('gets courses with semester extracted from fullname', async () => {
