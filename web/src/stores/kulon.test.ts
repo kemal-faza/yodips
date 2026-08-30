@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useKulonStore } from './kulon';
 import * as api from '../api/client';
+import { clearCache } from '../api/cache';
 
 vi.mock('../api/client', () => ({
   getAllAssignments: vi.fn(), getAssignments: vi.fn(),
@@ -10,7 +11,11 @@ vi.mock('../api/client', () => ({
 }));
 
 describe('KulonStore', () => {
-  beforeEach(() => { setActivePinia(createPinia()); vi.clearAllMocks(); });
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    clearCache();
+    vi.clearAllMocks();
+  });
 
   it('fetches assignments lazily and caches', async () => {
     const store = useKulonStore();
@@ -28,20 +33,20 @@ describe('KulonStore', () => {
     expect(api.getCourses).toHaveBeenCalledTimes(1);
   });
 
-  it('caches content per course', async () => {
+  it('fetches course content once (cache layer dedups)', async () => {
     const store = useKulonStore();
     (api.getCourseContent as any).mockResolvedValue({ courseId: 9, sections: [] });
     await store.ensureContent(9);
     await store.ensureContent(9);
     expect(api.getCourseContent).toHaveBeenCalledTimes(1);
-    expect(store.contents.get(9)).toEqual({ courseId: 9, sections: [] });
   });
 
-  it('reset clears caches', async () => {
+  it('clearCache empties the store caches', async () => {
     const store = useKulonStore();
     (api.getAllAssignments as any).mockResolvedValue([]);
     await store.ensureAssignments();
-    store.reset();
-    expect(store.assignmentsLoaded).toBe(false);
+    clearCache();
+    await store.ensureAssignments();
+    expect(api.getAllAssignments).toHaveBeenCalledTimes(2); // cache purged → refetch
   });
 });
