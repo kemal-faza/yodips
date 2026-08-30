@@ -12,6 +12,7 @@ package ac.undip.sso.core.network
  *   GET  /api/siap/jadwal
  *   GET  /api/kulon/assignments/all
  *   GET  /api/kulon/courses
+ *   GET  /api/kulon/courses/:id/content
  *   GET  /api/siap/lecturers
  *   GET  /api/siap/absen
  *   POST /api/notifications/device
@@ -42,6 +43,9 @@ interface SsoApi {
 
     /** GET /api/kulon/courses */
     suspend fun courses(): List<KulonCourse>
+
+    /** GET /api/kulon/courses/:id/content */
+    suspend fun courseContent(courseId: Long): KulonCourseContent
 
     /** GET /api/siap/lecturers */
     suspend fun lecturers(): List<SiapLecturer>

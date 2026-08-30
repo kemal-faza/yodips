@@ -8,6 +8,7 @@ import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.core.network.KulonCourse
+import ac.undip.sso.core.network.KulonCourseContent
 import ac.undip.sso.core.network.PushDeviceRequest
 import ac.undip.sso.core.network.PushDeviceResponse
 import ac.undip.sso.core.network.VapidPublicKeyResponse
@@ -66,6 +67,10 @@ private class FakeApi : SsoApi {
         throw UnsupportedOperationException()
 
     override suspend fun courses(): List<KulonCourse> = throw UnsupportedOperationException()
+
+    var courseContentStub: suspend (Long) -> KulonCourseContent = { throw UnsupportedOperationException("courseContent not stubbed") }
+
+    override suspend fun courseContent(courseId: Long): KulonCourseContent = courseContentStub(courseId)
 
     override suspend fun lecturers(): List<SiapLecturer> = throw UnsupportedOperationException()
 
@@ -220,6 +225,24 @@ class SsoRepositoryTest {
         val r = runBlocking { SsoRepository(api, inMemory, disk).profile() }
 
         assertEquals("FROM-DISK", (r as ApiResult.Success).data.nama)
+    }
+
+    @Test
+    fun `courseContent cached under course-content key with force bypass`() = runBlocking {
+        var networkCalls = 0
+        val api = FakeApi().apply {
+            courseContentStub = { id ->
+                networkCalls++
+                KulonCourseContent(courseId = id, sections = emptyList())
+            }
+        }
+        val cache = InMemoryDataCache()
+        val repo = SsoRepository(api, cache)
+        repo.courseContent(5)
+        repo.courseContent(5) // fresh cache hit — no second network call
+        assertEquals(1, networkCalls)
+        repo.courseContent(5, force = true)
+        assertEquals(2, networkCalls)
     }
 
     // ────────────── Silent refresh tests (Task 5) ──────────────
