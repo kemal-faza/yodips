@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { flushPromises, mount } from '@vue/test-utils';
 import DetailPanel from './DetailPanel.vue';
 import type { Assignment } from '../types';
@@ -79,7 +81,19 @@ describe('DetailPanel', () => {
     });
     mountPanel({ assignment, open: true });
     await flushPromises();
-    expect(bodyEls('h1')[0]?.textContent).toContain('Judul');
+    const h1 = bodyEls('h1')[0];
+    expect(h1?.textContent).toContain('Judul');
+    // Root cause probe: heading harus punya visual hierarchy (bukan reset jadi
+    // text-sm seperti yang tampil hari ini). jsdom tidak menghitung computed
+    // font-size dari stylesheet (NaN) dan tidak men-scan CSS bundled ke
+    // document.styleSheets, jadi kami verifikasi DI LEVEL FILE source CSS:
+    // blok deskripsi punya rule yang menaikkan ukuran heading (h1 > body 14px).
+    const mainCss = readFileSync(
+      resolve(__dirname, '../assets/css/main.css'),
+      'utf8',
+    );
+    expect(mainCss).toMatch(/\[data-test="description"\] h1/);
+    expect(mainCss).toMatch(/font-size: 1\.5rem/);
     expect(bodyEls('strong').length).toBeGreaterThan(0);
     expect(bodyText()).toContain('Bold text');
   });
