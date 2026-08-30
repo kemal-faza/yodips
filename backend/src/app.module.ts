@@ -12,6 +12,7 @@ import { KulonModule } from './kulon/kulon.module';
 import { SiapModule } from './siap/siap.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PairingModule } from './pairing/pairing.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { PairingModule } from './pairing/pairing.module';
     SiapModule,
     NotificationsModule,
     PairingModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [
