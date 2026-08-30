@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import {
   isLoginRedirect,
   probeUpstreamSession,
@@ -8,6 +8,10 @@ import {
   upstreamFetchJson,
   upstreamFetchText,
 } from '../upstream/upstream-fetch';
+import { DataCache } from '../cache/data-cache';
+import { SessionStore } from '../session/session-store';
+import { createKeyedSingleFlight } from '../common/single-flight';
+import { SiapApiUpstream } from './siap-api';
 
 export const SIAP_BASE_URL = 'https://siap.undip.ac.id';
 
@@ -15,6 +19,24 @@ export const SIAP_BASE_URL = 'https://siap.undip.ac.id';
 const SIAP_PROBE_PATH = '/pages/mhs/dashboard';
 /** Present on the authenticated dashboard, absent on a login page. */
 export const SIAP_AUTH_MARKER = 'tabmhs_profile';
+
+/** Identity cache TTL: 24 h — email/nim are stable for a session. */
+const IDENTITY_TTL_MS = 24 * 60 * 60_000;
+/** Token cache TTL: 10 min — minted token is single-use-ish, keep it short. */
+const TOKEN_TTL_MS = 10 * 60_000;
+
+/** Resolved SIAP context handed to the service: identity + API token. */
+export interface SiapSessionContext {
+  emailSso: string;
+  nim: string;
+  token: string;
+}
+
+/** Scrape fallback shape (used when the session store lacks emailSso). */
+export type SiapIdentityScraper = (siapCookie: string) => Promise<{
+  nim: string;
+  emailSso: string;
+}>;
 
 /**
  * SIAP's one session seam: validity probe + authenticated fetch + stale
@@ -26,6 +48,25 @@ export const SIAP_AUTH_MARKER = 'tabmhs_profile';
 @Injectable()
 export class SiapUpstreamSession {
   private readonly logger = new Logger(SiapUpstreamSession.name);
+  private readonly sessionStore?: SessionStore;
+  private readonly cache?: DataCache;
+  private readonly apiUpstream?: SiapApiUpstream;
+  private scrapeIdentity?: SiapIdentityScraper;
+  /** Keyed flights: one in-flight slot per user (no cross-user contention). */
+  private readonly identityFlight = createKeyedSingleFlight<SiapSessionContext>();
+  private readonly tokenFlight = createKeyedSingleFlight<string>();
+
+  constructor(
+    @Optional() sessionStore?: SessionStore,
+    @Optional() cache?: DataCache,
+    @Optional() apiUpstream?: SiapApiUpstream,
+    @Optional() scrapeIdentity?: SiapIdentityScraper,
+  ) {
+    this.sessionStore = sessionStore;
+    this.cache = cache;
+    this.apiUpstream = apiUpstream;
+    this.scrapeIdentity = scrapeIdentity;
+  }
 
   /** Single source of truth for SIAP session validity (no-throw probe). */
   checkSessionValid(cookie: string): Promise<UpstreamSessionCheck> {
@@ -36,6 +77,90 @@ export class SiapUpstreamSession {
       isAuthenticatedPage: (finalUrl, html) =>
         !/\/login\//i.test(finalUrl) && html.includes(SIAP_AUTH_MARKER),
     });
+  }
+
+  /** Identity + token for a user. Identity: session store → cache (24 h) →
+   *  scrape fallback (cached, NOT written back to the session store). Token:
+   *  cache (10 min) → mint (single-flight). Missing siapCookie -> stale 401. */
+  async getContext(sub?: string): Promise<SiapSessionContext> {
+    const session = sub ? await this.sessionStore?.get(sub) : null;
+    if (!session?.siapCookie) {
+      throw new StaleUpstreamError(
+        'Siap',
+        'no-cookie',
+        'SIAP session belum ada. Silakan login ulang via SSO',
+      );
+    }
+    if (!sub || !this.cache) {
+      // No cache path: resolve directly (identity from store, scrape fallback).
+      const identity = await this.resolveIdentity(sub, session);
+      const token = await this.mintFresh(identity.emailSso, identity.nim);
+      return { ...identity, token };
+    }
+    const identityKey = `${sub}:siap:identity`;
+    const identity = await this.identityFlight.run(identityKey, async () => {
+      const cached = await this.cache!.get<SiapSessionContext>(identityKey);
+      if (cached) {
+        this.logger.debug(`[upstream] siap identity sub=${sub} hit=true`);
+        return cached;
+      }
+      this.logger.debug(`[upstream] siap identity sub=${sub} hit=false`);
+      const resolved = await this.resolveIdentity(sub, session);
+      await this.cache!.set(identityKey, resolved, IDENTITY_TTL_MS);
+      return resolved;
+    });
+    const tokenKey = `${sub}:siap:token`;
+    const token = await this.tokenFlight.run(tokenKey, async () => {
+      const cached = await this.cache!.get<string>(tokenKey);
+      if (cached) {
+        this.logger.debug(`[upstream] siap token sub=${sub} hit=true`);
+        return cached;
+      }
+      this.logger.debug(`[upstream] siap token sub=${sub} hit=false`);
+      const fresh = await this.mintFresh(identity.emailSso, identity.nim);
+      await this.cache!.set(tokenKey, fresh, TOKEN_TTL_MS);
+      return fresh;
+    });
+    return { ...identity, token };
+  }
+
+  /** Identity = nim + emailSso, resolved store-first, scrape fallback last.
+   *  Never writes the scraped emailSso back to the session store (the session
+   *  stays as-captured; the cache owns the enriched value). */
+  private async resolveIdentity(
+    sub: string | undefined,
+    session: { identity?: string; emailSso?: string } | null,
+  ): Promise<{ emailSso: string; nim: string }> {
+    const nim = session?.identity ?? sub ?? '';
+    let emailSso = session?.emailSso ?? '';
+    if (!emailSso && this.scrapeIdentity && session?.siapCookie) {
+      const scraped = await this.scrapeIdentity(session.siapCookie);
+      emailSso = scraped.emailSso ?? '';
+    }
+    if (!emailSso) {
+      throw new StaleUpstreamError(
+        'Siap',
+        'no-emailSso',
+        'Email SSO tidak tersedia. Silakan login ulang via SSO',
+      );
+    }
+    return { nim, emailSso };
+  }
+
+  /** Mint a fresh SIAP API token (no cache read/write here — callers cache). */
+  private async mintFresh(emailSso: string, nim: string): Promise<string> {
+    if (!this.apiUpstream) {
+      throw new StaleUpstreamError('Siap', 'no-api-upstream');
+    }
+    const { token } = await this.apiUpstream.mintToken(emailSso, nim);
+    this.logger.debug(`[upstream] siap mint-token sub=${nim}`);
+    return token;
+  }
+
+  /** Wire the scrape fallback after construction (SiapService calls this in its
+   *  constructor — it owns fetchProfile; avoids circular DI via SiapModule). */
+  setScrapeIdentity(fn: SiapIdentityScraper): void {
+    this.scrapeIdentity = fn;
   }
 
   /** Authenticated SIAP page fetch → body text, or throws stale 401. */
