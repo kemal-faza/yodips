@@ -252,10 +252,13 @@ export class SiapService {
   }
 
   /**
-   * IRS: mint ONCE, fetch `v2/lihat_irs` per semester (semester_aktif label +
-   * angkatan drive the count). Retry the whole batch once on invalid-credential.
-   * Angkatan is resolved from `data_mahasiswa` via the SAME batch token (never
-   * a nested getProfile — that would mint a fresh token and invalidate this one).
+   * IRS: mint ONCE, fetch `v2/lihat_irs` for the CURRENT semester only
+   * (semester_aktif label + angkatan drive the count). Returning every past
+   * semester made the mobile IRS page list courses from all terms — the IRS
+   * contract is the study plan for the on-going term. Retry the whole batch
+   * once on invalid-credential. Angkatan is resolved from `data_mahasiswa` via
+   * the SAME batch token (never a nested getProfile — that would mint a fresh
+   * token and invalidate this one).
    */
   async getIrs(sub?: string): Promise<SiapIrs> {
     if (sub && this.cache) {
@@ -263,7 +266,7 @@ export class SiapService {
       if (hit) return hit;
     }
     const { emailSso, nim } = await this.resolveSiapIdentity(sub);
-    // Batch: mint ONCE + reuse for the whole semester loop; retry once on stale.
+    // Batch: mint ONCE + reuse for the whole fetch; retry once on stale.
     let token = (await this.apiUpstream.mintToken(emailSso, nim)).token;
     const fetchBatch = async <T>(endpoint: string, form?: Record<string, string>) =>
       this.apiUpstream.fetch<T>(endpoint, token, form, nim);
@@ -275,18 +278,14 @@ export class SiapService {
       const semester = sem?.nm_smt ?? '';
       const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
       const count = currentSemesterCount(angkatan, semester);
-      let totalSks = 0;
-      const mataKuliah: SiapIrs['mataKuliah'] = [];
-      for (let smt = 1; smt <= count; smt++) {
-        const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
-        const smtWithinYear = smt % 2 === 1 ? 1 : 2;
-        const rows = await fetchBatch<Array<Record<string, unknown>>>('v2/lihat_irs', {
-          ta: String(ta), smt_ambil: String(smt), smt: String(smtWithinYear),
-        });
-        const mk = parseApiIrs(Array.isArray(rows) ? rows : []);
-        mataKuliah.push(...mk);
-        totalSks += mk.reduce((s, m) => s + m.sks, 0);
-      }
+      const smt = count; // current semester (1-based)
+      const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
+      const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+      const rows = await fetchBatch<Array<Record<string, unknown>>>('v2/lihat_irs', {
+        ta: String(ta), smt_ambil: String(smt), smt: String(smtWithinYear),
+      });
+      const mataKuliah = parseApiIrs(Array.isArray(rows) ? rows : []);
+      const totalSks = mataKuliah.reduce((s, m) => s + m.sks, 0);
       return { semester, totalSks, mataKuliah };
     };
     try {
@@ -481,8 +480,12 @@ export class SiapService {
 
   /**
    * Ringkasan hadir (%) per matakuliah dari API `absen` (per-pertemuan rows
-   * grouped by kode_mk/idjadwal). No `get_absen` detail — the API carries the
-   * kehadiran per pertemuan, so hadir/total is computed inline.
+   * grouped by kode_mk/idjadwal). `hadir` counts the recorded kehadiran rows;
+   * `total` is the number of SCHEDULED meetings for the course (from `jadwal`
+   * per-pertemuan), NOT the number of recorded absen rows — the absen API only
+   * returns meetings that already have a status, so counting its rows would
+   * under-report the total (e.g. 2 recorded vs 14 scheduled). Joins both by
+   * kode MIK; a course missing from jadwal keeps its absen-derived total.
    */
   async getAbsen(sub?: string): Promise<SiapAbsenItem[]> {
     if (sub && this.cache) {
@@ -492,8 +495,33 @@ export class SiapService {
       if (hit) return hit;
     }
     const { emailSso, nim } = await this.resolveSiapIdentity(sub);
-    const rows = await this.mintAndFetch<Array<Record<string, unknown>>>(emailSso, nim, 'absen');
-    const items = parseApiAbsen(Array.isArray(rows) ? rows : []);
+    const absenRows = await this.mintAndFetch<Array<Record<string, unknown>>>(
+      emailSso,
+      nim,
+      'absen',
+    );
+    const items = parseApiAbsen(Array.isArray(absenRows) ? absenRows : []);
+    // Override `total`/`hadirPct` with the scheduled-meeting count per course.
+    // `getJadwal` reuses its own cache + token handling for the per-meeting feed.
+    // A jadwal failure must not wipe out absen entirely — fall back to the
+    // absen-derived total (best-effort, mirrors mergeProfileFallback).
+    try {
+      const meetingsByKode = new Map<string, number>();
+      for (const j of await this.getJadwal(sub)) {
+        const kode = j.kode ?? '';
+        if (!kode) continue;
+        meetingsByKode.set(kode, (meetingsByKode.get(kode) ?? 0) + 1);
+      }
+      for (const item of items) {
+        const total = meetingsByKode.get(item.kode);
+        if (total != null && total > 0) {
+          item.total = total;
+          item.hadirPct = Math.round((item.hadir / item.total) * 100);
+        }
+      }
+    } catch {
+      // keep the absen-derived hadir/total/hadirPct
+    }
     if (sub && this.cache) {
       await this.cache.set(`${sub}:siap:absen`, items);
     }

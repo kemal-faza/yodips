@@ -205,26 +205,30 @@ describe('SiapService', () => {
 
     it('maps v2/lihat_irs rows into mataKuliah + computes totalSks (one token batch)', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
-      // getIrs mints once for semester_aktif then reuses the token for N×lihat_irs.
+      // getIrs mints once for semester_aktif then reuses the token for lihat_irs.
       const rows = [
         { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', sks_mk: '5', nama_kelas: 'C', jadwal: 'Senin 07:00', nama_dosen: 'Dosen X' },
         { kode_mk: 'MIK1624103', nama_mk: 'Struktur Diskret', sks_mk: '4', nama_kelas: 'D' },
       ];
+      const lihatCalls: string[] = [];
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
         if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
-        return rows; // v2/lihat_irs per semester (5x)
+        lihatCalls.push(endpoint);
+        return rows; // v2/lihat_irs
       });
       const irs = await irsSvc().getIrs('u1');
-      // 5 semesters × (5 + 4 = 9 SKS per semester) = 45 total.
-      expect(irs.totalSks).toBe(45);
-      expect(irs.mataKuliah.length).toBe(10); // 2 rows × 5 semesters
+      // ONLY the current semester is returned (smt = count), NOT all 5 semesters.
+      expect(irs.totalSks).toBe(9); // 5 + 4 within the current semester only
+      expect(irs.mataKuliah.length).toBe(2);
       expect(irs.mataKuliah[0].kode).toBe('MIK1624503');
       expect(irs.mataKuliah[0].nama).toBe('Sistem Informasi');
       expect(irs.mataKuliah[0].sks).toBe(5);
       expect(irs.mataKuliah[0].kelas).toBe('C');
       // mint once for the whole batch (spec §2.2).
       expect(apiMock.mintToken).toHaveBeenCalledTimes(1);
+      // Exactly ONE v2/lihat_irs fetch (the current semester), not 5.
+      expect(lihatCalls).toHaveLength(1);
     });
 
     it('propagates a stale api-credential as 401', async () => {
@@ -453,22 +457,57 @@ describe('SiapService', () => {
       apiMock.fetch.mockReset();
     });
 
-    it('parses hadir + total per matkul from the API absen rows (grouped)', async () => {
+    it('computes total from scheduled meetings (jadwal), not from recorded absen rows', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
-      apiMock.fetch.mockResolvedValue([
-        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
-        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'Hadir' },
-        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'alpa' },
-        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
-        { kode_mk: 'MIK1624103', nama_mk: 'Komputasi Tersebar dan Pararel', idjadwal: '216387', kehadiran: 'hadir' },
-      ]);
+      // absen API only returns rows for meetings that have a recorded status:
+      // 2 hadir for MIK1624503 (the user was present twice). The real total of
+      // scheduled meetings for that course is 14 (from jadwal per-pertemuan).
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'absen') {
+          return [
+            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
+            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
+          ];
+        }
+        if (endpoint === 'jadwal') {
+          // 14 scheduled per-pertemuan rows for MIK1624503 in the current term.
+          return Array.from({ length: 14 }, (_, i) => ({
+            kode_mk: 'MIK1624503',
+            nama_mk: 'Sistem Informasi',
+            nama_ruang: 'A301',
+            waktu_mulai: '09:40:00',
+            waktu_selesai: '12:10:00',
+            sks: '3',
+            tanggal_pertemuan: `2026-08-${String(i + 1).padStart(2, '0')}`,
+          }));
+        }
+        throw new Error(`unmocked endpoint: ${endpoint}`);
+      });
       const res = await absenSvc().getAbsen('u1');
-      expect(res.length).toBe(2);
       const si = res.find((r) => r.idJadwal === '216328')!;
       expect(si.nama).toBe('Sistem Informasi');
-      expect(si.hadir).toBe(3);
-      expect(si.total).toBe(4);
-      expect(si.hadirPct).toBe(Math.round((3 / 4) * 100));
+      expect(si.hadir).toBe(2);
+      expect(si.total).toBe(14);
+      expect(si.hadirPct).toBe(Math.round((2 / 14) * 100));
+    });
+
+    it('falls back to absen-derived total when the jadwal feed fails (best-effort)', async () => {
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'absen') {
+          return [
+            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
+            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
+            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'alpa' },
+          ];
+        }
+        // jadwal fails → getJadwal throws; getAbsen must not propagate this.
+        throw new StaleUpstreamError('Siap', 'api-endpoint');
+      });
+      const res = await absenSvc().getAbsen('u1');
+      const si = res.find((r) => r.idJadwal === '216328')!;
+      expect(si.hadir).toBe(2);
+      expect(si.total).toBe(3); // absen-derived fallback
     });
 
     it('throws 401 on a stale api-credential', async () => {

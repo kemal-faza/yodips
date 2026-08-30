@@ -71,10 +71,10 @@ internal fun irsJadwal(mk: SiapIrsMataKuliah, jadwalByNama: Map<String, SiapJadw
 }
 
 /**
- * Kartu IRS di-dedupe by kode MIK (fallback nama): payload backend adalah
- * gabungan IRS semua semester, jadi kursus yang mengulang — dan baris ganda
- * upstream — muncul berulang di layar (mirror web `dedupeSchedule`).
- * Occurrence pertama (semester terlama) menang.
+ * Kartu IRS di-dedupe by kode MIK (fallback nama): backend kini mengembalikan
+ * hanya mata kuliah semester berjalan, tapi baris ganda upstream (dan kursus
+ * yang muncul pada jadwal yang sama) masih bisa muncul berulang. Mirror web
+ * `dedupeSchedule`. Occurrence pertama menang.
  */
 internal fun dedupeIrsMk(list: List<SiapIrsMataKuliah>): List<SiapIrsMataKuliah> =
     list.distinctBy { it.kode.ifBlank { it.nama }.trim().lowercase() }
