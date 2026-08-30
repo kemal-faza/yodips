@@ -506,6 +506,27 @@ describe('KulonService', () => {
     );
   });
 
+  it('getAllAssignments single-flights concurrent callers (1 upstream run)', async () => {
+    const upstreamMock = {
+      getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      ajax: jest.fn().mockResolvedValue({ courses: [] }),
+    };
+    const service = new KulonService(
+      undefined,
+      undefined,
+      upstreamMock as any,
+      undefined,
+    );
+    await Promise.all([
+      service.getAllAssignments('S1'),
+      service.getAllAssignments('S1'),
+      service.getAllAssignments('S1'),
+    ]);
+    // One allAssignmentsFlight run for the whole burst: the upstream run
+    // (getContext) happens exactly once, not once per caller.
+    expect(upstreamMock.getContext).toHaveBeenCalledTimes(1);
+  });
+
   it('getCourses single-flights concurrent callers per sub', async () => {
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
