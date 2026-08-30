@@ -1,12 +1,25 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
+import { createHash } from 'crypto';
 import {
   classifyUpstreamFetch,
   probeUpstreamSession,
   StaleUpstreamError,
   UpstreamSessionCheck,
 } from '../upstream/upstream-fetch';
+import { DataCache } from '../cache/data-cache';
+import { SessionStore } from '../session/session-store';
+import { createKeyedSingleFlight } from '../common/single-flight';
 
 export const KULON_BASE_URL = 'https://kulon2.undip.ac.id';
+const SESSKEY_TTL_MS = 5 * 60_000;
+const SESSKEY_FP_LEN = 16;
+
+/** Cache key for a user's sesskey, fingerprinted by the session cookie so a
+ *  re-login (new cookie) is an automatic cache miss. */
+export function sesskeyCacheKey(sub: string, cookie: string): string {
+  const fp = createHash('sha256').update(cookie).digest('hex').slice(0, SESSKEY_FP_LEN);
+  return `${sub}:kulon:sesskey:${fp}`;
+}
 
 /** Pull the AJAX sesskey out of a Kulon page (present only when authed). */
 export function parseSesskey(html: string): string {
@@ -27,6 +40,17 @@ function hasSesskeyMarker(html: string): boolean {
 @Injectable()
 export class KulonUpstreamSession {
   private readonly logger = new Logger(KulonUpstreamSession.name);
+  private readonly sessionStore?: SessionStore;
+  private readonly cache?: DataCache;
+  private readonly sesskeyFlight = createKeyedSingleFlight<string>();
+
+  constructor(
+    @Optional() sessionStore?: SessionStore,
+    @Optional() cache?: DataCache,
+  ) {
+    this.sessionStore = sessionStore;
+    this.cache = cache;
+  }
 
   /**
    * Single source of truth for Kulon session validity. A real session makes
@@ -43,6 +67,35 @@ export class KulonUpstreamSession {
       onEvidence: (evidence) =>
         this.logger.warn(`Kulon session probe: ${evidence}`),
     });
+  }
+
+  /** Cookie + cached sesskey for a user. Cookie is ALWAYS read from the session
+   *  store (never cached); sesskey is cached (fingerprint key, 5 min TTL) with
+   *  single-flight. Missing session -> typed stale 401. */
+  async getContext(sub?: string): Promise<{ cookie: string; sesskey: string }> {
+    const session = sub ? await this.sessionStore?.get(sub) : null;
+    if (!session?.kulonCookie) {
+      throw new StaleUpstreamError(
+        'Kulon',
+        'no-cookie',
+        'Kulon session belum ada. Silakan login ulang via SSO',
+      );
+    }
+    const cookie = session.kulonCookie;
+    if (!sub || !this.cache) {
+      const sesskey = await this.fetchSesskeyOrThrow(cookie);
+      return { cookie, sesskey };
+    }
+    const key = sesskeyCacheKey(sub, cookie);
+    const cached = await this.cache.get<string>(key);
+    if (cached) {
+      this.logger.debug(`[upstream] kulon sesskey sub=${sub} hit=true`);
+      return { cookie, sesskey: cached };
+    }
+    this.logger.debug(`[upstream] kulon sesskey sub=${sub} hit=false`);
+    const sesskey = await this.sesskeyFlight.run(key, () => this.fetchSesskeyOrThrow(cookie));
+    if (this.cache) await this.cache.set(key, sesskey, SESSKEY_TTL_MS);
+    return { cookie, sesskey };
   }
 
   /**
