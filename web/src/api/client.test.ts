@@ -344,4 +344,24 @@ describe('api client', () => {
     });
     expect(r.status).toBe('success');
   });
+
+  describe('getDashboard', () => {
+    it('getDashboard fetches /api/dashboard and routes through getCached with key dashboard + 60s TTLs', async () => {
+      getCachedMock.mockClear();
+      mockRequest.mockResolvedValue({
+        data: { profile: null, khs: null, irs: null, jadwal: [], courses: [], assignments: [], errors: {} },
+      });
+      const { getDashboard } = await import('./client');
+      const out = await getDashboard();
+      const call = mockRequest.mock.calls[0][0];
+      expect(call.method).toBe('get');
+      expect(call.url).toBe('/api/dashboard');
+      expect(out.errors).toEqual({});
+      expect(getCachedMock).toHaveBeenCalledWith(
+        'dashboard',
+        expect.any(Function),
+        { freshTtl: 60_000, staleTtl: 60_000 },
+      );
+    });
+  });
 });
