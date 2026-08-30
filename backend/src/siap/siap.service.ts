@@ -436,6 +436,14 @@ export class SiapService {
     return (await this.methodFlight.run(
       `lecturers:${sub ?? '__anon__'}`,
       async () => {
+        // 24h DataCache read INSIDE the single-flight so concurrent callers
+        // share one fetch; lecturer lists change ~never (mirrors getKhs).
+        if (sub && this.cache) {
+          const hit = await this.cache.get<{ kode: string; dosen: string }[]>(
+            `${sub}:siap:lecturers`,
+          );
+          if (hit) return hit;
+        }
         let ctx = await this.upstream.getContext(sub);
         const fetchBatch = async <T>(
           endpoint: string,
@@ -466,7 +474,14 @@ export class SiapService {
               if (!entries.has(kode)) entries.set(kode, { kode, dosen });
             }
           }
-          return Array.from(entries.values());
+          const result = Array.from(entries.values());
+          // Write INSIDE build() so BOTH the normal and api-credential retry
+          // paths cache; a throw never reaches here. 24h TTL: lecturer lists
+          // change ~never (unlike KHS's 30-min). Inside the single-flight so
+          // concurrent callers don't double-fetch.
+          if (sub && this.cache)
+            await this.cache.set(`${sub}:siap:lecturers`, result, 24 * 60 * 60_000);
+          return result;
         };
         try {
           return await build();

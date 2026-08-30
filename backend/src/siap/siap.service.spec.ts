@@ -425,6 +425,63 @@ describe('SiapService', () => {
         { ta: '2026', smt_ambil: '5', smt: '1' },
       ]);
     });
+
+    it('serves from cache on hit (0 IRS fetches)', async () => {
+      const cached = [{ kode: 'MIK1624105', dosen: 'Dr. X' }];
+      const svc = lecturersSvc(); // helper sets cache.get defaults first
+      cache.get.mockImplementation((key: string) =>
+        key.endsWith(':siap:lecturers')
+          ? Promise.resolve(cached)
+          : Promise.resolve(null),
+      );
+      const result = await svc.getLecturers('u1');
+      expect(result).toEqual(cached);
+      expect(apiMock.fetch).not.toHaveBeenCalled();
+    });
+
+    it('writes the lecturers cache (24h) after a successful fetch', async () => {
+      const setSpy = jest.fn();
+      const cache2 = {
+        get: jest.fn().mockResolvedValue(null),
+        set: setSpy,
+        del: jest.fn(),
+      };
+      const api = { mintToken: jest.fn().mockResolvedValue({ token: 'T', data: {} }), fetch: jest.fn() };
+      api.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+        return [];
+      });
+      const svc = makeRealSeamService(api, cache2);
+      await svc.getLecturers('u1');
+      expect(setSpy).toHaveBeenCalledWith(
+        'u1:siap:lecturers',
+        expect.any(Array),
+        24 * 60 * 60_000,
+      );
+    });
+
+    it('writes the cache after an api-credential retry succeeds', async () => {
+      const setSpy = jest.fn();
+      const cache2 = { get: jest.fn().mockResolvedValue(null), set: setSpy, del: jest.fn() };
+      const mint = jest
+        .fn()
+        .mockResolvedValueOnce({ token: 'T1', data: {} })
+        .mockResolvedValueOnce({ token: 'T2', data: {} });
+      const fetch = jest
+        .fn()
+        .mockRejectedValueOnce(new StaleUpstreamError('Siap', 'api-credential'))
+        .mockImplementation(async (endpoint: string) => {
+          if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+          if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+          return [];
+        });
+      const svc = makeRealSeamService({ mintToken: mint, fetch }, cache2);
+      const result = await svc.getLecturers('u1');
+      expect(result).toEqual([]);
+      expect(setSpy).toHaveBeenCalledWith('u1:siap:lecturers', [], 24 * 60 * 60_000);
+      expect(mint).toHaveBeenCalledTimes(2); // initial + re-mint
+    });
   });
 
   describe('getNotifications', () => {
