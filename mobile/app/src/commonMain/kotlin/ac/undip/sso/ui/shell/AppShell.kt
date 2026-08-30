@@ -4,10 +4,13 @@ import ac.undip.sso.core.data.TokenStoreLike
 import ac.undip.sso.core.data.PersistentCache
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.KulonAssignment
+import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.push.NotificationHistoryStore
 import ac.undip.sso.core.push.PushTargets
 import ac.undip.sso.uptimeMs
 import ac.undip.sso.ui.feature.AssignmentDetailScreen
+import ac.undip.sso.ui.feature.CourseDetailScreen
+import ac.undip.sso.ui.feature.CoursesScreen
 import ac.undip.sso.ui.feature.DashboardScreen
 import ac.undip.sso.ui.feature.NotificationsScreen
 import ac.undip.sso.ui.feature.IrsScreen
@@ -115,6 +118,9 @@ fun AppShell(
     // Selected task handed to the detail sub-screen (navigated by id so the
     // back stack stays light; the screen re-fetches detail from the api).
     var selectedTask by remember { mutableStateOf<KulonAssignment?>(null) }
+    // Selected course handed to the course-detail sub-screen (same pattern as
+    // selectedTask — route carries only the id, the full object rides here).
+    var selectedCourse by remember { mutableStateOf<KulonCourse?>(null) }
 
     CompositionLocalProvider(
         LocalAppNavigation provides AppNavigation(
@@ -145,6 +151,7 @@ fun AppShell(
                     onOpenIrs = { navController.navigate("irs") },
                     onOpenKhs = { navController.navigate("khs") },
                     onOpenNotifications = { navController.navigate("notifications") },
+                    onOpenCourses = { navController.navigate("courses") },
                 )
             }
             composable(Tab.Tasks.route) {
@@ -168,6 +175,34 @@ fun AppShell(
                 val history = notificationHistory
                 if (history != null) {
                     NotificationsScreen(history = history, onBack = { navController.popBackStack() })
+                }
+            }
+            composable("courses") {
+                CoursesScreen(
+                    repo = repo,
+                    onOpenCourse = { course ->
+                        selectedCourse = course
+                        navController.navigate("courses/${course.id}")
+                    },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable("courses/{courseId}") {
+                val course = selectedCourse
+                if (course == null) {
+                    navController.popBackStack()
+                } else {
+                    CourseDetailScreen(
+                        repo = repo,
+                        courseId = course.id,
+                        courseName = course.fullname,
+                        semester = course.semester,
+                        onOpenAssignment = { task ->
+                            selectedTask = task
+                            navController.navigate("task/${task.id}")
+                        },
+                        onBack = { navController.popBackStack() },
+                    )
                 }
             }
             composable("task/{taskId}") {

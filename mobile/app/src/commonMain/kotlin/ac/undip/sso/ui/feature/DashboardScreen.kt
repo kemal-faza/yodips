@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ListAlt
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -53,6 +54,7 @@ fun DashboardScreen(
     onOpenIrs: () -> Unit,
     onOpenKhs: () -> Unit,
     onOpenNotifications: () -> Unit = {},
+    onOpenCourses: () -> Unit = {},
 ) {
     var refreshTick by remember { mutableIntStateOf(0) }
     RefreshableLoadableData(
@@ -63,7 +65,7 @@ fun DashboardScreen(
         },
         emptyMessage = "Belum ada data",
     ) { profile ->
-        DashboardContent(profile, repo, onOpenIrs, onOpenKhs, onOpenNotifications, refreshTick)
+        DashboardContent(profile, repo, onOpenIrs, onOpenKhs, onOpenNotifications, onOpenCourses, refreshTick)
     }
 }
 
@@ -74,6 +76,7 @@ private fun DashboardContent(
     onOpenIrs: () -> Unit,
     onOpenKhs: () -> Unit,
     onOpenNotifications: () -> Unit,
+    onOpenCourses: () -> Unit,
     refreshTick: Int,
 ) {
     Column(
@@ -117,6 +120,7 @@ private fun DashboardContent(
                 listOf(
                     MenuSpec("IRS", Icons.Filled.ListAlt, onOpenIrs),
                     MenuSpec("KHS", Icons.Filled.Description, onOpenKhs),
+                    MenuSpec("Mata Kuliah", Icons.Filled.MenuBook, onOpenCourses),
                 ),
         )
 
