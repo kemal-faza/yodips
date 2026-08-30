@@ -62,6 +62,7 @@ export const API = {
     kehadiran: (id: string) => `/api/siap/kehadiran/${id}`,
     markKehadiran: '/api/siap/kehadiran',
   },
+  dashboard: '/api/dashboard',
 } as const;
 
 /** The backend error envelope: `{ message?: string; code?: string }`. */

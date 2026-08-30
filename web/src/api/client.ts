@@ -42,6 +42,17 @@ const CACHE = {
   notifications: { freshTtl: 60_000, staleTtl: 5 * 60_000 },
 } as const;
 
+export interface DashboardSliceError { status: number; message: string; }
+export interface DashboardPayload {
+  profile: SiapProfile | null;
+  khs: SiapKhs | null;
+  irs: SiapIrs | null;
+  jadwal: SiapJadwal[];
+  courses: Course[];
+  assignments: Assignment[];
+  errors: Partial<Record<'profile'|'khs'|'irs'|'jadwal'|'courses'|'assignments', DashboardSliceError>>;
+}
+
 export const apiClient: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000',
 });
@@ -259,4 +270,11 @@ export async function getSiapKehadiran(idJadwal: string): Promise<SiapKehadiran>
 export async function postKehadiranToken(token: string): Promise<KehadiranResult> {
   const { data } = await apiClient.post<KehadiranResult>(API.siap.markKehadiran, { token });
   return data;
+}
+
+export async function getDashboard(): Promise<DashboardPayload> {
+  return getCached('dashboard', async () => {
+    const { data } = await apiClient.get<DashboardPayload>(API.dashboard);
+    return data;
+  }, { freshTtl: 60_000, staleTtl: 60_000 });
 }
