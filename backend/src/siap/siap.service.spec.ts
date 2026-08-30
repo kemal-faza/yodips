@@ -3,6 +3,8 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { HttpException } from '@nestjs/common';
 import { SiapService } from './siap.service';
+import { SiapUpstreamSession } from './siap-upstream.session';
+import { InMemoryDataCache } from '../cache/in-memory-data.cache';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import type { SiapApiUpstream } from './siap-api';
 
@@ -14,13 +16,17 @@ function fixture(name: string): string {
 }
 
 /**
- * Service whose endpoint API resolves `sub` via a fixed session store fake
- * (cookie value is irrelevant to the routing-based fetch mocks below).
+ * Service whose cookie-path methods (checkSessionValid / markNotification /
+ * getKehadiran / markKehadiran) run against a REAL seam + global.fetch mocks.
+ * The session store fake returns a cookie value irrelevant to those tests.
  */
 function makeAuthedSiapSvc(cache?: any): SiapService {
-  return new SiapService(cache, undefined, {
-    get: async () => ({ siapCookie: 'sia_app_session=TEST' }),
-  } as any);
+  const store = { get: async () => ({ siapCookie: 'sia_app_session=TEST' }) };
+  return new SiapService(
+    cache,
+    new SiapUpstreamSession(store as any, cache as any),
+    store as any,
+  );
 }
 
 // Inline minimal profile used by multi-semester tests (getKhs, getLecturers)
@@ -33,6 +39,56 @@ const PROFILE_2024_5_SEM =
   '<p class="text-muted">2026/2027 Ganjil</p>' +
   '<p><span class="badge badge-success">AKTIF</span></p>' +
   '</div></html>';
+
+const EMAIL = 'x@students.undip.ac.id';
+const NIM = '24060124120013';
+
+/** Session-store fake shared by every service constructor below: the seam's
+ *  getContext resolves identity from it (siapCookie + identity + emailSso). */
+const STORE = {
+  get: async () => ({ siapCookie: 's', identity: NIM, emailSso: EMAIL }),
+  set: jest.fn(),
+};
+
+/** Upstream seam mock (Task 6 seam-shape): getContext returns a canned context,
+ *  the API-surface mocks (checkSessionValid / fetchText / fetchJson) stay
+ *  jest.fn so cookie-path methods (fetchProfile, kehadiran) are unimplemented
+ *  unless a test overrides them. */
+function makeSeamMock(overrides: Record<string, unknown> = {}): {
+  getContext: jest.Mock;
+  checkSessionValid: jest.Mock;
+  fetchText: jest.Mock;
+  fetchJson: jest.Mock;
+  fetchJsonAllowingHttpErrors: jest.Mock;
+} {
+  return {
+    getContext: jest
+      .fn()
+      .mockResolvedValue({ emailSso: EMAIL, nim: NIM, token: 'T1' }),
+    checkSessionValid: jest.fn(),
+    fetchText: jest.fn(),
+    fetchJson: jest.fn(),
+    fetchJsonAllowingHttpErrors: jest.fn(),
+    setScrapeIdentity: jest.fn(),
+    ...overrides,
+  } as any;
+}
+
+/** Service whose endpoint API resolves `sub` via a REAL seam wired with the
+ *  session store + cache, so getContext → sessionStore.get → mintFresh. Used by
+ *  tests that assert mint counts / cache-invalidation on api-credential. */
+function makeRealSeamService(
+  api: { mintToken: jest.Mock; fetch: jest.Mock },
+  cache?: any,
+  store: any = STORE,
+): SiapService {
+  return new SiapService(
+    cache,
+    new SiapUpstreamSession(store as any, cache as any, api as any),
+    store as any,
+    api as any,
+  );
+}
 
 /**
  * Build a fetch mock that routes by URL substring (or regex) to a fixture body.
@@ -81,15 +137,26 @@ describe('SiapService', () => {
     });
 
     function svcWith(cookie: string | undefined): SiapService {
+      const store = {
+        get: jest
+          .fn()
+          .mockResolvedValue(
+            cookie
+              ? {
+                  siapCookie: cookie,
+                  identity: '24060124120013',
+                  emailSso: 'x@students.undip.ac.id',
+                }
+              : null,
+          ),
+        set: jest.fn(),
+      };
+      // REAL seam: getContext reads the session store and mints through
+      // apiMock.mintToken — no cookie → no-cookie stale 401.
       return new SiapService(
         undefined,
-        undefined,
-        {
-          get: jest.fn().mockResolvedValue(
-            cookie ? { siapCookie: cookie, identity: '24060124120013', emailSso: 'x@students.undip.ac.id' } : null,
-          ),
-          set: jest.fn(),
-        } as any,
+        new SiapUpstreamSession(store as any, undefined, apiMock as any),
+        store as any,
         apiMock as any,
       );
     }
@@ -97,23 +164,36 @@ describe('SiapService', () => {
     it('resolves the SIAP identity from SessionStore by sub and drives the API', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
       apiMock.fetch
-        .mockResolvedValueOnce({ nama: 'Budi', nim: '24060124120013', nama_ps: 'TI', namafak: 'FSM', tahun_masuk: '2024', sso_email: 'x@students.undip.ac.id', status_terakhir: 'Aktif' })
+        .mockResolvedValueOnce({
+          nama: 'Budi',
+          nim: '24060124120013',
+          nama_ps: 'TI',
+          namafak: 'FSM',
+          tahun_masuk: '2024',
+          sso_email: 'x@students.undip.ac.id',
+          status_terakhir: 'Aktif',
+        })
         .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' });
       const out = await svcWith('ci_session_x=K').getProfile('u1');
       expect(out.nama).toBe('Budi');
       // The identity passed to the API is the session's, not a cookie.
-      expect(apiMock.mintToken).toHaveBeenCalledWith('x@students.undip.ac.id', '24060124120013');
+      expect(apiMock.mintToken).toHaveBeenCalledWith(
+        'x@students.undip.ac.id',
+        '24060124120013',
+      );
     });
 
     it('throws a typed stale 401 when no SIAP session exists for sub', async () => {
       const promise = svcWith(undefined).getProfile('u1');
       await expect(promise).rejects.toBeInstanceOf(StaleUpstreamError);
-      await expect(svcWith(null as any).getProfile('u1')).rejects.toMatchObject({
-        status: 401,
-      });
-      await expect(
-        svcWith(undefined).getProfile('u1'),
-      ).rejects.toThrow('SIAP session belum ada. Silakan login ulang via SSO');
+      await expect(svcWith(null as any).getProfile('u1')).rejects.toMatchObject(
+        {
+          status: 401,
+        },
+      );
+      await expect(svcWith(undefined).getProfile('u1')).rejects.toThrow(
+        'SIAP session belum ada. Silakan login ulang via SSO',
+      );
     });
   });
 
@@ -176,43 +256,50 @@ describe('SiapService', () => {
 
   describe('getIrs', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
-    const sessionStore = {
-      get: async () => ({
-        siapCookie: 's',
-        identity: '2024',
-        emailSso: 'x@students.undip.ac.id',
-      }),
-      set: jest.fn(),
-    };
-    // getIrs resolves angkatan via this.getProfile(sub); short-circuit it through
-    // the cache so the batch-token assertions are deterministic. The cache
+    // getIrs resolves angkatan via data_mahasiswa on the batch token; the cache
     // returns the profile for `:siap:profile` and null for `:siap:irs` (so getIrs
     // doesn't short-circuit on its own cache hit).
     const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
 
     function irsSvc(): SiapService {
       cache.get.mockImplementation((key: string) =>
-        key.endsWith(':siap:profile') ? Promise.resolve({ angkatan: '2024' }) : Promise.resolve(null),
+        key.endsWith(':siap:profile')
+          ? Promise.resolve({ angkatan: '2024' })
+          : Promise.resolve(null),
       );
-      return new SiapService(cache, undefined, sessionStore as any, apiMock as any);
+      return makeRealSeamService(apiMock, cache);
     }
 
     beforeEach(() => {
       apiMock.mintToken.mockReset();
       apiMock.fetch.mockReset();
       cache.get.mockReset();
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
     });
 
     it('maps v2/lihat_irs rows into mataKuliah + computes totalSks (one token batch)', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
       // getIrs mints once for semester_aktif then reuses the token for lihat_irs.
       const rows = [
-        { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', sks_mk: '5', nama_kelas: 'C', jadwal: 'Senin 07:00', nama_dosen: 'Dosen X' },
-        { kode_mk: 'MIK1624103', nama_mk: 'Struktur Diskret', sks_mk: '4', nama_kelas: 'D' },
+        {
+          kode_mk: 'MIK1624503',
+          nama_mk: 'Sistem Informasi',
+          sks_mk: '5',
+          nama_kelas: 'C',
+          jadwal: 'Senin 07:00',
+          nama_dosen: 'Dosen X',
+        },
+        {
+          kode_mk: 'MIK1624103',
+          nama_mk: 'Struktur Diskret',
+          sks_mk: '4',
+          nama_kelas: 'D',
+        },
       ];
       const lihatCalls: string[] = [];
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'semester_aktif')
+          return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
         lihatCalls.push(endpoint);
         return rows; // v2/lihat_irs
@@ -234,11 +321,14 @@ describe('SiapService', () => {
     it('propagates a stale api-credential as 401', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'semester_aktif')
+          return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
         throw new StaleUpstreamError('Siap', 'api-credential');
       });
-      await expect(irsSvc().getIrs('u1')).rejects.toBeInstanceOf(StaleUpstreamError);
+      await expect(irsSvc().getIrs('u1')).rejects.toBeInstanceOf(
+        StaleUpstreamError,
+      );
     });
 
     it('resolves angkatan from data_mahasiswa via the batch token (no nested getProfile mint)', async () => {
@@ -249,7 +339,8 @@ describe('SiapService', () => {
       const endpoints: string[] = [];
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
         endpoints.push(endpoint);
-        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'semester_aktif')
+          return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
         return [];
       });
@@ -261,17 +352,15 @@ describe('SiapService', () => {
 
   describe('getLecturers', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
-    const sessionStore = {
-      get: async () => ({ siapCookie: 's', identity: '2024', emailSso: 'x@students.undip.ac.id' }),
-      set: jest.fn(),
-    };
     const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
 
     function lecturersSvc(): SiapService {
       cache.get.mockImplementation((key: string) =>
-        key.endsWith(':siap:profile') ? Promise.resolve({ angkatan: '2024' }) : Promise.resolve(null),
+        key.endsWith(':siap:profile')
+          ? Promise.resolve({ angkatan: '2024' })
+          : Promise.resolve(null),
       );
-      return new SiapService(cache, undefined, sessionStore as any, apiMock as any);
+      return makeRealSeamService(apiMock, cache);
     }
 
     beforeEach(() => {
@@ -284,7 +373,8 @@ describe('SiapService', () => {
     it('returns [] when every semester IRS has no lecturer', async () => {
       // semester_aktif + data_mahasiswa drive angkatan/count; IRS empty across all.
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'semester_aktif')
+          return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
         return []; // v2/lihat_irs empty for all 5 semesters
       });
@@ -298,7 +388,8 @@ describe('SiapService', () => {
         { kode_mk: 'UUW1624002', nama_dosen: 'Dosen Uji Empat' },
       ];
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'semester_aktif')
+          return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
         return rows; // v2/lihat_irs per semester
       });
@@ -313,8 +404,13 @@ describe('SiapService', () => {
     it('sends the correct per-semester ta/smt_ambil/smt params', async () => {
       const seen: Array<Record<string, string>> = [];
       apiMock.fetch.mockImplementation(
-        async (endpoint: string, _token: string, form: Record<string, string>) => {
-          if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        async (
+          endpoint: string,
+          _token: string,
+          form: Record<string, string>,
+        ) => {
+          if (endpoint === 'semester_aktif')
+            return { nm_smt: '2026/2027 Ganjil' };
           if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
           seen.push(form);
           return [{ kode_mk: 'MIK1624105', nama_dosen: 'D' }];
@@ -334,12 +430,21 @@ describe('SiapService', () => {
   describe('getNotifications', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
     const sessionStore = {
-      get: async () => ({ siapCookie: 's', identity: '24060124120013', emailSso: 'x@students.undip.ac.id' }),
+      get: async () => ({
+        siapCookie: 's',
+        identity: '24060124120013',
+        emailSso: 'x@students.undip.ac.id',
+      }),
       set: jest.fn(),
     };
 
     function notifSvc(): SiapService {
-      return new SiapService(undefined, undefined, sessionStore as any, apiMock as any);
+      return new SiapService(
+        undefined,
+        makeSeamMock(),
+        STORE as any,
+        apiMock as any,
+      );
     }
 
     beforeEach(() => {
@@ -350,7 +455,14 @@ describe('SiapService', () => {
     it('normalizes the list payload from pengumuman', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
       apiMock.fetch.mockResolvedValue([
-        { id: '1', judul: 'Pengumuman', isi: 'Isi', created_at: '2026-08-01', read: false, jenis: 'info' },
+        {
+          id: '1',
+          judul: 'Pengumuman',
+          isi: 'Isi',
+          created_at: '2026-08-01',
+          read: false,
+          jenis: 'info',
+        },
       ]);
       const res = await notifSvc().getNotifications('u1');
       expect(Array.isArray(res.items)).toBe(true);
@@ -360,7 +472,9 @@ describe('SiapService', () => {
 
     it('throws 401 on a stale api-credential', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
-      apiMock.fetch.mockRejectedValue(new StaleUpstreamError('Siap', 'api-credential'));
+      apiMock.fetch.mockRejectedValue(
+        new StaleUpstreamError('Siap', 'api-credential'),
+      );
       await expect(notifSvc().getNotifications('u1')).rejects.toMatchObject({
         status: 401,
       });
@@ -396,12 +510,21 @@ describe('SiapService', () => {
   describe('getJadwal', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
     const sessionStore = {
-      get: async () => ({ siapCookie: 's', identity: '24060124120013', emailSso: 'x@students.undip.ac.id' }),
+      get: async () => ({
+        siapCookie: 's',
+        identity: '24060124120013',
+        emailSso: 'x@students.undip.ac.id',
+      }),
       set: jest.fn(),
     };
 
     function jadwalSvc(): SiapService {
-      return new SiapService(undefined, undefined, sessionStore as any, apiMock as any);
+      return new SiapService(
+        undefined,
+        makeSeamMock(),
+        STORE as any,
+        apiMock as any,
+      );
     }
 
     beforeEach(() => {
@@ -412,7 +535,15 @@ describe('SiapService', () => {
     it('maps the API jadwal rows to SiapJadwal[]', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
       apiMock.fetch.mockResolvedValue([
-        { hari: 'senin', nama_mk: 'Sistem Informasi', nama_ruang: 'A301', waktu_mulai: '09:40:00', waktu_selesai: '12:10:00', sks: '3', tanggal_pertemuan: '2026-08-31' },
+        {
+          hari: 'senin',
+          nama_mk: 'Sistem Informasi',
+          nama_ruang: 'A301',
+          waktu_mulai: '09:40:00',
+          waktu_selesai: '12:10:00',
+          sks: '3',
+          tanggal_pertemuan: '2026-08-31',
+        },
       ]);
       const res = await jadwalSvc().getJadwal('u1');
       expect(Array.isArray(res)).toBe(true);
@@ -434,7 +565,9 @@ describe('SiapService', () => {
 
     it('throws 401 on a stale api-credential', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
-      apiMock.fetch.mockRejectedValue(new StaleUpstreamError('Siap', 'api-credential'));
+      apiMock.fetch.mockRejectedValue(
+        new StaleUpstreamError('Siap', 'api-credential'),
+      );
       await expect(jadwalSvc().getJadwal('u1')).rejects.toMatchObject({
         status: 401,
       });
@@ -444,12 +577,21 @@ describe('SiapService', () => {
   describe('getAbsen', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
     const sessionStore = {
-      get: async () => ({ siapCookie: 's', identity: '24060124120013', emailSso: 'x@students.undip.ac.id' }),
+      get: async () => ({
+        siapCookie: 's',
+        identity: '24060124120013',
+        emailSso: 'x@students.undip.ac.id',
+      }),
       set: jest.fn(),
     };
 
     function absenSvc(): SiapService {
-      return new SiapService(undefined, undefined, sessionStore as any, apiMock as any);
+      return new SiapService(
+        undefined,
+        makeSeamMock(),
+        STORE as any,
+        apiMock as any,
+      );
     }
 
     beforeEach(() => {
@@ -465,8 +607,18 @@ describe('SiapService', () => {
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
         if (endpoint === 'absen') {
           return [
-            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
-            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
+            {
+              kode_mk: 'MIK1624503',
+              nama_mk: 'Sistem Informasi',
+              idjadwal: '216328',
+              kehadiran: 'hadir',
+            },
+            {
+              kode_mk: 'MIK1624503',
+              nama_mk: 'Sistem Informasi',
+              idjadwal: '216328',
+              kehadiran: 'hadir',
+            },
           ];
         }
         if (endpoint === 'jadwal') {
@@ -496,9 +648,24 @@ describe('SiapService', () => {
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
         if (endpoint === 'absen') {
           return [
-            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
-            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
-            { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'alpa' },
+            {
+              kode_mk: 'MIK1624503',
+              nama_mk: 'Sistem Informasi',
+              idjadwal: '216328',
+              kehadiran: 'hadir',
+            },
+            {
+              kode_mk: 'MIK1624503',
+              nama_mk: 'Sistem Informasi',
+              idjadwal: '216328',
+              kehadiran: 'hadir',
+            },
+            {
+              kode_mk: 'MIK1624503',
+              nama_mk: 'Sistem Informasi',
+              idjadwal: '216328',
+              kehadiran: 'alpa',
+            },
           ];
         }
         // jadwal fails → getJadwal throws; getAbsen must not propagate this.
@@ -512,8 +679,12 @@ describe('SiapService', () => {
 
     it('throws 401 on a stale api-credential', async () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
-      apiMock.fetch.mockRejectedValue(new StaleUpstreamError('Siap', 'api-credential'));
-      await expect(absenSvc().getAbsen('u1')).rejects.toMatchObject({ status: 401 });
+      apiMock.fetch.mockRejectedValue(
+        new StaleUpstreamError('Siap', 'api-credential'),
+      );
+      await expect(absenSvc().getAbsen('u1')).rejects.toMatchObject({
+        status: 401,
+      });
     });
   });
 
@@ -604,10 +775,7 @@ describe('SiapService', () => {
         text: async () => '{"status":"success","message":"ok"}',
         json: async () => ({ status: 'success', message: 'ok' }),
       });
-      const res = await svc.markKehadiran(
-        'u1',
-        'qrcodetoken123',
-      );
+      const res = await svc.markKehadiran('u1', 'qrcodetoken123');
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('/absensi/process/'),
         expect.objectContaining({
@@ -659,13 +827,12 @@ describe('SiapService', () => {
 
   describe('getKhs', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
-    const sessionStore = {
-      get: async () => ({ siapCookie: 's', identity: '24060124120013', emailSso: 'x@students.undip.ac.id' }),
-      set: jest.fn(),
-    };
-
+    // REAL seam (sessionStore + InMemoryDataCache + apiMock): getContext mints
+    // through apiMock.mintToken, so the retry/invalidate tests below assert real
+    // mint counts and the token-cache invalidation on api-credential. A FRESH
+    // cache per service keeps one test's `:siap:khs` write out of the next.
     function khsSvc(): SiapService {
-      return new SiapService(undefined, undefined, sessionStore as any, apiMock as any);
+      return makeRealSeamService(apiMock, new InMemoryDataCache(60_000));
     }
 
     beforeEach(() => {
@@ -683,8 +850,18 @@ describe('SiapService', () => {
         .mockResolvedValueOnce(daftar) // v2/daftar_khs
         .mockResolvedValue([
           // v2/lihat_khs rows (reused for both semesters in the mock)
-          { nama_mk: 'MATKUL UJI 1', sks_mk: '3', nilai_akhir_huruf: 'A', nilai_bobot: '4' },
-          { nama_mk: 'MATKUL UJI 2', sks_mk: '3', nilai_akhir_huruf: 'A', nilai_bobot: '4' },
+          {
+            nama_mk: 'MATKUL UJI 1',
+            sks_mk: '3',
+            nilai_akhir_huruf: 'A',
+            nilai_bobot: '4',
+          },
+          {
+            nama_mk: 'MATKUL UJI 2',
+            sks_mk: '3',
+            nilai_akhir_huruf: 'A',
+            nilai_bobot: '4',
+          },
         ]);
       const khs = await khsSvc().getKhs('u1');
       expect(khs.semesters.length).toBe(2);
@@ -708,10 +885,12 @@ describe('SiapService', () => {
           { ta: '2024', smt: '2', smt_ambil: '2', ipk: '3.5' },
           { ta: '2025', smt: '1', smt_ambil: '3', ipk: '3.5' },
         ])
-        .mockImplementation(async (_e: string, _t: string, form: Record<string, string>) => {
-          seen.push(form);
-          return [];
-        });
+        .mockImplementation(
+          async (_e: string, _t: string, form: Record<string, string>) => {
+            seen.push(form);
+            return [];
+          },
+        );
       await khsSvc().getKhs('u1');
       // 3 semesters: within-year smt toggles 1/2 (2025/2026 Ganjil → within-year 1).
       expect(seen).toEqual([
@@ -747,22 +926,41 @@ describe('SiapService', () => {
 });
 
 // Session resolver whose store carries emailSso (the API path needs it directly
-// without a scrape fallback). cookie value is irrelevant to the apiMock below.
+// without a scrape fallback). REAL seam: getContext mints through apiMock.
+// cookie value is irrelevant to the apiMock below.
 function makeApiSvc(
   apiMock: Partial<SiapApiUpstream>,
   cache?: any,
 ): SiapService {
+  const store = {
+    get: async () => ({
+      siapCookie: 'sia_app_session=TEST',
+      identity: '24060124120013',
+      emailSso: 'kemalfaza26@students.undip.ac.id',
+    }),
+  };
   return new SiapService(
     cache,
-    undefined,
-    {
-      get: async () => ({
-        siapCookie: 'sia_app_session=TEST',
-        identity: '24060124120013',
-        emailSso: 'kemalfaza26@students.undip.ac.id',
-      }),
-    } as any,
+    new SiapUpstreamSession(store as any, cache as any, apiMock as any),
+    store as any,
     apiMock as SiapApiUpstream,
+  );
+}
+
+/** Brief Step 1 helper: seam mock + api mock. getContext returns a canned
+ *  identity + token without minting — use for routing tests. For tests that
+ *  assert MINT COUNTS or token-cache invalidation, use makeRealSeamService
+ *  (the seam's getContext mints through apiMock.mintToken there). */
+function makeService(opts: {
+  seam?: Record<string, unknown>;
+  api: { mintToken?: jest.Mock; fetch: jest.Mock };
+  cache?: any;
+}): SiapService {
+  return new SiapService(
+    opts.cache,
+    makeSeamMock(opts.seam ?? {}),
+    STORE as any,
+    opts.api as any,
   );
 }
 
@@ -797,7 +995,12 @@ describe('API-backed methods', () => {
   it('getJadwal maps API rows', async () => {
     apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
     apiMock.fetch.mockResolvedValue([
-      { hari: 'senin', nama_mk: 'X', sks: '3', tanggal_pertemuan: '2026-08-30' },
+      {
+        hari: 'senin',
+        nama_mk: 'X',
+        sks: '3',
+        tanggal_pertemuan: '2026-08-30',
+      },
     ]);
     const svc = makeApiSvc(apiMock);
     const j = await svc.getJadwal('u1');
@@ -840,10 +1043,25 @@ describe('API-backed methods', () => {
 
   it('getAbsen parses API rows (group-by) into SiapAbsenItem[]', async () => {
     apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
-    apiMock.fetch.mockResolvedValue([
-      { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'hadir' },
-      { kode_mk: 'MIK1624503', nama_mk: 'Sistem Informasi', idjadwal: '216328', kehadiran: 'alpa' },
-    ]);
+    apiMock.fetch.mockImplementation(async (endpoint: string) => {
+      if (endpoint === 'absen') {
+        return [
+          {
+            kode_mk: 'MIK1624503',
+            nama_mk: 'Sistem Informasi',
+            idjadwal: '216328',
+            kehadiran: 'hadir',
+          },
+          {
+            kode_mk: 'MIK1624503',
+            nama_mk: 'Sistem Informasi',
+            idjadwal: '216328',
+            kehadiran: 'alpa',
+          },
+        ];
+      }
+      throw new Error(`unmocked endpoint: ${endpoint}`);
+    });
     const svc = makeApiSvc(apiMock);
     const a = await svc.getAbsen('u1');
     expect(a).toHaveLength(1);
@@ -852,36 +1070,57 @@ describe('API-backed methods', () => {
     expect(a[0].total).toBe(2);
   });
 
-  it('fallback-scrapes emailSso from fetchProfile when session lacks it', async () => {
-    // No emailSso in the session → resolveSiapIdentity calls fetchProfile (scrape)
-    // via this.upstream.fetchText, then mints the token.
+  it('fallback-scrapes emailSso via the seam when session lacks it', async () => {
+    // No emailSso in the session → the REAL seam's getContext calls the
+    // service's fetchProfile (wired via setScrapeIdentity in the constructor)
+    // through upstream.fetchText, then mints the token.
+    const fetchText = jest
+      .fn()
+      .mockResolvedValue(
+        '<html><div id="tabmhs_profile">' +
+          '<b>Email SSO</b>:</div><div class="col-sm-9">x@students.undip.ac.id</div>' +
+          '</div></html>',
+      );
     const svc = new SiapService(
       undefined,
-      {
-        fetchText: jest.fn().mockResolvedValue(
-          '<html><div id="tabmhs_profile">' +
-            '<b>Email SSO</b>:</div><div class="col-sm-9">x@students.undip.ac.id</div>' +
-            '</div></html>',
-        ),
-      } as any,
+      new SiapUpstreamSession(
+        {
+          get: async () => ({ siapCookie: 's', identity: '24060124120013' }),
+        } as any,
+        undefined,
+        apiMock as any,
+      ),
       {
         get: async () => ({ siapCookie: 's', identity: '24060124120013' }),
-        set: jest.fn(),
       } as any,
       apiMock as SiapApiUpstream,
     );
+    // The constructor wires the seam's scrape fallback to THIS service's
+    // fetchProfile; route its fetchText to the profile HTML.
+    (svc as any).upstream.fetchText = fetchText;
     apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
     apiMock.fetch
-      .mockResolvedValueOnce({ nama: 'Budi', nim: '24060124120013', sso_email: 'x@students.undip.ac.id' })
+      .mockResolvedValueOnce({
+        nama: 'Budi',
+        nim: '24060124120013',
+        sso_email: 'x@students.undip.ac.id',
+      })
       .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' });
     const p = await svc.getProfile('u1');
-    expect(apiMock.mintToken).toHaveBeenCalledWith('x@students.undip.ac.id', '24060124120013');
+    expect(apiMock.mintToken).toHaveBeenCalledWith(
+      'x@students.undip.ac.id',
+      '24060124120013',
+    );
+    expect(fetchText).toHaveBeenCalled(); // scrape fallback was hit
     expect(p.nama).toBe('Budi');
   });
 
   it('getKehadiran stays on the cookie upstream (scrape), not apiUpstream', async () => {
     const apiMock2 = { mintToken: jest.fn(), fetch: jest.fn() };
-    const upstreamMock = { fetchText: jest.fn().mockResolvedValue('<html>ok</html>') };
+    const upstreamMock = {
+      fetchText: jest.fn().mockResolvedValue('<html>ok</html>'),
+      setScrapeIdentity: jest.fn(),
+    };
     const svc = new SiapService(
       undefined,
       upstreamMock as any,
@@ -891,5 +1130,69 @@ describe('API-backed methods', () => {
     await svc.getKehadiran('u1', '3747942');
     expect(upstreamMock.fetchText).toHaveBeenCalled();
     expect(apiMock2.fetch).not.toHaveBeenCalled();
+  });
+
+  it('getKhs 5 concurrent callers → exactly 1 mintToken + 1 fetch', async () => {
+    const cache = new InMemoryDataCache(60_000);
+    const mint = jest.fn().mockResolvedValue({ token: 'T1', data: {} });
+    const fetch = jest.fn().mockResolvedValue([]);
+    const svc = makeRealSeamService({ mintToken: mint, fetch }, cache);
+    await Promise.all([
+      svc.getKhs(NIM),
+      svc.getKhs(NIM),
+      svc.getKhs(NIM),
+      svc.getKhs(NIM),
+      svc.getKhs(NIM),
+    ]);
+    expect(mint).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('on api-credential: deletes cached token, re-mints, retries once', async () => {
+    const cache = new InMemoryDataCache(60_000);
+    const mint = jest.fn().mockResolvedValue({ token: 'T1', data: {} });
+    const fetch = jest
+      .fn()
+      .mockRejectedValueOnce(new StaleUpstreamError('Siap', 'api-credential'))
+      .mockResolvedValueOnce([]);
+    const svc = makeRealSeamService({ mintToken: mint, fetch }, cache);
+    const result = await svc.getKhs(NIM);
+    expect(result).toBeDefined();
+    expect(fetch).toHaveBeenCalledTimes(2); // original + retry
+    expect(mint).toHaveBeenCalledTimes(2); // initial + re-mint
+  });
+
+  it('on api-endpoint (502): does NOT re-mint (guard precise)', async () => {
+    const cache = new InMemoryDataCache(60_000);
+    const mint = jest.fn().mockResolvedValue({ token: 'T1', data: {} });
+    const fetch = jest
+      .fn()
+      .mockRejectedValueOnce(new StaleUpstreamError('Siap', 'api-endpoint'));
+    const svc = makeRealSeamService({ mintToken: mint, fetch }, cache);
+    await expect(svc.getKhs(NIM)).rejects.toMatchObject({
+      reason: 'api-endpoint',
+    });
+    expect(mint).toHaveBeenCalledTimes(1); // no re-mint
+  });
+
+  it('getProfile folds double-mint into ONE token (data_mahasiswa + semester_aktif share it)', async () => {
+    const cache = new InMemoryDataCache(60_000);
+    const mint = jest.fn().mockResolvedValue({ token: 'T', data: {} });
+    const fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        nama: 'Budi',
+        nim: NIM,
+        tahun_masuk: '2024',
+        status_terakhir: 'Aktif',
+      })
+      .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' });
+    const svc = makeRealSeamService({ mintToken: mint, fetch }, cache);
+    const p = await svc.getProfile(NIM);
+    expect(p.nama).toBe('Budi');
+    expect(mint).toHaveBeenCalledTimes(1); // ONE mint, not two
+    expect(fetch).toHaveBeenCalledTimes(2); // data_mahasiswa + semester_aktif
+    expect(fetch.mock.calls[0][1]).toBe('T'); // same token on both fetches
+    expect(fetch.mock.calls[1][1]).toBe('T');
   });
 });
