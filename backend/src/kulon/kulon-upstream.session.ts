@@ -169,6 +169,7 @@ export class KulonUpstreamSession {
         `Kulon method ${methodname} error: ${first.exception?.message ?? 'unknown'}`,
       );
     }
+    this.logger.debug(`[upstream] kulon ajax ${methodname} sub=n/a`);
     return first?.data;
   }
 }
