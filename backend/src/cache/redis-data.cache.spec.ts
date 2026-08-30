@@ -14,14 +14,26 @@ beforeEach(() => {
 });
 
 describe('RedisDataCache', () => {
-  it('set() writes SET key <json> EX ttl (ms→sec)', async () => {
+  it('set() writes envelope JSON with EX ttl (ms→sec)', async () => {
     mockClient.set.mockResolvedValue('OK');
     await cache.set('u:siap:profile', { nama: 'Budi' }, 60_000);
-    expect(mockClient.set).toHaveBeenCalledWith('sso:cache:u:siap:profile', '{"nama":"Budi"}', 'EX', 60);
+    const [key, raw, exFlag, ttlSec] = mockClient.set.mock.calls[0];
+    expect(key).toBe('sso:cache:u:siap:profile');
+    expect(exFlag).toBe('EX');
+    expect(ttlSec).toBe(60);
+    const parsed = JSON.parse(raw as string) as { v: { nama: string }; fa: number; ex: number };
+    expect(parsed.v).toEqual({ nama: 'Budi' });
+    expect(typeof parsed.fa).toBe('number');
+    expect(typeof parsed.ex).toBe('number');
   });
-  it('get() parses the JSON value', async () => {
-    mockClient.get.mockResolvedValue('[{"id":1}]');
+  it('get() unwraps the envelope and returns the bare value', async () => {
+    const env = JSON.stringify({ v: [{ id: 1 }], fa: Date.now(), ex: Date.now() + 60_000 });
+    mockClient.get.mockResolvedValue(env);
     expect(await cache.get('u:kulon:assignments')).toEqual([{ id: 1 }]);
+  });
+  it('get() parses legacy bare JSON (no fa) as null (treated as miss)', async () => {
+    mockClient.get.mockResolvedValue('[{"id":1}]');
+    expect(await cache.get('u:kulon:assignments')).toBeNull();
   });
   it('get() returns null on a Redis miss', async () => {
     mockClient.get.mockResolvedValue(null);
