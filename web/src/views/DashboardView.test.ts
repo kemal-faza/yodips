@@ -4,8 +4,8 @@ import { createMemoryHistory } from 'vue-router';
 import { createPinia, setActivePinia } from 'pinia';
 import { buildRouter } from '../router';
 import DashboardView from './DashboardView.vue';
-import { __resetDashboardCache } from '../composables/useDashboard';
 import * as api from '../api/client';
+import { clearCache } from '../api/cache';
 import { useAuthStore } from '../stores/auth';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
@@ -48,7 +48,7 @@ describe('DashboardView (academic dashboard)', () => {
     localStorage.clear();
     vi.clearAllMocks();
     setActivePinia(createPinia());
-    __resetDashboardCache();
+    clearCache();
     mockStore();
     healthyApi();
   });

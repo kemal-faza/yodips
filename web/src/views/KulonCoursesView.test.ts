@@ -6,6 +6,7 @@ import { buildRouter } from '../router';
 import KulonCoursesView from './KulonCoursesView.vue';
 import * as api from '../api/client';
 import { useAuthStore } from '../stores/auth';
+import { clearCache } from '../api/cache';
 
 vi.mock('../api/client', () => ({ getCourses: vi.fn(), getCourseContent: vi.fn(), getAssignments: vi.fn(), getAllAssignments: vi.fn() }));
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
@@ -34,6 +35,7 @@ describe('KulonCoursesView', () => {
     localStorage.clear();
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    clearCache();
     mockStore();
   });
 
