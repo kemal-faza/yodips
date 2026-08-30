@@ -6,6 +6,9 @@ import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.theme.accentForeground
+import ac.undip.sso.ui.theme.appMarkdownDocStyle
+import ac.undip.sso.ui.theme.rememberMarkdownColors
+import ac.undip.sso.ui.theme.rememberMarkdownTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -128,7 +131,13 @@ private fun DescriptionCard(descriptionMarkdown: String) {
                 color = accentForeground(),
             )
             Spacer(Modifier.height(8.dp))
-            Markdown(content = descriptionMarkdown, modifier = Modifier.fillMaxWidth())
+            val docStyle = appMarkdownDocStyle()
+            Markdown(
+                content = descriptionMarkdown,
+                modifier = Modifier.fillMaxWidth(),
+                colors = rememberMarkdownColors(docStyle),
+                typography = rememberMarkdownTheme(docStyle),
+            )
         }
     }
 }
