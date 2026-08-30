@@ -16,6 +16,7 @@ import {
   parseMoodleDate,
   parseQuizIndex,
 } from './kulon-parse';
+import { CachePolicy } from '../cache/cache-policy';
 
 describe('parseSemester', () => {
   it('extracts semester from fullname', () => {
@@ -502,7 +503,7 @@ describe('KulonService', () => {
     expect(setSpy).toHaveBeenCalledWith(
       '2304012012345:kulon:assignments:all',
       expect.anything(),
-      180_000,
+      CachePolicy.KULON_ASSIGNMENTS_ALL,
     );
   });
 
@@ -558,7 +559,7 @@ describe('KulonService', () => {
     expect(progressSpy).not.toHaveBeenCalled();
     expect(setSpy).not.toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
     // assignments:all still written (existing behavior)
-    expect(setSpy).toHaveBeenCalledWith('u1:kulon:assignments:all', expect.anything(), 180_000);
+    expect(setSpy).toHaveBeenCalledWith('u1:kulon:assignments:all', expect.anything(), CachePolicy.KULON_ASSIGNMENTS_ALL);
     progressSpy.mockRestore();
   });
 
@@ -606,7 +607,7 @@ describe('KulonService', () => {
     ]) as any;
     (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
     await svcNew.getCourses('u1');
-    expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
+    expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.anything(), CachePolicy.KULON_COURSES);
   });
 
   it('getAllAssignments single-flights concurrent callers (1 upstream run)', async () => {
@@ -1223,7 +1224,7 @@ describe('KulonService', () => {
     const out = await svcNew.getCourses('u1');
     expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.arrayContaining([
       expect.objectContaining({ lecturer: 'Dr. X' }),
-    ]));
+    ]), CachePolicy.KULON_COURSES);
     expect(siapFake.getLecturers).toHaveBeenCalledWith('u1');
   });
 });
