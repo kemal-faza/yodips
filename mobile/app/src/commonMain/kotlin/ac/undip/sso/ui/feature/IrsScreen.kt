@@ -205,7 +205,6 @@ fun IrsScreen(
                             absen = absenByKode[mk.kode] ?: absenByNama[mk.nama.trim().lowercase()],
                             kode = mk.kode,
                         )
-                        Spacer(Modifier.height(12.dp))
                     }
                 }
             }
