@@ -25,6 +25,12 @@ const IDENTITY_TTL_MS = 24 * 60 * 60_000;
 /** Token cache TTL: 10 min — minted token is single-use-ish, keep it short. */
 const TOKEN_TTL_MS = 10 * 60_000;
 
+/** Identity payload (no token) cached/fetched independently of the API token. */
+export interface SiapIdentity {
+  emailSso: string;
+  nim: string;
+}
+
 /** Resolved SIAP context handed to the service: identity + API token. */
 export interface SiapSessionContext {
   emailSso: string;
@@ -53,7 +59,7 @@ export class SiapUpstreamSession {
   private readonly apiUpstream?: SiapApiUpstream;
   private scrapeIdentity?: SiapIdentityScraper;
   /** Keyed flights: one in-flight slot per user (no cross-user contention). */
-  private readonly identityFlight = createKeyedSingleFlight<SiapSessionContext>();
+  private readonly identityFlight = createKeyedSingleFlight<SiapIdentity>();
   private readonly tokenFlight = createKeyedSingleFlight<string>();
 
   constructor(
@@ -99,7 +105,7 @@ export class SiapUpstreamSession {
     }
     const identityKey = `${sub}:siap:identity`;
     const identity = await this.identityFlight.run(identityKey, async () => {
-      const cached = await this.cache!.get<SiapSessionContext>(identityKey);
+      const cached = await this.cache!.get<SiapIdentity>(identityKey);
       if (cached) {
         this.logger.debug(`[upstream] siap identity sub=${sub} hit=true`);
         return cached;
@@ -129,8 +135,8 @@ export class SiapUpstreamSession {
    *  stays as-captured; the cache owns the enriched value). */
   private async resolveIdentity(
     sub: string | undefined,
-    session: { identity?: string; emailSso?: string } | null,
-  ): Promise<{ emailSso: string; nim: string }> {
+    session: { identity?: string; emailSso?: string; siapCookie?: string } | null,
+  ): Promise<SiapIdentity> {
     const nim = session?.identity ?? sub ?? '';
     let emailSso = session?.emailSso ?? '';
     if (!emailSso && this.scrapeIdentity && session?.siapCookie) {
