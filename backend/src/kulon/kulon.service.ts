@@ -1,4 +1,5 @@
 import { Injectable, Optional } from '@nestjs/common';
+import { createKeyedSingleFlight } from '../common/single-flight';
 import { DataCache } from '../cache/data-cache';
 import { SiapService } from '../siap/siap.service';
 import { SessionStore } from '../session/session-store';
@@ -73,6 +74,17 @@ export class KulonService {
   private readonly cache?: DataCache;
   private readonly siap?: SiapService;
   private readonly sessionStore?: SessionStore;
+
+  /**
+   * Method-level single-flight, keyed per `sub`: N concurrent callers of the
+   * same method+sub share ONE upstream run; the map entry is deleted on settle
+   * (success OR error) so a later call starts fresh. No TTL here — TTL belongs
+   * to DataCache.
+   */
+  private readonly courseFlight = createKeyedSingleFlight<KulonCourse[]>();
+  private readonly assignmentsFlight = createKeyedSingleFlight<KulonAssignment[]>();
+  private readonly allAssignmentsFlight =
+    createKeyedSingleFlight<KulonAssignment[]>();
 
   /**
    * Cookie + sesskey pair every AJAX-backed entry point starts from.
@@ -172,8 +184,12 @@ export class KulonService {
     sub?: string,
     opts: { withLecturers?: boolean } = {},
   ): Promise<KulonCourse[]> {
-    const { cookie: sessionCookie, sesskey } = await this.requireKulonAjax(sub);
-    return this.fetchCourses(sessionCookie, sesskey, sub, opts);
+    const key = sub ?? '__anon__';
+    return this.courseFlight.run(key, async () => {
+      const { cookie: sessionCookie, sesskey } =
+        await this.requireKulonAjax(sub);
+      return this.fetchCourses(sessionCookie, sesskey, sub, opts);
+    });
   }
 
   /** Course aggregation without session resolution (caller owns the session). */
@@ -285,40 +301,43 @@ export class KulonService {
   }
 
   async getAssignments(sub?: string): Promise<KulonAssignment[]> {
-    const { cookie: sessionCookie, sesskey } =
-      await this.requireKulonAjax(sub);
-    const data = (await this.upstream.ajax(
-      sessionCookie,
-      sesskey,
-      'core_calendar_get_action_events_by_timesort',
-      {
-        timesortfrom: 0,
-        timesortto: 0,
-        limitnum: 50,
-      },
-    )) as { events: any[] };
-    return (data?.events ?? [])
-      .filter((e: any) => e.eventtype === 'due')
-      .map((e: any): KulonAssignment => {
-        const assignmentId = e.instance ?? 0;
-        return {
-          id: e.id,
-          name: e.activityname ?? e.name,
-          module: e.modulename,
-          eventType: e.eventtype,
-          duedate: e.timestart,
-          overdue: !!e.overdue,
-          course: e.course?.fullname ?? '',
-          courseId: e.course?.id ?? 0,
-          assignmentId,
-          // Moodle does NOT expose cmid on calendar events, and the
-          // core_course_get_course_module_by_instance web service is disabled
-          // on Kulon. The event's `url` (built by Moodle itself) carries the
-          // page id used by /mod/assign/view.php?id=<n> — verified against
-          // real Kulon data. Use that as the courseModuleId.
-          courseModuleId: extractCourseModuleId(e.url),
-        };
-      });
+    const key = sub ?? '__anon__';
+    return this.assignmentsFlight.run(key, async () => {
+      const { cookie: sessionCookie, sesskey } =
+        await this.requireKulonAjax(sub);
+      const data = (await this.upstream.ajax(
+        sessionCookie,
+        sesskey,
+        'core_calendar_get_action_events_by_timesort',
+        {
+          timesortfrom: 0,
+          timesortto: 0,
+          limitnum: 50,
+        },
+      )) as { events: any[] };
+      return (data?.events ?? [])
+        .filter((e: any) => e.eventtype === 'due')
+        .map((e: any): KulonAssignment => {
+          const assignmentId = e.instance ?? 0;
+          return {
+            id: e.id,
+            name: e.activityname ?? e.name,
+            module: e.modulename,
+            eventType: e.eventtype,
+            duedate: e.timestart,
+            overdue: !!e.overdue,
+            course: e.course?.fullname ?? '',
+            courseId: e.course?.id ?? 0,
+            assignmentId,
+            // Moodle does NOT expose cmid on calendar events, and the
+            // core_course_get_course_module_by_instance web service is disabled
+            // on Kulon. The event's `url` (built by Moodle itself) carries the
+            // page id used by /mod/assign/view.php?id=<n> — verified against
+            // real Kulon data. Use that as the courseModuleId.
+            courseModuleId: extractCourseModuleId(e.url),
+          };
+        });
+    });
   }
 
   /**
@@ -330,42 +349,45 @@ export class KulonService {
    * the first load reasonable.
    */
   async getAllAssignments(sub?: string): Promise<KulonAssignment[]> {
-    if (sub && this.cache) {
-      const hit = await this.cache.get<KulonAssignment[]>(
-        `${sub}:kulon:assignments`,
+    const key = sub ?? '__anon__';
+    return this.allAssignmentsFlight.run(key, async () => {
+      if (sub && this.cache) {
+        const hit = await this.cache.get<KulonAssignment[]>(
+          `${sub}:kulon:assignments:all`,
+        );
+        if (hit) return hit;
+      }
+      const { cookie: sessionCookie, sesskey } =
+        await this.requireKulonAjax(sub);
+      // Lecturer merge skipped on internal calls to keep poll cycles lean.
+      const courses = await this.fetchCourses(
+        sessionCookie,
+        sesskey,
+        sub,
+        { withLecturers: false },
       );
-      if (hit) return hit;
-    }
-    const { cookie: sessionCookie, sesskey } =
-      await this.requireKulonAjax(sub);
-    // Lecturer merge skipped on internal calls to keep poll cycles lean.
-    const courses = await this.fetchCourses(
-      sessionCookie,
-      sesskey,
-      sub,
-      { withLecturers: false },
-    );
-    const results: KulonAssignment[][] = [];
-    const CONCURRENCY = 4;
-    const queue = [...courses];
-    const workers = Array(Math.min(CONCURRENCY, queue.length))
-      .fill(0)
-      .map(async () => {
-        while (queue.length) {
-          const c = queue.shift()!;
-          const [assignRows, quizRows] = await Promise.all([
-            this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname),
-            this.fetchQuizIndex(sessionCookie, c.id, c.fullname),
-          ]);
-          results.push(assignRows, quizRows);
-        }
-      });
-    await Promise.all(workers);
-    const flat = results.flat();
-    if (sub && this.cache) {
-      await this.cache.set(`${sub}:kulon:assignments`, flat);
-    }
-    return flat;
+      const results: KulonAssignment[][] = [];
+      const CONCURRENCY = 4;
+      const queue = [...courses];
+      const workers = Array(Math.min(CONCURRENCY, queue.length))
+        .fill(0)
+        .map(async () => {
+          while (queue.length) {
+            const c = queue.shift()!;
+            const [assignRows, quizRows] = await Promise.all([
+              this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname),
+              this.fetchQuizIndex(sessionCookie, c.id, c.fullname),
+            ]);
+            results.push(assignRows, quizRows);
+          }
+        });
+      await Promise.all(workers);
+      const flat = results.flat();
+      if (sub && this.cache) {
+        await this.cache.set(`${sub}:kulon:assignments:all`, flat, 180_000);
+      }
+      return flat;
+    });
   }
 
   /** Fetch and parse one course's assignment index page; [] on any failure. */
