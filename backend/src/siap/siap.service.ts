@@ -1,6 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
+import { CachePolicy } from '../cache/cache-policy';
 import { SessionStore } from '../session/session-store';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { createKeyedSingleFlight } from '../common/single-flight';
@@ -208,7 +209,7 @@ export class SiapService {
         // Merge web-visible fields the API may omit, from a scrape fallback.
         const profile = await this.mergeProfileFallback(base, sub);
         if (sub && this.cache)
-          await this.cache.set(`${sub}:siap:profile`, profile);
+          await this.cache.set(`${sub}:siap:profile`, profile, CachePolicy.SIAP_PROFILE);
         return profile;
       },
     )) as SiapProfile;
@@ -322,7 +323,7 @@ export class SiapService {
         try {
           const irs = await build();
           if (sub && this.cache)
-            await this.cache.set(`${sub}:siap:irs`, irs, 15 * 60_000); // M3: 15-min TTL
+            await this.cache.set(`${sub}:siap:irs`, irs, CachePolicy.SIAP_IRS); // M3: 15-min TTL
           return irs;
         } catch (e) {
           if (
@@ -333,7 +334,7 @@ export class SiapService {
             ctx = await this.upstream.getContext(sub); // re-mint
             const irs = await build();
             if (sub && this.cache)
-              await this.cache.set(`${sub}:siap:irs`, irs, 15 * 60_000);
+              await this.cache.set(`${sub}:siap:irs`, irs, CachePolicy.SIAP_IRS);
             return irs;
           }
           throw e; // original error on second failure
@@ -403,7 +404,7 @@ export class SiapService {
         try {
           const khs = await build();
           if (sub && this.cache)
-            await this.cache.set(`${sub}:siap:khs`, khs, 30 * 60_000); // M3: 30-min TTL
+            await this.cache.set(`${sub}:siap:khs`, khs, CachePolicy.SIAP_KHS); // M3: 30-min TTL
           return khs;
         } catch (e) {
           // Retry once on api-credential: invalidate the cached token + re-mint.
@@ -415,7 +416,7 @@ export class SiapService {
             ctx = await this.upstream.getContext(sub);
             const khs = await build();
             if (sub && this.cache)
-              await this.cache.set(`${sub}:siap:khs`, khs, 30 * 60_000);
+              await this.cache.set(`${sub}:siap:khs`, khs, CachePolicy.SIAP_KHS);
             return khs;
           }
           throw e; // original error on second failure
@@ -493,7 +494,7 @@ export class SiapService {
           // change ~never (unlike KHS's 30-min). Inside the single-flight so
           // concurrent callers don't double-fetch.
           if (sub && this.cache)
-            await this.cache.set(`${sub}:siap:lecturers`, result, 24 * 60 * 60_000);
+            await this.cache.set(`${sub}:siap:lecturers`, result, CachePolicy.SIAP_LECTURERS);
           return result;
         };
         try {
@@ -539,7 +540,7 @@ export class SiapService {
         );
         const items = parseApiNotifications(Array.isArray(raw) ? raw : []);
         if (sub && this.cache)
-          await this.cache.set(`${sub}:siap:notifications`, items);
+          await this.cache.set(`${sub}:siap:notifications`, items, CachePolicy.SIAP_NOTIFICATIONS);
         return items;
       },
     )) as SiapNotifications;
@@ -591,7 +592,7 @@ export class SiapService {
         >(sub, 'jadwal');
         const out = parseApiJadwal(Array.isArray(rows) ? rows : []);
         if (sub && this.cache) {
-          await this.cache.set(`${sub}:siap:jadwal`, out);
+          await this.cache.set(`${sub}:siap:jadwal`, out, CachePolicy.SIAP_JADWAL);
         }
         return out;
       },
@@ -643,7 +644,7 @@ export class SiapService {
           // keep the absen-derived hadir/total/hadirPct
         }
         if (sub && this.cache) {
-          await this.cache.set(`${sub}:siap:absen`, items);
+          await this.cache.set(`${sub}:siap:absen`, items, CachePolicy.SIAP_ABSEN);
         }
         return items;
       },
