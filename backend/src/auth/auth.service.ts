@@ -10,15 +10,13 @@ import { SessionStore } from '../session/session-store';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
 import { HandoffDto } from './dto/handoff.dto';
+import { CachePolicy } from '../cache/cache-policy';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   // Reuse a stored session only if it was captured within this window.
   private readonly SESSION_TTL_MS = 30 * 60_000; // 30 minutes
-  // Live-probe validity is cached 60s so /me (called on polls) doesn't hammer
-  // the upstream Kulon/SIAP services on every request.
-  private readonly PROBE_CACHE_TTL_MS = 60_000;
   private readonly probeCache = new Map<string, { valid: boolean; at: number }>();
 
   constructor(
@@ -384,7 +382,7 @@ export class AuthService {
   }
 
   /**
-   * Run `probe()` and cache its boolean result for PROBE_CACHE_TTL_MS, keyed by
+   * Run `probe()` and cache its boolean result for CachePolicy.AUTH_PROBE, keyed by
    * `key` (which embeds the user sub + service). The cookie value acts as a
    * natural invalidation signal: a changed cookie produces a different key.
    */
@@ -395,7 +393,7 @@ export class AuthService {
   ): Promise<boolean> {
     const cacheKey = `${key}:${cookie}`;
     const hit = this.probeCache.get(cacheKey);
-    if (hit && Date.now() - hit.at < this.PROBE_CACHE_TTL_MS) return hit.valid;
+    if (hit && Date.now() - hit.at < CachePolicy.AUTH_PROBE) return hit.valid;
     const result = await probe();
     this.probeCache.set(cacheKey, { valid: result.valid, at: Date.now() });
     return result.valid;

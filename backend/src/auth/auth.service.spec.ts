@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { AuthService } from './auth.service';
+import { CachePolicy } from '../cache/cache-policy';
 
 // Mock-heavy spec: the session-store double and fetch helpers intentionally deal
 // in arbitrary/dynamic `any` payloads, and several async helpers have no await.
@@ -748,6 +749,10 @@ describe('AuthService.me', () => {
     // Probe should run once per service, cached for the subsequent calls.
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(1);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(1);
+  });
+
+  it('AUTH_PROBE TTL matches the probe cache window', () => {
+    expect(CachePolicy.AUTH_PROBE).toBe(60_000);
   });
 
   // Sesi Android pairing tidak pernah punya ssoCookie (handoffBody tanpa ssoCookie).
