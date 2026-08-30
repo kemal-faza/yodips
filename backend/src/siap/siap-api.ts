@@ -64,6 +64,7 @@ export class SiapApiUpstream {
       this.logger.warn('SIAP mintToken: token empty');
       throw new StaleUpstreamError('Siap', 'api-credential');
     }
+    this.logger.debug(`[upstream] siap mint-token sub=${nim.slice(-4)}`);
     return { token, data };
   }
 
@@ -120,6 +121,7 @@ export class SiapApiUpstream {
       );
       throw new StaleUpstreamError('Siap', authFailure ? 'api-credential' : 'api-endpoint');
     }
+    this.logger.debug(`[upstream] siap fetch ${endpoint} sub=${nim.slice(-4)}`);
     return (payload.data ?? payload) as T;
   }
 }
