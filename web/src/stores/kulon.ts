@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { getAllAssignments, getCourses, getCourseContent } from '../api/client';
+import { getCached } from '../api/cache';
 import type { Assignment, Course, KulonCourseContent } from '../types';
 
 const HIDDEN_KEY = 'sso_hidden_assignments';
@@ -16,27 +17,27 @@ function loadHidden(): number[] {
 export const useKulonStore = defineStore('kulon', {
   state: () => ({
     assignments: [] as Assignment[],
-    assignmentsLoaded: false,
     courses: [] as Course[],
-    coursesLoaded: false,
-    contents: new Map<number, KulonCourseContent>(),
     hidden: loadHidden() as number[],
   }),
   actions: {
     async ensureAssignments(): Promise<void> {
-      if (this.assignmentsLoaded) return;
-      this.assignments = await getAllAssignments();
-      this.assignmentsLoaded = true;
+      this.assignments = await getCached('kulon:assignments', getAllAssignments, {
+        freshTtl: 3 * 60_000,
+        staleTtl: 15 * 60_000,
+      });
     },
     async ensureCourses(): Promise<void> {
-      if (this.coursesLoaded) return;
-      this.courses = await getCourses();
-      this.coursesLoaded = true;
+      this.courses = await getCached('kulon:courses', getCourses, {
+        freshTtl: 5 * 60_000,
+        staleTtl: 30 * 60_000,
+      });
     },
-    async ensureContent(courseId: number): Promise<void> {
-      if (this.contents.has(courseId)) return;
-      const content = await getCourseContent(courseId);
-      this.contents.set(courseId, content);
+    async ensureContent(courseId: number): Promise<KulonCourseContent> {
+      return getCached(`kulon:content:${courseId}`, () => getCourseContent(courseId), {
+        freshTtl: 5 * 60_000,
+        staleTtl: 30 * 60_000,
+      });
     },
     isHidden(id: number): boolean {
       return this.hidden.includes(id);
@@ -49,13 +50,6 @@ export const useKulonStore = defineStore('kulon', {
     unhide(id: number): void {
       this.hidden = this.hidden.filter((h) => h !== id);
       localStorage.setItem(HIDDEN_KEY, JSON.stringify(this.hidden));
-    },
-    reset(): void {
-      this.assignments = [];
-      this.assignmentsLoaded = false;
-      this.courses = [];
-      this.coursesLoaded = false;
-      this.contents.clear();
     },
   },
 });

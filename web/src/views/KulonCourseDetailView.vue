@@ -20,7 +20,7 @@ import {
   ArrowLeft,
   Calendar,
 } from '@lucide/vue';
-import type { CourseContentItem, Assignment, CourseSection } from '../types';
+import type { CourseContentItem, Assignment, CourseSection, KulonCourseContent } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -34,7 +34,7 @@ const panelOpen = ref(false);
 const collapsedSections = ref<Record<number, boolean>>({});
 
 const courseId = computed(() => Number(route.params.courseId));
-const content = computed(() => store.contents.get(courseId.value));
+const content = ref<KulonCourseContent | null>(null);
 const course = computed(() => store.courses.find((c) => c.id === courseId.value));
 
 const ITEM_ICON = {
@@ -207,13 +207,21 @@ async function load() {
   clear();
   try {
     await store.ensureCourses().catch(() => undefined);
-    await store.ensureContent(courseId.value);
+    content.value = await store.ensureContent(courseId.value);
   } catch (e) {
     error.value = extract(e);
   } finally {
     loading.value = false;
   }
 }
+
+watch(
+  () => route.params.courseId,
+  () => {
+    content.value = null;
+    load();
+  },
+);
 
 load();
 </script>
