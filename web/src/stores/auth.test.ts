@@ -10,6 +10,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from './auth';
 import * as api from '../api/client';
 import { EXTENSION_ID } from '../config/extension';
+import * as cache from '../api/cache';
 
 vi.mock('../api/client', () => ({
   capture: vi.fn(),
@@ -82,6 +83,14 @@ describe('auth store', () => {
     await store.logout();
     expect(sentAction).toBe('logout');
     delete (globalThis as any).chrome;
+  });
+
+  it('logout clears the shared cache', async () => {
+    const spy = vi.spyOn(cache, 'clearCache');
+    const store = useAuthStore();
+    store.logout();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('logout does not throw when the extension is not installed', async () => {
