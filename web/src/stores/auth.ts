@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { capture, me, getSiapProfile } from '../api/client';
 import type { User } from '../types';
+import { clearCache } from '../api/cache';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 import { onTokenRefreshed } from '../lib/reauth';
 
@@ -143,6 +144,7 @@ export const useAuthStore = defineStore('auth', {
      *  session cookies. Used when the server-side session is incomplete so
      *  the still-valid browser cookies can be silently re-captured. */
     clearSessionState() {
+      clearCache();
       this.token = null;
       this.user = null;
       this.fotoUrl = null;
@@ -207,6 +209,7 @@ export const useAuthStore = defineStore('auth', {
       return 'failed';
     },
     logout() {
+      clearCache();
       this.reauthAttempted = false; // a next expiry event may auto-reauth again
       this.token = null;
       this.user = null;
