@@ -8,7 +8,7 @@ import { buildRedisClient } from '../common/build-redis-client';
 export async function createDataCache(
   config: ConfigService,
 ): Promise<DataCache> {
-  const rawTtl: unknown = config.get('CACHE_TTL_MS') ?? 60_000;
+  const rawTtl: unknown = config.get('CACHE_TTL_MS') ?? 300_000;
   const ttlMs = Number(rawTtl);
   if (!Number.isFinite(ttlMs) || ttlMs <= 0)
     throw new Error('CACHE_TTL_MS must be a positive number');
