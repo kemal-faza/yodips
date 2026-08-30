@@ -2,7 +2,6 @@ import { Injectable, Optional } from '@nestjs/common';
 import { DataCache } from '../cache/data-cache';
 import { SiapService } from '../siap/siap.service';
 import { SessionStore } from '../session/session-store';
-import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import {
   KulonUpstreamSession,
   parseSesskey as parseSesskeyHtml,
@@ -76,30 +75,16 @@ export class KulonService {
   private readonly sessionStore?: SessionStore;
 
   /**
-   * Resolve the stored Kulon (and optionally SIAP) session for a user. The
-   * endpoint-facing API takes only `sub`; missing sessions map to the same
-   * typed stale 401 as an expired one.
+   * Cookie + sesskey pair every AJAX-backed entry point starts from.
+   * Delegates to the upstream-session seam: the seam resolves the stored
+   * session cookie (and a cached single-flight sesskey) for `sub`, and throws
+   * the same typed no-cookie stale 401 the old requireKulonCookie threw.
    */
-  private async requireKulonCookie(sub?: string): Promise<string> {
-    const session = sub ? await this.sessionStore?.get(sub) : null;
-    if (!session?.kulonCookie) {
-      throw new StaleUpstreamError(
-        'Kulon',
-        'no-cookie',
-        'Kulon session belum ada. Silakan login ulang via SSO',
-      );
-    }
-    return session.kulonCookie;
-  }
-
-  /** Cookie + sesskey pair every AJAX-backed entry point starts from. */
   private async requireKulonAjax(sub?: string): Promise<{
     cookie: string;
     sesskey: string;
   }> {
-    const cookie = await this.requireKulonCookie(sub);
-    const sesskey = await this.upstream.fetchSesskeyOrThrow(cookie);
-    return { cookie, sesskey };
+    return this.upstream.getContext(sub);
   }
 
   /** Kept as the service's public parsing entry point (thin delegate). */
