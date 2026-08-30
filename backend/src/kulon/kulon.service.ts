@@ -1,7 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { DataCache } from '../cache/data-cache';
-import { CachePolicy } from '../cache/cache-policy';
+import { CachePolicy, swrWindow } from '../cache/cache-policy';
 import { SiapService } from '../siap/siap.service';
 import { SessionStore } from '../session/session-store';
 import {
@@ -181,15 +181,26 @@ export class KulonService {
     }
   }
 
-  async getCourses(
-    sub?: string,
-    opts: { withLecturers?: boolean; withProgress?: boolean } = {},
-  ): Promise<KulonCourse[]> {
-    const key = sub ?? '__anon__';
-    return this.courseFlight.run(key, async () => {
+  async getCourses(sub?: string): Promise<KulonCourse[]> {
+    return this.courseFlight.run(sub ?? '__anon__', async () => {
       const { cookie: sessionCookie, sesskey } =
         await this.requireKulonAjax(sub);
-      return this.fetchCourses(sessionCookie, sesskey, sub, opts);
+      if (sub && this.cache) {
+        const { value } = await this.cache.getStale<KulonCourse[]>(
+          `${sub}:kulon:courses`,
+          () =>
+            this.fetchCourses(sessionCookie, sesskey, sub, {
+              withLecturers: true,
+              withProgress: true,
+            }),
+          swrWindow('KULON_COURSES'),
+        );
+        return value;
+      }
+      return this.fetchCourses(sessionCookie, sesskey, sub, {
+        withLecturers: true,
+        withProgress: true,
+      });
     });
   }
 
@@ -360,44 +371,60 @@ export class KulonService {
   async getAllAssignments(sub?: string): Promise<KulonAssignment[]> {
     const key = sub ?? '__anon__';
     return this.allAssignmentsFlight.run(key, async () => {
-      if (sub && this.cache) {
-        const hit = await this.cache.get<KulonAssignment[]>(
-          `${sub}:kulon:assignments:all`,
-        );
-        if (hit) return hit;
-      }
       const { cookie: sessionCookie, sesskey } =
         await this.requireKulonAjax(sub);
-      // Lecturer merge AND per-course progress scrape skipped on internal calls
-      // to keep poll cycles lean — the assignments output carries neither.
-      const courses = await this.fetchCourses(
-        sessionCookie,
-        sesskey,
-        sub,
-        { withLecturers: false, withProgress: false },
-      );
-      const results: KulonAssignment[][] = [];
-      const CONCURRENCY = 4;
-      const queue = [...courses];
-      const workers = Array(Math.min(CONCURRENCY, queue.length))
-        .fill(0)
-        .map(async () => {
-          while (queue.length) {
-            const c = queue.shift()!;
-            const [assignRows, quizRows] = await Promise.all([
-              this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname),
-              this.fetchQuizIndex(sessionCookie, c.id, c.fullname),
-            ]);
-            results.push(assignRows, quizRows);
-          }
-        });
-      await Promise.all(workers);
-      const flat = results.flat();
       if (sub && this.cache) {
-        await this.cache.set(`${sub}:kulon:assignments:all`, flat, CachePolicy.KULON_ASSIGNMENTS_ALL);
+        const { value } = await this.cache.getStale<KulonAssignment[]>(
+          `${sub}:kulon:assignments:all`,
+          () => this.fetchAllAssignments(sessionCookie, sesskey, sub),
+          swrWindow('KULON_ASSIGNMENTS_ALL'),
+        );
+        return value;
       }
-      return flat;
+      return this.fetchAllAssignments(sessionCookie, sesskey, sub);
     });
+  }
+
+  /**
+   * Aggregate every course's assignment + quiz index pages into one flat list
+   * (incl. completed items). Caller owns the session. Keeps its own cache set
+   * so background refresh writes via it (getStale's post-fetch set is a benign
+   * duplicate — same key, same TTL).
+   */
+  private async fetchAllAssignments(
+    sessionCookie: string,
+    sesskey: string,
+    sub?: string,
+  ): Promise<KulonAssignment[]> {
+    // Lecturer merge AND per-course progress scrape skipped on internal calls
+    // to keep poll cycles lean — the assignments output carries neither.
+    const courses = await this.fetchCourses(
+      sessionCookie,
+      sesskey,
+      sub,
+      { withLecturers: false, withProgress: false },
+    );
+    const results: KulonAssignment[][] = [];
+    const CONCURRENCY = 4;
+    const queue = [...courses];
+    const workers = Array(Math.min(CONCURRENCY, queue.length))
+      .fill(0)
+      .map(async () => {
+        while (queue.length) {
+          const c = queue.shift()!;
+          const [assignRows, quizRows] = await Promise.all([
+            this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname),
+            this.fetchQuizIndex(sessionCookie, c.id, c.fullname),
+          ]);
+          results.push(assignRows, quizRows);
+        }
+      });
+    await Promise.all(workers);
+    const flat = results.flat();
+    if (sub && this.cache) {
+      await this.cache.set(`${sub}:kulon:assignments:all`, flat, CachePolicy.KULON_ASSIGNMENTS_ALL);
+    }
+    return flat;
   }
 
   /** Fetch and parse one course's assignment index page; [] on any failure. */
@@ -444,11 +471,27 @@ export class KulonService {
     // Probe first: it is the stale-session gate for the raw page fetch below.
     const { cookie: sessionCookie } = await this.requireKulonAjax(sub);
     if (sub && this.cache) {
-      const hit = await this.cache.get<KulonAssignmentDetail>(
+      const { value } = await this.cache.getStale<KulonAssignmentDetail>(
         `${sub}:kulon:assignment-detail:${cmid}`,
+        () => this.fetchAssignmentDetail(sessionCookie, cmid, assignmentId, sub),
+        swrWindow('KULON_ASSIGNMENT_DETAIL'),
       );
-      if (hit) return hit;
+      return value;
     }
+    return this.fetchAssignmentDetail(sessionCookie, cmid, assignmentId, sub);
+  }
+
+  /**
+   * Fetch + parse one assignment's `/mod/assign/view.php` page. Caller owns the
+   * session. Keeps its own cache set so background refresh writes via it
+   * (getStale's post-fetch set is a benign duplicate — same key, same TTL).
+   */
+  private async fetchAssignmentDetail(
+    sessionCookie: string,
+    cmid: number,
+    assignmentId: number,
+    sub?: string,
+  ): Promise<KulonAssignmentDetail> {
     const pageUrl = `${this.baseUrl}/mod/assign/view.php?id=${cmid}`;
     const res = await fetch(pageUrl, {
       headers: { Cookie: sessionCookie },
@@ -536,11 +579,27 @@ export class KulonService {
     sub?: string,
   ): Promise<KulonCourseContent> {
     if (sub && this.cache) {
-      const hit = await this.cache.get<KulonCourseContent>(
+      const { value } = await this.cache.getStale<KulonCourseContent>(
         `${sub}:kulon:course-content:${courseId}`,
+        () => this.fetchCourseContentFresh(cookie, sesskey, courseId, sub),
+        swrWindow('KULON_COURSE_CONTENT'),
       );
-      if (hit) return hit;
+      return value;
     }
+    return this.fetchCourseContentFresh(cookie, sesskey, courseId, sub);
+  }
+
+  /**
+   * Fresh course-content fetch + parse (JSON-first, HTML fallback). Caller owns
+   * the session. Keeps its own cache set so background refresh writes via it
+   * (getStale's post-fetch set is a benign duplicate — same key, same TTL).
+   */
+  private async fetchCourseContentFresh(
+    cookie: string,
+    sesskey: string,
+    courseId: number,
+    sub?: string,
+  ): Promise<KulonCourseContent> {
     // JSON-first via core_courseformat_get_state; fall back to the HTML scrape on
     // ANY error (method disabled, session quirks, even a missing res.json() on a
     // stubbed response) so a JSON regression never breaks course content.

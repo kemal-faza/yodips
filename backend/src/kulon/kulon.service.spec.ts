@@ -16,7 +16,12 @@ import {
   parseMoodleDate,
   parseQuizIndex,
 } from './kulon-parse';
-import { CachePolicy } from '../cache/cache-policy';
+import { CachePolicy, swrWindow } from '../cache/cache-policy';
+import type {
+  KulonAssignment,
+  KulonAssignmentDetail,
+  KulonCourseContent,
+} from './kulon-parse';
 
 describe('parseSemester', () => {
   it('extracts semester from fullname', () => {
@@ -486,6 +491,10 @@ describe('KulonService', () => {
     const setSpy = jest.fn();
     const cacheMock = {
       get: jest.fn().mockResolvedValue(null),
+      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
+        value: await fetcher(),
+        stale: false,
+      })),
       set: setSpy,
       del: jest.fn(),
     };
@@ -510,6 +519,10 @@ describe('KulonService', () => {
   it('getAllAssignments passes withProgress:false to the courses fetch', async () => {
     const cacheMock = {
       get: jest.fn().mockResolvedValue(null),
+      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
+        value: await fetcher(),
+        stale: false,
+      })),
       set: jest.fn(),
       del: jest.fn(),
     };
@@ -538,6 +551,10 @@ describe('KulonService', () => {
     const setSpy = jest.fn();
     const cacheMock = {
       get: jest.fn().mockResolvedValue(null), // cold miss
+      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
+        value: await fetcher(),
+        stale: false,
+      })),
       set: setSpy,
       del: jest.fn(),
     };
@@ -567,22 +584,29 @@ describe('KulonService', () => {
     const cached = [
       { id: 1, fullname: 'X', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress', progress: 50 },
     ];
-    // getAllAssignments checks its OWN `assignments:all` cache first — that must
-    // miss (null) so the flow reaches fetchCourses, whose `courses` cache hit
-    // (cached) is what this test exercises. (Adapted: plan's flat mockResolvedValue
-    // would make the assignments:all check hit and return the course array early.)
+    // getAllAssignments checks its OWN `assignments:all` cache first via getStale
+    // — that must MISS (run the fetcher) so the flow reaches fetchCourses, whose
+    // internal `courses` cache.get hit (cached) is what this test exercises. The
+    // getStale mock invokes the fetcher (miss path) so the assignments aggregation
+    // runs and lands on the internal fetchCourses cache.get below.
     const getSpy = jest
       .fn()
       .mockImplementation(async (key: string) =>
         key.endsWith(':assignments:all') ? null : cached,
       );
+    const getStaleSpy = jest.fn(
+      async (_key: string, fetcher: () => unknown) => ({
+        value: await fetcher(),
+        stale: false,
+      }),
+    );
     const setSpy = jest.fn();
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const svc = new KulonService(
-      { get: getSpy, set: setSpy, del: jest.fn() } as any,
+      { get: getSpy, getStale: getStaleSpy, set: setSpy, del: jest.fn() } as any,
       undefined,
       upstreamMock as any,
       undefined,
@@ -592,6 +616,13 @@ describe('KulonService', () => {
     // instead of relying on fetchAssignmentIndex's error-swallowing catch.
     global.fetch = jest.fn().mockResolvedValue({ ok: false }) as any;
     const out = await svc.getAllAssignments('u1');
+    // getAllAssignments' own payload read goes through getStale (miss → fetcher ran)
+    expect(getStaleSpy).toHaveBeenCalledWith(
+      'u1:kulon:assignments:all',
+      expect.any(Function),
+      swrWindow('KULON_ASSIGNMENTS_ALL'),
+    );
+    // fetchCourses' internal read still uses cache.get and hit the cached courses
     expect(getSpy).toHaveBeenCalledWith('u1:kulon:courses');
     expect(upstreamMock.ajax).not.toHaveBeenCalled();
     expect(setSpy).not.toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
@@ -599,7 +630,15 @@ describe('KulonService', () => {
   });
 
   it('public getCourses (no opts) still writes cache with progress', async () => {
-    const cache = { get: jest.fn().mockResolvedValue(null), set: jest.fn(), del: jest.fn() };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
+        value: await fetcher(),
+        stale: false,
+      })),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
     const siapFake = { getLecturers: jest.fn().mockResolvedValue([{ kode: 'M1', dosen: 'Dr. X' }]) };
     const svcNew = makeAuthedKulonSvc({ cache, siap: siapFake });
     svcNew.fetchTimelineCourses = jest.fn().mockResolvedValue([
@@ -1204,17 +1243,32 @@ describe('KulonService', () => {
   });
 
   it('getCourses caches and reuses cached output per user, including lecturer merge', async () => {
-    const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+    const cachedCourses = [
+      { id: 1, fullname: 'X', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress' },
+    ];
+    const cache = { get: jest.fn(), getStale: jest.fn(), set: jest.fn(), del: jest.fn() };
     const svcNew = makeAuthedKulonSvc({ cache });
-    cache.get.mockResolvedValue([{ id: 1, fullname: 'X', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress' }]);
+    cache.getStale.mockResolvedValue({ value: cachedCourses, stale: false });
     const out = await svcNew.getCourses('u1');
-    expect(cache.get).toHaveBeenCalledWith('u1:kulon:courses');
-    expect(out).toHaveLength(1);
+    expect(cache.getStale).toHaveBeenCalledWith(
+      'u1:kulon:courses',
+      expect.any(Function),
+      swrWindow('KULON_COURSES'),
+    );
+    expect(out).toEqual(cachedCourses);
   });
 
   it('getCourses on cache miss scrapes, merges lecturers, and caches the merged list', async () => {
     global.fetch = jest.fn();
-    const cache = { get: jest.fn().mockResolvedValue(null), set: jest.fn(), del: jest.fn() };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
+        value: await fetcher(),
+        stale: false,
+      })),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
     const siapFake = { getLecturers: jest.fn().mockResolvedValue([{ kode: 'MIK1624105', dosen: 'Dr. X' }]) };
     const svcNew = makeAuthedKulonSvc({ cache, siap: siapFake });
     svcNew.fetchTimelineCourses = jest.fn().mockResolvedValue([
@@ -1226,6 +1280,78 @@ describe('KulonService', () => {
       expect.objectContaining({ lecturer: 'Dr. X' }),
     ]), CachePolicy.KULON_COURSES);
     expect(siapFake.getLecturers).toHaveBeenCalledWith('u1');
+  });
+
+  it('getAllAssignments uses getStale for the payload key (SWR)', async () => {
+    const cachedAssignments: KulonAssignment[] = [
+      { id: 1, name: 'Tugas 1', module: 'assign', eventType: 'due', duedate: 1742230800, overdue: false, course: 'C', courseId: 1, assignmentId: 1, courseModuleId: 1 },
+    ];
+    const cache = { get: jest.fn(), getStale: jest.fn(), set: jest.fn(), del: jest.fn() };
+    cache.getStale.mockResolvedValue({ value: cachedAssignments, stale: false });
+    const svcNew = makeAuthedKulonSvc({ cache });
+    const out = await svcNew.getAllAssignments('u1');
+    expect(cache.getStale).toHaveBeenCalledWith(
+      'u1:kulon:assignments:all',
+      expect.any(Function),
+      swrWindow('KULON_ASSIGNMENTS_ALL'),
+    );
+    expect(out).toEqual(cachedAssignments);
+  });
+
+  it('getAssignmentDetail uses getStale for the payload key (SWR)', async () => {
+    const cachedDetail: KulonAssignmentDetail = {
+      assignmentId: 42,
+      name: 'Tugas Kelompok I',
+      descriptionHtml: '<p>Kerjakan laporan.</p>',
+      descriptionMarkdown: 'Kerjakan laporan.',
+      files: [],
+      submission: { status: 'not_submitted' },
+      kulonUrl: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
+    };
+    const cache = { get: jest.fn(), getStale: jest.fn(), set: jest.fn(), del: jest.fn() };
+    cache.getStale.mockResolvedValue({ value: cachedDetail, stale: false });
+    const svcNew = makeAuthedKulonSvc({ cache });
+    const out = await svcNew.getAssignmentDetail('u1', 42, 777);
+    expect(cache.getStale).toHaveBeenCalledWith(
+      'u1:kulon:assignment-detail:777',
+      expect.any(Function),
+      swrWindow('KULON_ASSIGNMENT_DETAIL'),
+    );
+    expect(out).toEqual(cachedDetail);
+  });
+
+  it('getCourseContent uses getStale for the payload key (SWR)', async () => {
+    const cachedContent: KulonCourseContent = { courseId: 16294, sections: [] };
+    const cache = { get: jest.fn(), getStale: jest.fn(), set: jest.fn(), del: jest.fn() };
+    cache.getStale.mockResolvedValue({ value: cachedContent, stale: false });
+    const svcNew = makeAuthedKulonSvc({ cache });
+    const out = await svcNew.getCourseContent('u1', 16294);
+    expect(cache.getStale).toHaveBeenCalledWith(
+      'u1:kulon:course-content:16294',
+      expect.any(Function),
+      swrWindow('KULON_COURSE_CONTENT'),
+    );
+    expect(out).toEqual(cachedContent);
+  });
+
+  it('getCourses works without a cache instance (optional-cache fallback)', async () => {
+    const svcNoCache = makeAuthedKulonSvc();
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: { courses: [] } }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: { courses: [] } }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ error: false, data: { courses: [] } }],
+      });
+    const out = await svcNoCache.getCourses('u1');
+    // No cache -> plain fetch path, resolves with the (empty) timeline merge.
+    expect(out).toEqual([]);
   });
 });
 
