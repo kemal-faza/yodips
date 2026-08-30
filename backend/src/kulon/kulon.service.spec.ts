@@ -481,6 +481,67 @@ describe('KulonService', () => {
     expect(upstreamMock.getContext).toHaveBeenCalledTimes(1);
   });
 
+  it('getAllAssignments uses renamed key + 3-min TTL', async () => {
+    const setSpy = jest.fn();
+    const cacheMock = {
+      get: jest.fn().mockResolvedValue(null),
+      set: setSpy,
+      del: jest.fn(),
+    };
+    const upstreamMock = {
+      getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      ajax: jest.fn().mockResolvedValue({ courses: [] }),
+    };
+    const service = new KulonService(
+      cacheMock as any,
+      undefined,
+      upstreamMock as any,
+      undefined,
+    );
+    await service.getAllAssignments('2304012012345');
+    expect(setSpy).toHaveBeenCalledWith(
+      '2304012012345:kulon:assignments:all',
+      expect.anything(),
+      180_000,
+    );
+  });
+
+  it('getCourses single-flights concurrent callers per sub', async () => {
+    const upstreamMock = {
+      getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      ajax: jest.fn().mockResolvedValue({ courses: [] }),
+    };
+    const service = new KulonService(
+      undefined,
+      undefined,
+      upstreamMock as any,
+      undefined,
+    );
+    await Promise.all([
+      service.getCourses('S1'),
+      service.getCourses('S1'),
+      service.getCourses('S2'),
+    ]);
+    // getContext called once for S1, once for S2 (3 timeline fetches each)
+    expect(upstreamMock.getContext).toHaveBeenCalledTimes(2);
+  });
+
+  it('getCourses allows a fresh run after completion (keyed map cleaned)', async () => {
+    const upstreamMock = {
+      getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      ajax: jest.fn().mockResolvedValue({ courses: [] }),
+    };
+    const service = new KulonService(
+      undefined,
+      undefined,
+      upstreamMock as any,
+      undefined,
+    );
+    await service.getCourses('S1');
+    await service.getCourses('S1'); // sequential — NOT concurrent
+    expect(upstreamMock.getContext).toHaveBeenCalledTimes(2);
+  });
+
   it('gets courses with semester extracted from fullname', async () => {
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce({
