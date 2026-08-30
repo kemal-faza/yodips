@@ -15,23 +15,12 @@ export function assignStatus(
   return 'onTrack';
 }
 
+/** Deadline-only display status (used when submission status is unknown). */
 export type DisplayTone = 'danger' | 'warn' | 'success' | 'muted';
 
 export interface DisplayStatus {
   label: string;
   tone: DisplayTone;
-}
-
-/** Deadline-only display status (used when submission status is unknown). */
-export function deadlineStatus(
-  overdue: boolean,
-  duedateSec: number,
-  nowMs: number,
-): DisplayStatus {
-  const s = assignStatus(overdue, duedateSec, nowMs);
-  if (s === 'overdue') return { label: 'Terlambat', tone: 'danger' };
-  if (s === 'dueSoon') return { label: 'Segera', tone: 'warn' };
-  return { label: 'On track', tone: 'success' };
 }
 
 /**

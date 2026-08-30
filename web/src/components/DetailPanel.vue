@@ -4,8 +4,8 @@ import MarkdownIt from 'markdown-it';
 import { useMediaQuery } from '@vueuse/core';
 import { X } from '@lucide/vue';
 import { getAssignmentDetail } from '../api/client';
-import type { Assignment, AssignmentDetail, SubmissionStatus } from '../types';
-import { deadlineStatus } from '../utils/assignment';
+import type { Assignment, AssignmentDetail } from '../types';
+import { assignmentDisplayStatus } from '../utils/assignment';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -32,17 +32,14 @@ const tabs = [
   { key: 'submission', label: 'Submission' },
 ] as const;
 
-const SUBMISSION_LABELS: Record<SubmissionStatus, string> = {
-  not_submitted: 'Belum dikumpulkan',
-  submitted: 'Sudah dikumpulkan',
-  graded: 'Sudah dinilai',
-  unknown: 'Tidak diketahui',
-};
-
 const status = computed(() =>
   props.assignment
-    ? deadlineStatus(props.assignment.overdue, props.assignment.duedate, Date.now())
-    : { label: 'On track', tone: 'success' as const },
+    ? assignmentDisplayStatus(
+        props.assignment.overdue,
+        props.assignment.duedate,
+        props.assignment.submissionStatus,
+      )
+    : { label: 'due', tone: 'warn' as const },
 );
 
 const deadline = computed(() => {
@@ -61,19 +58,6 @@ const kulonUrl = computed(() => {
     ? `https://kulon2.undip.ac.id/mod/assign/view.php?id=${cmid}`
     : 'https://kulon2.undip.ac.id/';
 });
-
-const submissionDot = computed(() => {
-  switch (detail.value?.submission.status) {
-    case 'submitted': return 'bg-yellow-400';
-    case 'graded': return 'bg-emerald-400';
-    case 'not_submitted': return 'bg-white/40';
-    default: return 'bg-white/25';
-  }
-});
-
-const submissionLabel = computed(() =>
-  detail.value ? SUBMISSION_LABELS[detail.value.submission.status] : '',
-);
 
 const submittedAt = computed(() => {
   const sec = detail.value?.submission.submittedAt;
@@ -142,23 +126,14 @@ watch(
             {{ assignment.name }}
             <span class="mt-1 block text-sm font-normal text-primary-foreground/70">Deadline: {{ deadline }}</span>
             <span
-              v-if="detail"
+              v-if="submittedAt"
               class="mt-2 flex items-center gap-1.5 text-sm font-normal text-primary-foreground/85"
             >
-              <span
-                class="size-2 shrink-0 rounded-full"
-                :class="submissionDot"
-                aria-hidden="true"
-              />
-              <span data-test="submission-status">{{ submissionLabel }}</span>
-              <template v-if="submittedAt">
-                <span aria-hidden="true">·</span>
-                <span>Dikumpulkan {{ submittedAt }}</span>
-              </template>
+              <span>Dikumpulkan {{ submittedAt }}</span>
             </span>
           </SheetTitle>
           <div class="flex flex-col items-end gap-2">
-            <StatusBadge :label="status.label" :tone="status.tone" />
+            <StatusBadge :label="status.label" :tone="status.tone" data-test="header-status-badge" />
             <Button
               variant="ghost"
               size="icon"

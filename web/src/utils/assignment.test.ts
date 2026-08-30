@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignStatus, assignmentDisplayStatus, deadlineStatus, isDone, courseActive, matchesKulonFilter, upcomingTasks } from './assignment';
+import { assignStatus, assignmentDisplayStatus, isDone, courseActive, matchesKulonFilter, upcomingTasks } from './assignment';
 import type { Assignment, Course } from '../types';
 
 const now = Date.now();
@@ -58,12 +58,6 @@ describe('assignmentDisplayStatus', () => {
   it('unknown submission + on-track => due (warn)', () => {
     expect(assignmentDisplayStatus(false, now / sec + 5 * 24 * 3600, undefined))
       .toEqual({ label: 'due', tone: 'warn' });
-  });
-  it('deadlineStatus maps to display', () => {
-    expect(deadlineStatus(false, now / sec + 5 * 24 * 3600, now))
-      .toEqual({ label: 'On track', tone: 'success' });
-    expect(deadlineStatus(false, now / sec + 24 * 3600, now))
-      .toEqual({ label: 'Segera', tone: 'warn' });
   });
 });
 
