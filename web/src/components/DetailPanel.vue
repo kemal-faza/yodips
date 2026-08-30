@@ -207,6 +207,7 @@ watch(
                 <div
                   v-if="renderedDescriptionHtml && renderedDescriptionHtml.trim()"
                   class="text-sm leading-relaxed text-foreground"
+                  data-test="description"
                   v-html="renderedDescriptionHtml"
                 />
                 <p v-else class="text-muted-foreground">Tidak ada deskripsi.</p>
