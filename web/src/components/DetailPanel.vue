@@ -174,7 +174,10 @@ watch(
       </SheetHeader>
 
       <template v-if="assignment?.courseModuleId">
-        <Tabs v-model="activeTab" class="flex flex-1 flex-col">
+        <!-- min-h-0 pada chain flex: tanpa ini, flex-1 child tidak bisa
+             menyusut di bawah kontennya sehingga overflow-y-auto di bawah
+             tidak pernah scroll (bug: deskripsi panjang tidak bisa discroll). -->
+        <Tabs v-model="activeTab" class="flex min-h-0 flex-1 flex-col">
           <TabsList variant="line" class="w-full border-b border-border">
             <TabsTrigger
               v-for="t in tabs"
@@ -186,7 +189,7 @@ watch(
             </TabsTrigger>
           </TabsList>
 
-          <div class="flex-1 overflow-y-auto p-5">
+          <div class="min-h-0 flex-1 overflow-y-auto p-5">
             <div v-if="loading" class="flex justify-center py-10" data-test="loading">
               <span class="size-6 animate-spin rounded-full border-2 border-gold border-t-transparent" />
             </div>
@@ -203,7 +206,7 @@ watch(
             </div>
 
             <template v-else-if="detail">
-              <TabsContent value="description">
+              <TabsContent value="description" class="min-h-0">
                 <div
                   v-if="renderedDescriptionHtml && renderedDescriptionHtml.trim()"
                   class="text-sm leading-relaxed text-foreground"
@@ -213,7 +216,7 @@ watch(
                 <p v-else class="text-muted-foreground">Tidak ada deskripsi.</p>
               </TabsContent>
 
-              <TabsContent value="files">
+              <TabsContent value="files" class="min-h-0">
                 <ul class="space-y-3">
                   <li v-for="f in detail.files" :key="f.url">
                     <a
@@ -229,7 +232,7 @@ watch(
                 </ul>
               </TabsContent>
 
-              <TabsContent value="submission" class="space-y-3 text-sm">
+              <TabsContent value="submission" class="min-h-0 space-y-3 text-sm">
                 <p v-if="submittedAt">
                   <span class="font-semibold text-foreground">Dikumpulkan:</span>
                   {{ submittedAt }}
