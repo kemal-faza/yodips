@@ -36,11 +36,15 @@ data class SiapProfile(
     val alamatSekarang: String? = null,
 )
 
-/** Kulon course (minimal shape): id + Moodle timeline classification.
- *  `timelineStatus == "inprogress"` marks the course as in the current semester. */
+/** Kulon course from GET /api/kulon/courses. `timelineStatus == "inprogress"`
+ *  marks the current-semester course (source of truth for "aktif"; semester
+ *  name-parsing is display-only). */
 @Serializable
 data class KulonCourse(
     val id: Long = 0,
+    val fullname: String = "",
+    val shortname: String = "",
+    val semester: String? = null,
     val timelineStatus: String = "",
     val lecturer: String? = null,
 )
@@ -194,3 +198,34 @@ data class WebPushDeviceRequest(
 /** Response GET /api/notifications/vapid-public-key (kosong bila backend belum dikonfigurasi). */
 @Serializable
 data class VapidPublicKeyResponse(val publicKey: String = "")
+
+/** Konten satu course (GET /api/kulon/courses/:id/content) — sections pertemuan
+ *  berisi item materi/kuis/tugas/link/forum. Mirror backend `KulonCourseContent`
+ *  (kulon-parse.ts). */
+@Serializable
+data class KulonCourseContent(
+    val courseId: Long = 0,
+    val sections: List<KulonSection> = emptyList(),
+)
+
+@Serializable
+data class KulonSection(
+    val id: Long = 0,
+    val label: String = "",
+    val dateRange: String? = null,
+    val items: List<KulonContentItem> = emptyList(),
+)
+
+/** Satu item di dalam section course. Backend TIDAK mengisi `assignmentId`/
+ *  `duedate` (verified 2026-08-30) — nullable sebagai pengaman saja, jangan
+ *  bergantung padanya. `kind`: file|assign|quiz|url|forum|page|other. */
+@Serializable
+data class KulonContentItem(
+    val kind: String = "other",
+    val name: String = "",
+    val url: String = "",
+    val fileType: String? = null,
+    val cmid: Long? = null,
+    val assignmentId: Long? = null,
+    val duedate: Long? = null,
+)
