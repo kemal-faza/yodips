@@ -1,27 +1,25 @@
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
 import { SessionModule } from '../session/session.module';
 import { KulonModule } from '../kulon/kulon.module';
 import { SiapModule } from '../siap/siap.module';
+import { AuthModule } from '../auth/auth.module';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
+// Pakai JwtModule ter-pin + JwtAuthGuard MILIK AuthModule (di-import), BUKAN
+// registrasi JwtModule baru (Kulon/Siap pattern): duplikasi instansi JwtService
+// mengubah instansi yang di-resolve `app.get(JwtService)` — token e2e yang
+// di-sign TANPA iss/aud default ditolak /auth/refresh (pinned
+// issuer='yodips', audience='yodips-web') sebagai INVALID_TOKEN. Sama dengan
+// catatan di notifications.module.ts / pairing.module.ts.
 @Module({
   imports: [
     SessionModule,
     KulonModule,
     SiapModule,
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (c: ConfigService) => ({
-        secret: c.get<string>('JWT_SECRET')!,
-        signOptions: { expiresIn: c.get<string>('JWT_EXPIRES_IN')! as never },
-      }),
-    }),
+    AuthModule,
   ],
   controllers: [DashboardController],
-  providers: [DashboardService, JwtAuthGuard],
+  providers: [DashboardService],
 })
 export class DashboardModule {}
