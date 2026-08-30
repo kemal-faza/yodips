@@ -182,7 +182,7 @@ export class KulonService {
 
   async getCourses(
     sub?: string,
-    opts: { withLecturers?: boolean } = {},
+    opts: { withLecturers?: boolean; withProgress?: boolean } = {},
   ): Promise<KulonCourse[]> {
     const key = sub ?? '__anon__';
     return this.courseFlight.run(key, async () => {
@@ -197,7 +197,7 @@ export class KulonService {
     sessionCookie: string,
     sesskey: string,
     sub?: string,
-    opts: { withLecturers?: boolean } = {},
+    opts: { withLecturers?: boolean; withProgress?: boolean } = {},
   ): Promise<KulonCourse[]> {
     if (sub && this.cache) {
       const hit = await this.cache.get<KulonCourse[]>(
@@ -228,25 +228,30 @@ export class KulonService {
     }));
     // Batch-parallel course-progress scrape. Each course's /course/view.php feeds
     // parseSectionProgress. Failures per course are non-fatal (progress omitted).
-    const settled = await Promise.allSettled(
-      merged.map(async (c) => ({
-        id: c.id,
-        progress: parseSectionProgress(
-          (await this.fetchCourseContent(sessionCookie, sesskey, c.id)).sections,
-          undefined,
-          { isPast: c.timelineStatus === 'past' },
-        ),
-      })),
-    );
-    const progressById = new Map<number, number>();
-    for (const r of settled) {
-      if (r.status === 'fulfilled' && r.value.progress != null) {
-        progressById.set(r.value.id, r.value.progress);
+    // Skipped when withProgress:false — the assignments aggregation output does
+    // not carry progress, so per-course fetches would be pure wasted upstream work.
+    let mergedWithProgress: KulonCourse[] = merged;
+    if (opts.withProgress !== false) {
+      const settled = await Promise.allSettled(
+        merged.map(async (c) => ({
+          id: c.id,
+          progress: parseSectionProgress(
+            (await this.fetchCourseContent(sessionCookie, sesskey, c.id)).sections,
+            undefined,
+            { isPast: c.timelineStatus === 'past' },
+          ),
+        })),
+      );
+      const progressById = new Map<number, number>();
+      for (const r of settled) {
+        if (r.status === 'fulfilled' && r.value.progress != null) {
+          progressById.set(r.value.id, r.value.progress);
+        }
       }
+      mergedWithProgress = merged.map((c) =>
+        progressById.has(c.id) ? { ...c, progress: progressById.get(c.id) } : c,
+      );
     }
-    const mergedWithProgress: KulonCourse[] = merged.map((c) =>
-      progressById.has(c.id) ? { ...c, progress: progressById.get(c.id) } : c,
-    );
     // Best-effort lecturer merge by MIK code (shortname). Missing SIAP cookie /
     // empty IRS -> lecturer simply omitted. Failures are non-fatal. Skipped on
     // internal calls (assignments aggregation) to keep poll cycles lean.
@@ -266,7 +271,10 @@ export class KulonService {
         /* best-effort: omit lecturers on failure */
       }
     }
-    if (sub && this.cache) {
+    // Cache write skipped on withProgress:false runs — they read but never
+    // write, so a progress-less run can never poison the public progress-ful
+    // cache (the shared `:kulon:courses` key stays progress-complete).
+    if (sub && this.cache && opts.withProgress !== false) {
       await this.cache.set(`${sub}:kulon:courses`, result);
     }
     return result;
@@ -359,12 +367,13 @@ export class KulonService {
       }
       const { cookie: sessionCookie, sesskey } =
         await this.requireKulonAjax(sub);
-      // Lecturer merge skipped on internal calls to keep poll cycles lean.
+      // Lecturer merge AND per-course progress scrape skipped on internal calls
+      // to keep poll cycles lean — the assignments output carries neither.
       const courses = await this.fetchCourses(
         sessionCookie,
         sesskey,
         sub,
-        { withLecturers: false },
+        { withLecturers: false, withProgress: false },
       );
       const results: KulonAssignment[][] = [];
       const CONCURRENCY = 4;

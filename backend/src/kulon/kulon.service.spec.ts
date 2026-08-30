@@ -506,6 +506,109 @@ describe('KulonService', () => {
     );
   });
 
+  it('getAllAssignments passes withProgress:false to the courses fetch', async () => {
+    const cacheMock = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
+    const upstreamMock = {
+      getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      ajax: jest.fn().mockResolvedValue({ courses: [] }),
+    };
+    const svc = new KulonService(
+      cacheMock as any,
+      undefined,
+      upstreamMock as any,
+      undefined,
+    );
+    const spy = jest.spyOn(svc as any, 'fetchCourses');
+    await svc.getAllAssignments('u1');
+    expect(spy).toHaveBeenCalledWith(
+      'c1',
+      'sk1',
+      'u1',
+      { withLecturers: false, withProgress: false },
+    );
+    spy.mockRestore();
+  });
+
+  it('fetchCourses with withProgress:false skips progress scrape and does NOT write cache on miss', async () => {
+    const setSpy = jest.fn();
+    const cacheMock = {
+      get: jest.fn().mockResolvedValue(null), // cold miss
+      set: setSpy,
+      del: jest.fn(),
+    };
+    const upstreamMock = {
+      getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      ajax: jest
+        .fn()
+        // timeline 'all' / 'inprogress' / 'hidden' each resolve an empty course list
+        .mockResolvedValue({ courses: [] }),
+    };
+    const svc = new KulonService(
+      cacheMock as any,
+      undefined,
+      upstreamMock as any,
+      undefined,
+    );
+    const progressSpy = jest.spyOn(svc as any, 'fetchCourseContent');
+    await svc.getAllAssignments('u1');
+    expect(progressSpy).not.toHaveBeenCalled();
+    expect(setSpy).not.toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
+    // assignments:all still written (existing behavior)
+    expect(setSpy).toHaveBeenCalledWith('u1:kulon:assignments:all', expect.anything(), 180_000);
+    progressSpy.mockRestore();
+  });
+
+  it('fetchCourses with withProgress:false on cache HIT returns cached data without upstream fetch', async () => {
+    const cached = [
+      { id: 1, fullname: 'X', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress', progress: 50 },
+    ];
+    // getAllAssignments checks its OWN `assignments:all` cache first — that must
+    // miss (null) so the flow reaches fetchCourses, whose `courses` cache hit
+    // (cached) is what this test exercises. (Adapted: plan's flat mockResolvedValue
+    // would make the assignments:all check hit and return the course array early.)
+    const getSpy = jest
+      .fn()
+      .mockImplementation(async (key: string) =>
+        key.endsWith(':assignments:all') ? null : cached,
+      );
+    const setSpy = jest.fn();
+    const upstreamMock = {
+      getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      ajax: jest.fn().mockResolvedValue({ courses: [] }),
+    };
+    const svc = new KulonService(
+      { get: getSpy, set: setSpy, del: jest.fn() } as any,
+      undefined,
+      upstreamMock as any,
+      undefined,
+    );
+    // getAllAssignments will loop the cached course through fetchAssignmentIndex /
+    // fetchQuizIndex (global.fetch). Mock it so the loop settles deterministically
+    // instead of relying on fetchAssignmentIndex's error-swallowing catch.
+    global.fetch = jest.fn().mockResolvedValue({ ok: false }) as any;
+    const out = await svc.getAllAssignments('u1');
+    expect(getSpy).toHaveBeenCalledWith('u1:kulon:courses');
+    expect(upstreamMock.ajax).not.toHaveBeenCalled();
+    expect(setSpy).not.toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
+    expect(out).toEqual([]);
+  });
+
+  it('public getCourses (no opts) still writes cache with progress', async () => {
+    const cache = { get: jest.fn().mockResolvedValue(null), set: jest.fn(), del: jest.fn() };
+    const siapFake = { getLecturers: jest.fn().mockResolvedValue([{ kode: 'M1', dosen: 'Dr. X' }]) };
+    const svcNew = makeAuthedKulonSvc({ cache, siap: siapFake });
+    svcNew.fetchTimelineCourses = jest.fn().mockResolvedValue([
+      { id: 1, fullname: 'Matkul', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress' },
+    ]) as any;
+    (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
+    await svcNew.getCourses('u1');
+    expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
+  });
+
   it('getAllAssignments single-flights concurrent callers (1 upstream run)', async () => {
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
