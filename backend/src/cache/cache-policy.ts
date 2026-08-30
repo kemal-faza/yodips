@@ -1,3 +1,5 @@
+import { defaultStaleTtlMs } from './data-cache';
+
 /**
  * Single source of truth for backend cache TTLs (ms).
  * Values are behavior-preserving (verified against Phase 1 upstream logs and
@@ -25,3 +27,41 @@ export const CachePolicy = {
 } as const;
 
 export type CachePolicyKey = keyof typeof CachePolicy;
+
+/**
+ * SWR window for a payload key: fresh = the policy TTL, stale = derived
+ * (defaultStaleTtlMs: ×2, capped at 30 min for long-TTL keys). See spec §2.4.
+ */
+export function swrWindow(key: CachePolicyKey): { freshTtlMs: number; staleTtlMs: number } {
+  const freshTtlMs = CachePolicy[key];
+  return { freshTtlMs, staleTtlMs: defaultStaleTtlMs(freshTtlMs) };
+}
+
+/**
+ * The 11 data-payload key prefixes eligible for SWR (spec §2 decision 2).
+ * Credential/identity keys (sesskey/token/identity), AUTH_PROBE, and the
+ * uncached assignments feed are intentionally absent. Suffix keys match by
+ * prefix (`kulon:assignment-detail:` and `kulon:course-content:` have a
+ * trailing `:${cmid}` / `:${courseId}`).
+ */
+export const SWR_KEYS: ReadonlySet<string> = new Set([
+  'kulon:courses',
+  'kulon:assignments:all',
+  'kulon:assignment-detail:',
+  'kulon:course-content:',
+  'siap:profile',
+  'siap:irs',
+  'siap:khs',
+  'siap:lecturers',
+  'siap:notifications',
+  'siap:jadwal',
+  'siap:absen',
+]);
+
+/** True when a cache key is an SWR-eligible payload key (prefix match). */
+export function isSwrKey(key: string): boolean {
+  for (const prefix of SWR_KEYS) {
+    if (key.includes(prefix)) return true;
+  }
+  return false;
+}
