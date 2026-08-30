@@ -22,8 +22,25 @@ import type {
 import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
 import { createTokenRefresher } from './token-refresher';
 import { API, isServiceStale, parseErrorEnvelope } from './contract';
+import { getCached, invalidate } from './cache';
 
 const TOKEN_KEY = 'sso_token';
+
+/** Frontend cache TTLs (ms). Independent of backend TTLs. fresh→stale. */
+const CACHE = {
+  courses: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
+  assignments: { freshTtl: 3 * 60_000, staleTtl: 15 * 60_000 },
+  assignmentDetail: { freshTtl: 60_000, staleTtl: 10 * 60_000 },
+  courseContent: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
+  profile: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
+  khs: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
+  irs: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
+  jadwal: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
+  lecturers: { freshTtl: 60 * 60_000, staleTtl: 24 * 60 * 60_000 },
+  absen: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
+  kehadiran: { freshTtl: 60_000, staleTtl: 5 * 60_000 },
+  notifications: { freshTtl: 60_000, staleTtl: 5 * 60_000 },
+} as const;
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000',
@@ -120,60 +137,81 @@ export async function refreshToken(): Promise<string> {
 }
 
 export async function getAssignments(): Promise<Assignment[]> {
-  const { data } = await apiClient.get<Assignment[]>(API.kulon.assignments);
-  return data;
+  return getCached('kulon:upcoming', async () => {
+    const { data } = await apiClient.get<Assignment[]>(API.kulon.assignments);
+    return data;
+  }, CACHE.assignments);
 }
 
 export async function getAllAssignments(): Promise<Assignment[]> {
-  const { data } = await apiClient.get<Assignment[]>(API.kulon.allAssignments);
-  return data;
+  return getCached('kulon:assignments', async () => {
+    const { data } = await apiClient.get<Assignment[]>(API.kulon.allAssignments);
+    return data;
+  }, CACHE.assignments);
 }
 
 export async function getCourses(): Promise<Course[]> {
-  const { data } = await apiClient.get<Course[]>(API.kulon.courses);
-  return data;
+  return getCached('kulon:courses', async () => {
+    const { data } = await apiClient.get<Course[]>(API.kulon.courses);
+    return data;
+  }, CACHE.courses);
 }
 
 export async function getCourseContent(courseId: number): Promise<KulonCourseContent> {
-  const { data } = await apiClient.get<KulonCourseContent>(API.kulon.courseContent(courseId));
-  return data;
+  return getCached(`kulon:content:${courseId}`, async () => {
+    const { data } = await apiClient.get<KulonCourseContent>(API.kulon.courseContent(courseId));
+    return data;
+  }, CACHE.courseContent);
 }
 
 export async function getAssignmentDetail(assignmentId: number, cmid: number): Promise<AssignmentDetail> {
-  const { data } = await apiClient.get<AssignmentDetail>(
-    API.kulon.assignmentDetail(assignmentId),
-    { params: { cmid } },
-  );
-  return data;
+  return getCached(`kulon:detail:${assignmentId}:${cmid}`, async () => {
+    const { data } = await apiClient.get<AssignmentDetail>(
+      API.kulon.assignmentDetail(assignmentId),
+      { params: { cmid } },
+    );
+    return data;
+  }, CACHE.assignmentDetail);
 }
 
 export async function getSiapProfile(): Promise<SiapProfile> {
-  const { data } = await apiClient.get<SiapProfile>(API.siap.profile);
-  return data;
+  return getCached('siap:profile', async () => {
+    const { data } = await apiClient.get<SiapProfile>(API.siap.profile);
+    return data;
+  }, CACHE.profile);
 }
 
 export async function getSiapIrs(): Promise<SiapIrs> {
-  const { data } = await apiClient.get<SiapIrs>(API.siap.irs);
-  return data;
+  return getCached('siap:irs', async () => {
+    const { data } = await apiClient.get<SiapIrs>(API.siap.irs);
+    return data;
+  }, CACHE.irs);
 }
 
 export async function getSiapKhs(): Promise<SiapKhs> {
-  const { data } = await apiClient.get<SiapKhs>(API.siap.khs);
-  return data;
+  return getCached('siap:khs', async () => {
+    const { data } = await apiClient.get<SiapKhs>(API.siap.khs);
+    return data;
+  }, CACHE.khs);
 }
 
 export async function getSiapJadwal(): Promise<SiapJadwal[]> {
-  const { data } = await apiClient.get<SiapJadwal[]>(API.siap.jadwal);
-  return data;
+  return getCached('siap:jadwal', async () => {
+    const { data } = await apiClient.get<SiapJadwal[]>(API.siap.jadwal);
+    return data;
+  }, CACHE.jadwal);
 }
 
 export async function getNotifications(): Promise<SiapNotifications> {
-  const { data } = await apiClient.get<SiapNotifications>(API.siap.notifications);
-  return data;
+  return getCached('siap:notifications', async () => {
+    const { data } = await apiClient.get<SiapNotifications>(API.siap.notifications);
+    return data;
+  }, CACHE.notifications);
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
   await apiClient.post(API.siap.markNotification(id));
+  invalidate('siap:notifications');
 }
 
 /** Minta kode pairing (JWT-guarded; axios interceptor menyuntik Bearer). */
@@ -197,18 +235,24 @@ export async function pairStatus(code: string): Promise<PairStatusResult> {
 }
 
 export async function getSiapLecturers(): Promise<SiapLecturer[]> {
-  const { data } = await apiClient.get<SiapLecturer[]>(API.siap.lecturers);
-  return data;
+  return getCached('siap:lecturers', async () => {
+    const { data } = await apiClient.get<SiapLecturer[]>(API.siap.lecturers);
+    return data;
+  }, CACHE.lecturers);
 }
 
 export async function getSiapAbsen(): Promise<SiapAbsenItem[]> {
-  const { data } = await apiClient.get<SiapAbsenItem[]>(API.siap.absen);
-  return data;
+  return getCached('siap:absen', async () => {
+    const { data } = await apiClient.get<SiapAbsenItem[]>(API.siap.absen);
+    return data;
+  }, CACHE.absen);
 }
 
 export async function getSiapKehadiran(idJadwal: string): Promise<SiapKehadiran> {
-  const { data } = await apiClient.get<SiapKehadiran>(API.siap.kehadiran(idJadwal));
-  return data;
+  return getCached(`siap:kehadiran:${idJadwal}`, async () => {
+    const { data } = await apiClient.get<SiapKehadiran>(API.siap.kehadiran(idJadwal));
+    return data;
+  }, CACHE.kehadiran);
 }
 
 /** Proxy token hasil scan QR absensi ke SIAP (anti-replay milik SIAP). */
