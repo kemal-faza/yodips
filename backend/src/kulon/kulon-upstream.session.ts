@@ -7,11 +7,11 @@ import {
   UpstreamSessionCheck,
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
+import { CachePolicy } from '../cache/cache-policy';
 import { SessionStore } from '../session/session-store';
 import { createKeyedSingleFlight } from '../common/single-flight';
 
 export const KULON_BASE_URL = 'https://kulon2.undip.ac.id';
-const SESSKEY_TTL_MS = 5 * 60_000;
 const SESSKEY_FP_LEN = 16;
 
 /** Cache key for a user's sesskey, fingerprinted by the session cookie so a
@@ -94,7 +94,7 @@ export class KulonUpstreamSession {
     }
     this.logger.debug(`[upstream] kulon sesskey sub=${sub} hit=false`);
     const sesskey = await this.sesskeyFlight.run(key, () => this.fetchSesskeyOrThrow(cookie));
-    if (this.cache) await this.cache.set(key, sesskey, SESSKEY_TTL_MS);
+    if (this.cache) await this.cache.set(key, sesskey, CachePolicy.KULON_SESSKEY);
     return { cookie, sesskey };
   }
 

@@ -1,6 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { DataCache } from '../cache/data-cache';
+import { CachePolicy } from '../cache/cache-policy';
 import { SiapService } from '../siap/siap.service';
 import { SessionStore } from '../session/session-store';
 import {
@@ -275,7 +276,7 @@ export class KulonService {
     // write, so a progress-less run can never poison the public progress-ful
     // cache (the shared `:kulon:courses` key stays progress-complete).
     if (sub && this.cache && opts.withProgress !== false) {
-      await this.cache.set(`${sub}:kulon:courses`, result);
+      await this.cache.set(`${sub}:kulon:courses`, result, CachePolicy.KULON_COURSES);
     }
     return result;
   }
@@ -393,7 +394,7 @@ export class KulonService {
       await Promise.all(workers);
       const flat = results.flat();
       if (sub && this.cache) {
-        await this.cache.set(`${sub}:kulon:assignments:all`, flat, 180_000);
+        await this.cache.set(`${sub}:kulon:assignments:all`, flat, CachePolicy.KULON_ASSIGNMENTS_ALL);
       }
       return flat;
     });
@@ -470,7 +471,7 @@ export class KulonService {
       await this.cache.set(
         `${sub}:kulon:assignment-detail:${cmid}`,
         detail,
-        60_000,
+        CachePolicy.KULON_ASSIGNMENT_DETAIL,
       );
     }
     return detail;
@@ -553,7 +554,7 @@ export class KulonService {
       await this.cache.set(
         `${sub}:kulon:course-content:${courseId}`,
         content,
-        60_000,
+        CachePolicy.KULON_COURSE_CONTENT,
       );
     }
     return content;
