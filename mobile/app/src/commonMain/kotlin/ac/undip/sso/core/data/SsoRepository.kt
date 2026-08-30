@@ -7,6 +7,7 @@ import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.core.network.KulonCourse
+import ac.undip.sso.core.network.KulonCourseContent
 import ac.undip.sso.core.network.PushDeviceRequest
 import ac.undip.sso.core.network.PushDeviceResponse
 import ac.undip.sso.core.network.SiapAbsen
@@ -112,6 +113,12 @@ class SsoRepository(
     suspend fun courses(force: Boolean = false): ApiResult<List<KulonCourse>> =
         cached("courses", ListSerializer(KulonCourse.serializer()), force) {
             refresher.safe(serviceStale = true) { api.courses() }
+        }
+
+    /** Konten course (sections + items) — di-cache per course, back/forth tanpa refetch. */
+    suspend fun courseContent(courseId: Long, force: Boolean = false): ApiResult<KulonCourseContent> =
+        cached("course-content-$courseId", KulonCourseContent.serializer(), force) {
+            refresher.safe(serviceStale = true) { api.courseContent(courseId) }
         }
 
     suspend fun lecturers(force: Boolean = false): ApiResult<List<SiapLecturer>> =

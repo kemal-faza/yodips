@@ -184,4 +184,21 @@ class KtorSsoApiTest {
         assertEquals("submitted", d.submission.status)
         assertEquals("Deskripsi", d.descriptionMarkdown)
     }
+
+    @Test
+    fun `courseContent hits the content endpoint and parses DTO`() = runBlocking {
+        val body =
+            """{"courseId":16294,"sections":[{"id":1,"label":"Pertemuan 1","items":[{"kind":"file","name":"S1","url":"https://k/f","fileType":"pdf","cmid":10}]}]}"""
+        val resp =
+            api(
+                mockClient(
+                    body = body,
+                    assertRequest = { req ->
+                        assertEquals("https://be.test/api/kulon/courses/16294/content", req.url.toString())
+                    },
+                ),
+            ).courseContent(16294)
+        assertEquals(16294L, resp.courseId)
+        assertEquals("Pertemuan 1", resp.sections[0].label)
+    }
 }

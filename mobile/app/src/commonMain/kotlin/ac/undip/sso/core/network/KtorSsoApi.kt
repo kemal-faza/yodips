@@ -81,6 +81,11 @@ class KtorSsoApi(
         return json.decodeFromString<List<KulonCourse>>(handle(resp))
     }
 
+    override suspend fun courseContent(courseId: Long): KulonCourseContent {
+        val resp = client.get("$root/api/kulon/courses/$courseId/content")
+        return json.decodeFromString<KulonCourseContent>(handle(resp))
+    }
+
     override suspend fun lecturers(): List<SiapLecturer> {
         val resp = client.get("$root/api/siap/lecturers")
         return json.decodeFromString<List<SiapLecturer>>(handle(resp))
