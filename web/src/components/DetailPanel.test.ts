@@ -112,12 +112,40 @@ describe('DetailPanel', () => {
     expect(bodyText()).toContain('85');
   });
 
-  it('shows submission status in the header (glanceable)', async () => {
-    mountPanel({ assignment, open: true });
+  it('shows when submitted in the header (factual)', async () => {
+    getAssignmentDetailMock.mockResolvedValue({
+      assignmentId: 42,
+      name: 'Tugas 1',
+      descriptionHtml: '',
+      descriptionMarkdown: '# Judul',
+      files: [],
+      submission: { status: 'submitted', submittedAt: Math.floor(Date.now() / 1000) - 3600 },
+      kulonUrl: 'https://kulon2.undip.ac.id/',
+    });
+    mountPanel({ assignment: { ...assignment, submissionStatus: 'submitted' }, open: true });
     await flushPromises();
-    const el = bodyEls('[data-test="submission-status"]')[0];
-    expect(el).toBeTruthy();
-    expect(el.textContent).toContain('Sudah dinilai');
+    expect(bodyText()).toContain('Dikumpulkan');
+  });
+
+  it('header badge uses card status (due/done/overdue), not deadline label', async () => {
+    // graded -> card status = "done"
+    mountPanel({ assignment: { ...assignment, submissionStatus: 'graded' }, open: true });
+    await flushPromises();
+    const badge = bodyEls('[data-test="header-status-badge"]')[0];
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toContain('done');
+    // The deadline-only labels must NOT appear in the sheet header.
+    expect(bodyText()).not.toContain('On track');
+    expect(bodyText()).not.toContain('Terlambat');
+    expect(bodyText()).not.toContain('Segera');
+  });
+
+  it('header does not duplicate submission text label', async () => {
+    mountPanel({ assignment: { ...assignment, submissionStatus: 'graded' }, open: true });
+    await flushPromises();
+    // Submission state is shown via the badge; the raw "Sudah dinilai" /
+    // "Belum dikumpulkan" text label is dropped from the header.
+    expect(bodyText()).not.toMatch(/Sudah dinilai|Belum dikumpulkan/);
   });
 
   it('shows retry on error', async () => {
