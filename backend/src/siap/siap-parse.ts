@@ -268,44 +268,6 @@ export function currentSemesterCount(
   return Math.max(1, (year - Number(angkatan)) * 2 + (isGanjil ? 1 : 0));
 }
 
-/** Parse ringkasan hadir dari tabel index jadwal (baris dengan progress-bar). */
-export function parseAbsenSummary(html: string): SiapAbsenItem[] {
-  const out: SiapAbsenItem[] = [];
-  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rm: RegExpExecArray | null;
-  while ((rm = rowRe.exec(html)) !== null) {
-    const tr = rm[1];
-    if (
-      !/<div\b[^>]*progress-bar/i.test(tr) &&
-      !/progress-bar[^"]*"/i.test(tr)
-    )
-      continue;
-    const tds: string[] = [];
-    const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-    let td: RegExpExecArray | null;
-    while ((td = tdRe.exec(tr)) !== null) tds.push(td[1]);
-    if (tds.length < 7) continue;
-    const clean = (c: string) =>
-      c
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    const nama = clean(tds[2]);
-    const pctRaw = tr.match(/aria-valuenow="([0-9.]+)"/i)?.[1];
-    const idJadwal = tr.match(/data-id="([0-9]+)"/i)?.[1] ?? '';
-    if (!nama || pctRaw === undefined) continue;
-    const pct = Number(pctRaw.replace(',', '.'));
-    out.push({
-      idJadwal,
-      nama,
-      hadirPct: Number.isFinite(pct) ? pct : 0,
-      hadir: 0,
-      total: 0,
-    });
-  }
-  return out;
-}
-
 /**
  * Parse tabel absensi `get_absen.html`: beberapa <tbody>, tiap tbody punya
  * baris label colspan ("Absensi Kuliah"/"Absensi Ujian") lalu baris data
