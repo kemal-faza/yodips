@@ -5,6 +5,7 @@ import { HttpException } from '@nestjs/common';
 import { SiapService } from './siap.service';
 import { SiapUpstreamSession } from './siap-upstream.session';
 import { InMemoryDataCache } from '../cache/in-memory-data.cache';
+import { CachePolicy } from '../cache/cache-policy';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import type { SiapApiUpstream } from './siap-api';
 
@@ -461,7 +462,7 @@ describe('SiapService', () => {
       expect(setSpy).toHaveBeenCalledWith(
         'u1:siap:lecturers',
         expect.any(Array),
-        24 * 60 * 60_000,
+        CachePolicy.SIAP_LECTURERS,
       );
     });
 
@@ -483,7 +484,11 @@ describe('SiapService', () => {
       const svc = makeRealSeamService({ mintToken: mint, fetch }, cache2);
       const result = await svc.getLecturers('u1');
       expect(result).toEqual([]);
-      expect(setSpy).toHaveBeenCalledWith('u1:siap:lecturers', [], 24 * 60 * 60_000);
+      expect(setSpy).toHaveBeenCalledWith(
+        'u1:siap:lecturers',
+        [],
+        CachePolicy.SIAP_LECTURERS,
+      );
       expect(mint).toHaveBeenCalledTimes(2); // initial + re-mint
     });
 

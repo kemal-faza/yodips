@@ -9,6 +9,7 @@ import {
   upstreamFetchText,
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
+import { CachePolicy } from '../cache/cache-policy';
 import { SessionStore } from '../session/session-store';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { SiapApiUpstream } from './siap-api';
@@ -19,11 +20,6 @@ export const SIAP_BASE_URL = 'https://siap.undip.ac.id';
 const SIAP_PROBE_PATH = '/pages/mhs/dashboard';
 /** Present on the authenticated dashboard, absent on a login page. */
 export const SIAP_AUTH_MARKER = 'tabmhs_profile';
-
-/** Identity cache TTL: 24 h — email/nim are stable for a session. */
-const IDENTITY_TTL_MS = 24 * 60 * 60_000;
-/** Token cache TTL: 10 min — minted token is single-use-ish, keep it short. */
-const TOKEN_TTL_MS = 10 * 60_000;
 
 /** Identity payload (no token) cached/fetched independently of the API token. */
 export interface SiapIdentity {
@@ -112,7 +108,7 @@ export class SiapUpstreamSession {
       }
       this.logger.debug(`[upstream] siap identity sub=${sub} hit=false`);
       const resolved = await this.resolveIdentity(sub, session);
-      await this.cache!.set(identityKey, resolved, IDENTITY_TTL_MS);
+      await this.cache!.set(identityKey, resolved, CachePolicy.SIAP_IDENTITY);
       return resolved;
     });
     const tokenKey = `${sub}:siap:token`;
@@ -124,7 +120,7 @@ export class SiapUpstreamSession {
       }
       this.logger.debug(`[upstream] siap token sub=${sub} hit=false`);
       const fresh = await this.mintFresh(identity.emailSso, identity.nim);
-      await this.cache!.set(tokenKey, fresh, TOKEN_TTL_MS);
+      await this.cache!.set(tokenKey, fresh, CachePolicy.SIAP_TOKEN);
       return fresh;
     });
     return { ...identity, token };
