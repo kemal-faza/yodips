@@ -162,4 +162,35 @@ describe('DetailPanel', () => {
     expect(content?.getAttribute('data-side')).toBe('bottom');
     expect(content?.className).toContain('data-[side=bottom]:max-md:h-[85vh]');
   });
+
+  it('description scroll container can shrink inside the flex column (min-h-0)', async () => {
+    // Bug: the detail side-sheet cannot scroll for long descriptions. Root
+    // cause is flexbox: the Tabs chain (SheetContent > Tabs > scroll div) uses
+    // `flex-1` without `min-h-0`, so the inner overflow-y-auto div cannot
+    // shrink below its content height → content overflows the fixed-height
+    // sheet instead of scrolling. This test asserts the scroll container
+    // carries the flex-shrink allowance.
+    setMatchMedia('(min-width: 768px)', true);
+    mountPanel({ assignment, open: true });
+    await flushPromises();
+    // The scrollable description region (overflow-y-auto inside flex-1 Tabs).
+    const scrollEls = bodyEls('[data-slot="tabs-content"]').length
+      ? bodyEls('[data-slot="tabs-content"]')
+      : bodyEls('.overflow-y-auto');
+    expect(scrollEls.length).toBeGreaterThan(0);
+    // Every flex-1 ancestor in the scroll chain must allow shrinking (min-h-0)
+    // so the inner overflow-y-auto actually scrolls; otherwise the panel grows
+    // unbounded and the scrollbar never appears. (TabsTrigger buttons also use
+    // flex-1 but are NOT part of the scroll chain — they just spread evenly.)
+    const scrollRoot = bodyEls('[data-slot="sheet-content"]')[0];
+    const chain = [
+      ...bodyEls('[data-slot="tabs-root"]'),
+      ...bodyEls('[data-slot="tabs-content"]'),
+      ...(scrollRoot ? [scrollRoot] : []),
+    ].filter((el) => [...el.classList].some((c) => c.startsWith('flex-1')));
+    expect(chain.length).toBeGreaterThan(0);
+    for (const el of chain) {
+      expect([...el.classList].some((c) => c.startsWith('min-h-0'))).toBe(true);
+    }
+  });
 });
