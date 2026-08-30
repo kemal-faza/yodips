@@ -2,6 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAssignments, getCourses, capture } from './client';
 import { emitReauthRequested } from '../lib/reauth';
 
+const { getCachedMock } = vi.hoisted(() => ({ getCachedMock: vi.fn() }));
+vi.mock('./cache', () => ({
+  getCached: getCachedMock,
+  invalidate: vi.fn(),
+  clearCache: vi.fn(),
+}));
+
+getCachedMock.mockImplementation(async (_k: string, fetcher: () => Promise<unknown>) => fetcher());
+
 vi.mock('../lib/reauth', () => ({
   emitReauthRequested: vi.fn(),
   emitTokenRefreshed: vi.fn(),
@@ -79,6 +88,19 @@ describe('api client', () => {
     const call = mockRequest.mock.calls[0][0];
     expect(call.method).toBe('get');
     expect(call.url).toBe('/api/kulon/courses');
+  });
+
+  it('getCourses routes through getCached with the expected key + TTLs', async () => {
+    getCachedMock.mockClear();
+    mockRequest.mockResolvedValue({ data: [] });
+    const { getCourses } = await import('./client');
+    const courses = await getCourses();
+    expect(courses).toEqual([]); // mocked network returns []
+    expect(getCachedMock).toHaveBeenCalledWith(
+      'kulon:courses',
+      expect.any(Function),
+      { freshTtl: 300_000, staleTtl: 1_800_000 },
+    );
   });
 
   it('Kulon 401 does NOT clear token or redirect (view handles re-login)', async () => {
