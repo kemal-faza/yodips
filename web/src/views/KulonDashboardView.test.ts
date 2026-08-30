@@ -6,6 +6,7 @@ import { buildRouter } from '../router';
 import KulonDashboardView from './KulonDashboardView.vue';
 import * as api from '../api/client';
 import { useAuthStore } from '../stores/auth';
+import { clearCache } from '../api/cache';
 
 vi.mock('../api/client', () => ({
   getAllAssignments: vi.fn(),
@@ -58,6 +59,7 @@ describe('KulonDashboardView', () => {
     localStorage.clear();
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    clearCache();
     mockStore();
   });
 
