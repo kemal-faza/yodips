@@ -417,13 +417,17 @@ describe('SiapService', () => {
         },
       );
       await lecturersSvc().getLecturers('u1');
-      expect(seen).toEqual([
-        { ta: '2024', smt_ambil: '1', smt: '1' },
-        { ta: '2024', smt_ambil: '2', smt: '2' },
-        { ta: '2025', smt_ambil: '3', smt: '1' },
-        { ta: '2025', smt_ambil: '4', smt: '2' },
-        { ta: '2026', smt_ambil: '5', smt: '1' },
-      ]);
+      // Order-insensitive: worker-pool invocation order is timing-dependent.
+      expect(seen).toHaveLength(5);
+      expect(seen).toEqual(
+        expect.arrayContaining([
+          { ta: '2024', smt_ambil: '1', smt: '1' },
+          { ta: '2024', smt_ambil: '2', smt: '2' },
+          { ta: '2025', smt_ambil: '3', smt: '1' },
+          { ta: '2025', smt_ambil: '4', smt: '2' },
+          { ta: '2026', smt_ambil: '5', smt: '1' },
+        ]),
+      );
     });
 
     it('serves from cache on hit (0 IRS fetches)', async () => {
@@ -481,6 +485,23 @@ describe('SiapService', () => {
       expect(result).toEqual([]);
       expect(setSpy).toHaveBeenCalledWith('u1:siap:lecturers', [], 24 * 60 * 60_000);
       expect(mint).toHaveBeenCalledTimes(2); // initial + re-mint
+    });
+
+    it('fetches per-semester IRS with bounded concurrency (multiple in flight, peak <= 4)', async () => {
+      let inFlight = 0;
+      let peak = 0;
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        return [];
+      });
+      await lecturersSvc().getLecturers('u1');
+      expect(peak).toBeGreaterThan(1);     // WAS serial (peak 1); now parallel waves
+      expect(peak).toBeLessThanOrEqual(4); // bounded by the pool
     });
   });
 
@@ -950,11 +971,38 @@ describe('SiapService', () => {
         );
       await khsSvc().getKhs('u1');
       // 3 semesters: within-year smt toggles 1/2 (2025/2026 Ganjil → within-year 1).
-      expect(seen).toEqual([
-        { ta: '2024', smt_ambil: '1', smt: '1' },
-        { ta: '2024', smt_ambil: '2', smt: '2' },
-        { ta: '2025', smt_ambil: '3', smt: '1' },
-      ]);
+      // Order-insensitive: worker-pool invocation order is timing-dependent.
+      expect(seen).toHaveLength(3);
+      expect(seen).toEqual(
+        expect.arrayContaining([
+          { ta: '2024', smt_ambil: '1', smt: '1' },
+          { ta: '2024', smt_ambil: '2', smt: '2' },
+          { ta: '2025', smt_ambil: '3', smt: '1' },
+        ]),
+      );
+    });
+
+    it('fetches semesters with bounded concurrency (multiple in flight, peak <= 4)', async () => {
+      let inFlight = 0;
+      let peak = 0;
+      const daftar = Array.from({ length: 8 }, (_, i) => ({
+        ta: String(2024 + Math.floor(i / 2)),
+        smt: String((i % 2) + 1),
+        smt_ambil: String(i + 1),
+        ipk: '3.5',
+      }));
+      apiMock.fetch
+        .mockResolvedValueOnce(daftar) // v2/daftar_khs
+        .mockImplementation(async () => {
+          inFlight++;
+          peak = Math.max(peak, inFlight);
+          await new Promise((r) => setTimeout(r, 5));
+          inFlight--;
+          return [];
+        });
+      await khsSvc().getKhs('u1');
+      expect(peak).toBeGreaterThan(1);     // WAS serial (peak 1); now parallel waves
+      expect(peak).toBeLessThanOrEqual(4); // bounded by the pool
     });
 
     it('retries the whole batch once on an invalid-credential', async () => {

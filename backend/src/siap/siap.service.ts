@@ -4,6 +4,7 @@ import { DataCache } from '../cache/data-cache';
 import { SessionStore } from '../session/session-store';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { createKeyedSingleFlight } from '../common/single-flight';
+import { mapWithConcurrency } from '../common/map-with-concurrency';
 import { SiapUpstreamSession } from './siap-upstream.session';
 import { SiapApiUpstream } from './siap-api';
 import type {
@@ -367,31 +368,36 @@ export class SiapService {
             await fetchBatch<Array<Record<string, unknown>>>('v2/daftar_khs');
           const list = Array.isArray(daftar) ? daftar : [];
           const ipk = parseApiDaftarKhs(list).ipk;
-          const semesters: SiapKhsSemester[] = [];
-          for (const d of list) {
-            const ta = String(d.ta ?? '');
-            // smt_ambil = cumulative index; smt = within-year index that v2/lihat_khss keys on.
-            const smtAmbil = String(d.smt_ambil ?? '');
-            const smt = String(d.smt ?? '');
-            const rows = await fetchBatch<Array<Record<string, unknown>>>(
-              'v2/lihat_khs',
-              { ta, smt_ambil: smtAmbil, smt },
-            );
-            const nilai = parseApiKhs(Array.isArray(rows) ? rows : []);
-            const totalSks = nilai.reduce((s, n) => s + n.sks, 0);
-            const rawIp = nilai.length
-              ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
-                nilai.reduce((s, n) => s + n.sks, 0)
-              : 0;
-            // Label always from the TA + within-year smt (NOT semesterLabel('',…)).
-            const label = this.semesterLabelFromTa(ta, smt);
-            semesters.push({
-              semester: label,
-              ip: round(rawIp),
-              totalSks,
-              nilai,
-            });
-          }
+          // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
+          // order preserved so `semesters` stays in `list` order.
+          const semesters = await mapWithConcurrency(
+            list,
+            4,
+            async (d) => {
+              const ta = String(d.ta ?? '');
+              // smt_ambil = cumulative index; smt = within-year index that v2/lihat_khss keys on.
+              const smtAmbil = String(d.smt_ambil ?? '');
+              const smt = String(d.smt ?? '');
+              const rows = await fetchBatch<Array<Record<string, unknown>>>(
+                'v2/lihat_khs',
+                { ta, smt_ambil: smtAmbil, smt },
+              );
+              const nilai = parseApiKhs(Array.isArray(rows) ? rows : []);
+              const totalSks = nilai.reduce((s, n) => s + n.sks, 0);
+              const rawIp = nilai.length
+                ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
+                  nilai.reduce((s, n) => s + n.sks, 0)
+                : 0;
+              // Label always from the TA + within-year smt (NOT semesterLabel('',…)).
+              const label = this.semesterLabelFromTa(ta, smt);
+              return {
+                semester: label,
+                ip: round(rawIp),
+                totalSks,
+                nilai,
+              };
+            },
+          );
           return { ipk: ipk ?? 0, semesters }; // ipk REQUIRED on SiapKhs
         };
         try {
@@ -457,20 +463,27 @@ export class SiapService {
           const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
           const count = currentSemesterCount(angkatan, sem?.nm_smt ?? '');
           const entries = new Map<string, { kode: string; dosen: string }>();
-          for (let smt = 1; smt <= count; smt++) {
-            const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
-            const smtWithinYear = smt % 2 === 1 ? 1 : 2;
-            const rows = await fetchBatch<Array<Record<string, unknown>>>(
-              'v2/lihat_irs',
-              {
-                ta: String(ta),
-                smt_ambil: String(smt),
-                smt: String(smtWithinYear),
-              },
-            );
-            for (const { kode, dosen } of lecturersFromIrs(
-              Array.isArray(rows) ? rows : [],
-            )) {
+          // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
+          // order preserved so ascending-smt dedup order is unchanged.
+          const rowsBySmt = await mapWithConcurrency(
+            Array.from({ length: count }, (_, i) => i + 1),
+            4,
+            async (smt) => {
+              const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
+              const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+              const rows = await fetchBatch<Array<Record<string, unknown>>>(
+                'v2/lihat_irs',
+                {
+                  ta: String(ta),
+                  smt_ambil: String(smt),
+                  smt: String(smtWithinYear),
+                },
+              );
+              return Array.isArray(rows) ? rows : [];
+            },
+          );
+          for (const rows of rowsBySmt) {
+            for (const { kode, dosen } of lecturersFromIrs(rows)) {
               if (!entries.has(kode)) entries.set(kode, { kode, dosen });
             }
           }
