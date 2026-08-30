@@ -9,16 +9,9 @@ import { clearCache } from '../api/cache';
 import { useAuthStore } from '../stores/auth';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
-vi.mock('../api/client', () => ({
-  getCourses: vi.fn(), getAllAssignments: vi.fn(),
-  getSiapProfile: vi.fn(), getSiapIrs: vi.fn(), getSiapKhs: vi.fn(), getSiapJadwal: vi.fn(),
-}));
+vi.mock('../api/client', () => ({ getDashboard: vi.fn() }));
 
-const mockApi = api as unknown as {
-  getCourses: ReturnType<typeof vi.fn>; getAllAssignments: ReturnType<typeof vi.fn>;
-  getSiapProfile: ReturnType<typeof vi.fn>; getSiapIrs: ReturnType<typeof vi.fn>; getSiapKhs: ReturnType<typeof vi.fn>;
-  getSiapJadwal: ReturnType<typeof vi.fn>;
-};
+const mockApi = api as unknown as { getDashboard: ReturnType<typeof vi.fn> };
 
 const stubs = {
   ChartIpTrend: true,
@@ -27,13 +20,20 @@ const stubs = {
   MorphingText: true,
 };
 
+// Single complete /api/dashboard payload (all 7 keys) — mirrors the old
+// per-getter aggregate (profile + khs + irs + jadwal + courses + assignments).
+const payload = {
+  profile: { nama: 'Anindita Rahmawati', nim: '24010122130001', prodi: 'S1 Informatika', fakultas: 'FSM', angkatan: '2022', ipk: 3.71, sksLulus: 108, status: 'AKTIF' },
+  khs: { ipk: 3.71, semesters: [{ semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [] }] },
+  irs: { semester: 'Ganjil 2025/2026', totalSks: 18, mataKuliah: [] },
+  jadwal: [],
+  courses: [{ id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' }],
+  assignments: [{ id: 1, name: 'Tugas 1', module: 'assign', eventType: '', duedate: 999999999, overdue: false, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'not_submitted' }],
+  errors: {},
+};
+
 function healthyApi() {
-  mockApi.getCourses.mockResolvedValue([{ id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' }]);
-  mockApi.getAllAssignments.mockResolvedValue([{ id: 1, name: 'Tugas 1', module: 'assign', eventType: '', duedate: 999999999, overdue: false, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'not_submitted' }]);
-  mockApi.getSiapProfile.mockResolvedValue({ nama: 'Anindita Rahmawati', nim: '24010122130001', prodi: 'S1 Informatika', fakultas: 'FSM', angkatan: '2022', ipk: 3.71, sksLulus: 108, status: 'AKTIF' });
-  mockApi.getSiapKhs.mockResolvedValue({ ipk: 3.71, semesters: [{ semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [] }] });
-  mockApi.getSiapIrs.mockResolvedValue({ semester: 'Ganjil 2025/2026', totalSks: 18, mataKuliah: [] });
-  mockApi.getSiapJadwal.mockResolvedValue([]);
+  mockApi.getDashboard.mockResolvedValue(payload);
 }
 
 function mockStore() {
@@ -65,7 +65,9 @@ describe('DashboardView (academic dashboard)', () => {
   });
 
   it('shows a SIAP error banner while keeping Kulon visible', async () => {
-    mockApi.getSiapProfile.mockRejectedValue(Object.assign(new Error('x'), { response: { data: { message: 'SIAP down' } } }));
+    // profile: null mirrors the old getSiapProfile rejection — the header
+    // falls back to 'Pengguna' while the Kulon slices stay populated.
+    mockApi.getDashboard.mockResolvedValue({ ...payload, profile: null, errors: { profile: { status: 401, message: 'SIAP down' } } });
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();
@@ -83,8 +85,11 @@ describe('DashboardView (academic dashboard)', () => {
   });
 
   it('prefers KHS-computed IPK over the fragile profile IPK', async () => {
-    mockApi.getSiapKhs.mockResolvedValue({ ipk: 3.78, semesters: [] });
-    mockApi.getSiapProfile.mockResolvedValue({ nama: 'Aplin Nasution', nim: 'x', prodi: 'S1', fakultas: 'FSM', angkatan: '2024', ipk: 1, sksLulus: 108, status: 'AKTIF' });
+    mockApi.getDashboard.mockResolvedValue({
+      ...payload,
+      profile: { nama: 'Aplin Nasution', nim: 'x', prodi: 'S1', fakultas: 'FSM', angkatan: '2024', ipk: 1, sksLulus: 108, status: 'AKTIF' },
+      khs: { ipk: 3.78, semesters: [] },
+    });
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();
@@ -93,21 +98,24 @@ describe('DashboardView (academic dashboard)', () => {
   });
 
   it('shows only "Perlu Dikerjakan" tasks with the new label', async () => {
-    mockApi.getCourses.mockResolvedValue([
-      { id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' },
-      { id: 2, fullname: 'Aplikasi Web', shortname: 'LBWEB001', idnumber: '', semester: 'Ganjil 2024/2025', timelineStatus: 'past' },
-    ]);
     const base = { id: 0, name: '', module: 'assign', eventType: '', duedate: 0, overdue: false, course: '', courseId: 0, submissionStatus: 'not_submitted' as const };
-    mockApi.getAllAssignments.mockResolvedValue([
-      { ...base, id: 1, name: 'Aktif Belum', duedate: 100, course: 'Kecerdasan Buatan', courseId: 1 },
-      { ...base, id: 2, name: 'Sudah Dikerjakan', duedate: 200, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'submitted' },
-      { ...base, id: 3, name: 'Terlambat', duedate: 300, overdue: true, course: 'Kecerdasan Buatan', courseId: 1 },
-      { ...base, id: 4, name: 'Kursus Nonaktif', duedate: 400, course: 'Aplikasi Web', courseId: 2 },
-      { ...base, id: 5, name: 'Lima', duedate: 400, course: 'Kecerdasan Buatan', courseId: 1 },
-      { ...base, id: 6, name: 'Enam', duedate: 500, course: 'Kecerdasan Buatan', courseId: 1 },
-      { ...base, id: 7, name: 'Tujuh', duedate: 200, course: 'Kecerdasan Buatan', courseId: 1 },
-      { ...base, id: 8, name: 'Delapan', duedate: 300, course: 'Kecerdasan Buatan', courseId: 1 },
-    ]);
+    mockApi.getDashboard.mockResolvedValue({
+      ...payload,
+      courses: [
+        { id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' },
+        { id: 2, fullname: 'Aplikasi Web', shortname: 'LBWEB001', idnumber: '', semester: 'Ganjil 2024/2025', timelineStatus: 'past' },
+      ],
+      assignments: [
+        { ...base, id: 1, name: 'Aktif Belum', duedate: 100, course: 'Kecerdasan Buatan', courseId: 1 },
+        { ...base, id: 2, name: 'Sudah Dikerjakan', duedate: 200, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'submitted' },
+        { ...base, id: 3, name: 'Terlambat', duedate: 300, overdue: true, course: 'Kecerdasan Buatan', courseId: 1 },
+        { ...base, id: 4, name: 'Kursus Nonaktif', duedate: 400, course: 'Aplikasi Web', courseId: 2 },
+        { ...base, id: 5, name: 'Lima', duedate: 400, course: 'Kecerdasan Buatan', courseId: 1 },
+        { ...base, id: 6, name: 'Enam', duedate: 500, course: 'Kecerdasan Buatan', courseId: 1 },
+        { ...base, id: 7, name: 'Tujuh', duedate: 200, course: 'Kecerdasan Buatan', courseId: 1 },
+        { ...base, id: 8, name: 'Delapan', duedate: 300, course: 'Kecerdasan Buatan', courseId: 1 },
+      ],
+    });
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();
@@ -126,13 +134,16 @@ describe('DashboardView (academic dashboard)', () => {
   });
 
   it('renders the empty state when no assignment matches the "need" predicate', async () => {
-    mockApi.getCourses.mockResolvedValue([
-      { id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' },
-    ]);
     const base = { id: 0, name: '', module: 'assign', eventType: '', duedate: 0, overdue: false, course: '', courseId: 0, submissionStatus: 'not_submitted' as const };
-    mockApi.getAllAssignments.mockResolvedValue([
-      { ...base, id: 1, name: 'Sudah Dikerjakan', duedate: 100, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'submitted' },
-    ]);
+    mockApi.getDashboard.mockResolvedValue({
+      ...payload,
+      courses: [
+        { id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' },
+      ],
+      assignments: [
+        { ...base, id: 1, name: 'Sudah Dikerjakan', duedate: 100, course: 'Kecerdasan Buatan', courseId: 1, submissionStatus: 'submitted' },
+      ],
+    });
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();

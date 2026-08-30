@@ -3,65 +3,96 @@ import { flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
 import { clearCache } from '../api/cache';
 
-// Network-level fetchers (what the real client would send over axios). The
-// mocked client re-exports them through the REAL cache layer (getCached),
-// mirroring how web/src/api/client.ts routes every getter through the cache.
-// A bare vi.fn() client would bypass the cache, making cache-reuse tests
-// meaningless.
-const { getCourses, getAllAssignments, profileFetch, khsFetch, irsFetch, jadwalFetch } = vi.hoisted(() => ({
-  getCourses: vi.fn(),
-  getAllAssignments: vi.fn(),
-  profileFetch: vi.fn(),
-  khsFetch: vi.fn(),
-  irsFetch: vi.fn(),
-  jadwalFetch: vi.fn(),
-}));
+// The mocked client re-exports getDashboard through the REAL cache layer —
+// mirroring web/src/api/client.ts. A bare vi.fn() would bypass the cache,
+// making cache-reuse tests meaningless (Phase-3 deviation (e)).
+const { dashboardFetch } = vi.hoisted(() => ({ dashboardFetch: vi.fn() }));
 
 vi.mock('../api/client', async () => {
   const { getCached } = await import('../api/cache');
-  // Keys + TTLs match web/src/api/client.ts (5m fresh / 30m stale).
-  const fresh = { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 };
   return {
-    getCourses,
-    getAllAssignments,
-    getSiapProfile: () => getCached('siap:profile', () => profileFetch(), fresh),
-    getSiapKhs: () => getCached('siap:khs', () => khsFetch(), fresh),
-    getSiapIrs: () => getCached('siap:irs', () => irsFetch(), fresh),
-    getSiapJadwal: () => getCached('siap:jadwal', () => jadwalFetch(), fresh),
+    getDashboard: () =>
+      getCached('dashboard', () => dashboardFetch(), { freshTtl: 60_000, staleTtl: 60_000 }),
   };
 });
 
 import { useDashboard } from './useDashboard';
 
-describe('useDashboard', () => {
+const ok = (overrides: Record<string, unknown> = {}) => ({
+  profile: { nama: 'A' },
+  khs: null,
+  irs: null,
+  jadwal: [],
+  courses: [],
+  assignments: [],
+  errors: {},
+  ...overrides,
+});
+
+describe('useDashboard (single request)', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     clearCache();
     vi.clearAllMocks();
-    getCourses.mockResolvedValue([]);
-    getAllAssignments.mockResolvedValue([]);
-    profileFetch.mockResolvedValue({ nama: 'A' } as never);
-    irsFetch.mockResolvedValue(null as never);
-    khsFetch.mockResolvedValue(null as never);
-    jadwalFetch.mockResolvedValue([]);
+    dashboardFetch.mockResolvedValue(ok());
   });
 
-  it('loads and splits data by source (original behavior retained)', async () => {
+  it('maps payload slices to siap/kulon refs', async () => {
+    dashboardFetch.mockResolvedValue(ok({
+      profile: { nama: 'B' }, jadwal: [{ tanggal: '2026-08-30' }],
+      courses: [{ id: 1 }], assignments: [{ id: 2 }],
+    }));
     const d = useDashboard();
     await d.load();
-    expect(d.siap.value.profile).toEqual({ nama: 'A' });
-    expect(d.kulon.value.assignments).toEqual([]);
-    expect(d.siapLoading.value).toBe(false);
-    expect(d.kulonLoading.value).toBe(false);
+    expect(d.siap.value.profile?.nama).toBe('B');
+    expect(d.siap.value.jadwal).toHaveLength(1);
+    expect(d.kulon.value.courses).toHaveLength(1);
+    expect(d.kulon.value.assignments).toHaveLength(1);
+    expect(d.siapError.value).toBeNull();
+    expect(d.kulonError.value).toBeNull();
   });
 
-  it('reuses cached data instead of re-fetching when fresh', async () => {
+  it('maps SIAP slice errors to siapError, keeping kulon populated', async () => {
+    dashboardFetch.mockResolvedValue(ok({
+      errors: { profile: { status: 401, message: 'Session SIAP expired. Silakan login ulang via SSO' } },
+      courses: [{ id: 1 }],
+    }));
     const d = useDashboard();
-    // first load warms the cache
     await d.load();
-    profileFetch.mockClear();
-    // second load: fresh cache → no network
+    expect(d.siapError.value).toBe('Session SIAP expired. Silakan login ulang via SSO');
+    expect(d.kulon.value.courses).toHaveLength(1);
+    expect(d.kulonError.value).toBeNull();
+  });
+
+  it('maps Kulon slice errors to kulonError', async () => {
+    dashboardFetch.mockResolvedValue(ok({
+      errors: { assignments: { status: 401, message: 'Session Kulon expired. Silakan login ulang via SSO' } },
+    }));
+    const d = useDashboard();
     await d.load();
-    expect(profileFetch).not.toHaveBeenCalled();
+    expect(d.kulonError.value).toBe('Session Kulon expired. Silakan login ulang via SSO');
+    expect(d.siapError.value).toBeNull();
+  });
+
+  it('does NOT raise siapError when only jadwal fails (silent, parity with today)', async () => {
+    dashboardFetch.mockResolvedValue(ok({ errors: { jadwal: { status: 502, message: 'SIAP gangguan' } } }));
+    const d = useDashboard();
+    await d.load();
+    expect(d.siapError.value).toBeNull();
+    expect(d.siap.value.jadwal).toEqual([]);
+  });
+
+  it('sets both error banners on a network-level rejection', async () => {
+    dashboardFetch.mockRejectedValue({ response: { data: { message: 'Network down' } } });
+    const d = useDashboard();
+    await d.load();
+    expect(d.siapError.value).toBe('Network down');
+    expect(d.kulonError.value).toBe('Network down');
+  });
+
+  it('does not call getSiapJadwal anymore (single request)', async () => {
+    const d = useDashboard();
+    await d.load();
+    expect(dashboardFetch).toHaveBeenCalledTimes(1);
   });
 });

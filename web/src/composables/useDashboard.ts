@@ -1,10 +1,10 @@
 import { onMounted, ref } from 'vue';
-import { useKulonStore } from '../stores/kulon';
-import { getSiapProfile, getSiapIrs, getSiapKhs, getSiapJadwal } from '../api/client';
+import { getDashboard } from '../api/client';
 import type { SiapProfile, SiapKhs, SiapIrs, SiapJadwal } from '../types';
+import type { Course, Assignment } from '../types';
 
 export interface SiapSource { profile: SiapProfile | null; khs: SiapKhs | null; irs: SiapIrs | null; jadwal: SiapJadwal[]; }
-export interface KulonSource { courses: ReturnType<typeof useKulonStore>['courses']; assignments: ReturnType<typeof useKulonStore>['assignments']; }
+export interface KulonSource { courses: Course[]; assignments: Assignment[]; }
 
 export function useDashboard() {
   const siapLoading = ref(false);
@@ -14,38 +14,29 @@ export function useDashboard() {
   const kulonError = ref<string | null>(null);
   const kulon = ref<KulonSource>({ courses: [], assignments: [] });
 
-  async function loadSiap() {
+  async function load(): Promise<void> {
     siapLoading.value = true;
+    kulonLoading.value = true;
     siapError.value = null;
+    kulonError.value = null;
     try {
-      const [profile, khs, irs] = await Promise.all([getSiapProfile(), getSiapKhs(), getSiapIrs()]);
-      siap.value = { profile, khs, irs, jadwal: siap.value.jadwal };
+      const d = await getDashboard();
+      const errs = d.errors ?? {}; // defensive: backend pins errors={} but never crash on missing
+      siap.value = { profile: d.profile, khs: d.khs, irs: d.irs, jadwal: d.jadwal };
+      kulon.value = { courses: d.courses ?? [], assignments: d.assignments ?? [] };
+      // jadwal intentionally excluded: a jadwal-only failure is silent (parity
+      // with the pre-aggregation loadSiap which caught getSiapJadwal errors).
+      if (errs.profile || errs.khs || errs.irs)
+        siapError.value = errs.profile?.message ?? errs.khs?.message ?? errs.irs?.message ?? null;
+      if (errs.courses || errs.assignments)
+        kulonError.value = errs.courses?.message ?? errs.assignments?.message ?? null;
     } catch (e: any) {
       siapError.value = e?.response?.data?.message ?? 'Gagal memuat data akademik (SIAP)';
-    } finally {
-      siapLoading.value = false;
-    }
-    try {
-      siap.value = { ...siap.value, jadwal: await getSiapJadwal() };
-    } catch { /* keep existing jadwal */ }
-  }
-
-  async function loadKulon() {
-    kulonLoading.value = true;
-    kulonError.value = null;
-    const store = useKulonStore();
-    try {
-      await Promise.all([store.ensureCourses(), store.ensureAssignments()]);
-      kulon.value = { courses: store.courses, assignments: store.assignments };
-    } catch (e: any) {
       kulonError.value = e?.response?.data?.message ?? 'Gagal memuat data Kulon';
     } finally {
+      siapLoading.value = false;
       kulonLoading.value = false;
     }
-  }
-
-  async function load(): Promise<void> {
-    await Promise.all([loadSiap(), loadKulon()]);
   }
 
   onMounted(load);

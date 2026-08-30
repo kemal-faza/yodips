@@ -34,6 +34,9 @@ vi.mock("./api/client", () => ({
     .fn()
     .mockResolvedValue({ semester: "", totalSks: 0, mataKuliah: [] }),
   getSiapKhs: vi.fn().mockResolvedValue({ ipk: 0, semesters: [] }),
+  getDashboard: vi
+    .fn()
+    .mockResolvedValue({ profile: null, khs: null, irs: null, jadwal: [], courses: [], assignments: [], errors: {} }),
 }));
 
 describe("App integration", () => {
