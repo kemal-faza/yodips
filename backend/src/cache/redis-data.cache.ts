@@ -46,10 +46,14 @@ export class RedisDataCache extends DataCache implements OnModuleDestroy {
           const age = Date.now() - env.fa;
           if (age < opts.freshTtlMs) return { value: env.v, stale: false };
           if (age < staleTtl) {
+            this.logger.debug(
+              `[cache] swr stale serve ${key} age=${age}ms fresh=${opts.freshTtlMs} stale=${staleTtl}`,
+            );
             void this.swrFlight.run(key, async () => {
               try {
                 const fresh = await fetcher();
                 await this.set(key, fresh, opts.freshTtlMs);
+                this.logger.debug(`[cache] swr refresh ok ${key}`);
               } catch (err) {
                 await handleBackgroundError({ del: (k) => this.del(k) }, key, err);
               }
