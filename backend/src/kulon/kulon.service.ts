@@ -41,7 +41,7 @@ function isKulonLoginPage(html: string): boolean {
     /<body\b[^>]*\bid=["']page-login-index["']/i.test(html) ||
     /<form\b[^>]*\bid=["']login["']/i.test(html) ||
     /<form\b[^>]*\baction=["'][^"']*\/login\/index\.php(?:["'?])/i.test(html) ||
-    /<title>\s*(?:log\s+in|login)\b[^<]*<\/title>/i.test(html)
+    /<title>\s*(?:log\s+in|login)(?:\s*(?:[|:-]|<\/title>))/i.test(html)
   );
 }
 
