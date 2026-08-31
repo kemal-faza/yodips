@@ -1,7 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
-import { CachePolicy } from '../cache/cache-policy';
+import { CachePolicy, swrWindow } from '../cache/cache-policy';
 import { SessionStore } from '../session/session-store';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { createKeyedSingleFlight } from '../common/single-flight';
@@ -14,7 +14,6 @@ import type {
   SiapJadwal,
   SiapKehadiran,
   SiapKhs,
-  SiapKhsSemester,
   SiapNotifications,
   SiapProfile,
 } from './siap-parse';
@@ -64,7 +63,6 @@ export class SiapService {
   private readonly apiUpstream: SiapApiUpstream;
   private readonly cache?: DataCache;
   private readonly sessionStore?: SessionStore;
-  private readonly config?: ConfigService;
   /** Keyed single-flight per user: N concurrent getKhs/getProfile/getIrs (and
    *  the shared-list methods) share ONE upstream+parse run. D2 done-criteria. */
   private readonly methodFlight = createKeyedSingleFlight<unknown>();
@@ -78,7 +76,6 @@ export class SiapService {
     this.cache = cache;
     this.upstream = upstream ?? new SiapUpstreamSession();
     this.sessionStore = sessionStore;
-    this.config = config;
     this.apiUpstream =
       apiUpstream ??
       new SiapApiUpstream(
@@ -180,6 +177,32 @@ export class SiapService {
     return this.upstream.checkSessionValid(siapCookie);
   }
 
+  private async fetchProfileData(sub?: string): Promise<SiapProfile> {
+    const ctx = await this.upstream.getContext(sub);
+    const data = await this.apiUpstream.fetch<Record<string, unknown>>(
+      'data_mahasiswa',
+      ctx.token,
+      {},
+      ctx.nim,
+    );
+    const sem = await this.apiUpstream.fetch<{ nm_smt?: string }>(
+      'semester_aktif',
+      ctx.token,
+      {},
+      ctx.nim,
+    );
+    const base = parseApiProfile(data ?? {}, sem);
+    // Merge web-visible fields the API may omit, from a scrape fallback.
+    const profile = await this.mergeProfileFallback(base, sub);
+    if (sub && this.cache)
+      await this.cache.set(
+        `${sub}:siap:profile`,
+        profile,
+        CachePolicy.SIAP_PROFILE,
+      );
+    return profile;
+  }
+
   /** Cached profile entry point (endpoint API takes only `sub`). ONE getContext
    *  token is reused for data_mahasiswa + semester_aktif (folds the old
    *  double-mint). Whole body runs inside the per-user single-flight so 5
@@ -189,28 +212,14 @@ export class SiapService {
       `profile:${sub ?? '__anon__'}`,
       async () => {
         if (sub && this.cache) {
-          const hit = await this.cache.get<SiapProfile>(`${sub}:siap:profile`);
-          if (hit) return hit;
+          const { value } = await this.cache.getStale<SiapProfile>(
+            `${sub}:siap:profile`,
+            () => this.fetchProfileData(sub),
+            swrWindow('SIAP_PROFILE'),
+          );
+          return value;
         }
-        const ctx = await this.upstream.getContext(sub);
-        const data = await this.apiUpstream.fetch<Record<string, unknown>>(
-          'data_mahasiswa',
-          ctx.token,
-          {},
-          ctx.nim,
-        );
-        const sem = await this.apiUpstream.fetch<{ nm_smt?: string }>(
-          'semester_aktif',
-          ctx.token,
-          {},
-          ctx.nim,
-        );
-        const base = parseApiProfile(data ?? {}, sem);
-        // Merge web-visible fields the API may omit, from a scrape fallback.
-        const profile = await this.mergeProfileFallback(base, sub);
-        if (sub && this.cache)
-          await this.cache.set(`${sub}:siap:profile`, profile, CachePolicy.SIAP_PROFILE);
-        return profile;
+        return this.fetchProfileData(sub);
       },
     )) as SiapProfile;
   }
@@ -284,61 +293,66 @@ export class SiapService {
    * Batch-shaped: ONE token reused across sub-fetches, NOT fetchWithContext per
    * endpoint (M1 — that would mint per endpoint and INCREASE upstream calls).
    */
+  private async fetchIrs(sub?: string): Promise<SiapIrs> {
+    let ctx = await this.upstream.getContext(sub);
+    const fetchBatch = async <T>(
+      endpoint: string,
+      form?: Record<string, string>,
+    ) => this.apiUpstream.fetch<T>(endpoint, ctx.token, form, ctx.nim);
+    const build = async (): Promise<SiapIrs> => {
+      const [sem, data] = await Promise.all([
+        fetchBatch<{ nm_smt?: string }>('semester_aktif'),
+        fetchBatch<Record<string, unknown>>('data_mahasiswa'),
+      ]);
+      const semester = sem?.nm_smt ?? '';
+      const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
+      const count = currentSemesterCount(angkatan, semester);
+      const smt = count; // current semester (1-based)
+      const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
+      const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+      const rows = await fetchBatch<Array<Record<string, unknown>>>(
+        'v2/lihat_irs',
+        {
+          ta: String(ta),
+          smt_ambil: String(smt),
+          smt: String(smtWithinYear),
+        },
+      );
+      const mataKuliah = parseApiIrs(Array.isArray(rows) ? rows : []);
+      const totalSks = mataKuliah.reduce((s, m) => s + m.sks, 0);
+      return { semester, totalSks, mataKuliah };
+    };
+    try {
+      const irs = await build();
+      if (sub && this.cache)
+        await this.cache.set(`${sub}:siap:irs`, irs, CachePolicy.SIAP_IRS); // M3: 15-min TTL
+      return irs;
+    } catch (e) {
+      if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
+        if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
+        ctx = await this.upstream.getContext(sub); // re-mint
+        const irs = await build();
+        if (sub && this.cache)
+          await this.cache.set(`${sub}:siap:irs`, irs, CachePolicy.SIAP_IRS);
+        return irs;
+      }
+      throw e; // original error on second failure
+    }
+  }
+
   async getIrs(sub?: string): Promise<SiapIrs> {
     return (await this.methodFlight.run(
       `irs:${sub ?? '__anon__'}`,
       async () => {
         if (sub && this.cache) {
-          const hit = await this.cache.get<SiapIrs>(`${sub}:siap:irs`);
-          if (hit) return hit;
-        }
-        let ctx = await this.upstream.getContext(sub);
-        const fetchBatch = async <T>(
-          endpoint: string,
-          form?: Record<string, string>,
-        ) => this.apiUpstream.fetch<T>(endpoint, ctx.token, form, ctx.nim);
-        const build = async (): Promise<SiapIrs> => {
-          const [sem, data] = await Promise.all([
-            fetchBatch<{ nm_smt?: string }>('semester_aktif'),
-            fetchBatch<Record<string, unknown>>('data_mahasiswa'),
-          ]);
-          const semester = sem?.nm_smt ?? '';
-          const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
-          const count = currentSemesterCount(angkatan, semester);
-          const smt = count; // current semester (1-based)
-          const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
-          const smtWithinYear = smt % 2 === 1 ? 1 : 2;
-          const rows = await fetchBatch<Array<Record<string, unknown>>>(
-            'v2/lihat_irs',
-            {
-              ta: String(ta),
-              smt_ambil: String(smt),
-              smt: String(smtWithinYear),
-            },
+          const { value } = await this.cache.getStale<SiapIrs>(
+            `${sub}:siap:irs`,
+            () => this.fetchIrs(sub),
+            swrWindow('SIAP_IRS'),
           );
-          const mataKuliah = parseApiIrs(Array.isArray(rows) ? rows : []);
-          const totalSks = mataKuliah.reduce((s, m) => s + m.sks, 0);
-          return { semester, totalSks, mataKuliah };
-        };
-        try {
-          const irs = await build();
-          if (sub && this.cache)
-            await this.cache.set(`${sub}:siap:irs`, irs, CachePolicy.SIAP_IRS); // M3: 15-min TTL
-          return irs;
-        } catch (e) {
-          if (
-            e instanceof StaleUpstreamError &&
-            e.reason === 'api-credential'
-          ) {
-            if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
-            ctx = await this.upstream.getContext(sub); // re-mint
-            const irs = await build();
-            if (sub && this.cache)
-              await this.cache.set(`${sub}:siap:irs`, irs, CachePolicy.SIAP_IRS);
-            return irs;
-          }
-          throw e; // original error on second failure
+          return value;
         }
+        return this.fetchIrs(sub);
       },
     )) as SiapIrs;
   }
@@ -349,78 +363,79 @@ export class SiapService {
    * within-year index the API keys on. Retry the whole batch once on
    * api-credential (cache token invalidated + fresh getContext re-mint).
    */
+  private async fetchKhs(sub?: string): Promise<SiapKhs> {
+    let ctx = await this.upstream.getContext(sub);
+    // Batch: ONE token for the whole method (spec §2.2). Retry the whole
+    // batch once on an api-credential (fresh token invalidates the old).
+    const fetchBatch = async <T>(
+      endpoint: string,
+      form?: Record<string, string>,
+    ) => this.apiUpstream.fetch<T>(endpoint, ctx.token, form, ctx.nim);
+    const build = async (): Promise<SiapKhs> => {
+      const daftar =
+        await fetchBatch<Array<Record<string, unknown>>>('v2/daftar_khs');
+      const list = Array.isArray(daftar) ? daftar : [];
+      const ipk = parseApiDaftarKhs(list).ipk;
+      // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
+      // order preserved so `semesters` stays in `list` order.
+      const semesters = await mapWithConcurrency(list, 4, async (d) => {
+        const ta = String(d.ta ?? '');
+        // smt_ambil = cumulative index; smt = within-year index that v2/lihat_khss keys on.
+        const smtAmbil = String(d.smt_ambil ?? '');
+        const smt = String(d.smt ?? '');
+        const rows = await fetchBatch<Array<Record<string, unknown>>>(
+          'v2/lihat_khs',
+          { ta, smt_ambil: smtAmbil, smt },
+        );
+        const nilai = parseApiKhs(Array.isArray(rows) ? rows : []);
+        const totalSks = nilai.reduce((s, n) => s + n.sks, 0);
+        const rawIp = nilai.length
+          ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
+            nilai.reduce((s, n) => s + n.sks, 0)
+          : 0;
+        // Label always from the TA + within-year smt (NOT semesterLabel('',…)).
+        const label = this.semesterLabelFromTa(ta, smt);
+        return {
+          semester: label,
+          ip: round(rawIp),
+          totalSks,
+          nilai,
+        };
+      });
+      return { ipk: ipk ?? 0, semesters }; // ipk REQUIRED on SiapKhs
+    };
+    try {
+      const khs = await build();
+      if (sub && this.cache)
+        await this.cache.set(`${sub}:siap:khs`, khs, CachePolicy.SIAP_KHS); // M3: 30-min TTL
+      return khs;
+    } catch (e) {
+      // Retry once on api-credential: invalidate the cached token + re-mint.
+      if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
+        if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
+        ctx = await this.upstream.getContext(sub);
+        const khs = await build();
+        if (sub && this.cache)
+          await this.cache.set(`${sub}:siap:khs`, khs, CachePolicy.SIAP_KHS);
+        return khs;
+      }
+      throw e; // original error on second failure
+    }
+  }
+
   async getKhs(sub?: string): Promise<SiapKhs> {
     return (await this.methodFlight.run(
       `khs:${sub ?? '__anon__'}`,
       async () => {
         if (sub && this.cache) {
-          const hit = await this.cache.get<SiapKhs>(`${sub}:siap:khs`);
-          if (hit) return hit;
-        }
-        let ctx = await this.upstream.getContext(sub);
-        // Batch: ONE token for the whole method (spec §2.2). Retry the whole
-        // batch once on an api-credential (fresh token invalidates the old).
-        const fetchBatch = async <T>(
-          endpoint: string,
-          form?: Record<string, string>,
-        ) => this.apiUpstream.fetch<T>(endpoint, ctx.token, form, ctx.nim);
-        const build = async (): Promise<SiapKhs> => {
-          const daftar =
-            await fetchBatch<Array<Record<string, unknown>>>('v2/daftar_khs');
-          const list = Array.isArray(daftar) ? daftar : [];
-          const ipk = parseApiDaftarKhs(list).ipk;
-          // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
-          // order preserved so `semesters` stays in `list` order.
-          const semesters = await mapWithConcurrency(
-            list,
-            4,
-            async (d) => {
-              const ta = String(d.ta ?? '');
-              // smt_ambil = cumulative index; smt = within-year index that v2/lihat_khss keys on.
-              const smtAmbil = String(d.smt_ambil ?? '');
-              const smt = String(d.smt ?? '');
-              const rows = await fetchBatch<Array<Record<string, unknown>>>(
-                'v2/lihat_khs',
-                { ta, smt_ambil: smtAmbil, smt },
-              );
-              const nilai = parseApiKhs(Array.isArray(rows) ? rows : []);
-              const totalSks = nilai.reduce((s, n) => s + n.sks, 0);
-              const rawIp = nilai.length
-                ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
-                  nilai.reduce((s, n) => s + n.sks, 0)
-                : 0;
-              // Label always from the TA + within-year smt (NOT semesterLabel('',…)).
-              const label = this.semesterLabelFromTa(ta, smt);
-              return {
-                semester: label,
-                ip: round(rawIp),
-                totalSks,
-                nilai,
-              };
-            },
+          const { value } = await this.cache.getStale<SiapKhs>(
+            `${sub}:siap:khs`,
+            () => this.fetchKhs(sub),
+            swrWindow('SIAP_KHS'),
           );
-          return { ipk: ipk ?? 0, semesters }; // ipk REQUIRED on SiapKhs
-        };
-        try {
-          const khs = await build();
-          if (sub && this.cache)
-            await this.cache.set(`${sub}:siap:khs`, khs, CachePolicy.SIAP_KHS); // M3: 30-min TTL
-          return khs;
-        } catch (e) {
-          // Retry once on api-credential: invalidate the cached token + re-mint.
-          if (
-            e instanceof StaleUpstreamError &&
-            e.reason === 'api-credential'
-          ) {
-            if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
-            ctx = await this.upstream.getContext(sub);
-            const khs = await build();
-            if (sub && this.cache)
-              await this.cache.set(`${sub}:siap:khs`, khs, CachePolicy.SIAP_KHS);
-            return khs;
-          }
-          throw e; // original error on second failure
+          return value;
         }
+        return this.fetchKhs(sub);
       },
     )) as SiapKhs;
   }
@@ -439,77 +454,89 @@ export class SiapService {
    * to nothing. Results are deduped by kode (a course code repeats across
    * semesters; the first approved occurrence wins).
    */
+  private async fetchLecturers(
+    sub?: string,
+  ): Promise<{ kode: string; dosen: string }[]> {
+    let ctx = await this.upstream.getContext(sub);
+    const fetchBatch = async <T>(
+      endpoint: string,
+      form?: Record<string, string>,
+    ) => this.apiUpstream.fetch<T>(endpoint, ctx.token, form, ctx.nim);
+    const build = async (): Promise<{ kode: string; dosen: string }[]> => {
+      const [sem, data] = await Promise.all([
+        fetchBatch<{ nm_smt?: string }>('semester_aktif'),
+        fetchBatch<Record<string, unknown>>('data_mahasiswa'),
+      ]);
+      const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
+      const count = currentSemesterCount(angkatan, sem?.nm_smt ?? '');
+      const entries = new Map<string, { kode: string; dosen: string }>();
+      // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
+      // order preserved so ascending-smt dedup order is unchanged.
+      const rowsBySmt = await mapWithConcurrency(
+        Array.from({ length: count }, (_, i) => i + 1),
+        4,
+        async (smt) => {
+          const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
+          const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+          const rows = await fetchBatch<Array<Record<string, unknown>>>(
+            'v2/lihat_irs',
+            {
+              ta: String(ta),
+              smt_ambil: String(smt),
+              smt: String(smtWithinYear),
+            },
+          );
+          return Array.isArray(rows) ? rows : [];
+        },
+      );
+      for (const rows of rowsBySmt) {
+        for (const { kode, dosen } of lecturersFromIrs(rows)) {
+          if (!entries.has(kode)) entries.set(kode, { kode, dosen });
+        }
+      }
+      const result = Array.from(entries.values());
+      // Write INSIDE build() so BOTH the normal and api-credential retry
+      // paths cache; a throw never reaches here. 24h TTL: lecturer lists
+      // change ~never (unlike KHS's 30-min). Inside the single-flight so
+      // concurrent callers don't double-fetch.
+      if (sub && this.cache)
+        await this.cache.set(
+          `${sub}:siap:lecturers`,
+          result,
+          CachePolicy.SIAP_LECTURERS,
+        );
+      return result;
+    };
+    try {
+      return await build();
+    } catch (e) {
+      if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
+        if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
+        ctx = await this.upstream.getContext(sub);
+        return await build();
+      }
+      throw e; // original error on second failure
+    }
+  }
+
   async getLecturers(sub?: string): Promise<{ kode: string; dosen: string }[]> {
     return (await this.methodFlight.run(
       `lecturers:${sub ?? '__anon__'}`,
       async () => {
-        // 24h DataCache read INSIDE the single-flight so concurrent callers
-        // share one fetch; lecturer lists change ~never (mirrors getKhs).
         if (sub && this.cache) {
-          const hit = await this.cache.get<{ kode: string; dosen: string }[]>(
+          const { value } = await this.cache.getStale<
+            {
+              kode: string;
+              dosen: string;
+            }[]
+          >(
             `${sub}:siap:lecturers`,
+            () => this.fetchLecturers(sub),
+            swrWindow('SIAP_LECTURERS'),
           );
-          if (hit) return hit;
+          return value;
         }
-        let ctx = await this.upstream.getContext(sub);
-        const fetchBatch = async <T>(
-          endpoint: string,
-          form?: Record<string, string>,
-        ) => this.apiUpstream.fetch<T>(endpoint, ctx.token, form, ctx.nim);
-        const build = async (): Promise<{ kode: string; dosen: string }[]> => {
-          const [sem, data] = await Promise.all([
-            fetchBatch<{ nm_smt?: string }>('semester_aktif'),
-            fetchBatch<Record<string, unknown>>('data_mahasiswa'),
-          ]);
-          const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
-          const count = currentSemesterCount(angkatan, sem?.nm_smt ?? '');
-          const entries = new Map<string, { kode: string; dosen: string }>();
-          // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
-          // order preserved so ascending-smt dedup order is unchanged.
-          const rowsBySmt = await mapWithConcurrency(
-            Array.from({ length: count }, (_, i) => i + 1),
-            4,
-            async (smt) => {
-              const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
-              const smtWithinYear = smt % 2 === 1 ? 1 : 2;
-              const rows = await fetchBatch<Array<Record<string, unknown>>>(
-                'v2/lihat_irs',
-                {
-                  ta: String(ta),
-                  smt_ambil: String(smt),
-                  smt: String(smtWithinYear),
-                },
-              );
-              return Array.isArray(rows) ? rows : [];
-            },
-          );
-          for (const rows of rowsBySmt) {
-            for (const { kode, dosen } of lecturersFromIrs(rows)) {
-              if (!entries.has(kode)) entries.set(kode, { kode, dosen });
-            }
-          }
-          const result = Array.from(entries.values());
-          // Write INSIDE build() so BOTH the normal and api-credential retry
-          // paths cache; a throw never reaches here. 24h TTL: lecturer lists
-          // change ~never (unlike KHS's 30-min). Inside the single-flight so
-          // concurrent callers don't double-fetch.
-          if (sub && this.cache)
-            await this.cache.set(`${sub}:siap:lecturers`, result, CachePolicy.SIAP_LECTURERS);
-          return result;
-        };
-        try {
-          return await build();
-        } catch (e) {
-          if (
-            e instanceof StaleUpstreamError &&
-            e.reason === 'api-credential'
-          ) {
-            if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
-            ctx = await this.upstream.getContext(sub);
-            return await build();
-          }
-          throw e; // original error on second failure
-        }
+        return this.fetchLecturers(sub);
       },
     )) as { kode: string; dosen: string }[];
   }
@@ -524,24 +551,34 @@ export class SiapService {
    * maps to a stale 401. The header (set below) is the fix. The upstream payload is
    * `{"status":"ok","data":{"_timestamp":"...","count":"0"}}` (count as a STRING).
    */
+  private async fetchNotifications(sub?: string): Promise<SiapNotifications> {
+    const raw = await this.fetchWithContext<Array<Record<string, unknown>>>(
+      sub,
+      'pengumuman',
+    );
+    const items = parseApiNotifications(Array.isArray(raw) ? raw : []);
+    if (sub && this.cache)
+      await this.cache.set(
+        `${sub}:siap:notifications`,
+        items,
+        CachePolicy.SIAP_NOTIFICATIONS,
+      );
+    return items;
+  }
+
   async getNotifications(sub?: string): Promise<SiapNotifications> {
     return (await this.methodFlight.run(
       `notifications:${sub ?? '__anon__'}`,
       async () => {
         if (sub && this.cache) {
-          const hit = await this.cache.get<SiapNotifications>(
+          const { value } = await this.cache.getStale<SiapNotifications>(
             `${sub}:siap:notifications`,
+            () => this.fetchNotifications(sub),
+            swrWindow('SIAP_NOTIFICATIONS'),
           );
-          if (hit) return hit;
+          return value;
         }
-        const raw = await this.fetchWithContext<Array<Record<string, unknown>>>(
-          sub,
-          'pengumuman',
-        );
-        const items = parseApiNotifications(Array.isArray(raw) ? raw : []);
-        if (sub && this.cache)
-          await this.cache.set(`${sub}:siap:notifications`, items, CachePolicy.SIAP_NOTIFICATIONS);
-        return items;
+        return this.fetchNotifications(sub);
       },
     )) as SiapNotifications;
   }
@@ -579,22 +616,31 @@ export class SiapService {
    * by `uuid_pertemuan`, each entry with date/time/room/code. Normalize into a
    * flat `SiapJadwal[]`.
    */
+  private async fetchJadwal(sub?: string): Promise<SiapJadwal[]> {
+    const rows = await this.fetchWithContext<Array<Record<string, unknown>>>(
+      sub,
+      'jadwal',
+    );
+    const out = parseApiJadwal(Array.isArray(rows) ? rows : []);
+    if (sub && this.cache) {
+      await this.cache.set(`${sub}:siap:jadwal`, out, CachePolicy.SIAP_JADWAL);
+    }
+    return out;
+  }
+
   async getJadwal(sub?: string): Promise<SiapJadwal[]> {
     return (await this.methodFlight.run(
       `jadwal:${sub ?? '__anon__'}`,
       async () => {
         if (sub && this.cache) {
-          const hit = await this.cache.get<SiapJadwal[]>(`${sub}:siap:jadwal`);
-          if (hit) return hit;
+          const { value } = await this.cache.getStale<SiapJadwal[]>(
+            `${sub}:siap:jadwal`,
+            () => this.fetchJadwal(sub),
+            swrWindow('SIAP_JADWAL'),
+          );
+          return value;
         }
-        const rows = await this.fetchWithContext<
-          Array<Record<string, unknown>>
-        >(sub, 'jadwal');
-        const out = parseApiJadwal(Array.isArray(rows) ? rows : []);
-        if (sub && this.cache) {
-          await this.cache.set(`${sub}:siap:jadwal`, out, CachePolicy.SIAP_JADWAL);
-        }
-        return out;
+        return this.fetchJadwal(sub);
       },
     )) as SiapJadwal[];
   }
@@ -608,45 +654,52 @@ export class SiapService {
    * under-report the total (e.g. 2 recorded vs 14 scheduled). Joins both by
    * kode MIK; a course missing from jadwal keeps its absen-derived total.
    */
+  private async fetchAbsen(sub?: string): Promise<SiapAbsenItem[]> {
+    const absenRows = await this.fetchWithContext<Array<Record<string, unknown>>>(
+      sub,
+      'absen',
+    );
+    const items = parseApiAbsen(Array.isArray(absenRows) ? absenRows : []);
+    // Override `total`/`hadirPct` with the scheduled-meeting count per course.
+    // `getJadwal` reuses its own cache + token handling for the per-meeting feed.
+    // A jadwal failure must not wipe out absen entirely — fall back to the
+    // absen-derived total (best-effort, mirrors mergeProfileFallback).
+    try {
+      const meetingsByKode = new Map<string, number>();
+      for (const j of await this.getJadwal(sub)) {
+        const kode = j.kode ?? '';
+        if (!kode) continue;
+        meetingsByKode.set(kode, (meetingsByKode.get(kode) ?? 0) + 1);
+      }
+      for (const item of items) {
+        const total = meetingsByKode.get(item.kode);
+        if (total != null && total > 0) {
+          item.total = total;
+          item.hadirPct = Math.round((item.hadir / item.total) * 100);
+        }
+      }
+    } catch {
+      // keep the absen-derived hadir/total/hadirPct
+    }
+    if (sub && this.cache) {
+      await this.cache.set(`${sub}:siap:absen`, items, CachePolicy.SIAP_ABSEN);
+    }
+    return items;
+  }
+
   async getAbsen(sub?: string): Promise<SiapAbsenItem[]> {
     return (await this.methodFlight.run(
       `absen:${sub ?? '__anon__'}`,
       async () => {
         if (sub && this.cache) {
-          const hit = await this.cache.get<SiapAbsenItem[]>(
+          const { value } = await this.cache.getStale<SiapAbsenItem[]>(
             `${sub}:siap:absen`,
+            () => this.fetchAbsen(sub),
+            swrWindow('SIAP_ABSEN'),
           );
-          if (hit) return hit;
+          return value;
         }
-        const absenRows = await this.fetchWithContext<
-          Array<Record<string, unknown>>
-        >(sub, 'absen');
-        const items = parseApiAbsen(Array.isArray(absenRows) ? absenRows : []);
-        // Override `total`/`hadirPct` with the scheduled-meeting count per course.
-        // `getJadwal` reuses its own cache + token handling for the per-meeting feed.
-        // A jadwal failure must not wipe out absen entirely — fall back to the
-        // absen-derived total (best-effort, mirrors mergeProfileFallback).
-        try {
-          const meetingsByKode = new Map<string, number>();
-          for (const j of await this.getJadwal(sub)) {
-            const kode = j.kode ?? '';
-            if (!kode) continue;
-            meetingsByKode.set(kode, (meetingsByKode.get(kode) ?? 0) + 1);
-          }
-          for (const item of items) {
-            const total = meetingsByKode.get(item.kode);
-            if (total != null && total > 0) {
-              item.total = total;
-              item.hadirPct = Math.round((item.hadir / item.total) * 100);
-            }
-          }
-        } catch {
-          // keep the absen-derived hadir/total/hadirPct
-        }
-        if (sub && this.cache) {
-          await this.cache.set(`${sub}:siap:absen`, items, CachePolicy.SIAP_ABSEN);
-        }
-        return items;
+        return this.fetchAbsen(sub);
       },
     )) as SiapAbsenItem[];
   }

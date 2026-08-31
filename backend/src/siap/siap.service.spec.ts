@@ -1,11 +1,10 @@
 import 'reflect-metadata';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { HttpException } from '@nestjs/common';
 import { SiapService } from './siap.service';
 import { SiapUpstreamSession } from './siap-upstream.session';
 import { InMemoryDataCache } from '../cache/in-memory-data.cache';
-import { CachePolicy } from '../cache/cache-policy';
+import { CachePolicy, swrWindow } from '../cache/cache-policy';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import type { SiapApiUpstream } from './siap-api';
 
@@ -30,17 +29,6 @@ function makeAuthedSiapSvc(cache?: any): SiapService {
   );
 }
 
-// Inline minimal profile used by multi-semester tests (getKhs, getLecturers)
-// so the loop count is deterministic regardless of the profile fixture file.
-// angkatan 2024 + semester "2026/2027 Ganjil" => 5 semesters.
-const PROFILE_2024_5_SEM =
-  '<html><div id="tabmhs_profile">' +
-  '<b>NIM</b>:</div><div class="col-sm-9">20999999999999</div>' +
-  '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
-  '<p class="text-muted">2026/2027 Ganjil</p>' +
-  '<p><span class="badge badge-success">AKTIF</span></p>' +
-  '</div></html>';
-
 const EMAIL = 'x@students.undip.ac.id';
 const NIM = '24060124120013';
 
@@ -55,13 +43,7 @@ const STORE = {
  *  the API-surface mocks (checkSessionValid / fetchText / fetchJson) stay
  *  jest.fn so cookie-path methods (fetchProfile, kehadiran) are unimplemented
  *  unless a test overrides them. */
-function makeSeamMock(overrides: Record<string, unknown> = {}): {
-  getContext: jest.Mock;
-  checkSessionValid: jest.Mock;
-  fetchText: jest.Mock;
-  fetchJson: jest.Mock;
-  fetchJsonAllowingHttpErrors: jest.Mock;
-} {
+function makeSeamMock(overrides: Record<string, unknown> = {}): any {
   return {
     getContext: jest
       .fn()
@@ -139,17 +121,15 @@ describe('SiapService', () => {
 
     function svcWith(cookie: string | undefined): SiapService {
       const store = {
-        get: jest
-          .fn()
-          .mockResolvedValue(
-            cookie
-              ? {
-                  siapCookie: cookie,
-                  identity: '24060124120013',
-                  emailSso: 'x@students.undip.ac.id',
-                }
-              : null,
-          ),
+        get: jest.fn().mockResolvedValue(
+          cookie
+            ? {
+                siapCookie: cookie,
+                identity: '24060124120013',
+                emailSso: 'x@students.undip.ac.id',
+              }
+            : null,
+        ),
         set: jest.fn(),
       };
       // REAL seam: getContext reads the session store and mints through
@@ -239,18 +219,28 @@ describe('SiapService', () => {
 
   describe('getProfile', () => {
     it('getProfile caches and returns cached value on hit per user', async () => {
-      const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+      const cache = {
+        get: jest.fn(),
+        getStale: jest.fn(),
+        set: jest.fn(),
+        del: jest.fn(),
+      };
       const svc = makeAuthedSiapSvc(cache);
-      cache.get.mockResolvedValue({
+      const cachedProfile = {
         nama: 'Budi',
         nim: '1',
         prodi: 'TI',
         fakultas: 'F',
         angkatan: '2024',
         status: 'aktif',
-      });
+      };
+      cache.getStale.mockResolvedValue({ value: cachedProfile, stale: false });
       const out = await svc.getProfile('u1');
-      expect(cache.get).toHaveBeenCalledWith('u1:siap:profile');
+      expect(cache.getStale).toHaveBeenCalledWith(
+        'u1:siap:profile',
+        expect.any(Function),
+        swrWindow('SIAP_PROFILE'),
+      );
       expect(out.nama).toBe('Budi');
     });
   });
@@ -260,7 +250,12 @@ describe('SiapService', () => {
     // getIrs resolves angkatan via data_mahasiswa on the batch token; the cache
     // returns the profile for `:siap:profile` and null for `:siap:irs` (so getIrs
     // doesn't short-circuit on its own cache hit).
-    const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+    const cache = {
+      get: jest.fn(),
+      getStale: jest.fn(),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
 
     function irsSvc(): SiapService {
       cache.get.mockImplementation((key: string) =>
@@ -275,7 +270,31 @@ describe('SiapService', () => {
       apiMock.mintToken.mockReset();
       apiMock.fetch.mockReset();
       cache.get.mockReset();
+      cache.getStale.mockReset();
+      cache.getStale.mockImplementation(
+        async (_key: string, fetcher: () => Promise<unknown>) => ({
+          value: await fetcher(),
+          stale: false,
+        }),
+      );
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    });
+
+    it('serves a cached IRS payload through getStale', async () => {
+      const cached = {
+        semester: '2026/2027 Ganjil',
+        totalSks: 9,
+        mataKuliah: [],
+      };
+      cache.getStale.mockResolvedValue({ value: cached, stale: false });
+      const result = await irsSvc().getIrs('u1');
+      expect(result).toEqual(cached);
+      expect(cache.getStale).toHaveBeenCalledWith(
+        'u1:siap:irs',
+        expect.any(Function),
+        swrWindow('SIAP_IRS'),
+      );
+      expect(apiMock.fetch).not.toHaveBeenCalled();
     });
 
     it('maps v2/lihat_irs rows into mataKuliah + computes totalSks (one token batch)', async () => {
@@ -353,7 +372,12 @@ describe('SiapService', () => {
 
   describe('getLecturers', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
-    const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
+    const cache = {
+      get: jest.fn(),
+      getStale: jest.fn(),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
 
     function lecturersSvc(): SiapService {
       cache.get.mockImplementation((key: string) =>
@@ -368,7 +392,27 @@ describe('SiapService', () => {
       apiMock.mintToken.mockReset();
       apiMock.fetch.mockReset();
       cache.get.mockReset();
+      cache.getStale.mockReset();
+      cache.getStale.mockImplementation(
+        async (_key: string, fetcher: () => Promise<unknown>) => ({
+          value: await fetcher(),
+          stale: false,
+        }),
+      );
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    });
+
+    it('serves a cached lecturer payload through getStale', async () => {
+      const cached = [{ kode: 'MIK1624105', dosen: 'Dr. X' }];
+      cache.getStale.mockResolvedValue({ value: cached, stale: false });
+      const result = await lecturersSvc().getLecturers('u1');
+      expect(result).toEqual(cached);
+      expect(cache.getStale).toHaveBeenCalledWith(
+        'u1:siap:lecturers',
+        expect.any(Function),
+        swrWindow('SIAP_LECTURERS'),
+      );
+      expect(apiMock.fetch).not.toHaveBeenCalled();
     });
 
     it('returns [] when every semester IRS has no lecturer', async () => {
@@ -433,14 +477,14 @@ describe('SiapService', () => {
 
     it('serves from cache on hit (0 IRS fetches)', async () => {
       const cached = [{ kode: 'MIK1624105', dosen: 'Dr. X' }];
-      const svc = lecturersSvc(); // helper sets cache.get defaults first
-      cache.get.mockImplementation((key: string) =>
-        key.endsWith(':siap:lecturers')
-          ? Promise.resolve(cached)
-          : Promise.resolve(null),
-      );
-      const result = await svc.getLecturers('u1');
+      cache.getStale.mockResolvedValue({ value: cached, stale: false });
+      const result = await lecturersSvc().getLecturers('u1');
       expect(result).toEqual(cached);
+      expect(cache.getStale).toHaveBeenCalledWith(
+        'u1:siap:lecturers',
+        expect.any(Function),
+        swrWindow('SIAP_LECTURERS'),
+      );
       expect(apiMock.fetch).not.toHaveBeenCalled();
     });
 
@@ -448,12 +492,20 @@ describe('SiapService', () => {
       const setSpy = jest.fn();
       const cache2 = {
         get: jest.fn().mockResolvedValue(null),
+        getStale: jest.fn().mockImplementation(async (_key: string, fetcher: () => Promise<unknown>) => ({
+          value: await fetcher(),
+          stale: false,
+        })),
         set: setSpy,
         del: jest.fn(),
       };
-      const api = { mintToken: jest.fn().mockResolvedValue({ token: 'T', data: {} }), fetch: jest.fn() };
+      const api = {
+        mintToken: jest.fn().mockResolvedValue({ token: 'T', data: {} }),
+        fetch: jest.fn(),
+      };
       api.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'semester_aktif')
+          return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
         return [];
       });
@@ -468,7 +520,15 @@ describe('SiapService', () => {
 
     it('writes the cache after an api-credential retry succeeds', async () => {
       const setSpy = jest.fn();
-      const cache2 = { get: jest.fn().mockResolvedValue(null), set: setSpy, del: jest.fn() };
+      const cache2 = {
+        get: jest.fn().mockResolvedValue(null),
+        getStale: jest.fn().mockImplementation(async (_key: string, fetcher: () => Promise<unknown>) => ({
+          value: await fetcher(),
+          stale: false,
+        })),
+        set: setSpy,
+        del: jest.fn(),
+      };
       const mint = jest
         .fn()
         .mockResolvedValueOnce({ token: 'T1', data: {} })
@@ -477,7 +537,8 @@ describe('SiapService', () => {
         .fn()
         .mockRejectedValueOnce(new StaleUpstreamError('Siap', 'api-credential'))
         .mockImplementation(async (endpoint: string) => {
-          if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+          if (endpoint === 'semester_aktif')
+            return { nm_smt: '2026/2027 Ganjil' };
           if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
           return [];
         });
@@ -496,7 +557,8 @@ describe('SiapService', () => {
       let inFlight = 0;
       let peak = 0;
       apiMock.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'semester_aktif')
+          return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
         inFlight++;
         peak = Math.max(peak, inFlight);
@@ -505,22 +567,13 @@ describe('SiapService', () => {
         return [];
       });
       await lecturersSvc().getLecturers('u1');
-      expect(peak).toBeGreaterThan(1);     // WAS serial (peak 1); now parallel waves
+      expect(peak).toBeGreaterThan(1); // WAS serial (peak 1); now parallel waves
       expect(peak).toBeLessThanOrEqual(4); // bounded by the pool
     });
   });
 
   describe('getNotifications', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
-    const sessionStore = {
-      get: async () => ({
-        siapCookie: 's',
-        identity: '24060124120013',
-        emailSso: 'x@students.undip.ac.id',
-      }),
-      set: jest.fn(),
-    };
-
     function notifSvc(): SiapService {
       return new SiapService(
         undefined,
@@ -592,15 +645,6 @@ describe('SiapService', () => {
 
   describe('getJadwal', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
-    const sessionStore = {
-      get: async () => ({
-        siapCookie: 's',
-        identity: '24060124120013',
-        emailSso: 'x@students.undip.ac.id',
-      }),
-      set: jest.fn(),
-    };
-
     function jadwalSvc(): SiapService {
       return new SiapService(
         undefined,
@@ -613,6 +657,24 @@ describe('SiapService', () => {
     beforeEach(() => {
       apiMock.mintToken.mockReset();
       apiMock.fetch.mockReset();
+    });
+
+    it('serves a cached jadwal payload through getStale', async () => {
+      const cached = [{ matakuliah: 'Sistem Informasi', hari: 'senin', waktu: '09:40:00', sks: 3 }];
+      const cache = {
+        get: jest.fn(),
+        getStale: jest.fn().mockResolvedValue({ value: cached, stale: false }),
+        set: jest.fn(),
+        del: jest.fn(),
+      };
+      const result = await makeService({ api: apiMock, cache }).getJadwal('u1');
+      expect(result).toEqual(cached);
+      expect(cache.getStale).toHaveBeenCalledWith(
+        'u1:siap:jadwal',
+        expect.any(Function),
+        swrWindow('SIAP_JADWAL'),
+      );
+      expect(apiMock.fetch).not.toHaveBeenCalled();
     });
 
     it('maps the API jadwal rows to SiapJadwal[]', async () => {
@@ -659,15 +721,6 @@ describe('SiapService', () => {
 
   describe('getAbsen', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
-    const sessionStore = {
-      get: async () => ({
-        siapCookie: 's',
-        identity: '24060124120013',
-        emailSso: 'x@students.undip.ac.id',
-      }),
-      set: jest.fn(),
-    };
-
     function absenSvc(): SiapService {
       return new SiapService(
         undefined,
@@ -680,6 +733,24 @@ describe('SiapService', () => {
     beforeEach(() => {
       apiMock.mintToken.mockReset();
       apiMock.fetch.mockReset();
+    });
+
+    it('serves a cached absen payload through getStale', async () => {
+      const cached = [{ kode: 'MIK1624503', nama: 'Sistem Informasi', idJadwal: '216328', hadir: 2, total: 14, hadirPct: 14 }];
+      const cache = {
+        get: jest.fn(),
+        getStale: jest.fn().mockResolvedValue({ value: cached, stale: false }),
+        set: jest.fn(),
+        del: jest.fn(),
+      };
+      const result = await makeService({ api: apiMock, cache }).getAbsen('u1');
+      expect(result).toEqual(cached);
+      expect(cache.getStale).toHaveBeenCalledWith(
+        'u1:siap:absen',
+        expect.any(Function),
+        swrWindow('SIAP_ABSEN'),
+      );
+      expect(apiMock.fetch).not.toHaveBeenCalled();
     });
 
     it('computes total from scheduled meetings (jadwal), not from recorded absen rows', async () => {
@@ -924,6 +995,24 @@ describe('SiapService', () => {
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
     });
 
+    it('serves a cached KHS payload through getStale', async () => {
+      const cached = { ipk: 3.65, semesters: [] };
+      const cache = {
+        get: jest.fn(),
+        getStale: jest.fn().mockResolvedValue({ value: cached, stale: false }),
+        set: jest.fn(),
+        del: jest.fn(),
+      };
+      const result = await makeService({ api: apiMock, cache }).getKhs('u1');
+      expect(result).toEqual(cached);
+      expect(cache.getStale).toHaveBeenCalledWith(
+        'u1:siap:khs',
+        expect.any(Function),
+        swrWindow('SIAP_KHS'),
+      );
+      expect(apiMock.fetch).not.toHaveBeenCalled();
+    });
+
     it('parses v2/daftar_khs (ipk) + v2/lihat_khs per semester into SiapKhs', async () => {
       const daftar = [
         { ta: '2024', smt: '1', smt_ambil: '1', ipk: '3.65' },
@@ -1006,7 +1095,7 @@ describe('SiapService', () => {
           return [];
         });
       await khsSvc().getKhs('u1');
-      expect(peak).toBeGreaterThan(1);     // WAS serial (peak 1); now parallel waves
+      expect(peak).toBeGreaterThan(1); // WAS serial (peak 1); now parallel waves
       expect(peak).toBeLessThanOrEqual(4); // bounded by the pool
     });
 
@@ -1142,13 +1231,24 @@ describe('API-backed methods', () => {
     expect(apiMock.mintToken).toHaveBeenCalledTimes(1); // no retry
   });
 
-  it('getNotifications uses the API (pengumuman) and caches', async () => {
-    const cache = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
-    cache.get.mockResolvedValue({ count: 1, items: [{ id: '1' }] });
+  it('getNotifications uses getStale for the payload key (SWR)', async () => {
+    const cache = {
+      get: jest.fn(),
+      getStale: jest.fn().mockResolvedValue({
+        value: { count: 1, items: [{ id: '1' }] },
+        stale: false,
+      }),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
     const svc = makeApiSvc(apiMock, cache);
     const n = await svc.getNotifications('u1');
     expect(n.count).toBe(1);
-    expect(cache.get).toHaveBeenCalledWith('u1:siap:notifications');
+    expect(cache.getStale).toHaveBeenCalledWith(
+      'u1:siap:notifications',
+      expect.any(Function),
+      swrWindow('SIAP_NOTIFICATIONS'),
+    );
   });
 
   it('getAbsen parses API rows (group-by) into SiapAbsenItem[]', async () => {
@@ -1203,7 +1303,7 @@ describe('API-backed methods', () => {
       {
         get: async () => ({ siapCookie: 's', identity: '24060124120013' }),
       } as any,
-      apiMock as SiapApiUpstream,
+      apiMock as unknown as SiapApiUpstream,
     );
     // The constructor wires the seam's scrape fallback to THIS service's
     // fetchProfile; route its fetchText to the profile HTML.
@@ -1235,7 +1335,7 @@ describe('API-backed methods', () => {
       undefined,
       upstreamMock as any,
       { get: async () => ({ siapCookie: 's' }) } as any,
-      apiMock2 as SiapApiUpstream,
+      apiMock2 as unknown as SiapApiUpstream,
     );
     await svc.getKehadiran('u1', '3747942');
     expect(upstreamMock.fetchText).toHaveBeenCalled();
