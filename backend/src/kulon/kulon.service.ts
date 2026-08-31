@@ -35,6 +35,16 @@ import {
   StaleUpstreamError,
 } from '../upstream/upstream-fetch';
 
+/** Detect Moodle's login document when a proxy returns it as a successful page. */
+function isKulonLoginPage(html: string): boolean {
+  return (
+    /<body\b[^>]*\bid=["']page-login-index["']/i.test(html) ||
+    /<form\b[^>]*\bid=["']login["']/i.test(html) ||
+    /<form\b[^>]*\baction=["'][^"']*\/login\/index\.php(?:["'?])/i.test(html) ||
+    /<title>\s*(?:log\s+in|login)\b[^<]*<\/title>/i.test(html)
+  );
+}
+
 // Public data shapes + pure parsing helpers moved to kulon-parse.ts —
 // re-exported so existing imports keep working.
 export type {
@@ -490,7 +500,11 @@ export class KulonService {
         outcome.res,
       );
     }
-    return outcome.res.text();
+    const html = await outcome.res.text();
+    if (isKulonLoginPage(html)) {
+      throw new StaleUpstreamError('Kulon', 'login-redirect');
+    }
+    return html;
   }
 
   /** Fetch and parse one course's assignment index page; [] on transient failure. */

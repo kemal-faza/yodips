@@ -84,7 +84,7 @@ export class RedisDataCache extends DataCache implements OnModuleDestroy {
             void this.swrFlight.run(key, async () => {
               try {
                 const fresh = await fetcher();
-                await this.set(key, fresh, opts.freshTtlMs);
+                await this.set(key, fresh, staleCutoff);
                 this.logger.debug(`[cache] swr refresh ok ${key}`);
               } catch (err) {
                 await handleBackgroundError(
