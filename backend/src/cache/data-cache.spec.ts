@@ -193,6 +193,44 @@ describe('SWR observability', () => {
       spy.mockRestore();
     });
   });
+
+  it('does not log swr refresh ok before the in-memory write succeeds', async () => {
+    await withInMemory(async (c) => {
+      const logger = c['logger'] as unknown as { debug: jest.Mock };
+      const spy = jest
+        .spyOn(logger, 'debug')
+        .mockImplementation(() => undefined);
+      await c.set('k', 'old');
+      ageInMemory(c, 'k', 60_000);
+
+      let resolveWrite!: () => void;
+      const pendingWrite = new Promise<void>((resolve) => {
+        resolveWrite = resolve;
+      });
+      const setSpy = jest.spyOn(c, 'set').mockReturnValue(pendingWrite);
+
+      await c.getStale('k', jest.fn().mockResolvedValue('new'), {
+        freshTtlMs: 30_000,
+        staleTtlMs: 120_000,
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(
+        spy.mock.calls.some((call) =>
+          String(call[0]).includes('swr refresh ok'),
+        ),
+      ).toBe(false);
+
+      resolveWrite();
+      await new Promise((r) => setTimeout(r, 5));
+      expect(
+        spy.mock.calls.some((call) =>
+          String(call[0]).includes('swr refresh ok'),
+        ),
+      ).toBe(true);
+      setSpy.mockRestore();
+      spy.mockRestore();
+    });
+  });
 });
 
 describe('defaultStaleTtlMs', () => {

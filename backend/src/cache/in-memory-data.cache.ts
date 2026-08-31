@@ -42,7 +42,7 @@ export class InMemoryDataCache extends DataCache {
         void this.swrFlight.run(key, async () => {
           try {
             const fresh = await fetcher();
-            this.set(key, fresh, opts.freshTtlMs);
+            await this.set(key, fresh, opts.freshTtlMs);
             this.logger.debug(`[cache] swr refresh ok ${key}`);
           } catch (err) {
             await handleBackgroundError({ del: (k) => this.del(k) }, key, err);
