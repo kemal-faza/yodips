@@ -68,7 +68,7 @@ describe('Kulon page transport error classification', () => {
       // proxy serves its login HTML with a successful status.
       url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
       text: () => Promise.resolve(loginPageHtml()),
-    } as unknown as Response);
+    });
     const service = new KulonService();
 
     await expect(
@@ -104,6 +104,28 @@ describe('Kulon page transport error classification', () => {
 
     await expect(
       internals(service).contentFromHTML('cookie', 9371),
+    ).rejects.toMatchObject({ reason: 'http-not-ok', status: 502 });
+  });
+
+  it('keeps transient assignment-index failures visible through aggregation', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      url: 'https://kulon2.undip.ac.id/mod/assign/index.php?id=9371',
+    });
+    const service = new KulonService();
+    jest.spyOn(internals(service), 'fetchCourses').mockResolvedValue([
+      {
+        id: 9371,
+        fullname: 'Course',
+        shortname: 'C',
+        idnumber: '',
+        timelineStatus: 'past',
+      },
+    ]);
+
+    await expect(
+      internals(service).fetchAllAssignments('cookie', 'sesskey'),
     ).rejects.toMatchObject({ reason: 'http-not-ok', status: 502 });
   });
 });
