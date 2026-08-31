@@ -44,6 +44,10 @@ function loginRedirectResponse() {
   } as unknown as Response;
 }
 
+function loginPageHtml(): string {
+  return '<html><body id="page-login-index"><form id="login" action="/login/index.php"><input name="username"></form></body></html>';
+}
+
 describe('Kulon page transport error classification', () => {
   afterEach(() => jest.restoreAllMocks());
 
@@ -54,6 +58,22 @@ describe('Kulon page transport error classification', () => {
     await expect(
       internals(service).fetchAssignmentDetail('cookie', 777, 42),
     ).rejects.toBeInstanceOf(StaleUpstreamError);
+  });
+
+  it('classifies a 2xx login page body as a typed dead-session error', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      // The redirect target can remain the requested page when an upstream
+      // proxy serves its login HTML with a successful status.
+      url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
+      text: () => Promise.resolve(loginPageHtml()),
+    } as unknown as Response);
+    const service = new KulonService();
+
+    await expect(
+      internals(service).fetchAssignmentDetail('cookie', 777, 42),
+    ).rejects.toMatchObject({ reason: 'login-redirect', status: 401 });
   });
 
   it('keeps dead-session failures visible through assignment aggregation', async () => {

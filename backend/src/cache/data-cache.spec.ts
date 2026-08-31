@@ -166,6 +166,77 @@ describe('getStale (shared behavior)', () => {
     });
   });
 
+  it('successful refresh survives into a second stale window without a sync fetch', async () => {
+    const dateNow = jest.spyOn(Date, 'now');
+    let now = 1_000_000;
+    dateNow.mockImplementation(() => now);
+    try {
+      await withInMemory(async (c) => {
+        await c.set('k', 'old', 600_000);
+        now += 125_000;
+
+        const refresh = jest.fn().mockResolvedValue('new');
+        await c.getStale('k', refresh, {
+          freshTtlMs: 100_000,
+          staleTtlMs: 50_000,
+        });
+        await new Promise((r) => setTimeout(r, 5));
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        // The refreshed value is 125s old at this point: stale, but still
+        // physically retained until the 150s fresh+stale cutoff.
+        now += 125_000;
+        const secondRefresh = jest.fn().mockResolvedValue('second-refresh');
+        const second = await c.getStale('k', secondRefresh, {
+          freshTtlMs: 100_000,
+          staleTtlMs: 50_000,
+        });
+        expect(second).toEqual({ value: 'new', stale: true });
+        // A stale result proves this call did not synchronously fetch. The
+        // fetcher may still be invoked by the expected background refresh.
+        expect(secondRefresh).toHaveBeenCalledTimes(1);
+      });
+
+      await withRedis(async (c) => {
+        now = 1_000_000 + 125_000;
+        let raw = JSON.stringify({
+          v: 'old',
+          fa: 1_000_000,
+          ex: now + 475_000,
+        });
+        mockClient.get.mockImplementation(async () => {
+          if (Date.now() > (JSON.parse(raw) as { ex: number }).ex) return null;
+          return raw;
+        });
+        mockClient.set.mockImplementation(
+          async (_key: string, value: string) => {
+            raw = value;
+          },
+        );
+        const refresh = jest.fn().mockResolvedValue('new');
+        const first = await c.getStale('k', refresh, {
+          freshTtlMs: 100_000,
+          staleTtlMs: 50_000,
+        });
+        expect(first).toEqual({ value: 'old', stale: true });
+        await new Promise((r) => setTimeout(r, 5));
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        now += 125_000;
+        const secondRefresh = jest.fn().mockResolvedValue('second-refresh');
+        const second = await c.getStale('k', secondRefresh, {
+          freshTtlMs: 100_000,
+          staleTtlMs: 50_000,
+        });
+        expect(second).toEqual({ value: 'new', stale: true });
+        expect(secondRefresh).toHaveBeenCalledTimes(1);
+        mockClient.set.mockReset();
+      });
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
   it('retains long-TTL payloads through the capped stale window', async () => {
     const opts = {
       freshTtlMs: 86_400_000,
