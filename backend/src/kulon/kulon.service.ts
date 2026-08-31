@@ -207,6 +207,7 @@ export class KulonService {
             this.fetchCourses(sessionCookie, sesskey, sub, {
               withLecturers: true,
               withProgress: true,
+              skipCacheRead: true,
             }),
           swrWindow('KULON_COURSES'),
         );
@@ -224,9 +225,13 @@ export class KulonService {
     sessionCookie: string,
     sesskey: string,
     sub?: string,
-    opts: { withLecturers?: boolean; withProgress?: boolean } = {},
+    opts: {
+      withLecturers?: boolean;
+      withProgress?: boolean;
+      skipCacheRead?: boolean;
+    } = {},
   ): Promise<KulonCourse[]> {
-    if (sub && this.cache) {
+    if (sub && this.cache && !opts.skipCacheRead) {
       const hit = await this.cache.get<KulonCourse[]>(`${sub}:kulon:courses`);
       if (hit) return hit;
     }
