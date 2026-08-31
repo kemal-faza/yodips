@@ -1,9 +1,16 @@
-import { HttpException, HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { createHash } from 'crypto';
 import {
   classifyUpstreamFetch,
   probeUpstreamSession,
   StaleUpstreamError,
+  upstreamFetchJson,
   UpstreamSessionCheck,
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
@@ -17,7 +24,10 @@ const SESSKEY_FP_LEN = 16;
 /** Cache key for a user's sesskey, fingerprinted by the session cookie so a
  *  re-login (new cookie) is an automatic cache miss. */
 export function sesskeyCacheKey(sub: string, cookie: string): string {
-  const fp = createHash('sha256').update(cookie).digest('hex').slice(0, SESSKEY_FP_LEN);
+  const fp = createHash('sha256')
+    .update(cookie)
+    .digest('hex')
+    .slice(0, SESSKEY_FP_LEN);
   return `${sub}:kulon:sesskey:${fp}`;
 }
 
@@ -93,8 +103,11 @@ export class KulonUpstreamSession {
       return { cookie, sesskey: cached };
     }
     this.logger.debug(`[upstream] kulon sesskey sub=${sub} hit=false`);
-    const sesskey = await this.sesskeyFlight.run(key, () => this.fetchSesskeyOrThrow(cookie));
-    if (this.cache) await this.cache.set(key, sesskey, CachePolicy.KULON_SESSKEY);
+    const sesskey = await this.sesskeyFlight.run(key, () =>
+      this.fetchSesskeyOrThrow(cookie),
+    );
+    if (this.cache)
+      await this.cache.set(key, sesskey, CachePolicy.KULON_SESSKEY);
     return { cookie, sesskey };
   }
 
@@ -110,9 +123,7 @@ export class KulonUpstreamSession {
     });
     switch (outcome.kind) {
       case 'gateway':
-        this.logger.error(
-          `Kulon connection failed: ${outcome.networkMessage}`,
-        );
+        this.logger.error(`Kulon connection failed: ${outcome.networkMessage}`);
         throw new HttpException(
           { message: 'Gagal terhubung ke Kulon', detail: 'BAD_GATEWAY' },
           HttpStatus.BAD_GATEWAY,
@@ -139,18 +150,14 @@ export class KulonUpstreamSession {
     }
   }
 
-  /**
-   * Kulon session-based AJAX API (`lib/ajax/service.php`). Transport only:
-   * throws plain Errors exactly as before so callers' catch-all fallbacks
-   * (e.g. JSON-state → HTML scrape) keep behaving identically.
-   */
+  /** Kulon's session-based AJAX API with shared stale/transient classification. */
   async ajax(
     sessionCookie: string,
     sesskey: string,
     methodname: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    const res = await fetch(
+    const data = await upstreamFetchJson<unknown[]>(
       `${KULON_BASE_URL}/lib/ajax/service.php?sesskey=${sesskey}`,
       {
         method: 'POST',
@@ -160,16 +167,28 @@ export class KulonUpstreamSession {
         },
         body: JSON.stringify([{ index: 0, methodname, args }]),
       },
+      'Kulon',
     );
-    if (!res.ok) throw new Error(`Kulon AJAX failed: ${res.status}`);
-    const data = await res.json();
-    const first = (data as any[])[0];
-    if (first?.error) {
-      throw new Error(
+    const firstValue = Array.isArray(data) ? data[0] : undefined;
+    const first =
+      typeof firstValue === 'object' && firstValue !== null
+        ? (firstValue as {
+            error?: boolean;
+            exception?: { message?: string };
+            data?: unknown;
+          })
+        : undefined;
+    if (!first) {
+      throw new StaleUpstreamError('Kulon', 'api-endpoint');
+    }
+    if (first.error) {
+      throw new StaleUpstreamError(
+        'Kulon',
+        'api-endpoint',
         `Kulon method ${methodname} error: ${first.exception?.message ?? 'unknown'}`,
       );
     }
     this.logger.debug(`[upstream] kulon ajax ${methodname} sub=n/a`);
-    return first?.data;
+    return first.data;
   }
 }

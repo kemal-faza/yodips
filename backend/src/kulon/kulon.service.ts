@@ -30,6 +30,10 @@ import {
   parseSubmissionFromHtml,
 } from './kulon-parse';
 import { htmlToMarkdown } from './html-to-markdown';
+import {
+  classifyUpstreamFetch,
+  StaleUpstreamError,
+} from '../upstream/upstream-fetch';
 
 // Public data shapes + pure parsing helpers moved to kulon-parse.ts —
 // re-exported so existing imports keep working.
@@ -83,7 +87,8 @@ export class KulonService {
    * to DataCache.
    */
   private readonly courseFlight = createKeyedSingleFlight<KulonCourse[]>();
-  private readonly assignmentsFlight = createKeyedSingleFlight<KulonAssignment[]>();
+  private readonly assignmentsFlight =
+    createKeyedSingleFlight<KulonAssignment[]>();
   private readonly allAssignmentsFlight =
     createKeyedSingleFlight<KulonAssignment[]>();
 
@@ -212,9 +217,7 @@ export class KulonService {
     opts: { withLecturers?: boolean; withProgress?: boolean } = {},
   ): Promise<KulonCourse[]> {
     if (sub && this.cache) {
-      const hit = await this.cache.get<KulonCourse[]>(
-        `${sub}:kulon:courses`,
-      );
+      const hit = await this.cache.get<KulonCourse[]>(`${sub}:kulon:courses`);
       if (hit) return hit;
     }
     // Moodle's own timeline classification is the source of truth for
@@ -248,7 +251,8 @@ export class KulonService {
         merged.map(async (c) => ({
           id: c.id,
           progress: parseSectionProgress(
-            (await this.fetchCourseContent(sessionCookie, sesskey, c.id)).sections,
+            (await this.fetchCourseContent(sessionCookie, sesskey, c.id))
+              .sections,
             undefined,
             { isPast: c.timelineStatus === 'past' },
           ),
@@ -287,7 +291,11 @@ export class KulonService {
     // write, so a progress-less run can never poison the public progress-ful
     // cache (the shared `:kulon:courses` key stays progress-complete).
     if (sub && this.cache && opts.withProgress !== false) {
-      await this.cache.set(`${sub}:kulon:courses`, result, CachePolicy.KULON_COURSES);
+      await this.cache.set(
+        `${sub}:kulon:courses`,
+        result,
+        CachePolicy.KULON_COURSES,
+      );
     }
     return result;
   }
@@ -307,8 +315,15 @@ export class KulonService {
         offset: 0,
         sort: 'fullname',
       },
-    )) as { courses: any[] };
-    return (data?.courses ?? []).map((c: any) => ({
+    )) as {
+      courses?: Array<{
+        id: number;
+        fullname: string;
+        shortname?: string;
+        idnumber?: string;
+      }>;
+    };
+    return (data?.courses ?? []).map((c) => ({
       id: c.id,
       // Some courses carry a "[SIAP] ..." prefix (SIAP integration) — keep only
       // the real course name. parseSemester still reads the UN-stripped fullname
@@ -334,14 +349,27 @@ export class KulonService {
           timesortto: 0,
           limitnum: 50,
         },
-      )) as { events: any[] };
+      )) as {
+        events?: Array<{
+          id: number;
+          eventtype: string;
+          instance?: number;
+          activityname?: string;
+          name?: string;
+          modulename: string;
+          timestart: number;
+          overdue?: boolean;
+          url?: string;
+          course?: { id?: number; fullname?: string };
+        }>;
+      };
       return (data?.events ?? [])
-        .filter((e: any) => e.eventtype === 'due')
-        .map((e: any): KulonAssignment => {
+        .filter((e) => e.eventtype === 'due')
+        .map((e): KulonAssignment => {
           const assignmentId = e.instance ?? 0;
           return {
             id: e.id,
-            name: e.activityname ?? e.name,
+            name: e.activityname ?? e.name ?? '',
             module: e.modulename,
             eventType: e.eventtype,
             duedate: e.timestart,
@@ -398,12 +426,10 @@ export class KulonService {
   ): Promise<KulonAssignment[]> {
     // Lecturer merge AND per-course progress scrape skipped on internal calls
     // to keep poll cycles lean — the assignments output carries neither.
-    const courses = await this.fetchCourses(
-      sessionCookie,
-      sesskey,
-      sub,
-      { withLecturers: false, withProgress: false },
-    );
+    const courses = await this.fetchCourses(sessionCookie, sesskey, sub, {
+      withLecturers: false,
+      withProgress: false,
+    });
     const results: KulonAssignment[][] = [];
     const CONCURRENCY = 4;
     const queue = [...courses];
@@ -422,43 +448,99 @@ export class KulonService {
     await Promise.all(workers);
     const flat = results.flat();
     if (sub && this.cache) {
-      await this.cache.set(`${sub}:kulon:assignments:all`, flat, CachePolicy.KULON_ASSIGNMENTS_ALL);
+      await this.cache.set(
+        `${sub}:kulon:assignments:all`,
+        flat,
+        CachePolicy.KULON_ASSIGNMENTS_ALL,
+      );
     }
     return flat;
   }
 
-  /** Fetch and parse one course's assignment index page; [] on any failure. */
+  /** Fetch an authenticated Kulon HTML page with typed session classification. */
+  private async fetchKulonPage(
+    url: string,
+    cookie: string,
+    notFoundCode?: string,
+  ): Promise<string> {
+    const outcome = await classifyUpstreamFetch(url, {
+      headers: { Cookie: cookie },
+      redirect: 'follow',
+    });
+    if (outcome.kind === 'gateway') {
+      throw new StaleUpstreamError('Kulon', outcome.reason);
+    }
+    if (outcome.kind === 'stale') {
+      if (outcome.reason === 'http-not-ok' && outcome.res?.status === 404) {
+        if (notFoundCode) throw new Error(notFoundCode);
+        throw new Error('Kulon page not found');
+      }
+      if (
+        outcome.reason === 'http-not-ok' &&
+        (!outcome.res?.status || outcome.res.status < 400)
+      ) {
+        throw new Error(
+          `Kulon page failed: ${outcome.res?.status ?? 'unknown'}`,
+        );
+      }
+      throw new StaleUpstreamError(
+        'Kulon',
+        outcome.reason,
+        undefined,
+        outcome.res,
+      );
+    }
+    return outcome.res.text();
+  }
+
+  /** Fetch and parse one course's assignment index page; [] on transient failure. */
   private async fetchAssignmentIndex(
     sessionCookie: string,
     courseId: number,
     courseName: string,
   ): Promise<KulonAssignment[]> {
     try {
-      const res = await fetch(
+      const html = await this.fetchKulonPage(
         `${this.baseUrl}/mod/assign/index.php?id=${courseId}`,
-        { headers: { Cookie: sessionCookie }, redirect: 'follow' },
+        sessionCookie,
       );
-      if (!res.ok) return [];
-      return parseAssignmentIndex(await res.text(), courseId, courseName);
-    } catch {
+      return parseAssignmentIndex(html, courseId, courseName);
+    } catch (error) {
+      if (this.isDeadKulonPageError(error)) {
+        throw error;
+      }
       return [];
     }
   }
 
-  /** Fetch and parse one course's quiz index page; [] on any failure. */
+  /** Classify page failures while preserving dead-session evidence for SWR. */
+  private isDeadKulonPageError(error: unknown): error is StaleUpstreamError {
+    if (!(error instanceof StaleUpstreamError)) return false;
+    if (error.reason === 'http-not-ok') return error.getStatus() === 401;
+    return (
+      error.reason === 'login-redirect' ||
+      error.reason === 'redirect-loop' ||
+      error.reason === 'html-content-type' ||
+      error.reason === 'malformed-json'
+    );
+  }
+
+  /** Fetch and parse one course's quiz index page; [] on transient failure. */
   private async fetchQuizIndex(
     sessionCookie: string,
     courseId: number,
     courseName: string,
   ): Promise<KulonAssignment[]> {
     try {
-      const res = await fetch(
+      const html = await this.fetchKulonPage(
         `${this.baseUrl}/mod/quiz/index.php?id=${courseId}`,
-        { headers: { Cookie: sessionCookie }, redirect: 'follow' },
+        sessionCookie,
       );
-      if (!res.ok) return [];
-      return parseQuizIndex(await res.text(), courseId, courseName);
-    } catch {
+      return parseQuizIndex(html, courseId, courseName);
+    } catch (error) {
+      if (this.isDeadKulonPageError(error)) {
+        throw error;
+      }
       return [];
     }
   }
@@ -473,7 +555,8 @@ export class KulonService {
     if (sub && this.cache) {
       const { value } = await this.cache.getStale<KulonAssignmentDetail>(
         `${sub}:kulon:assignment-detail:${cmid}`,
-        () => this.fetchAssignmentDetail(sessionCookie, cmid, assignmentId, sub),
+        () =>
+          this.fetchAssignmentDetail(sessionCookie, cmid, assignmentId, sub),
         swrWindow('KULON_ASSIGNMENT_DETAIL'),
       );
       return value;
@@ -493,13 +576,11 @@ export class KulonService {
     sub?: string,
   ): Promise<KulonAssignmentDetail> {
     const pageUrl = `${this.baseUrl}/mod/assign/view.php?id=${cmid}`;
-    const res = await fetch(pageUrl, {
-      headers: { Cookie: sessionCookie },
-      redirect: 'follow',
-    });
-    if (res.status === 404) throw new Error('ASSIGNMENT_NOT_FOUND');
-    if (!res.ok) throw new Error(`Kulon assignment page failed: ${res.status}`);
-    const html = await res.text();
+    const html = await this.fetchKulonPage(
+      pageUrl,
+      sessionCookie,
+      'ASSIGNMENT_NOT_FOUND',
+    );
     const descriptionHtml = extractDescription(html);
     const detail = {
       assignmentId,
@@ -528,13 +609,12 @@ export class KulonService {
     cookie: string,
     courseId: number,
   ): Promise<KulonCourseContent> {
-    const res = await fetch(`${this.baseUrl}/course/view.php?id=${courseId}`, {
-      headers: { Cookie: cookie },
-      redirect: 'follow',
-    });
-    if (res.status === 404) throw new Error('COURSE_NOT_FOUND');
-    if (!res.ok) throw new Error(`Kulon course page failed: ${res.status}`);
-    return parseContentHtml(await res.text(), courseId);
+    const html = await this.fetchKulonPage(
+      `${this.baseUrl}/course/view.php?id=${courseId}`,
+      cookie,
+      'COURSE_NOT_FOUND',
+    );
+    return parseContentHtml(html, courseId);
   }
 
   /**
