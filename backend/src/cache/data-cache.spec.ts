@@ -14,6 +14,11 @@ const mockClient = {
 };
 (Redis as unknown as jest.Mock).mockImplementation(() => mockClient);
 
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockClient.get.mockResolvedValue(null);
+});
+
 async function withInMemory(
   fn: (c: InMemoryDataCache) => Promise<void>,
 ): Promise<void> {
@@ -106,6 +111,86 @@ describe('getStale (shared behavior)', () => {
     });
   });
 
+  it('treats staleTtlMs as a duration after fresh TTL, including the cutoff boundary', async () => {
+    await withInMemory(async (c) => {
+      await c.set('inside', 'old', 600_000);
+      ageInMemory(c, 'inside', 125_000);
+      const inside = await c.getStale(
+        'inside',
+        jest.fn().mockResolvedValue('new'),
+        {
+          freshTtlMs: 100_000,
+          staleTtlMs: 50_000,
+        },
+      );
+      expect(inside).toEqual({ value: 'old', stale: true });
+
+      await c.set('at-cutoff', 'old', 600_000);
+      ageInMemory(c, 'at-cutoff', 150_000);
+      const fetcher = jest.fn().mockResolvedValue('new');
+      const atCutoff = await c.getStale('at-cutoff', fetcher, {
+        freshTtlMs: 100_000,
+        staleTtlMs: 50_000,
+      });
+      expect(atCutoff).toEqual({ value: 'new', stale: false });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('retains a freshly fetched entry through its stale cutoff', async () => {
+    await withInMemory(async (c) => {
+      await c.getStale('k', jest.fn().mockResolvedValue('fresh'), {
+        freshTtlMs: 30_000,
+        staleTtlMs: 120_000,
+      });
+      const e = (
+        c as unknown as {
+          entries: Map<string, { fetchedAt: number; expiresAt: number }>;
+        }
+      ).entries.get('k')!;
+      expect(e.expiresAt - e.fetchedAt).toBe(150_000);
+    });
+
+    await withRedis(async (c) => {
+      const fetcher = jest.fn().mockResolvedValue('fresh');
+      await c.getStale('k', fetcher, {
+        freshTtlMs: 30_000,
+        staleTtlMs: 120_000,
+      });
+      expect(mockClient.set).toHaveBeenCalledWith(
+        'sso:cache:k',
+        expect.any(String),
+        'EX',
+        150,
+      );
+    });
+  });
+
+  it('retains long-TTL payloads through the capped stale window', async () => {
+    const opts = {
+      freshTtlMs: 86_400_000,
+      staleTtlMs: defaultStaleTtlMs(86_400_000),
+    };
+    await withInMemory(async (c) => {
+      await c.getStale('k', jest.fn().mockResolvedValue('fresh'), opts);
+      const e = (
+        c as unknown as {
+          entries: Map<string, { fetchedAt: number; expiresAt: number }>;
+        }
+      ).entries.get('k')!;
+      expect(e.expiresAt - e.fetchedAt).toBe(88_200_000);
+    });
+    await withRedis(async (c) => {
+      await c.getStale('k', jest.fn().mockResolvedValue('fresh'), opts);
+      expect(mockClient.set).toHaveBeenCalledWith(
+        'sso:cache:k',
+        expect.any(String),
+        'EX',
+        88_200,
+      );
+    });
+  });
+
   it('concurrent stale reads → single background fetch (piggyback)', async () => {
     await withInMemory(async (c) => {
       await c.set('k', 'old');
@@ -157,6 +242,27 @@ describe('getStale (shared behavior)', () => {
     });
   });
 
+  it('Redis stale entry serves immediately and refreshes in the background', async () => {
+    mockClient.get.mockResolvedValue(
+      JSON.stringify({
+        v: 'old',
+        fa: Date.now() - 60_000,
+        ex: Date.now() + 120_000,
+      }),
+    );
+    await withRedis(async (c) => {
+      const fetcher = jest.fn().mockResolvedValue('new');
+      const r = await c.getStale('k', fetcher, {
+        freshTtlMs: 30_000,
+        staleTtlMs: 120_000,
+      });
+      expect(r).toEqual({ value: 'old', stale: true });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(mockClient.set).toHaveBeenCalled();
+    });
+  });
+
   it('legacy bare JSON entry (no fa) → treated as miss (sync fetch)', async () => {
     mockClient.get.mockResolvedValue('[{"id":1}]');
     await withRedis(async (c) => {
@@ -166,6 +272,12 @@ describe('getStale (shared behavior)', () => {
         staleTtlMs: 20_000,
       });
       expect(r).toEqual({ value: 'fresh', stale: false });
+      expect(mockClient.set).toHaveBeenCalledWith(
+        'sso:cache:k',
+        expect.any(String),
+        'EX',
+        30,
+      );
     });
   });
 });
