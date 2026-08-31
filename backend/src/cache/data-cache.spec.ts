@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { Logger } from '@nestjs/common';
 import { InMemoryDataCache } from './in-memory-data.cache';
 import { RedisDataCache } from './redis-data.cache';
 import { defaultStaleTtlMs, handleBackgroundError } from './data-cache';
@@ -39,6 +40,13 @@ function ageInMemory(c: InMemoryDataCache, key: string, ageMs: number): void {
   ).entries;
   const e = entries.get(key);
   if (e) e.fetchedAt = Date.now() - ageMs;
+}
+
+/** Clear the refresh-backoff hold for a key (simulates the window lapsing). */
+function clearHold(c: InMemoryDataCache | RedisDataCache, key: string): void {
+  const holds = (c as unknown as { refreshHold: Map<string, number> })
+    .refreshHold;
+  holds.delete(key);
 }
 
 describe('getStale (shared behavior)', () => {
@@ -204,15 +212,13 @@ describe('getStale (shared behavior)', () => {
           fa: 1_000_000,
           ex: now + 475_000,
         });
-        mockClient.get.mockImplementation(async () => {
+        mockClient.get.mockImplementation(() => {
           if (Date.now() > (JSON.parse(raw) as { ex: number }).ex) return null;
           return raw;
         });
-        mockClient.set.mockImplementation(
-          async (_key: string, value: string) => {
-            raw = value;
-          },
-        );
+        mockClient.set.mockImplementation((_key: string, value: string) => {
+          raw = value;
+        });
         const refresh = jest.fn().mockResolvedValue('new');
         const first = await c.getStale('k', refresh, {
           freshTtlMs: 100_000,
@@ -281,6 +287,58 @@ describe('getStale (shared behavior)', () => {
     });
   });
 
+  it('expired read joins an in-flight stale refresh instead of fetching twice', async () => {
+    const opts = { freshTtlMs: 30_000, staleTtlMs: 40_000 };
+
+    await withInMemory(async (c) => {
+      let resolveRefresh!: (value: string) => void;
+      const refreshResult = new Promise<string>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const fetcher = jest.fn().mockReturnValue(refreshResult);
+      await c.set('k', 'old', 600_000);
+      ageInMemory(c, 'k', 60_000);
+      await expect(c.getStale('k', fetcher, opts)).resolves.toEqual({
+        value: 'old',
+        stale: true,
+      });
+
+      ageInMemory(c, 'k', 80_000);
+      const expired = c.getStale('k', fetcher, opts);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      resolveRefresh('new');
+      await expect(expired).resolves.toEqual({ value: 'new', stale: false });
+    });
+
+    await withRedis(async (c) => {
+      let raw = JSON.stringify({
+        v: 'old',
+        fa: Date.now() - 60_000,
+        ex: Date.now() + 600_000,
+      });
+      mockClient.get.mockImplementation(() => Promise.resolve(raw));
+      let resolveRefresh!: (value: string) => void;
+      const refreshResult = new Promise<string>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const fetcher = jest.fn().mockReturnValue(refreshResult);
+      await expect(c.getStale('k', fetcher, opts)).resolves.toEqual({
+        value: 'old',
+        stale: true,
+      });
+
+      raw = JSON.stringify({
+        v: 'old',
+        fa: Date.now() - 80_000,
+        ex: Date.now() + 600_000,
+      });
+      const expired = c.getStale('k', fetcher, opts);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      resolveRefresh('new');
+      await expect(expired).resolves.toEqual({ value: 'new', stale: false });
+    });
+  });
+
   it('background 401 (dead session) → key deleted; next get is miss', async () => {
     await withInMemory(async (c) => {
       await c.set('k', 'old');
@@ -310,6 +368,84 @@ describe('getStale (shared behavior)', () => {
       });
       await new Promise((r) => setTimeout(r, 5));
       expect(await c.get('k')).toBe('old');
+    });
+  });
+
+  it('transient failure backs off refresh re-attempts for the same key', async () => {
+    const opts = { freshTtlMs: 30_000, staleTtlMs: 120_000 };
+
+    await withInMemory(async (c) => {
+      await c.set('k', 'old');
+      ageInMemory(c, 'k', 60_000);
+      const fetcher = jest
+        .fn()
+        .mockRejectedValue(new StaleUpstreamError('Kulon', 'fetch-threw'));
+      const r1 = await c.getStale('k', fetcher, opts);
+      expect(r1).toEqual({ value: 'old', stale: true });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      // A second stale read right after the failure must NOT re-attempt the
+      // refresh (that is the unbounded upstream loop).
+      const r2 = await c.getStale('k', fetcher, opts);
+      expect(r2).toEqual({ value: 'old', stale: true });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      // Once the backoff window lapses, the next stale read attempts again.
+      clearHold(c, 'k');
+      const r3 = await c.getStale('k', fetcher, opts);
+      expect(r3).toEqual({ value: 'old', stale: true });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+
+    await withRedis(async (c) => {
+      const raw = JSON.stringify({
+        v: 'old',
+        fa: Date.now() - 60_000,
+        ex: Date.now() + 600_000,
+      });
+      mockClient.get.mockResolvedValue(raw);
+      const fetcher = jest
+        .fn()
+        .mockRejectedValue(new StaleUpstreamError('Kulon', 'fetch-threw'));
+      const r1 = await c.getStale('k', fetcher, opts);
+      expect(r1).toEqual({ value: 'old', stale: true });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      const r2 = await c.getStale('k', fetcher, opts);
+      expect(r2).toEqual({ value: 'old', stale: true });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      clearHold(c, 'k');
+      const r3 = await c.getStale('k', fetcher, opts);
+      expect(r3).toEqual({ value: 'old', stale: true });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('unexpected refresh errors also back off (fallback branch)', async () => {
+    await withInMemory(async (c) => {
+      await c.set('k', 'old');
+      ageInMemory(c, 'k', 60_000);
+      const fetcher = jest.fn().mockRejectedValue(new Error('boom'));
+      await c.getStale('k', fetcher, {
+        freshTtlMs: 30_000,
+        staleTtlMs: 120_000,
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      await c.getStale('k', fetcher, {
+        freshTtlMs: 30_000,
+        staleTtlMs: 120_000,
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(fetcher).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -463,6 +599,42 @@ describe('handleBackgroundError', () => {
     );
     expect(del).not.toHaveBeenCalled();
   });
+  it('onKeep fires for transient and unexpected failures, never for dead sessions', async () => {
+    const del = jest.fn().mockResolvedValue(undefined);
+    const onKeep = jest.fn();
+    await handleBackgroundError(
+      { del, onKeep },
+      'k',
+      new StaleUpstreamError('Kulon', 'fetch-threw'),
+    );
+    await handleBackgroundError({ del, onKeep }, 'k', new Error('unexpected'));
+    await handleBackgroundError(
+      { del, onKeep },
+      'k',
+      new StaleUpstreamError('Siap', 'login-redirect'),
+    );
+    expect(onKeep).toHaveBeenCalledTimes(2);
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+  it('cache deletion failure is contained and logged', async () => {
+    const del = jest.fn().mockRejectedValue(new Error('redis unavailable'));
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    try {
+      await expect(
+        handleBackgroundError(
+          { del },
+          'k',
+          new StaleUpstreamError('Kulon', 'login-redirect'),
+        ),
+      ).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('[cache] swr hard-expire failed k'),
+        expect.stringContaining('redis unavailable'),
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
   it('http-not-ok with upstream 4xx → statusForStaleReason maps to 401 → dead-session (hard-expire)', async () => {
     const del = jest.fn().mockResolvedValue(undefined);
     await handleBackgroundError(
@@ -474,6 +646,40 @@ describe('handleBackgroundError', () => {
     );
     expect(del).toHaveBeenCalledTimes(1);
   });
+  it('transient 502 reasons → debug log without warning or deletion', async () => {
+    const del = jest.fn().mockResolvedValue(undefined);
+    const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation();
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    try {
+      await handleBackgroundError(
+        { del },
+        'k',
+        new StaleUpstreamError('Kulon', 'fetch-threw'),
+      );
+      await handleBackgroundError(
+        { del },
+        'k',
+        new StaleUpstreamError('Kulon', 'api-endpoint'),
+      );
+      await handleBackgroundError(
+        { del },
+        'k',
+        new StaleUpstreamError('Kulon', 'http-not-ok', undefined, {
+          status: 502,
+        } as Response),
+      );
+      expect(debug).toHaveBeenCalledTimes(3);
+      expect(debug).toHaveBeenCalledWith(
+        expect.stringContaining('(transient, keeping stale)'),
+      );
+      expect(warn).not.toHaveBeenCalled();
+      expect(del).not.toHaveBeenCalled();
+    } finally {
+      debug.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it('no-api-upstream → transient (no del)', async () => {
     const del = jest.fn().mockResolvedValue(undefined);
     await handleBackgroundError(
