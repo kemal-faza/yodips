@@ -24,10 +24,21 @@ function makeAuthedSiapSvc(cache?: any): SiapService {
   const store = { get: async () => ({ siapCookie: 'sia_app_session=TEST' }) };
   return new SiapService(
     cache,
-    new SiapUpstreamSession(store as any, cache as any),
+    new SiapUpstreamSession(store as any, cache),
     store as any,
   );
 }
+
+// Inline minimal profile used by multi-semester tests (getKhs, getLecturers)
+// so the loop count is deterministic regardless of the profile fixture file.
+// angkatan 2024 + semester "2026/2027 Ganjil" => 5 semesters.
+const PROFILE_2024_5_SEM =
+  '<html><div id="tabmhs_profile">' +
+  '<b>NIM</b>:</div><div class="col-sm-9">20999999999999</div>' +
+  '<b>Angkatan</b>:</div><div class="col-sm-9">2024</div>' +
+  '<p class="text-muted">2026/2027 Ganjil</p>' +
+  '<p><span class="badge badge-success">AKTIF</span></p>' +
+  '</div></html>';
 
 const EMAIL = 'x@students.undip.ac.id';
 const NIM = '24060124120013';
@@ -67,8 +78,8 @@ function makeRealSeamService(
 ): SiapService {
   return new SiapService(
     cache,
-    new SiapUpstreamSession(store as any, cache as any, api as any),
-    store as any,
+    new SiapUpstreamSession(store, cache, api as any),
+    store,
     api as any,
   );
 }
@@ -226,22 +237,17 @@ describe('SiapService', () => {
         del: jest.fn(),
       };
       const svc = makeAuthedSiapSvc(cache);
-      const cachedProfile = {
-        nama: 'Budi',
-        nim: '1',
-        prodi: 'TI',
-        fakultas: 'F',
-        angkatan: '2024',
-        status: 'aktif',
-      };
-      cache.getStale.mockResolvedValue({ value: cachedProfile, stale: false });
+      cache.getStale.mockResolvedValue({
+        value: PROFILE_2024_5_SEM,
+        stale: false,
+      });
       const out = await svc.getProfile('u1');
       expect(cache.getStale).toHaveBeenCalledWith(
         'u1:siap:profile',
         expect.any(Function),
         swrWindow('SIAP_PROFILE'),
       );
-      expect(out.nama).toBe('Budi');
+      expect(out).toEqual(PROFILE_2024_5_SEM);
     });
   });
 
@@ -492,10 +498,14 @@ describe('SiapService', () => {
       const setSpy = jest.fn();
       const cache2 = {
         get: jest.fn().mockResolvedValue(null),
-        getStale: jest.fn().mockImplementation(async (_key: string, fetcher: () => Promise<unknown>) => ({
-          value: await fetcher(),
-          stale: false,
-        })),
+        getStale: jest
+          .fn()
+          .mockImplementation(
+            async (_key: string, fetcher: () => Promise<unknown>) => ({
+              value: await fetcher(),
+              stale: false,
+            }),
+          ),
         set: setSpy,
         del: jest.fn(),
       };
@@ -522,10 +532,14 @@ describe('SiapService', () => {
       const setSpy = jest.fn();
       const cache2 = {
         get: jest.fn().mockResolvedValue(null),
-        getStale: jest.fn().mockImplementation(async (_key: string, fetcher: () => Promise<unknown>) => ({
-          value: await fetcher(),
-          stale: false,
-        })),
+        getStale: jest
+          .fn()
+          .mockImplementation(
+            async (_key: string, fetcher: () => Promise<unknown>) => ({
+              value: await fetcher(),
+              stale: false,
+            }),
+          ),
         set: setSpy,
         del: jest.fn(),
       };
@@ -660,7 +674,14 @@ describe('SiapService', () => {
     });
 
     it('serves a cached jadwal payload through getStale', async () => {
-      const cached = [{ matakuliah: 'Sistem Informasi', hari: 'senin', waktu: '09:40:00', sks: 3 }];
+      const cached = [
+        {
+          matakuliah: 'Sistem Informasi',
+          hari: 'senin',
+          waktu: '09:40:00',
+          sks: 3,
+        },
+      ];
       const cache = {
         get: jest.fn(),
         getStale: jest.fn().mockResolvedValue({ value: cached, stale: false }),
@@ -736,7 +757,16 @@ describe('SiapService', () => {
     });
 
     it('serves a cached absen payload through getStale', async () => {
-      const cached = [{ kode: 'MIK1624503', nama: 'Sistem Informasi', idJadwal: '216328', hadir: 2, total: 14, hadirPct: 14 }];
+      const cached = [
+        {
+          kode: 'MIK1624503',
+          nama: 'Sistem Informasi',
+          idJadwal: '216328',
+          hadir: 2,
+          total: 14,
+          hadirPct: 14,
+        },
+      ];
       const cache = {
         get: jest.fn(),
         getStale: jest.fn().mockResolvedValue({ value: cached, stale: false }),
@@ -1140,7 +1170,7 @@ function makeApiSvc(
   };
   return new SiapService(
     cache,
-    new SiapUpstreamSession(store as any, cache as any, apiMock as any),
+    new SiapUpstreamSession(store as any, cache, apiMock as any),
     store as any,
     apiMock as SiapApiUpstream,
   );
