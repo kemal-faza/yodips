@@ -548,6 +548,10 @@ export function advance(
           ],
         };
       case "HANDOFF_NEEDS_SERVICE":
+        const nav: FlowEffect =
+          state.tabId == null
+            ? { kind: "openTab", url: deps.loginUrl(event.service) }
+            : { kind: "navigateTab", url: deps.loginUrl(event.service) };
         return {
           state: {
             ...state,
@@ -559,7 +563,7 @@ export function advance(
           },
           effects: [
             ...clearFor(event.service),
-            { kind: "navigateTab", url: deps.loginUrl(event.service) },
+            nav,
             { kind: "scheduleTimers", deadline: deadline(deps) },
           ],
         };

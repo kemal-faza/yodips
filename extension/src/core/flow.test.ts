@@ -473,6 +473,23 @@ describe("handoff decisions", () => {
     expect(r.state.service).toBe("siap");
     expect(r.effects).toContainEqual({ kind: "clearCookies", service: "siap" });
   });
+  it("HANDOFF_NEEDS_SERVICE:siap opens a tab when no login tab is tracked", () => {
+    const s = { ...st(), core: "handoff", tabId: null } as FlowState;
+    const r = advance(s, { type: "HANDOFF_NEEDS_SERVICE", service: "siap" }, D);
+    expect(r.state.core).toBe("authing");
+    expect(r.state.service).toBe("siap");
+    expect(r.effects).toContainEqual({ kind: "openTab", url: "SIAP_URL" });
+    expect(r.effects).not.toContainEqual({
+      kind: "navigateTab",
+      url: "SIAP_URL",
+    });
+  });
+  it("HANDOFF_NEEDS_SERVICE:siap navigates the tracked login tab", () => {
+    const s = { ...st(), core: "handoff", tabId: 7 } as FlowState;
+    const r = advance(s, { type: "HANDOFF_NEEDS_SERVICE", service: "siap" }, D);
+    expect(r.effects).toContainEqual({ kind: "navigateTab", url: "SIAP_URL" });
+    expect(r.effects).not.toContainEqual({ kind: "openTab", url: "SIAP_URL" });
+  });
   it("HANDOFF_STALE service:sso re-auths sso in the SAME tab (no closeAllTabs; clear downstream + upstream)", () => {
     const s = {
       ...st(),
