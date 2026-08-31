@@ -1,10 +1,8 @@
 import 'reflect-metadata';
+import type { DataCache } from '../cache/data-cache';
 import { KulonService } from './kulon.service';
 import type { KulonUpstreamSession } from './kulon-upstream.session';
-import type {
-  KulonCourse,
-  KulonCourseContent,
-} from './kulon-parse';
+import type { KulonCourse, KulonCourseContent } from './kulon-parse';
 
 type CacheMock = {
   get: jest.Mock;
@@ -82,7 +80,9 @@ function makeUpstream(): UpstreamMock {
                   : [],
             });
           }
-          return Promise.reject(new Error(`unexpected upstream method: ${method}`));
+          return Promise.reject(
+            new Error(`unexpected upstream method: ${method}`),
+          );
         },
       ),
   };
@@ -110,7 +110,7 @@ describe('KulonService SWR course refresh', () => {
     );
     const upstream = makeUpstream();
     const service = new KulonService(
-      cache as any,
+      cache as unknown as DataCache,
       undefined,
       upstream as unknown as KulonUpstreamSession,
     );
@@ -120,11 +120,13 @@ describe('KulonService SWR course refresh', () => {
     const result = await service.getCourses('u1');
 
     expect(result[0]?.id).toBe(1);
-    const staleCalls = cache.getStale.mock.calls as unknown as Array<[
-      string,
-      () => Promise<KulonCourse[]>,
-      { freshTtlMs: number; staleTtlMs: number },
-    ]>;
+    const staleCalls = cache.getStale.mock.calls as unknown as Array<
+      [
+        string,
+        () => Promise<KulonCourse[]>,
+        { freshTtlMs: number; staleTtlMs: number },
+      ]
+    >;
     expect(staleCalls[0]?.[0]).toBe('u1:kulon:courses');
     expect(staleCalls[0]?.[2].freshTtlMs).toBeGreaterThan(0);
     expect(cache.get).not.toHaveBeenCalledWith('u1:kulon:courses');
@@ -141,7 +143,7 @@ describe('KulonService SWR course refresh', () => {
     cache.get.mockResolvedValue(cachedCourses);
     const upstream = makeUpstream();
     const service = new KulonService(
-      cache as any,
+      cache as unknown as DataCache,
       undefined,
       upstream as unknown as KulonUpstreamSession,
     );
