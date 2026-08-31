@@ -448,18 +448,21 @@ export class KulonService {
     const results: KulonAssignment[][] = [];
     const CONCURRENCY = 4;
     const queue = [...courses];
-    const workers = Array(Math.min(CONCURRENCY, queue.length))
-      .fill(0)
-      .map(async () => {
-        while (queue.length) {
-          const c = queue.shift()!;
-          const [assignRows, quizRows] = await Promise.all([
-            this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname),
-            this.fetchQuizIndex(sessionCookie, c.id, c.fullname),
-          ]);
-          results.push(assignRows, quizRows);
-        }
-      });
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i += 1) {
+      workers.push(
+        (async () => {
+          while (queue.length) {
+            const c = queue.shift()!;
+            const [assignRows, quizRows] = await Promise.all([
+              this.fetchAssignmentIndex(sessionCookie, c.id, c.fullname),
+              this.fetchQuizIndex(sessionCookie, c.id, c.fullname),
+            ]);
+            results.push(assignRows, quizRows);
+          }
+        })(),
+      );
+    }
     await Promise.all(workers);
     const flat = results.flat();
     if (sub && this.cache) {
@@ -525,26 +528,14 @@ export class KulonService {
       );
       return parseAssignmentIndex(html, courseId, courseName);
     } catch (error) {
-      if (this.isDeadKulonPageError(error)) {
-        throw error;
-      }
+      // Typed upstream failures must reject aggregation so SWR preserves the
+      // previous complete list instead of replacing it with a partial one.
+      if (error instanceof StaleUpstreamError) throw error;
       return [];
     }
   }
 
-  /** Classify page failures while preserving dead-session evidence for SWR. */
-  private isDeadKulonPageError(error: unknown): error is StaleUpstreamError {
-    if (!(error instanceof StaleUpstreamError)) return false;
-    if (error.reason === 'http-not-ok') return error.getStatus() === 401;
-    return (
-      error.reason === 'login-redirect' ||
-      error.reason === 'redirect-loop' ||
-      error.reason === 'html-content-type' ||
-      error.reason === 'malformed-json'
-    );
-  }
-
-  /** Fetch and parse one course's quiz index page; [] on transient failure. */
+  /** Fetch and parse one course's quiz index page; [] on non-upstream failure. */
   private async fetchQuizIndex(
     sessionCookie: string,
     courseId: number,
@@ -557,9 +548,9 @@ export class KulonService {
       );
       return parseQuizIndex(html, courseId, courseName);
     } catch (error) {
-      if (this.isDeadKulonPageError(error)) {
-        throw error;
-      }
+      // See fetchAssignmentIndex: do not swallow typed session or gateway
+      // failures during the aggregate refresh.
+      if (error instanceof StaleUpstreamError) throw error;
       return [];
     }
   }
