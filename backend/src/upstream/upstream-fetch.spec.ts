@@ -475,6 +475,46 @@ describe('timedFetch', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(runtime.events).toHaveLength(0);
   });
+
+  it.each([
+    ['foreign host', 'https://siap.undip.ac.id/my/'],
+    ['loopback origin', 'http://127.0.0.1/my/'],
+  ])('rejects %s before calling fetch', async (_label, url) => {
+    const runtime = recordingRuntime();
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(resStub({ url: 'https://kulon2.undip.ac.id/my/' }));
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, url, {}, async () => ({
+        ok: true,
+        value: 'unreachable',
+        outcome: 'ok',
+      })),
+    ).rejects.toThrow('Upstream URL origin is not allowed');
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(runtime.events).toHaveLength(0);
+  });
+
+  it.each([
+    ['method', 'https://kulon2.undip.ac.id/my/', { method: 'POST' }],
+    ['path', 'https://kulon2.undip.ac.id/other/', {}],
+  ])('rejects invalid route %s before calling fetch', async (_label, url, init) => {
+    const runtime = recordingRuntime();
+    const fetch = jest.spyOn(global, 'fetch');
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, url, init, async () => ({
+        ok: true,
+        value: 'unreachable',
+        outcome: 'ok',
+      })),
+    ).rejects.toThrow('Upstream URL does not match route context');
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(runtime.events).toHaveLength(0);
+  });
 });
 
 describe('upstreamFetchText', () => {
@@ -522,6 +562,35 @@ describe('upstreamFetchText', () => {
       null,
       undefined,
     );
+  });
+
+  it('keeps the stale error when an async onStale hook rejects', async () => {
+    const hookError = new Error('callback failure must not leak');
+    const onStale = jest.fn(async () => {
+      throw hookError;
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(resStub({ ok: false, status: 403 }));
+
+      await expect(
+        upstreamFetchText('https://up.test/x', {}, 'Siap', { onStale }),
+      ).rejects.toBeInstanceOf(StaleUpstreamError);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(onStale).toHaveBeenCalledWith('http-not-ok', null, undefined);
+      expect(unhandled).toHaveLength(0);
+      expect(errorLog).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      errorLog.mockRestore();
+    }
   });
 });
 
