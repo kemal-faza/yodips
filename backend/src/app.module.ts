@@ -13,6 +13,7 @@ import { SiapModule } from './siap/siap.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PairingModule } from './pairing/pairing.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { ObservabilityModule } from './observability/observability.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
         limit: 30,
       },
     ]),
+    ObservabilityModule,
     SSOModule,
     CacheModule,
     AuthModule,
