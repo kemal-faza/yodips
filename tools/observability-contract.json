@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "cacheLabels": [
+    "kulon.courses",
+    "kulon.assignments_all",
+    "kulon.assignment_detail",
+    "kulon.course_content",
+    "kulon.sesskey",
+    "siap.profile",
+    "siap.irs",
+    "siap.khs",
+    "siap.lecturers",
+    "siap.notifications",
+    "siap.jadwal",
+    "siap.absen",
+    "siap.identity",
+    "siap.token",
+    "auth.probe",
+    "unknown"
+  ],
+  "cacheBackends": ["memory", "redis"],
+  "cacheReadOutcomes": ["fresh", "stale", "hit", "miss", "expired"],
+  "cacheRefreshOutcomes": ["started", "ok", "error", "hard_expire"],
+  "cacheRefreshReasons": ["dead-session", "transient", "unexpected", "unknown"],
+  "upstreamServices": ["kulon", "siap", "siap-api", "sso", "microsoft"],
+  "upstreamOutcomes": ["ok", "http_error", "network_error", "parse_error", "stale"],
+  "upstreamReasons": [
+    "redirect-loop",
+    "http-not-ok",
+    "login-redirect",
+    "html-content-type",
+    "malformed-json",
+    "no-cookie",
+    "api-credential",
+    "api-endpoint",
+    "no-api-upstream",
+    "no-emailSso",
+    "non-json-process",
+    "fetch-threw",
+    "stale",
+    "unknown"
+  ],
+  "upstreamRoutes": [
+    { "service": "kulon", "operation": "session_probe", "route": "GET /my/" },
+    { "service": "siap", "operation": "session_probe", "route": "GET /pages/mhs/dashboard" },
+    { "service": "kulon", "operation": "session_identity", "route": "GET /my/" },
+    { "service": "kulon", "operation": "profile_identity", "route": "GET /user/profile.php" },
+    { "service": "kulon", "operation": "assignments_index", "route": "GET /mod/assign/index.php" },
+    { "service": "kulon", "operation": "quiz_index", "route": "GET /mod/quiz/index.php" },
+    { "service": "kulon", "operation": "assignment_detail", "route": "GET /mod/assign/view.php" },
+    { "service": "kulon", "operation": "course_content", "route": "GET /course/view.php" },
+    { "service": "kulon", "operation": "sesskey", "route": "GET /my/" },
+    { "service": "kulon", "operation": "ajax", "route": "POST /lib/ajax/service.php" },
+    { "service": "siap", "operation": "profile_page", "route": "GET /pages/mhs/dashboard" },
+    { "service": "siap", "operation": "attendance_page", "route": "POST /jadwal_mahasiswa/mhs/jadwal/get_absen" },
+    { "service": "siap", "operation": "notification_action", "route": "POST /pages/mhs/dashboard/ajax/unread" },
+    { "service": "siap", "operation": "qr_presence", "route": "POST /master_perkuliahan/mhs/absensi/process/" },
+    { "service": "siap-api", "operation": "mintToken", "route": "POST /index.php/mahasiswa_sso" },
+    { "service": "siap-api", "operation": "semester_aktif", "route": "POST /index.php/semester_aktif" },
+    { "service": "siap-api", "operation": "data_mahasiswa", "route": "POST /index.php/data_mahasiswa" },
+    { "service": "siap-api", "operation": "v2/lihat_irs", "route": "POST /index.php/v2/lihat_irs" },
+    { "service": "siap-api", "operation": "v2/daftar_khs", "route": "POST /index.php/v2/daftar_khs" },
+    { "service": "siap-api", "operation": "v2/lihat_khs", "route": "POST /index.php/v2/lihat_khs" },
+    { "service": "siap-api", "operation": "jadwal", "route": "POST /index.php/jadwal" },
+    { "service": "siap-api", "operation": "absen", "route": "POST /index.php/absen" },
+    { "service": "siap-api", "operation": "pengumuman", "route": "POST /index.php/pengumuman" },
+    { "service": "sso", "operation": "login_page", "route": "GET /auth/user/login" },
+    { "service": "sso", "operation": "session_exchange", "route": "POST /sso/auth_v2" },
+    { "service": "microsoft", "operation": "token_exchange", "route": "POST /oauth2/v2.0/token" }
+  ],
+  "eventShapes": {
+    "cache.read": {
+      "plain": { "outcomes": ["hit", "miss"], "required": ["cache", "backend", "outcome", "durationMs"], "forbidden": ["ageMs", "freshTtlMs", "staleTtlMs"] },
+      "staleMiss": { "outcomes": ["miss"], "required": ["cache", "backend", "outcome", "freshTtlMs", "staleTtlMs", "durationMs"], "forbidden": ["ageMs"] },
+      "existing": { "outcomes": ["fresh", "stale", "expired"], "required": ["cache", "backend", "outcome", "ageMs", "freshTtlMs", "staleTtlMs", "durationMs"], "forbidden": [] }
+    },
+    "cache.refresh": {
+      "started": { "outcomes": ["started"], "required": ["cache", "backend", "outcome", "freshTtlMs", "staleTtlMs"], "forbidden": ["durationMs", "reason"] },
+      "ok": { "outcomes": ["ok"], "required": ["cache", "backend", "outcome", "freshTtlMs", "staleTtlMs", "durationMs"], "forbidden": ["reason"] },
+      "terminal": { "outcomes": ["error", "hard_expire"], "required": ["cache", "backend", "outcome", "freshTtlMs", "staleTtlMs", "durationMs", "reason"], "forbidden": [] }
+    },
+    "upstream.request": {
+      "ok": { "outcomes": ["ok"], "required": ["service", "operation", "route", "outcome", "status", "durationMs"], "forbidden": ["reason"] },
+      "httpError": { "outcomes": ["http_error"], "required": ["service", "operation", "route", "outcome", "status", "durationMs", "reason"], "forbidden": [] },
+      "networkError": { "outcomes": ["network_error"], "required": ["service", "operation", "route", "outcome", "durationMs", "reason"], "forbidden": ["status"] },
+      "parseError": { "outcomes": ["parse_error"], "required": ["service", "operation", "route", "outcome", "status", "durationMs", "reason"], "forbidden": [] },
+      "stale": { "outcomes": ["stale"], "required": ["service", "operation", "route", "outcome", "status", "durationMs", "reason"], "forbidden": [] }
+    }
+  }
+}
