@@ -2,24 +2,66 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
-  Logger,
+  Inject,
   Optional,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import {
-  classifyUpstreamFetch,
-  probeUpstreamSession,
+  getTimedFetchTransportReason,
+  isLoginRedirect,
+  timedFetch,
+  type UpstreamAttemptResult,
+  type UpstreamRouteContext,
   StaleUpstreamError,
-  upstreamFetchJson,
   UpstreamSessionCheck,
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
 import { SessionStore } from '../session/session-store';
 import { createKeyedSingleFlight } from '../common/single-flight';
+import {
+  createNoopTelemetryRuntime,
+  TELEMETRY_RUNTIME,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
+import type { UpstreamReason } from '../observability/telemetry-contract';
 
 export const KULON_BASE_URL = 'https://kulon2.undip.ac.id';
 const SESSKEY_FP_LEN = 16;
+
+function route(
+  operation: UpstreamRouteContext['operation'],
+  path: UpstreamRouteContext['route'],
+): UpstreamRouteContext {
+  return Object.freeze({ service: 'kulon', operation, route: path }) as UpstreamRouteContext;
+}
+
+export const KULON_ROUTE_CONTEXTS = Object.freeze({
+  sessionProbe: route('session_probe', 'GET /my/'),
+  sessionIdentity: route('session_identity', 'GET /my/'),
+  profileIdentity: route('profile_identity', 'GET /user/profile.php'),
+  assignmentsIndex: route('assignments_index', 'GET /mod/assign/index.php'),
+  quizIndex: route('quiz_index', 'GET /mod/quiz/index.php'),
+  assignmentDetail: route('assignment_detail', 'GET /mod/assign/view.php'),
+  courseContent: route('course_content', 'GET /course/view.php'),
+  sesskey: route('sesskey', 'GET /my/'),
+  ajax: route('ajax', 'POST /lib/ajax/service.php'),
+});
+
+function staleResult<T>(
+  error: unknown,
+  reason: UpstreamReason,
+  status: number,
+): UpstreamAttemptResult<T> {
+  return { ok: false, error, outcome: 'stale', reason, status };
+}
+
+function httpErrorResult<T>(
+  error: unknown,
+  status: number,
+): UpstreamAttemptResult<T> {
+  return { ok: false, error, outcome: 'http_error', reason: 'http-not-ok', status };
+}
 
 /** Cache key for a user's sesskey, fingerprinted by the session cookie so a
  *  re-login (new cookie) is an automatic cache miss. */
@@ -49,17 +91,19 @@ function hasSesskeyMarker(html: string): boolean {
  */
 @Injectable()
 export class KulonUpstreamSession {
-  private readonly logger = new Logger(KulonUpstreamSession.name);
   private readonly sessionStore?: SessionStore;
   private readonly cache?: DataCache;
+  private readonly runtime: TelemetryRuntime;
   private readonly sesskeyFlight = createKeyedSingleFlight<string>();
 
   constructor(
     @Optional() sessionStore?: SessionStore,
     @Optional() cache?: DataCache,
+    @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
     this.sessionStore = sessionStore;
     this.cache = cache;
+    this.runtime = runtime ?? createNoopTelemetryRuntime();
   }
 
   /**
@@ -69,14 +113,37 @@ export class KulonUpstreamSession {
    * `stale` without throwing.
    */
   checkSessionValid(cookie: string): Promise<UpstreamSessionCheck> {
-    return probeUpstreamSession({
-      url: `${KULON_BASE_URL}/my/`,
-      cookie,
-      service: 'Kulon',
-      isAuthenticatedPage: (_finalUrl, html) => hasSesskeyMarker(html),
-      onEvidence: (evidence) =>
-        this.logger.warn(`Kulon session probe: ${evidence}`),
-    });
+    if (!cookie) return Promise.resolve({ valid: false, reason: 'no-cookie' });
+    return timedFetch(
+      this.runtime,
+      KULON_ROUTE_CONTEXTS.sessionProbe,
+      `${KULON_BASE_URL}/my/`,
+      { headers: { Cookie: cookie }, redirect: 'follow' },
+      async (res): Promise<UpstreamAttemptResult<UpstreamSessionCheck>> => {
+        if (!res.ok) {
+          return httpErrorResult(
+            new StaleUpstreamError('Kulon', 'http-not-ok'),
+            res.status,
+          );
+        }
+        if (isLoginRedirect(res.url)) {
+          return staleResult(
+            new StaleUpstreamError('Kulon', 'login-redirect'),
+            'login-redirect',
+            res.status,
+          );
+        }
+        const html = await res.text();
+        if (!hasSesskeyMarker(html)) {
+          return staleResult(
+            new StaleUpstreamError('Kulon', 'login-redirect'),
+            'login-redirect',
+            res.status,
+          );
+        }
+        return { ok: true, value: { valid: true, reason: 'ok' }, outcome: 'ok', status: res.status };
+      },
+    ).catch(() => ({ valid: false, reason: 'stale' as const }));
   }
 
   /** Cookie + cached sesskey for a user. Cookie is ALWAYS read from the session
@@ -99,10 +166,8 @@ export class KulonUpstreamSession {
     const key = sesskeyCacheKey(sub, cookie);
     const cached = await this.cache.get<string>(key);
     if (cached) {
-      this.logger.debug(`[upstream] kulon sesskey sub=${sub} hit=true`);
       return { cookie, sesskey: cached };
     }
-    this.logger.debug(`[upstream] kulon sesskey sub=${sub} hit=false`);
     const sesskey = await this.sesskeyFlight.run(key, () =>
       this.fetchSesskeyOrThrow(cookie),
     );
@@ -117,36 +182,66 @@ export class KulonUpstreamSession {
    * BAD_GATEWAY, non-ok status → "gangguan" 401.
    */
   async fetchSesskeyOrThrow(cookie: string): Promise<string> {
-    const outcome = await classifyUpstreamFetch(`${KULON_BASE_URL}/my/`, {
-      headers: { Cookie: cookie },
-      redirect: 'follow',
-    });
-    switch (outcome.kind) {
-      case 'gateway':
-        this.logger.error(`Kulon connection failed: ${outcome.networkMessage}`);
-        throw new HttpException(
+    try {
+      return await timedFetch(
+        this.runtime,
+        KULON_ROUTE_CONTEXTS.sesskey,
+        `${KULON_BASE_URL}/my/`,
+        { headers: { Cookie: cookie }, redirect: 'follow' },
+        async (res): Promise<UpstreamAttemptResult<string>> => {
+          if (!res.ok) {
+            // Keep the historical response-less StaleUpstreamError: even a
+            // 5xx sesskey response is an outward 401 compatibility shape.
+            return httpErrorResult(
+              new StaleUpstreamError(
+                'Kulon',
+                'http-not-ok',
+                'Kulon mengalami gangguan. Silakan login ulang via SSO',
+              ),
+              res.status,
+            );
+          }
+          if (isLoginRedirect(res.url)) {
+            return staleResult(
+              new StaleUpstreamError('Kulon', 'login-redirect'),
+              'login-redirect',
+              res.status,
+            );
+          }
+          const html = await res.text();
+          try {
+            return {
+              ok: true,
+              value: parseSesskey(html),
+              outcome: 'ok',
+              status: res.status,
+            };
+          } catch (error) {
+            if (!hasSesskeyMarker(html)) {
+              return staleResult(
+                new StaleUpstreamError('Kulon', 'login-redirect'),
+                'login-redirect',
+                res.status,
+              );
+            }
+            throw error;
+          }
+        },
+      );
+    } catch (error) {
+      const transportReason = getTimedFetchTransportReason(error);
+      if (transportReason === 'fetch-threw') {
+        const gateway = new HttpException(
           { message: 'Gagal terhubung ke Kulon', detail: 'BAD_GATEWAY' },
           HttpStatus.BAD_GATEWAY,
-        );
-      case 'stale':
-        throw outcome.reason === 'http-not-ok'
-          ? new StaleUpstreamError(
-              'Kulon',
-              outcome.reason,
-              'Kulon mengalami gangguan. Silakan login ulang via SSO',
-            )
-          : new StaleUpstreamError('Kulon', outcome.reason);
-      case 'ok': {
-        const html = await outcome.res.text();
-        try {
-          return parseSesskey(html);
-        } catch (e) {
-          if (!hasSesskeyMarker(html)) {
-            throw new StaleUpstreamError('Kulon', 'login-redirect');
-          }
-          throw e;
-        }
+        ) as HttpException & { reason?: string };
+        gateway.reason = transportReason;
+        throw gateway;
       }
+      if (transportReason === 'redirect-loop') {
+        throw new StaleUpstreamError('Kulon', transportReason);
+      }
+      throw error;
     }
   }
 
@@ -157,38 +252,84 @@ export class KulonUpstreamSession {
     methodname: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    const data = await upstreamFetchJson<unknown[]>(
-      `${KULON_BASE_URL}/lib/ajax/service.php?sesskey=${sesskey}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Cookie: sessionCookie,
+    try {
+      return await timedFetch(
+        this.runtime,
+        KULON_ROUTE_CONTEXTS.ajax,
+        `${KULON_BASE_URL}/lib/ajax/service.php?sesskey=${encodeURIComponent(sesskey)}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: sessionCookie,
+          },
+          body: JSON.stringify([{ index: 0, methodname, args }]),
         },
-        body: JSON.stringify([{ index: 0, methodname, args }]),
-      },
-      'Kulon',
-    );
-    const firstValue = Array.isArray(data) ? data[0] : undefined;
-    const first =
-      typeof firstValue === 'object' && firstValue !== null
-        ? (firstValue as {
-            error?: boolean;
-            exception?: { message?: string };
-            data?: unknown;
-          })
-        : undefined;
-    if (!first) {
-      throw new StaleUpstreamError('Kulon', 'api-endpoint');
-    }
-    if (first.error) {
-      throw new StaleUpstreamError(
-        'Kulon',
-        'api-endpoint',
-        `Kulon method ${methodname} error: ${first.exception?.message ?? 'unknown'}`,
+        async (res): Promise<UpstreamAttemptResult<unknown>> => {
+        if (!res.ok) {
+          return httpErrorResult(
+            new StaleUpstreamError('Kulon', 'http-not-ok', undefined, res),
+            res.status,
+          );
+        }
+        if (isLoginRedirect(res.url)) {
+          return staleResult(
+            new StaleUpstreamError('Kulon', 'login-redirect', undefined, res),
+            'login-redirect',
+            res.status,
+          );
+        }
+        let data: unknown;
+        try {
+          data = await res.json();
+        } catch {
+          const reason = /text\/html/i.test(res.headers?.get?.('content-type') ?? '')
+            ? 'html-content-type'
+            : 'malformed-json';
+          return {
+            ok: false,
+            error: new StaleUpstreamError('Kulon', reason, undefined, res),
+            outcome: 'parse_error',
+            reason,
+            status: res.status,
+          };
+        }
+        const firstValue = Array.isArray(data) ? data[0] : undefined;
+        const first =
+          typeof firstValue === 'object' && firstValue !== null
+            ? (firstValue as {
+                error?: boolean;
+                exception?: { message?: string };
+                data?: unknown;
+              })
+            : undefined;
+        if (!first) {
+          return staleResult(
+            new StaleUpstreamError('Kulon', 'api-endpoint'),
+            'api-endpoint',
+            res.status,
+          );
+        }
+        if (first.error) {
+          return staleResult(
+            new StaleUpstreamError(
+              'Kulon',
+              'api-endpoint',
+              `Kulon method ${methodname} error: ${first.exception?.message ?? 'unknown'}`,
+            ),
+            'api-endpoint',
+            res.status,
+          );
+        }
+        return { ok: true, value: first.data, outcome: 'ok', status: res.status };
+        },
       );
+    } catch (error) {
+      const transportReason = getTimedFetchTransportReason(error);
+      if (transportReason) {
+        throw new StaleUpstreamError('Kulon', transportReason);
+      }
+      throw error;
     }
-    this.logger.debug(`[upstream] kulon ajax ${methodname} sub=n/a`);
-    return first.data;
   }
 }

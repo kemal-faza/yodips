@@ -4,6 +4,7 @@ import { SessionStore } from '../session/session-store';
 import type { CapturedSession } from '../playwright/playwright-auth.service';
 import { DataCache } from '../cache/data-cache';
 import { InMemoryDataCache } from '../cache/in-memory-data.cache';
+import type { TelemetryRuntime } from '../observability/telemetry';
 
 class FakeStore extends SessionStore {
   constructor(public map: Map<string, unknown>) {
@@ -31,6 +32,22 @@ class FakeStore extends SessionStore {
 
 function htmlWithSesskey(sk: string) {
   return `<html><body><input type="hidden" name="sesskey" value="${sk}"/></body></html>`;
+}
+
+function recordingRuntime(): { runtime: TelemetryRuntime; events: unknown[] } {
+  const events: unknown[] = [];
+  let now = 0n;
+  return {
+    events,
+    runtime: {
+      sink: { record: (event) => events.push(event) },
+      wallNowMs: () => 0,
+      monotonicNowNs: () => {
+        now += 1_000_000n;
+        return now;
+      },
+    },
+  };
 }
 
 describe('KulonUpstreamSession.ajax', () => {
@@ -71,6 +88,109 @@ describe('KulonUpstreamSession.ajax', () => {
       status: 502,
     });
   });
+
+  it('parses application errors inside the timed ajax attempt and emits one safe event', async () => {
+    const { runtime, events } = recordingRuntime();
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/lib/ajax/service.php?sesskey=secret',
+      json: async () => [
+        { error: true, exception: { message: 'Web service is disabled' } },
+      ],
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(undefined, undefined, runtime);
+
+    await expect(seam.ajax('cookie', 'secret', 'method', { courseid: 42 })).rejects.toMatchObject({
+      reason: 'api-endpoint',
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        service: 'kulon',
+        operation: 'ajax',
+        route: 'POST /lib/ajax/service.php',
+        outcome: 'stale',
+        reason: 'api-endpoint',
+      }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain('secret');
+    expect(JSON.stringify(events)).not.toContain('42');
+  });
+
+  it('records exactly one session-probe event for a valid sesskey page', async () => {
+    const { runtime, events } = recordingRuntime();
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: async () => htmlWithSesskey('sesskey'),
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(undefined, undefined, runtime);
+
+    await expect(seam.checkSessionValid('cookie')).resolves.toEqual({
+      valid: true,
+      reason: 'ok',
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        service: 'kulon',
+        operation: 'session_probe',
+        route: 'GET /my/',
+        outcome: 'ok',
+        status: 200,
+      }),
+    ]);
+  });
+
+  it('keeps sesskey transport failures as a 502 compatibility response with a reason', async () => {
+    const { runtime, events } = recordingRuntime();
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('connection reset'));
+    const seam = new KulonUpstreamSession(undefined, undefined, runtime);
+
+    await expect(seam.fetchSesskeyOrThrow('cookie')).rejects.toMatchObject({
+      status: 502,
+      response: { message: 'Gagal terhubung ke Kulon', detail: 'BAD_GATEWAY' },
+      reason: 'fetch-threw',
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        service: 'kulon',
+        operation: 'sesskey',
+        route: 'GET /my/',
+        outcome: 'network_error',
+        reason: 'fetch-threw',
+      }),
+    ]);
+  });
+
+  it.each([401, 302, 503])(
+    'keeps a non-ok sesskey response-less error at outward 401 (%i)',
+    async (status) => {
+      const { runtime, events } = recordingRuntime();
+      jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: false,
+        status,
+        url: 'https://kulon2.undip.ac.id/my/',
+      } as unknown as Response);
+      const seam = new KulonUpstreamSession(undefined, undefined, runtime);
+
+      await expect(seam.fetchSesskeyOrThrow('cookie')).rejects.toMatchObject({
+        status: 401,
+        reason: 'http-not-ok',
+      });
+      expect(events).toEqual([
+        expect.objectContaining({
+          operation: 'sesskey',
+          route: 'GET /my/',
+          outcome: 'http_error',
+          status,
+          reason: 'http-not-ok',
+        }),
+      ]);
+    },
+  );
 });
 
 describe('KulonUpstreamSession.getContext', () => {

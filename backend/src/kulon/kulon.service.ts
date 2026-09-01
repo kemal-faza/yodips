@@ -1,11 +1,12 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { DataCache } from '../cache/data-cache';
-import { CachePolicy, swrWindow } from '../cache/cache-policy';
+import { swrWindow } from '../cache/cache-policy';
 import { SiapService } from '../siap/siap.service';
 import { SessionStore } from '../session/session-store';
 import {
   KulonUpstreamSession,
+  KULON_ROUTE_CONTEXTS,
   parseSesskey as parseSesskeyHtml,
 } from './kulon-upstream.session';
 import type {
@@ -31,9 +32,47 @@ import {
 } from './kulon-parse';
 import { htmlToMarkdown } from './html-to-markdown';
 import {
-  classifyUpstreamFetch,
+  getTimedFetchTransportReason,
+  isLoginRedirect,
   StaleUpstreamError,
+  timedFetch,
+  type UpstreamAttemptResult,
+  type UpstreamRouteContext,
 } from '../upstream/upstream-fetch';
+import {
+  createNoopTelemetryRuntime,
+  TELEMETRY_RUNTIME,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
+import type { UpstreamReason } from '../observability/telemetry-contract';
+
+const kulonPageCompatibilityErrors = new WeakSet<object>();
+
+/** Mark the exact legacy plain Error used for expected Moodle page incompatibilities. */
+export function markKulonPageCompatibilityError(error: unknown): void {
+  if (typeof error === 'object' && error !== null) {
+    kulonPageCompatibilityErrors.add(error);
+  }
+}
+
+/** Identify a marked 404/3xx page error without changing its class or message. */
+export function isKulonPageCompatibilityError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null
+    ? kulonPageCompatibilityErrors.has(error)
+    : false;
+}
+
+function httpErrorResult<T>(error: unknown, status: number): UpstreamAttemptResult<T> {
+  return { ok: false, error, outcome: 'http_error', reason: 'http-not-ok', status };
+}
+
+function staleResult<T>(
+  error: unknown,
+  reason: UpstreamReason,
+  status: number,
+): UpstreamAttemptResult<T> {
+  return { ok: false, error, outcome: 'stale', reason, status };
+}
 
 /** Detect Moodle's login document when a proxy returns it as a successful page. */
 function isKulonLoginPage(html: string): boolean {
@@ -73,16 +112,19 @@ export class KulonService {
   private readonly baseUrl = 'https://kulon2.undip.ac.id';
   /** One session seam: probe + sesskey + AJAX transport + stale classification. */
   private readonly upstream: KulonUpstreamSession;
+  private readonly runtime: TelemetryRuntime;
 
   constructor(
     @Optional() cache?: DataCache,
     @Optional() siap?: SiapService,
     @Optional() upstream?: KulonUpstreamSession,
     @Optional() sessionStore?: SessionStore,
+    @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
     this.cache = cache;
     this.siap = siap;
-    this.upstream = upstream ?? new KulonUpstreamSession();
+    this.runtime = runtime ?? createNoopTelemetryRuntime();
+    this.upstream = upstream ?? new KulonUpstreamSession(sessionStore, cache, this.runtime);
     this.sessionStore = sessionStore;
   }
 
@@ -138,14 +180,43 @@ export class KulonService {
   async getSessionIdentity(sessionCookie: string): Promise<string | null> {
     if (!sessionCookie) return null;
     try {
-      const res = await fetch(`${this.baseUrl}/my/`, {
-        headers: { Cookie: sessionCookie },
-        redirect: 'follow',
-      });
-      if (!res.ok) return null;
-      const html = await res.text();
-      const sesskey = this.parseSesskey(html);
-      const username = await this.trySiteInfo(sessionCookie, sesskey);
+      const page = await timedFetch(
+        this.runtime,
+        KULON_ROUTE_CONTEXTS.sessionIdentity,
+        `${this.baseUrl}/my/`,
+        { headers: { Cookie: sessionCookie }, redirect: 'follow' },
+        async (res): Promise<UpstreamAttemptResult<{ sesskey: string }>> => {
+          if (!res.ok) {
+            return httpErrorResult(new StaleUpstreamError('Kulon', 'http-not-ok'), res.status);
+          }
+          if (isLoginRedirect(res.url)) {
+            return staleResult(
+              new StaleUpstreamError('Kulon', 'login-redirect'),
+              'login-redirect',
+              res.status,
+            );
+          }
+          const html = await res.text();
+          try {
+            return {
+              ok: true,
+              value: { sesskey: this.parseSesskey(html) },
+              outcome: 'ok',
+              status: res.status,
+            };
+          } catch (error) {
+            if (!/name="sesskey"/.test(html)) {
+              return staleResult(
+                new StaleUpstreamError('Kulon', 'login-redirect'),
+                'login-redirect',
+                res.status,
+              );
+            }
+            throw error;
+          }
+        },
+      );
+      const username = await this.trySiteInfo(sessionCookie, page.sesskey);
       if (username) return username;
       return this.identityFromProfilePage(sessionCookie);
     } catch {
@@ -176,21 +247,38 @@ export class KulonService {
     sessionCookie: string,
   ): Promise<string | null> {
     try {
-      const res = await fetch(`${this.baseUrl}/user/profile.php`, {
-        headers: { Cookie: sessionCookie },
-        redirect: 'follow',
-      });
-      if (!res.ok) return null;
-      const page = await res.text();
-      const title = page.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
-      // The page title is "Full Name NIM: Public profile". Prefer the number
-      // that directly precedes ": Public profile" — a phone/NIK-like number
-      // elsewhere in the title (home address, NIP, etc.) can be 8-16 digits and
-      // would otherwise be mistaken for the NIM (B13). Fall back to the first
-      // 8-16 digit run only if the ": Public profile" anchor is absent.
-      const anchored = title.match(/(\d{8,16})\s*:\s*Public profile/i);
-      if (anchored) return anchored[1];
-      return title.match(/\b\d{8,16}\b/)?.[0] ?? null;
+      return await timedFetch(
+        this.runtime,
+        KULON_ROUTE_CONTEXTS.profileIdentity,
+        `${this.baseUrl}/user/profile.php`,
+        { headers: { Cookie: sessionCookie }, redirect: 'follow' },
+        async (res): Promise<UpstreamAttemptResult<string | null>> => {
+          if (!res.ok) {
+            return httpErrorResult(new StaleUpstreamError('Kulon', 'http-not-ok'), res.status);
+          }
+          if (isLoginRedirect(res.url)) {
+            return staleResult(
+              new StaleUpstreamError('Kulon', 'login-redirect'),
+              'login-redirect',
+              res.status,
+            );
+          }
+          const page = await res.text();
+          const title = page.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
+          // The page title is "Full Name NIM: Public profile". Prefer the number
+          // that directly precedes ": Public profile" — a phone/NIK-like number
+          // elsewhere in the title (home address, NIP, etc.) can be 8-16 digits and
+          // would otherwise be mistaken for the NIM (B13). Fall back to the first
+          // 8-16 digit run only if the ": Public profile" anchor is absent.
+          const anchored = title.match(/(\d{8,16})\s*:\s*Public profile/i);
+          return {
+            ok: true,
+            value: anchored?.[1] ?? title.match(/\b\d{8,16}\b/)?.[0] ?? null,
+            outcome: 'ok',
+            status: res.status,
+          };
+        },
+      );
     } catch {
       return null;
     }
@@ -302,16 +390,8 @@ export class KulonService {
         /* best-effort: omit lecturers on failure */
       }
     }
-    // Cache write skipped on withProgress:false runs — they read but never
-    // write, so a progress-less run can never poison the public progress-ful
-    // cache (the shared `:kulon:courses` key stays progress-complete).
-    if (sub && this.cache && opts.withProgress !== false) {
-      await this.cache.set(
-        `${sub}:kulon:courses`,
-        result,
-        CachePolicy.KULON_COURSES,
-      );
-    }
+    // Payload persistence belongs exclusively to DataCache.getStale's refresh
+    // owner. Internal progress-less calls still read, but never write.
     return result;
   }
 
@@ -430,9 +510,8 @@ export class KulonService {
 
   /**
    * Aggregate every course's assignment + quiz index pages into one flat list
-   * (incl. completed items). Caller owns the session. Keeps its own cache set
-   * so background refresh writes via it (getStale's post-fetch set is a benign
-   * duplicate — same key, same TTL).
+   * (incl. completed items). Caller owns the session. Payload persistence belongs
+   * to DataCache.getStale's refresh owner.
    */
   private async fetchAllAssignments(
     sessionCookie: string,
@@ -465,13 +544,6 @@ export class KulonService {
     }
     await Promise.all(workers);
     const flat = results.flat();
-    if (sub && this.cache) {
-      await this.cache.set(
-        `${sub}:kulon:assignments:all`,
-        flat,
-        CachePolicy.KULON_ASSIGNMENTS_ALL,
-      );
-    }
     return flat;
   }
 
@@ -480,39 +552,59 @@ export class KulonService {
     url: string,
     cookie: string,
     notFoundCode?: string,
+    context?: UpstreamRouteContext,
   ): Promise<string> {
-    const outcome = await classifyUpstreamFetch(url, {
-      headers: { Cookie: cookie },
-      redirect: 'follow',
-    });
-    if (outcome.kind === 'gateway') {
-      throw new StaleUpstreamError('Kulon', outcome.reason);
-    }
-    if (outcome.kind === 'stale') {
-      if (outcome.reason === 'http-not-ok' && outcome.res?.status === 404) {
-        if (notFoundCode) throw new Error(notFoundCode);
-        throw new Error('Kulon page not found');
-      }
-      if (
-        outcome.reason === 'http-not-ok' &&
-        (!outcome.res?.status || outcome.res.status < 400)
-      ) {
-        throw new Error(
-          `Kulon page failed: ${outcome.res?.status ?? 'unknown'}`,
-        );
-      }
-      throw new StaleUpstreamError(
-        'Kulon',
-        outcome.reason,
-        undefined,
-        outcome.res,
+    if (!context) throw new TypeError('Kulon page route context is required');
+    try {
+      return await timedFetch(
+        this.runtime,
+        context,
+        url,
+        { headers: { Cookie: cookie }, redirect: 'follow' },
+        async (res): Promise<UpstreamAttemptResult<string>> => {
+          if (!res.ok) {
+            if (res.status === 404) {
+              const error = new Error(notFoundCode ?? 'Kulon page not found');
+              markKulonPageCompatibilityError(error);
+              return httpErrorResult(error, res.status);
+            }
+            if (!Number.isFinite(res.status) || res.status < 400) {
+              const error = new Error(
+                `Kulon page failed: ${Number.isFinite(res.status) ? res.status : 'unknown'}`,
+              );
+              markKulonPageCompatibilityError(error);
+              return httpErrorResult(error, res.status);
+            }
+            return httpErrorResult(
+              new StaleUpstreamError('Kulon', 'http-not-ok', undefined, res),
+              res.status,
+            );
+          }
+          if (isLoginRedirect(res.url)) {
+            return staleResult(
+              new StaleUpstreamError('Kulon', 'login-redirect', undefined, res),
+              'login-redirect',
+              res.status,
+            );
+          }
+          const html = await res.text();
+          if (isKulonLoginPage(html)) {
+            return staleResult(
+              new StaleUpstreamError('Kulon', 'login-redirect', undefined, res),
+              'login-redirect',
+              res.status,
+            );
+          }
+          return { ok: true, value: html, outcome: 'ok', status: res.status };
+        },
       );
+    } catch (error) {
+      const transportReason = getTimedFetchTransportReason(error);
+      if (transportReason) {
+        throw new StaleUpstreamError('Kulon', transportReason);
+      }
+      throw error;
     }
-    const html = await outcome.res.text();
-    if (isKulonLoginPage(html)) {
-      throw new StaleUpstreamError('Kulon', 'login-redirect');
-    }
-    return html;
   }
 
   /** Fetch and parse one course's assignment index page; [] on transient failure. */
@@ -525,6 +617,8 @@ export class KulonService {
       const html = await this.fetchKulonPage(
         `${this.baseUrl}/mod/assign/index.php?id=${courseId}`,
         sessionCookie,
+        undefined,
+        KULON_ROUTE_CONTEXTS.assignmentsIndex,
       );
       return parseAssignmentIndex(html, courseId, courseName);
     } catch (error) {
@@ -545,6 +639,8 @@ export class KulonService {
       const html = await this.fetchKulonPage(
         `${this.baseUrl}/mod/quiz/index.php?id=${courseId}`,
         sessionCookie,
+        undefined,
+        KULON_ROUTE_CONTEXTS.quizIndex,
       );
       return parseQuizIndex(html, courseId, courseName);
     } catch (error) {
@@ -576,8 +672,7 @@ export class KulonService {
 
   /**
    * Fetch + parse one assignment's `/mod/assign/view.php` page. Caller owns the
-   * session. Keeps its own cache set so background refresh writes via it
-   * (getStale's post-fetch set is a benign duplicate — same key, same TTL).
+   * session. Payload persistence belongs to DataCache.getStale's refresh owner.
    */
   private async fetchAssignmentDetail(
     sessionCookie: string,
@@ -590,6 +685,7 @@ export class KulonService {
       pageUrl,
       sessionCookie,
       'ASSIGNMENT_NOT_FOUND',
+      KULON_ROUTE_CONTEXTS.assignmentDetail,
     );
     const descriptionHtml = extractDescription(html);
     const detail = {
@@ -601,13 +697,6 @@ export class KulonService {
       submission: parseSubmissionFromHtml(html),
       kulonUrl: pageUrl,
     };
-    if (sub && this.cache) {
-      await this.cache.set(
-        `${sub}:kulon:assignment-detail:${cmid}`,
-        detail,
-        CachePolicy.KULON_ASSIGNMENT_DETAIL,
-      );
-    }
     return detail;
   }
 
@@ -623,6 +712,7 @@ export class KulonService {
       `${this.baseUrl}/course/view.php?id=${courseId}`,
       cookie,
       'COURSE_NOT_FOUND',
+      KULON_ROUTE_CONTEXTS.courseContent,
     );
     return parseContentHtml(html, courseId);
   }
@@ -681,8 +771,7 @@ export class KulonService {
 
   /**
    * Fresh course-content fetch + parse (JSON-first, HTML fallback). Caller owns
-   * the session. Keeps its own cache set so background refresh writes via it
-   * (getStale's post-fetch set is a benign duplicate — same key, same TTL).
+   * the session. Payload persistence belongs to DataCache.getStale's refresh owner.
    */
   private async fetchCourseContentFresh(
     cookie: string,
@@ -698,13 +787,6 @@ export class KulonService {
       content = await this.getCourseState(cookie, sesskey, courseId);
     } catch {
       content = await this.contentFromHTML(cookie, courseId);
-    }
-    if (sub && this.cache) {
-      await this.cache.set(
-        `${sub}:kulon:course-content:${courseId}`,
-        content,
-        CachePolicy.KULON_COURSE_CONTENT,
-      );
     }
     return content;
   }

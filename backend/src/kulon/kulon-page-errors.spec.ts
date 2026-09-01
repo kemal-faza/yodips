@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { KulonService } from './kulon.service';
+import { isKulonPageCompatibilityError, KulonService } from './kulon.service';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import type {
   KulonAssignment,
@@ -127,5 +127,57 @@ describe('Kulon page transport error classification', () => {
     await expect(
       internals(service).fetchAllAssignments('cookie', 'sesskey'),
     ).rejects.toMatchObject({ reason: 'http-not-ok', status: 502 });
+  });
+
+  it.each([
+    [404, 'COURSE_NOT_FOUND'],
+    [302, 'Kulon page failed: 302'],
+  ])('marks page compatibility error without changing its plain Error shape (%i)', async (status, message) => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status,
+      url: 'https://kulon2.undip.ac.id/course/view.php?id=9371',
+    });
+    const service = new KulonService();
+
+    const error = await internals(service)
+      .contentFromHTML('cookie', 9371)
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(message);
+    expect(error).not.toBeInstanceOf(StaleUpstreamError);
+    expect(isKulonPageCompatibilityError(error)).toBe(true);
+  });
+
+  it('emits one timed stale event for a login HTML page', async () => {
+    const events: unknown[] = [];
+    let now = 0n;
+    const runtime = {
+      sink: { record: (event: unknown) => events.push(event) },
+      wallNowMs: () => 0,
+      monotonicNowNs: () => {
+        now += 1_000_000n;
+        return now;
+      },
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
+      text: () => Promise.resolve(loginPageHtml()),
+    });
+    const service = new KulonService(undefined, undefined, undefined, undefined, runtime as any);
+
+    await expect(
+      internals(service).fetchAssignmentDetail('cookie', 777, 42),
+    ).rejects.toMatchObject({ reason: 'login-redirect', status: 401 });
+    expect(events).toEqual([
+      expect.objectContaining({
+        operation: 'assignment_detail',
+        route: 'GET /mod/assign/view.php',
+        outcome: 'stale',
+        reason: 'login-redirect',
+      }),
+    ]);
   });
 });
