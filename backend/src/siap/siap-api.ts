@@ -124,29 +124,38 @@ export class SiapApiUpstream {
         } catch {
           return {
             ok: false,
-            error: new StaleUpstreamError('Siap', 'api-credential', undefined, res),
+            error: new StaleUpstreamError('Siap', 'api-endpoint', undefined, res),
             outcome: 'parse_error',
             reason: 'malformed-json',
             status: res.status,
           };
         }
         if (payload.status !== 'success') {
+          const message = typeof payload.message === 'string' ? payload.message : '';
+          const authFailure =
+            res.status === 401 ||
+            res.status === 403 ||
+            /credential|unauthorized|email salah/i.test(message);
+          const reason = authFailure ? 'api-credential' : 'api-endpoint';
           return {
             ok: false,
-            error: new StaleUpstreamError('Siap', 'api-credential', undefined, res),
+            error: new StaleUpstreamError('Siap', reason, undefined, res),
             outcome: 'stale',
-            reason: 'api-credential',
+            reason,
             status: res.status,
           };
         }
-        const data = (payload.data ?? {}) as Record<string, unknown>;
-        const token = String(data.token ?? '');
-        if (!token) {
+        const data =
+          payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+            ? (payload.data as Record<string, unknown>)
+            : undefined;
+        const token = data?.token;
+        if (!data || typeof token !== 'string' || token.trim().length === 0) {
           return {
             ok: false,
-            error: new StaleUpstreamError('Siap', 'api-credential', undefined, res),
+            error: new StaleUpstreamError('Siap', 'api-endpoint', undefined, res),
             outcome: 'stale',
-            reason: 'api-credential',
+            reason: 'api-endpoint',
             status: res.status,
           };
         }
