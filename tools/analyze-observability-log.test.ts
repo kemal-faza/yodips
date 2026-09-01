@@ -425,6 +425,15 @@ describe("strict event validation", () => {
     }
   });
 
+  it("rejects unknown upstream status-rule references", () => {
+    for (const field of ["requiredFor", "forbiddenFor"] as const) {
+      const malformed = cloneContractFixture();
+      malformed.validationRules.upstreamStatus[field].push("not-in-catalog");
+
+      assert.throws(() => validateContract(malformed), /Invalid observability contract/);
+    }
+  });
+
   it("rejects shape outcomes that are absent from the matching aggregate catalog", () => {
     const malformed = cloneContractFixture();
     malformed.eventShapes["upstream.request"].ok.outcomes.push("not-in-catalog");
