@@ -1,6 +1,14 @@
-import { Logger } from '@nestjs/common';
 import { createCipheriv } from 'crypto';
-import { StaleUpstreamError } from '../upstream/upstream-fetch';
+import {
+  timedFetch,
+  StaleUpstreamError,
+  type UpstreamAttemptResult,
+  type UpstreamRouteContext,
+} from '../upstream/upstream-fetch';
+import {
+  createNoopTelemetryRuntime,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
 
 const SSO_CIPHER_KEY = 'Und1pUnd1p123456';
 const SSO_CIPHER_IV = 'Und1pUnd1p123456';
@@ -27,12 +35,67 @@ export interface SiapApiToken {
   data: Record<string, unknown>;
 }
 
+const API_CONTEXTS: Readonly<Record<string, UpstreamRouteContext>> = {
+  semester_aktif: {
+    service: 'siap-api',
+    operation: 'semester_aktif',
+    route: 'POST /index.php/semester_aktif',
+  },
+  data_mahasiswa: {
+    service: 'siap-api',
+    operation: 'data_mahasiswa',
+    route: 'POST /index.php/data_mahasiswa',
+  },
+  'v2/lihat_irs': {
+    service: 'siap-api',
+    operation: 'v2/lihat_irs',
+    route: 'POST /index.php/v2/lihat_irs',
+  },
+  'v2/daftar_khs': {
+    service: 'siap-api',
+    operation: 'v2/daftar_khs',
+    route: 'POST /index.php/v2/daftar_khs',
+  },
+  'v2/lihat_khs': {
+    service: 'siap-api',
+    operation: 'v2/lihat_khs',
+    route: 'POST /index.php/v2/lihat_khs',
+  },
+  jadwal: {
+    service: 'siap-api',
+    operation: 'jadwal',
+    route: 'POST /index.php/jadwal',
+  },
+  absen: {
+    service: 'siap-api',
+    operation: 'absen',
+    route: 'POST /index.php/absen',
+  },
+  pengumuman: {
+    service: 'siap-api',
+    operation: 'pengumuman',
+    route: 'POST /index.php/pengumuman',
+  },
+};
+
+const MINT_TOKEN_CONTEXT: UpstreamRouteContext = {
+  service: 'siap-api',
+  operation: 'mintToken',
+  route: 'POST /index.php/mahasiswa_sso',
+};
+
+function apiContext(endpoint: string): UpstreamRouteContext {
+  const context = API_CONTEXTS[endpoint];
+  if (!context) throw new TypeError('Invalid SIAP API endpoint');
+  return context;
+}
+
 /** Transport + auth ke API resmi SIAP. Murni & mockable. */
 export class SiapApiUpstream {
-  private readonly logger = new Logger(SiapApiUpstream.name);
   constructor(
     private readonly apiBase: string,
     private readonly appVer: string,
+    private readonly runtime: TelemetryRuntime = createNoopTelemetryRuntime(),
   ) {}
 
   /** Mint access_token via POST /index.php/mahasiswa_sso (no password, no cookie). */
@@ -42,30 +105,54 @@ export class SiapApiUpstream {
       mail: emailSso,
       nim: encryptNim(nim),
     });
-    const res = await fetch(`${this.apiBase}/mahasiswa_sso`, {
+    const url = `${this.apiBase}/mahasiswa_sso`;
+    return timedFetch<SiapApiToken>(
+      this.runtime,
+      MINT_TOKEN_CONTEXT,
+      url,
+      {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
-    });
-    let payload: Record<string, unknown>;
-    try {
-      payload = (await res.json()) as Record<string, unknown>;
-    } catch {
-      this.logger.warn(`SIAP mintToken non-JSON (status=${res.status})`);
-      throw new StaleUpstreamError('Siap', 'api-credential');
-    }
-    if (payload.status !== 'success') {
-      this.logger.warn(`SIAP mintToken failed: ${String(payload.message ?? payload.status)}`);
-      throw new StaleUpstreamError('Siap', 'api-credential');
-    }
-    const data = (payload.data ?? {}) as Record<string, unknown>;
-    const token = String(data.token ?? '');
-    if (!token) {
-      this.logger.warn('SIAP mintToken: token empty');
-      throw new StaleUpstreamError('Siap', 'api-credential');
-    }
-    this.logger.debug(`[upstream] siap mint-token sub=${nim.slice(-4)}`);
-    return { token, data };
+      },
+      async (res): Promise<UpstreamAttemptResult<SiapApiToken>> => {
+        let payload: Record<string, unknown>;
+        try {
+          const raw = await res.json();
+          if (raw === null || typeof raw !== 'object') throw new Error('invalid payload');
+          payload = raw as Record<string, unknown>;
+        } catch {
+          return {
+            ok: false,
+            error: new StaleUpstreamError('Siap', 'api-credential', undefined, res),
+            outcome: 'parse_error',
+            reason: 'malformed-json',
+            status: res.status,
+          };
+        }
+        if (payload.status !== 'success') {
+          return {
+            ok: false,
+            error: new StaleUpstreamError('Siap', 'api-credential', undefined, res),
+            outcome: 'stale',
+            reason: 'api-credential',
+            status: res.status,
+          };
+        }
+        const data = (payload.data ?? {}) as Record<string, unknown>;
+        const token = String(data.token ?? '');
+        if (!token) {
+          return {
+            ok: false,
+            error: new StaleUpstreamError('Siap', 'api-credential', undefined, res),
+            outcome: 'stale',
+            reason: 'api-credential',
+            status: res.status,
+          };
+        }
+        return { ok: true, value: { token, data }, outcome: 'ok', status: res.status };
+      },
+    );
   }
 
   /** Fetch endpoint data with Authorization: Basic base64(nim:token) + app_ver form. */
@@ -91,37 +178,59 @@ export class SiapApiUpstream {
     const body = new URLSearchParams(
       nim ? { app_ver: this.appVer, nim, ...rest } : { app_ver: this.appVer, ...rest },
     );
-    const res = await fetch(`${this.apiBase}/${endpoint}`, {
-      method: 'POST',
-      headers,
-      body: body.toString(),
-    });
-    let payload: Record<string, unknown>;
-    try {
-      payload = (await res.json()) as Record<string, unknown>;
-    } catch {
-      this.logger.warn(`SIAP fetch ${endpoint} non-JSON (status=${res.status})`);
-      throw new StaleUpstreamError('Siap', 'api-endpoint');
-    }
-    if (payload.status === 'fail' && String(payload.message).includes('update aplikasi')) {
-      this.logger.warn('SIAP fetch: app version gate — update SIAP_APP_VER');
-      throw new StaleUpstreamError('Siap', 'api-endpoint');
-    }
-    // Auth-class failures (401/403, "Invalid credentials") → api-credential
-    // (client should re-login). Everything else (5xx/429/generic fail) is an
-    // upstream/endpoint problem → api-endpoint, NOT a re-login prompt.
-    const authFailure =
-      res.status === 401 ||
-      res.status === 403 ||
-      String(payload.message).includes('Invalid credentials') ||
-      String(payload.message).includes('Unauthorized');
-    if (payload.status === 'fail' || res.status >= 400) {
-      this.logger.warn(
-        `SIAP fetch ${endpoint} failed status=${res.status} msg=${String(payload.message)} reason=${authFailure ? 'credential' : 'endpoint'}`,
-      );
-      throw new StaleUpstreamError('Siap', authFailure ? 'api-credential' : 'api-endpoint');
-    }
-    this.logger.debug(`[upstream] siap fetch ${endpoint} sub=${nim.slice(-4)}`);
-    return (payload.data ?? payload) as T;
+    const context = apiContext(endpoint);
+    return timedFetch<T>(
+      this.runtime,
+      context,
+      `${this.apiBase}/${endpoint}`,
+      {
+        method: 'POST',
+        headers,
+        body: body.toString(),
+      },
+      async (res): Promise<UpstreamAttemptResult<T>> => {
+        let payload: Record<string, unknown>;
+        try {
+          // SIAP sometimes sends JSON with text/html; body-first is intentional.
+          const raw = await res.json();
+          if (raw === null || typeof raw !== 'object') throw new Error('invalid payload');
+          payload = raw as Record<string, unknown>;
+        } catch {
+          return {
+            ok: false,
+            error: new StaleUpstreamError('Siap', 'api-endpoint', undefined, res),
+            outcome: 'parse_error',
+            reason: 'malformed-json',
+            status: res.status,
+          };
+        }
+        // Keep the old 2xx/3xx compatibility path for payloads without a
+        // failure status, while explicitly accepting successful JSON on any
+        // HTTP status (SIAP occasionally returns an error status with data).
+        if (payload.status === 'success' || (res.status < 400 && payload.status !== 'fail')) {
+          return {
+            ok: true,
+            value: (payload.data ?? payload) as T,
+            outcome: 'ok',
+            status: res.status,
+          };
+        }
+        // Auth-class failures (401/403, "Invalid credentials") → api-credential
+        // (client should re-login). Everything else is an endpoint problem.
+        const message = String(payload.message ?? '');
+        const authFailure =
+          res.status === 401 ||
+          res.status === 403 ||
+          /invalid credentials|unauthorized/i.test(message);
+        const reason = authFailure ? 'api-credential' : 'api-endpoint';
+        return {
+          ok: false,
+          error: new StaleUpstreamError('Siap', reason, undefined, res),
+          outcome: 'stale',
+          reason,
+          status: res.status,
+        };
+      },
+    );
   }
 }

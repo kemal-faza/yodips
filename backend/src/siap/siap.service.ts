@@ -1,13 +1,18 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
-import { CachePolicy, swrWindow } from '../cache/cache-policy';
+import { swrWindow } from '../cache/cache-policy';
 import { SessionStore } from '../session/session-store';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { mapWithConcurrency } from '../common/map-with-concurrency';
 import { SiapUpstreamSession } from './siap-upstream.session';
 import { SiapApiUpstream } from './siap-api';
+import {
+  createNoopTelemetryRuntime,
+  TELEMETRY_RUNTIME,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
 import type {
   SiapAbsenItem,
   SiapIrs,
@@ -72,9 +77,11 @@ export class SiapService {
     @Optional() sessionStore?: SessionStore,
     @Optional() apiUpstream?: SiapApiUpstream,
     @Optional() config?: ConfigService,
+    @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
+    const telemetryRuntime = runtime ?? createNoopTelemetryRuntime();
     this.cache = cache;
-    this.upstream = upstream ?? new SiapUpstreamSession();
+    this.upstream = upstream ?? new SiapUpstreamSession(undefined, undefined, undefined, undefined, telemetryRuntime);
     this.sessionStore = sessionStore;
     this.apiUpstream =
       apiUpstream ??
@@ -82,6 +89,7 @@ export class SiapService {
         config?.get('SIAP_API_BASE') ??
           'https://api.siap.undip.ac.id/index.php',
         config?.get('SIAP_APP_VER') ?? '24',
+        telemetryRuntime,
       );
     // Wire the seam's identity-scrape fallback to THIS service's fetchProfile
     // (public, preserved). Circular-free: setScrapeIdentity stores a closure.
@@ -194,12 +202,6 @@ export class SiapService {
     const base = parseApiProfile(data ?? {}, sem);
     // Merge web-visible fields the API may omit, from a scrape fallback.
     const profile = await this.mergeProfileFallback(base, sub);
-    if (sub && this.cache)
-      await this.cache.set(
-        `${sub}:siap:profile`,
-        profile,
-        CachePolicy.SIAP_PROFILE,
-      );
     return profile;
   }
 
@@ -324,16 +326,12 @@ export class SiapService {
     };
     try {
       const irs = await build();
-      if (sub && this.cache)
-        await this.cache.set(`${sub}:siap:irs`, irs, CachePolicy.SIAP_IRS); // M3: 15-min TTL
       return irs;
     } catch (e) {
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
         if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
         ctx = await this.upstream.getContext(sub); // re-mint
         const irs = await build();
-        if (sub && this.cache)
-          await this.cache.set(`${sub}:siap:irs`, irs, CachePolicy.SIAP_IRS);
         return irs;
       }
       throw e; // original error on second failure
@@ -406,8 +404,6 @@ export class SiapService {
     };
     try {
       const khs = await build();
-      if (sub && this.cache)
-        await this.cache.set(`${sub}:siap:khs`, khs, CachePolicy.SIAP_KHS); // M3: 30-min TTL
       return khs;
     } catch (e) {
       // Retry once on api-credential: invalidate the cached token + re-mint.
@@ -415,8 +411,6 @@ export class SiapService {
         if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
         ctx = await this.upstream.getContext(sub);
         const khs = await build();
-        if (sub && this.cache)
-          await this.cache.set(`${sub}:siap:khs`, khs, CachePolicy.SIAP_KHS);
         return khs;
       }
       throw e; // original error on second failure
@@ -495,16 +489,6 @@ export class SiapService {
         }
       }
       const result = Array.from(entries.values());
-      // Write INSIDE build() so BOTH the normal and api-credential retry
-      // paths cache; a throw never reaches here. 24h TTL: lecturer lists
-      // change ~never (unlike KHS's 30-min). Inside the single-flight so
-      // concurrent callers don't double-fetch.
-      if (sub && this.cache)
-        await this.cache.set(
-          `${sub}:siap:lecturers`,
-          result,
-          CachePolicy.SIAP_LECTURERS,
-        );
       return result;
     };
     try {
@@ -557,12 +541,6 @@ export class SiapService {
       'pengumuman',
     );
     const items = parseApiNotifications(Array.isArray(raw) ? raw : []);
-    if (sub && this.cache)
-      await this.cache.set(
-        `${sub}:siap:notifications`,
-        items,
-        CachePolicy.SIAP_NOTIFICATIONS,
-      );
     return items;
   }
 
@@ -622,9 +600,6 @@ export class SiapService {
       'jadwal',
     );
     const out = parseApiJadwal(Array.isArray(rows) ? rows : []);
-    if (sub && this.cache) {
-      await this.cache.set(`${sub}:siap:jadwal`, out, CachePolicy.SIAP_JADWAL);
-    }
     return out;
   }
 
@@ -680,9 +655,6 @@ export class SiapService {
       }
     } catch {
       // keep the absen-derived hadir/total/hadirPct
-    }
-    if (sub && this.cache) {
-      await this.cache.set(`${sub}:siap:absen`, items, CachePolicy.SIAP_ABSEN);
     }
     return items;
   }

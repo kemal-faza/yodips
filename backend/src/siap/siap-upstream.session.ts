@@ -1,18 +1,26 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
+  getTimedFetchTransportReason,
   isLoginRedirect,
-  probeUpstreamSession,
   StaleUpstreamError,
+  timedFetch,
   UpstreamFetchOpts,
   UpstreamSessionCheck,
   upstreamFetchJson,
   upstreamFetchText,
+  type UpstreamAttemptResult,
+  type UpstreamRouteContext,
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
 import { SessionStore } from '../session/session-store';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { SiapApiUpstream } from './siap-api';
+import {
+  createNoopTelemetryRuntime,
+  TELEMETRY_RUNTIME,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
 
 export const SIAP_BASE_URL = 'https://siap.undip.ac.id';
 
@@ -20,6 +28,40 @@ export const SIAP_BASE_URL = 'https://siap.undip.ac.id';
 const SIAP_PROBE_PATH = '/pages/mhs/dashboard';
 /** Present on the authenticated dashboard, absent on a login page. */
 export const SIAP_AUTH_MARKER = 'tabmhs_profile';
+
+const SIAP_PROFILE_PAGE: UpstreamRouteContext = {
+  service: 'siap',
+  operation: 'profile_page',
+  route: 'GET /pages/mhs/dashboard',
+};
+const SIAP_ATTENDANCE_PAGE: UpstreamRouteContext = {
+  service: 'siap',
+  operation: 'attendance_page',
+  route: 'POST /jadwal_mahasiswa/mhs/jadwal/get_absen',
+};
+const SIAP_NOTIFICATION_ACTION: UpstreamRouteContext = {
+  service: 'siap',
+  operation: 'notification_action',
+  route: 'POST /pages/mhs/dashboard/ajax/unread',
+};
+const SIAP_QR_PRESENCE: UpstreamRouteContext = {
+  service: 'siap',
+  operation: 'qr_presence',
+  route: 'POST /master_perkuliahan/mhs/absensi/process/',
+};
+
+function pageContext(url: string, init: RequestInit | undefined): UpstreamRouteContext {
+  const pathname = new URL(url).pathname;
+  const method = (init?.method ?? 'GET').toUpperCase();
+  if (method === 'GET' && pathname === '/pages/mhs/dashboard') return SIAP_PROFILE_PAGE;
+  if (method === 'POST' && pathname === '/jadwal_mahasiswa/mhs/jadwal/get_absen') {
+    return SIAP_ATTENDANCE_PAGE;
+  }
+  if (method === 'POST' && pathname === '/pages/mhs/dashboard/ajax/unread') {
+    return SIAP_NOTIFICATION_ACTION;
+  }
+  throw new TypeError('Invalid SIAP page endpoint');
+}
 
 /** Identity payload (no token) cached/fetched independently of the API token. */
 export interface SiapIdentity {
@@ -49,11 +91,11 @@ export type SiapIdentityScraper = (siapCookie: string) => Promise<{
  */
 @Injectable()
 export class SiapUpstreamSession {
-  private readonly logger = new Logger(SiapUpstreamSession.name);
   private readonly sessionStore?: SessionStore;
   private readonly cache?: DataCache;
   private readonly apiUpstream?: SiapApiUpstream;
   private scrapeIdentity?: SiapIdentityScraper;
+  private readonly runtime: TelemetryRuntime;
   /** Keyed flights: one in-flight slot per user (no cross-user contention). */
   private readonly identityFlight = createKeyedSingleFlight<SiapIdentity>();
   private readonly tokenFlight = createKeyedSingleFlight<string>();
@@ -63,22 +105,61 @@ export class SiapUpstreamSession {
     @Optional() cache?: DataCache,
     @Optional() apiUpstream?: SiapApiUpstream,
     @Optional() scrapeIdentity?: SiapIdentityScraper,
+    @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
     this.sessionStore = sessionStore;
     this.cache = cache;
     this.apiUpstream = apiUpstream;
     this.scrapeIdentity = scrapeIdentity;
+    this.runtime = runtime ?? createNoopTelemetryRuntime();
   }
 
   /** Single source of truth for SIAP session validity (no-throw probe). */
-  checkSessionValid(cookie: string): Promise<UpstreamSessionCheck> {
-    return probeUpstreamSession({
-      url: `${SIAP_BASE_URL}${SIAP_PROBE_PATH}`,
-      cookie,
-      service: 'Siap',
-      isAuthenticatedPage: (finalUrl, html) =>
-        !/\/login\//i.test(finalUrl) && html.includes(SIAP_AUTH_MARKER),
-    });
+  async checkSessionValid(cookie: string): Promise<UpstreamSessionCheck> {
+    if (!cookie) return { valid: false, reason: 'no-cookie' };
+    const url = `${SIAP_BASE_URL}${SIAP_PROBE_PATH}`;
+    try {
+      await timedFetch<void>(
+        this.runtime,
+        SIAP_SESSION_PROBE_CONTEXT,
+        url,
+        { headers: { Cookie: cookie }, redirect: 'follow' },
+        async (res): Promise<UpstreamAttemptResult<void>> => {
+          if (!res.ok) {
+            return {
+              ok: false,
+              error: new StaleUpstreamError('Siap', 'http-not-ok', undefined, res),
+              outcome: 'http_error',
+              reason: 'http-not-ok',
+              status: res.status,
+            };
+          }
+          if (isLoginRedirect(res.url)) {
+            return {
+              ok: false,
+              error: new StaleUpstreamError('Siap', 'login-redirect', undefined, res),
+              outcome: 'stale',
+              reason: 'login-redirect',
+              status: res.status,
+            };
+          }
+          const html = await res.text();
+          if (!html.includes(SIAP_AUTH_MARKER)) {
+            return {
+              ok: false,
+              error: new StaleUpstreamError('Siap', 'login-redirect', undefined, res),
+              outcome: 'stale',
+              reason: 'login-redirect',
+              status: res.status,
+            };
+          }
+          return { ok: true, value: undefined, outcome: 'ok', status: res.status };
+        },
+      );
+      return { valid: true, reason: 'ok' };
+    } catch {
+      return { valid: false, reason: 'stale' };
+    }
   }
 
   /** Identity + token for a user. Identity: session store → cache (24 h) →
@@ -103,10 +184,8 @@ export class SiapUpstreamSession {
     const identity = await this.identityFlight.run(identityKey, async () => {
       const cached = await this.cache!.get<SiapIdentity>(identityKey);
       if (cached) {
-        this.logger.debug(`[upstream] siap identity sub=${sub} hit=true`);
         return cached;
       }
-      this.logger.debug(`[upstream] siap identity sub=${sub} hit=false`);
       const resolved = await this.resolveIdentity(sub, session);
       await this.cache!.set(identityKey, resolved, CachePolicy.SIAP_IDENTITY);
       return resolved;
@@ -115,10 +194,8 @@ export class SiapUpstreamSession {
     const token = await this.tokenFlight.run(tokenKey, async () => {
       const cached = await this.cache!.get<string>(tokenKey);
       if (cached) {
-        this.logger.debug(`[upstream] siap token sub=${sub} hit=true`);
         return cached;
       }
-      this.logger.debug(`[upstream] siap token sub=${sub} hit=false`);
       const fresh = await this.mintFresh(identity.emailSso, identity.nim);
       await this.cache!.set(tokenKey, fresh, CachePolicy.SIAP_TOKEN);
       return fresh;
@@ -155,7 +232,6 @@ export class SiapUpstreamSession {
       throw new StaleUpstreamError('Siap', 'no-api-upstream');
     }
     const { token } = await this.apiUpstream.mintToken(emailSso, nim);
-    this.logger.debug(`[upstream] siap mint-token sub=${nim}`);
     return token;
   }
 
@@ -171,12 +247,24 @@ export class SiapUpstreamSession {
     init?: RequestInit,
     opts?: UpstreamFetchOpts,
   ): Promise<string> {
-    return upstreamFetchText(url, init, 'Siap', this.logged(url, opts));
+    return upstreamFetchText(
+      this.runtime,
+      pageContext(url, init),
+      url,
+      init,
+      this.logged(opts),
+    );
   }
 
   /** Authenticated SIAP AJAX/JSON fetch → parsed JSON, or throws stale 401. */
   async fetchJson<T = unknown>(url: string, init?: RequestInit): Promise<T> {
-    return upstreamFetchJson<T>(url, init, 'Siap', this.logged(url));
+    return upstreamFetchJson<T>(
+      this.runtime,
+      pageContext(url, init),
+      url,
+      init,
+      this.logged(),
+    );
   }
 
   /**
@@ -189,58 +277,82 @@ export class SiapUpstreamSession {
     url: string,
     init?: RequestInit,
   ): Promise<{ httpOk: boolean; status: number; body: T }> {
-    let res: Response;
+    const context = SIAP_QR_PRESENCE;
+    const passedThrough = {
+      httpOk: false,
+      status: 0,
+      body: undefined as T,
+    };
+    const passThroughError = { passedThrough };
     try {
-      res = await fetch(url, init);
-    } catch (e) {
-      this.logStale(url, null, 'fetch-threw', (e as Error)?.message);
-      throw new StaleUpstreamError('Siap', 'fetch-threw');
-    }
-    if (res.ok && isLoginRedirect(res.url)) {
-      this.logStale(url, res, 'login-redirect');
-      throw new StaleUpstreamError('Siap', 'login-redirect');
-    }
-    try {
-      const body = (await res.json()) as T;
-      return { httpOk: res.ok, status: res.status, body };
-    } catch {
-      // Non-JSON body: not the expected API. Treat as stale (upstream changed).
-      this.logStale(url, res, 'non-json-process', `status=${res.status}`);
-      throw new StaleUpstreamError('Siap', 'non-json-process');
+      return await timedFetch(
+        this.runtime,
+        context,
+        url,
+        init,
+        async (res): Promise<UpstreamAttemptResult<{ httpOk: boolean; status: number; body: T }>> => {
+          if (res.ok && isLoginRedirect(res.url)) {
+            return {
+              ok: false,
+              error: new StaleUpstreamError('Siap', 'login-redirect', undefined, res),
+              outcome: 'stale',
+              reason: 'login-redirect',
+              status: res.status,
+            };
+          }
+          let body: T;
+          try {
+            body = (await res.json()) as T;
+          } catch {
+            return {
+              ok: false,
+              error: new StaleUpstreamError('Siap', 'non-json-process', undefined, res),
+              outcome: 'parse_error',
+              reason: 'non-json-process',
+              status: res.status,
+            };
+          }
+          if (!res.ok) {
+            passedThrough.httpOk = false;
+            passedThrough.status = res.status;
+            passedThrough.body = body;
+            return {
+              ok: false,
+              error: passThroughError,
+              outcome: 'http_error',
+              reason: 'http-not-ok',
+              status: res.status,
+            };
+          }
+          return {
+            ok: true,
+            value: { httpOk: true, status: res.status, body },
+            outcome: 'ok',
+            status: res.status,
+          };
+        },
+      );
+    } catch (error) {
+      if (error === passThroughError) return passedThrough;
+      if (error instanceof StaleUpstreamError) throw error;
+      if (getTimedFetchTransportReason(error)) {
+        throw new StaleUpstreamError('Siap', 'fetch-threw');
+      }
+      throw error;
     }
   }
 
-  /** Merge caller opts with the adapter's stale-evidence logging. */
-  private logged(url: string, extra?: UpstreamFetchOpts): UpstreamFetchOpts {
+  /** Preserve the compatibility stale hook without exposing upstream evidence. */
+  private logged(extra?: UpstreamFetchOpts): UpstreamFetchOpts {
     return {
       ...extra,
-      onStale: (reason, res, evidence) => {
-        this.logStale(url, res, reason, evidence);
-        return extra?.onStale?.(reason, res, evidence);
-      },
+      onStale: (reason, res, evidence) => extra?.onStale?.(reason, res, evidence),
     };
   }
-
-  /**
-   * Log the evidence for a stale decision so we can distinguish a genuinely
-   * expired session (login URL/body) from a valid session whose endpoint
-   * returned something unexpected.
-   */
-  private logStale(
-    url: string,
-    res: Response | null,
-    reason: string,
-    extra?: string,
-  ): void {
-    const status = res?.status ?? 'n/a';
-    const finalUrl = res?.url ? truncate(res.url, 120) : 'n/a';
-    const contentType = res?.headers?.get('content-type') ?? 'n/a';
-    this.logger.warn(
-      `SIAP stale(${reason}) status=${status} finalUrl=${finalUrl} contentType=${contentType} extra=${extra ?? 'n/a'}`,
-    );
-  }
 }
 
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : `${s.slice(0, n)}…`;
-}
+const SIAP_SESSION_PROBE_CONTEXT: UpstreamRouteContext = {
+  service: 'siap',
+  operation: 'session_probe',
+  route: 'GET /pages/mhs/dashboard',
+};

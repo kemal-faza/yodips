@@ -1,6 +1,23 @@
 import 'reflect-metadata';
+import { Logger } from '@nestjs/common';
 import { encryptNim, SiapApiUpstream } from './siap-api';
-import { StaleUpstreamError } from '../upstream/upstream-fetch';
+import {
+  getTimedFetchTransportReason,
+  StaleUpstreamError,
+} from '../upstream/upstream-fetch';
+import type { TelemetryRuntime } from '../observability/telemetry';
+
+function recordingRuntime(): { runtime: TelemetryRuntime; events: unknown[] } {
+  const events: unknown[] = [];
+  return {
+    events,
+    runtime: {
+      sink: { record: (event) => events.push(event) },
+      wallNowMs: () => 1_000,
+      monotonicNowNs: () => 1_000_000n,
+    },
+  };
+}
 
 describe('encryptNim', () => {
   it('produces base64(cipher):base64(iv) format', () => {
@@ -146,5 +163,185 @@ describe('SiapApiUpstream', () => {
       .catch((e) => e);
     expect(err).toBeInstanceOf(StaleUpstreamError);
     expect(err.getStatus()).toBe(401);
+  });
+
+  it.each([
+    'semester_aktif',
+    'data_mahasiswa',
+    'v2/lihat_irs',
+    'v2/daftar_khs',
+    'v2/lihat_khs',
+    'jadwal',
+    'absen',
+    'pengumuman',
+  ])('accepts a successful %s payload even on a non-2xx response', async (endpoint) => {
+    const { runtime, events } = recordingRuntime();
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+      runtime as any,
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 302,
+      url: `https://api.siap.undip.ac.id/index.php/${endpoint}`,
+      headers: new Headers({ 'content-type': 'text/html' }),
+      json: async () => ({ status: 'success', data: { endpoint } }),
+    });
+
+    await expect(api.fetch(endpoint, 'T', {}, '24060124120013')).resolves.toEqual({ endpoint });
+    expect(events).toEqual([
+      expect.objectContaining({
+        service: 'siap-api',
+        operation: endpoint,
+        route: `POST /index.php/${endpoint}`,
+        outcome: 'ok',
+        status: 302,
+      }),
+    ]);
+  });
+
+  it('accepts a successful mint payload on a 3xx response and records one attempt', async () => {
+    const { runtime, events } = recordingRuntime();
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+      runtime as any,
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 302,
+      url: 'https://api.siap.undip.ac.id/index.php/mahasiswa_sso',
+      headers: new Headers({ 'content-type': 'text/html' }),
+      json: async () => ({ status: 'success', data: { token: 'T3' } }),
+    });
+
+    await expect(api.mintToken('x@y', '24060124120013')).resolves.toMatchObject({ token: 'T3' });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      service: 'siap-api',
+      operation: 'mintToken',
+      route: 'POST /index.php/mahasiswa_sso',
+      outcome: 'ok',
+      status: 302,
+    });
+  });
+
+  it('maps message-based credential failures without logging payload details', async () => {
+    const { runtime } = recordingRuntime();
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+      runtime as any,
+    );
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://api.siap.undip.ac.id/index.php/jadwal',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ status: 'fail', message: 'Invalid credentials SECRET-NIM' }),
+    });
+
+    try {
+      await expect(api.fetch('jadwal', 'SECRET-TOKEN', {}, 'SECRET-NIM')).rejects.toMatchObject({
+        reason: 'api-credential',
+        status: 401,
+      });
+      const rendered = warn.mock.calls.flat().join(' ');
+      expect(rendered).not.toContain('SECRET');
+      expect(rendered).not.toContain('jadwal');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('records malformed JSON as a parse error while preserving the API error mapping', async () => {
+    const { runtime, events } = recordingRuntime();
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+      runtime as any,
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://api.siap.undip.ac.id/index.php/absen',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => {
+        throw new Error('malformed SECRET');
+      },
+    });
+
+    await expect(api.fetch('absen', 'T', {}, 'NIM')).rejects.toMatchObject({
+      reason: 'api-endpoint',
+      status: 502,
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        service: 'siap-api',
+        operation: 'absen',
+        outcome: 'parse_error',
+        reason: 'malformed-json',
+        status: 200,
+      }),
+    ]);
+  });
+
+  it('rejects an endpoint outside the fixed API base prefix before fetching', async () => {
+    const { runtime } = recordingRuntime();
+    const api = new SiapApiUpstream('https://api.siap.undip.ac.id/not-index.php', '24', runtime as any);
+    await expect(api.fetch('jadwal', 'T', {}, 'NIM')).rejects.toThrow(TypeError);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('preserves a transport error object and its timed transport marker', async () => {
+    const { runtime, events } = recordingRuntime();
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+      runtime as any,
+    );
+    const transport = new Error('socket reset SECRET');
+    (global.fetch as jest.Mock).mockRejectedValueOnce(transport);
+
+    await expect(api.fetch('jadwal', 'token', {}, '123')).rejects.toBe(transport);
+    expect(getTimedFetchTransportReason(transport)).toBe('fetch-threw');
+    expect(events).toEqual([
+      expect.objectContaining({
+        service: 'siap-api',
+        operation: 'jadwal',
+        route: 'POST /index.php/jadwal',
+        outcome: 'network_error',
+        reason: 'fetch-threw',
+      }),
+    ]);
+  });
+
+  it('records retry attempts as separate terminal events', async () => {
+    const { runtime, events } = recordingRuntime();
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+      runtime as any,
+    );
+    const firstTransport = new Error('temporary failure');
+    (global.fetch as jest.Mock)
+      .mockRejectedValueOnce(firstTransport)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://api.siap.undip.ac.id/index.php/jadwal',
+        headers: new Headers(),
+        json: async () => ({ status: 'success', data: [] }),
+      });
+
+    await expect(api.fetch('jadwal', 'T', {}, 'N')).rejects.toBe(firstTransport);
+    await expect(api.fetch('jadwal', 'T', {}, 'N')).resolves.toEqual([]);
+    expect(events).toHaveLength(2);
+    expect(events).toEqual([
+      expect.objectContaining({ outcome: 'network_error', reason: 'fetch-threw' }),
+      expect.objectContaining({ outcome: 'ok', operation: 'jadwal' }),
+    ]);
   });
 });
