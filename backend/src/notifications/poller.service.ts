@@ -63,7 +63,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
       this.config.get<string>('NOTIF_POLL_CRON') ?? '*/15 * * * *';
     const job = new CronJob(expr, () => {
       void this.runCycle().catch((e) =>
-        this.logger.error(`cycle gagal: ${(e as Error).message}`),
+        this.logger.error('[notification.poll] cycle_failed'),
       );
     });
     this.schedulerRegistry.addCronJob('notifications-poll', job);
@@ -96,7 +96,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
                 await this.sendReloginOnce(sub, summary);
               } else {
                 // Upstream/network failure: skip diam — snapshot dipertahankan.
-                this.logger.warn(`skip ${sub}: ${(e as Error)?.message}`);
+                this.logger.warn('[notification.poll] user_skipped');
               }
             }
           }),

@@ -145,6 +145,27 @@ describe('NotificationsPoller.runCycle', () => {
     expect(await f.store.getSnapshot('u1', 'assignments')).toEqual([A(1, { duedate: DUE_FAR_SEC })]);
   });
 
+  it('upstream skip log is fixed and contains no subject or error details', async () => {
+    const f = makeFakes();
+    const subject = '12345678901234';
+    const secret = new Error('cookie=sia_app_session=SECRET nim=12345678901234');
+    const warn = jest
+      .spyOn((f.poller as any).logger, 'warn')
+      .mockImplementation(() => undefined);
+    f.kulon.getAllAssignments = async () => {
+      throw secret;
+    };
+    await f.store.addDeviceToken(subject, 'tok');
+
+    await f.poller.runCycle(NOW);
+
+    expect(warn).toHaveBeenCalledWith('[notification.poll] user_skipped');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(subject);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('SECRET');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(secret.message);
+    warn.mockRestore();
+  });
+
   it('reschedule -> push sekali; diff identik tak dikirim ulang', async () => {
     const f = makeFakes();
     f.siap.getJadwal = async () => [J('2026-08-17')];
@@ -342,5 +363,31 @@ describe('NotificationsPoller.onApplicationBootstrap', () => {
     expect(addCronJob).toHaveBeenCalledTimes(1);
     const job = addCronJob.mock.calls[0][1];
     job.stop();
+  });
+
+  it('outer cycle failure log is fixed and contains no error details', async () => {
+    const { addCronJob, poller, f } = makeBootstrapPoller({
+      fcmConfigured: true,
+      webPushConfigured: false,
+    });
+    const secret = new Error('cookie=sia_app_session=SECRET nim=12345678901234');
+    const error = jest
+      .spyOn((poller as any).logger, 'error')
+      .mockImplementation(() => undefined);
+    f.store.listSubsWithTokens = async () => {
+      throw secret;
+    };
+
+    poller.onApplicationBootstrap();
+    const job = addCronJob.mock.calls[0][1];
+    job.stop();
+    job.fireOnTick();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(error).toHaveBeenCalledWith('[notification.poll] cycle_failed');
+    expect(JSON.stringify(error.mock.calls)).not.toContain('SECRET');
+    expect(JSON.stringify(error.mock.calls)).not.toContain('12345678901234');
+    expect(JSON.stringify(error.mock.calls)).not.toContain(secret.message);
+    error.mockRestore();
   });
 });
