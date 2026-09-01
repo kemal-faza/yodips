@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "scripts": {
-    "probe": "ts-node tools/siap-probe.ts",
+    "probe": "ts-node siap-probe.ts",
     "test:build": "tsc -p tsconfig.json --outDir .tmp-test",
     "analyze:observability": "ts-node analyze-observability-log.ts",
     "test": "npm run test:build && node --test .tmp-test/siap-probe.test.js .tmp-test/analyze-observability-log.test.js"

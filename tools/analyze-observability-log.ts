@@ -1,12 +1,32 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 type JsonRecord = Record<string, unknown>;
+
+export const MAX_LINE_LENGTH = 64 * 1024;
+export const MAX_INPUT_BYTES = 10 * 1024 * 1024;
+const EVENT_NAMES = ["cache.read", "cache.refresh", "upstream.request"] as const;
+const NUMERIC_FIELDS = ["durationMs", "ageMs", "freshTtlMs", "staleTtlMs"] as const;
 
 type EventShape = {
   outcomes: string[];
   required: string[];
   forbidden: string[];
+};
+
+type StatusRules = {
+  minimum: number;
+  maximum: number;
+  requiredFor: string[];
+  forbiddenFor: string[];
+};
+
+type ValidationRules = {
+  numeric: { minimum: number; maximum: number };
+  upstreamStatus: StatusRules;
+  authProbe: { cache: string; backend: string; outcomes: string[]; forbidden: string[] };
+  hardExpireReason: string;
+  upstreamReasonGroups: Record<string, string[]>;
 };
 
 type Contract = {
@@ -22,15 +42,10 @@ type Contract = {
   upstreamRoutes: Array<{ service: string; operation: string; route: string }>;
   eventShapes: Record<string, Record<string, EventShape>>;
   numeric: { minimum: number; maximum: number };
-  upstreamStatus: { minimum: number; maximum: number };
+  upstreamStatus: StatusRules;
   authProbe: { cache: string; backend: string; outcomes: string[]; forbidden: string[] };
   hardExpireReason: string;
-  upstreamReasonGroups: {
-    httpError: string[];
-    networkError: string[];
-    parseError: string[];
-    stale: string[];
-  };
+  upstreamReasonGroups: Record<string, string[]>;
 };
 
 export type SafeEvent = JsonRecord & {
@@ -90,15 +105,18 @@ function requiredNumber(value: unknown): number {
   return value;
 }
 
-function loadContract(): Contract {
-  const candidates = [
+function contractCandidates(): string[] {
+  return [
     join(__dirname, "observability-contract.json"),
     join(__dirname, "..", "observability-contract.json"),
     join(process.cwd(), "observability-contract.json"),
     join(process.cwd(), "tools", "observability-contract.json"),
   ];
+}
+
+function readContractRaw(): string {
   let raw: string | undefined;
-  for (const candidate of candidates) {
+  for (const candidate of contractCandidates()) {
     try {
       raw = readFileSync(candidate, "utf8");
       break;
@@ -109,14 +127,18 @@ function loadContract(): Contract {
     }
   }
   if (raw === undefined) throw new Error("Unable to read observability contract");
+  return raw;
+}
 
-  let parsed: unknown;
+function parseContractRoot(raw: string): JsonRecord {
   try {
-    parsed = JSON.parse(raw);
+    return requiredRecord(JSON.parse(raw));
   } catch {
     throw new Error("Invalid observability contract");
   }
-  const root = requiredRecord(parsed);
+}
+
+function loadContractCatalog(root: JsonRecord) {
   const schemaVersion = requiredNumber(root.schemaVersion);
   const cacheLabels = stringArray(root.cacheLabels);
   const cacheBackends = stringArray(root.cacheBackends);
@@ -141,76 +163,6 @@ function loadContract(): Contract {
     throw new Error("Invalid observability contract");
   }
 
-  const upstreamRoutesValue = root.upstreamRoutes;
-  if (!Array.isArray(upstreamRoutesValue) || upstreamRoutesValue.length === 0) {
-    throw new Error("Invalid observability contract");
-  }
-  const upstreamRoutes = upstreamRoutesValue.map((value) => {
-    const route = requiredRecord(value);
-    if (
-      typeof route.service !== "string" ||
-      typeof route.operation !== "string" ||
-      typeof route.route !== "string" ||
-      !upstreamServices.includes(route.service)
-    ) {
-      throw new Error("Invalid observability contract");
-    }
-    return { service: route.service, operation: route.operation, route: route.route };
-  });
-
-  const eventShapesRoot = requiredRecord(root.eventShapes);
-  const eventShapes: Record<string, Record<string, EventShape>> = {};
-  for (const eventName of ["cache.read", "cache.refresh", "upstream.request"]) {
-    const eventRoot = requiredRecord(eventShapesRoot[eventName]);
-    const shapes: Record<string, EventShape> = {};
-    for (const [shapeName, value] of Object.entries(eventRoot)) {
-      const shape = requiredRecord(value);
-      shapes[shapeName] = {
-        outcomes: stringArray(shape.outcomes),
-        required: stringArray(shape.required),
-        forbidden: stringArray(shape.forbidden),
-      };
-    }
-    if (Object.keys(shapes).length === 0) throw new Error("Invalid observability contract");
-    eventShapes[eventName] = shapes;
-  }
-
-  const validationRules = requiredRecord(root.validationRules);
-  const numericRoot = requiredRecord(validationRules.numeric);
-  const numeric = {
-    minimum: requiredNumber(numericRoot.minimum),
-    maximum: requiredNumber(numericRoot.maximum),
-  };
-  const upstreamStatusRoot = requiredRecord(validationRules.upstreamStatus);
-  const upstreamStatus = {
-    minimum: requiredNumber(upstreamStatusRoot.minimum),
-    maximum: requiredNumber(upstreamStatusRoot.maximum),
-  };
-  if (numeric.minimum < 0 || numeric.maximum < numeric.minimum || upstreamStatus.minimum < 100) {
-    throw new Error("Invalid observability contract");
-  }
-
-  const authProbeRoot = requiredRecord(requiredRecord(validationRules.cacheRead).authProbe);
-  const authProbe = {
-    cache: typeof authProbeRoot.cache === "string" ? authProbeRoot.cache : "",
-    backend: typeof authProbeRoot.backend === "string" ? authProbeRoot.backend : "",
-    outcomes: stringArray(authProbeRoot.outcomes),
-    forbidden: stringArray(authProbeRoot.forbidden),
-  };
-  const hardExpireRoot = requiredRecord(requiredRecord(validationRules.cacheRefresh).hardExpire);
-  const hardExpireReason =
-    typeof hardExpireRoot.requiredReason === "string" ? hardExpireRoot.requiredReason : "";
-  const upstreamReasonsRoot = requiredRecord(validationRules.upstreamReasons);
-  const upstreamReasonGroups = {
-    httpError: stringArray(upstreamReasonsRoot.httpError),
-    networkError: stringArray(upstreamReasonsRoot.networkError),
-    parseError: stringArray(upstreamReasonsRoot.parseError),
-    stale: stringArray(upstreamReasonsRoot.stale),
-  };
-  if (!authProbe.cache || !authProbe.backend || !hardExpireReason) {
-    throw new Error("Invalid observability contract");
-  }
-
   return {
     schemaVersion,
     cacheLabels,
@@ -221,13 +173,141 @@ function loadContract(): Contract {
     upstreamServices,
     upstreamOutcomes,
     upstreamReasons,
-    upstreamRoutes,
-    eventShapes,
-    numeric,
-    upstreamStatus,
-    authProbe,
+  };
+}
+
+function loadRoute(value: unknown, services: string[]): Contract["upstreamRoutes"][number] {
+  const route = requiredRecord(value);
+  if (
+    typeof route.service !== "string" ||
+    typeof route.operation !== "string" ||
+    typeof route.route !== "string" ||
+    !services.includes(route.service)
+  ) {
+    throw new Error("Invalid observability contract");
+  }
+  return { service: route.service, operation: route.operation, route: route.route };
+}
+
+function loadRoutes(value: unknown, services: string[]): Contract["upstreamRoutes"] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("Invalid observability contract");
+  }
+  return value.map((route) => loadRoute(route, services));
+}
+
+function loadShape(value: unknown): EventShape {
+  const shape = requiredRecord(value);
+  const result = {
+    outcomes: stringArray(shape.outcomes),
+    required: stringArray(shape.required),
+    forbidden: stringArray(shape.forbidden),
+  };
+  if (
+    result.outcomes.length === 0 ||
+    result.required.some((field) => result.forbidden.includes(field))
+  ) {
+    throw new Error("Invalid observability contract");
+  }
+  return result;
+}
+
+function loadEventShapes(value: unknown): Contract["eventShapes"] {
+  const eventShapesRoot = requiredRecord(value);
+  const eventShapes: Record<string, Record<string, EventShape>> = {};
+  for (const eventName of EVENT_NAMES) {
+    const eventRoot = requiredRecord(eventShapesRoot[eventName]);
+    const shapes: Record<string, EventShape> = {};
+    for (const [shapeName, shape] of Object.entries(eventRoot)) shapes[shapeName] = loadShape(shape);
+    if (Object.keys(shapes).length === 0) throw new Error("Invalid observability contract");
+    eventShapes[eventName] = shapes;
+  }
+  return eventShapes;
+}
+
+function loadNumericRules(value: unknown): { minimum: number; maximum: number } {
+  const root = requiredRecord(value);
+  const result = {
+    minimum: requiredNumber(root.minimum),
+    maximum: requiredNumber(root.maximum),
+  };
+  if (
+    !Number.isSafeInteger(result.minimum) ||
+    !Number.isSafeInteger(result.maximum) ||
+    result.minimum < 0 ||
+    result.maximum < result.minimum
+  ) {
+    throw new Error("Invalid observability contract");
+  }
+  return result;
+}
+
+function loadStatusRules(value: unknown): StatusRules {
+  const root = requiredRecord(value);
+  const result = {
+    minimum: requiredNumber(root.minimum),
+    maximum: requiredNumber(root.maximum),
+    requiredFor: stringArray(root.requiredFor),
+    forbiddenFor: stringArray(root.forbiddenFor),
+  };
+  if (
+    !Number.isSafeInteger(result.minimum) ||
+    !Number.isSafeInteger(result.maximum) ||
+    result.minimum < 0 ||
+    result.maximum < result.minimum ||
+    result.requiredFor.some((outcome) => result.forbiddenFor.includes(outcome))
+  ) {
+    throw new Error("Invalid observability contract");
+  }
+  return result;
+}
+
+function loadAuthProbe(value: unknown): ValidationRules["authProbe"] {
+  const root = requiredRecord(value);
+  const result = {
+    cache: typeof root.cache === "string" ? root.cache : "",
+    backend: typeof root.backend === "string" ? root.backend : "",
+    outcomes: stringArray(root.outcomes),
+    forbidden: stringArray(root.forbidden),
+  };
+  if (!result.cache || !result.backend || result.outcomes.length === 0) {
+    throw new Error("Invalid observability contract");
+  }
+  return result;
+}
+
+function loadReasonGroups(value: unknown): Record<string, string[]> {
+  const root = requiredRecord(value);
+  const entries = Object.entries(root);
+  if (entries.length === 0) throw new Error("Invalid observability contract");
+  return Object.fromEntries(entries.map(([name, reasons]) => [name, stringArray(reasons)]));
+}
+
+function loadValidationRules(value: unknown): ValidationRules {
+  const root = requiredRecord(value);
+  const cacheRead = requiredRecord(root.cacheRead);
+  const cacheRefresh = requiredRecord(root.cacheRefresh);
+  const hardExpire = requiredRecord(cacheRefresh.hardExpire);
+  const hardExpireReason = typeof hardExpire.requiredReason === "string" ? hardExpire.requiredReason : "";
+  if (!hardExpireReason) throw new Error("Invalid observability contract");
+  return {
+    numeric: loadNumericRules(root.numeric),
+    upstreamStatus: loadStatusRules(root.upstreamStatus),
+    authProbe: loadAuthProbe(cacheRead.authProbe),
     hardExpireReason,
-    upstreamReasonGroups,
+    upstreamReasonGroups: loadReasonGroups(root.upstreamReasons),
+  };
+}
+
+function loadContract(): Contract {
+  const root = parseContractRoot(readContractRaw());
+  const catalog = loadContractCatalog(root);
+  const validationRules = loadValidationRules(root.validationRules);
+  return {
+    ...catalog,
+    upstreamRoutes: loadRoutes(root.upstreamRoutes, catalog.upstreamServices),
+    eventShapes: loadEventShapes(root.eventShapes),
+    ...validationRules,
   };
 }
 
@@ -262,61 +342,41 @@ function shapeFor(value: JsonRecord, eventName: string, contract: Contract): Eve
   const shapes = contract.eventShapes[eventName];
   if (!shapes || typeof value.outcome !== "string") return undefined;
 
-  if (eventName === "cache.read") {
-    if (value.outcome === "miss" && (has(value, "ageMs") || has(value, "freshTtlMs") || has(value, "staleTtlMs"))) {
-      return shapes.staleMiss;
-    }
-    if (value.outcome === "fresh" || value.outcome === "stale" || value.outcome === "expired") {
-      return shapes.existing;
-    }
-    return shapes.plain;
-  }
-  if (eventName === "cache.refresh") {
-    if (value.outcome === "started") return shapes.started;
-    if (value.outcome === "ok") return shapes.ok;
-    if (value.outcome === "error" || value.outcome === "hard_expire") return shapes.terminal;
-    return undefined;
-  }
-  const shapeName =
-    value.outcome === "http_error"
-      ? "httpError"
-      : value.outcome === "network_error"
-        ? "networkError"
-        : value.outcome === "parse_error"
-          ? "parseError"
-          : value.outcome;
-  return shapes[shapeName];
+  const matches = Object.values(shapes).filter(
+    (shape) =>
+      shape.outcomes.includes(value.outcome as string) &&
+      shape.required.every((field) => has(value, field)) &&
+      shape.forbidden.every((field) => !has(value, field)),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function validReason(value: JsonRecord, eventName: string, contract: Contract): boolean {
   if (typeof value.reason !== "string") return false;
   if (eventName === "cache.refresh") return contract.cacheRefreshReasons.includes(value.reason);
   if (eventName !== "upstream.request") return false;
-  if (!contract.upstreamReasons.includes(value.reason)) return false;
-  switch (value.outcome) {
-    case "http_error":
-      return contract.upstreamReasonGroups.httpError.includes(value.reason);
-    case "network_error":
-      return contract.upstreamReasonGroups.networkError.includes(value.reason);
-    case "parse_error":
-      return contract.upstreamReasonGroups.parseError.includes(value.reason);
-    case "stale":
-      return contract.upstreamReasonGroups.stale.includes(value.reason);
-    default:
-      return false;
-  }
+  if (typeof value.outcome !== "string" || !contract.upstreamReasons.includes(value.reason)) return false;
+  return Object.entries(contract.upstreamReasonGroups).some(
+    ([shapeName, reasons]) =>
+      contract.eventShapes["upstream.request"]?.[shapeName]?.outcomes.includes(value.outcome as string) &&
+      reasons.includes(value.reason as string),
+  );
 }
 
 function validField(value: JsonRecord, field: string, eventName: string, contract: Contract): boolean {
+  if ((NUMERIC_FIELDS as readonly string[]).includes(field)) return isSafeNumber(value[field], contract);
   switch (field) {
     case "cache":
       return typeof value.cache === "string" && contract.cacheLabels.includes(value.cache);
     case "backend":
       return typeof value.backend === "string" && contract.cacheBackends.includes(value.backend);
     case "outcome":
-      if (eventName === "cache.read") return typeof value.outcome === "string" && contract.cacheReadOutcomes.includes(value.outcome);
-      if (eventName === "cache.refresh") return typeof value.outcome === "string" && contract.cacheRefreshOutcomes.includes(value.outcome);
-      return typeof value.outcome === "string" && contract.upstreamOutcomes.includes(value.outcome);
+      return (
+        typeof value.outcome === "string" &&
+        Object.values(contract.eventShapes[eventName] ?? {}).some((shape) =>
+          shape.outcomes.includes(value.outcome as string),
+        )
+      );
     case "service":
       return typeof value.service === "string" && contract.upstreamServices.includes(value.service);
     case "operation":
@@ -324,11 +384,6 @@ function validField(value: JsonRecord, field: string, eventName: string, contrac
       return routeMatches(value, contract);
     case "reason":
       return validReason(value, eventName, contract);
-    case "durationMs":
-    case "ageMs":
-    case "freshTtlMs":
-    case "staleTtlMs":
-      return isSafeNumber(value[field], contract);
     case "status":
       return (
         isSafeNumber(value.status, contract) &&
@@ -336,7 +391,7 @@ function validField(value: JsonRecord, field: string, eventName: string, contrac
         value.status <= contract.upstreamStatus.maximum
       );
     default:
-      return true;
+      return false;
   }
 }
 
@@ -352,6 +407,39 @@ function hasValidBase(value: JsonRecord, contract: Contract): boolean {
   );
 }
 
+function followsUpstreamStatusRules(value: JsonRecord, contract: Contract): boolean {
+  if (value.event !== "upstream.request" || typeof value.outcome !== "string") return true;
+  const { requiredFor, forbiddenFor } = contract.upstreamStatus;
+  const hasStatus = has(value, "status");
+  if (forbiddenFor.includes(value.outcome) && hasStatus) return false;
+  if (requiredFor.includes(value.outcome) && (!hasStatus || !validField(value, "status", "upstream.request", contract))) {
+    return false;
+  }
+  return !hasStatus || validField(value, "status", "upstream.request", contract);
+}
+
+function followsCacheRules(value: JsonRecord, eventName: string, contract: Contract): boolean {
+  if (eventName === "cache.read" && value.cache === contract.authProbe.cache) {
+    return (
+      value.backend === contract.authProbe.backend &&
+      typeof value.outcome === "string" &&
+      contract.authProbe.outcomes.includes(value.outcome) &&
+      contract.authProbe.forbidden.every((field) => !has(value, field))
+    );
+  }
+  if (eventName === "cache.refresh") {
+    if (value.cache === contract.authProbe.cache) return false;
+    if (value.outcome === "hard_expire" && value.reason !== contract.hardExpireReason) return false;
+  }
+  return true;
+}
+
+function safeEvent(value: JsonRecord, shape: EventShape, eventName: string): SafeEvent {
+  const safe: SafeEvent = { v: value.v as number, ts: value.ts as string, event: eventName };
+  for (const field of shape.required) safe[field] = value[field];
+  return safe;
+}
+
 /** Validate an input object and return only the contract-approved fields. */
 export function validateEvent(value: unknown): SafeEvent | undefined {
   let contract: Contract;
@@ -365,49 +453,28 @@ export function validateEvent(value: unknown): SafeEvent | undefined {
     if (shape.required.some((field) => !has(value, field) || !validField(value, field, eventName, contract))) {
       return undefined;
     }
-
-    if (eventName === "cache.read" && value.cache === contract.authProbe.cache) {
-      if (
-        value.backend !== contract.authProbe.backend ||
-        typeof value.outcome !== "string" ||
-        !contract.authProbe.outcomes.includes(value.outcome) ||
-        contract.authProbe.forbidden.some((field) => has(value, field))
-      ) {
-        return undefined;
-      }
-    }
-    if (eventName === "cache.refresh" && value.cache === contract.authProbe.cache) return undefined;
-    if (
-      eventName === "cache.refresh" &&
-      value.outcome === "hard_expire" &&
-      value.reason !== contract.hardExpireReason
-    ) {
+    if (!followsUpstreamStatusRules(value, contract) || !followsCacheRules(value, eventName, contract)) {
       return undefined;
     }
-    if (
-      eventName === "upstream.request" &&
-      value.outcome !== "network_error" &&
-      (!has(value, "status") || !validField(value, "status", eventName, contract))
-    ) {
-      return undefined;
-    }
-    if (eventName === "upstream.request" && value.outcome === "network_error" && has(value, "status")) {
-      return undefined;
-    }
-
-    const safe: SafeEvent = { v: value.v as number, ts: value.ts as string, event: eventName };
-    for (const field of shape.required) safe[field] = value[field];
-    return safe;
+    return safeEvent(value, shape, eventName);
   } catch {
     return undefined;
   }
 }
 
-function matchingObjectEnd(line: string, start: number): number | undefined {
-  let depth = 0;
+type ObjectSpan = { start: number; end: number };
+
+type SpanScan = {
+  spans: ObjectSpan[];
+  hasOpeningBrace: boolean;
+};
+
+function scanBalancedSpans(line: string): SpanScan {
+  const stack: number[] = [];
+  const spans: ObjectSpan[] = [];
   let inString = false;
   let escaped = false;
-  for (let index = start; index < line.length; index += 1) {
+  for (let index = 0; index < line.length; index += 1) {
     const character = line[index];
     if (inString) {
       if (escaped) escaped = false;
@@ -418,46 +485,72 @@ function matchingObjectEnd(line: string, start: number): number | undefined {
     if (character === '"') {
       inString = true;
     } else if (character === "{") {
-      depth += 1;
+      stack.push(index);
     } else if (character === "}") {
-      depth -= 1;
-      if (depth === 0) return index;
-      if (depth < 0) return undefined;
+      if (stack.length === 0) continue;
+      const start = stack.pop() as number;
+      if (stack.length === 0) spans.push({ start, end: index });
     }
   }
-  return undefined;
+  return { spans, hasOpeningBrace: spans.length > 0 || stack.length > 0 };
 }
 
-function objectCandidates(line: string): string[] {
-  const candidates: string[] = [];
-  for (let index = line.length - 1; index >= 0; index -= 1) {
-    if (line[index] !== "{") continue;
-    const end = matchingObjectEnd(line, index);
-    if (end !== undefined) candidates.push(line.slice(index, end + 1));
+function isWhitespace(line: string, start: number, end: number): boolean {
+  for (let index = start; index < end; index += 1) {
+    if (!/\s/.test(line[index])) return false;
+  }
+  return true;
+}
+
+function suffixCandidateSpans(line: string, spans: ObjectSpan[]): ObjectSpan[] {
+  if (spans.length === 0) return [];
+  const eligible: boolean[] = new Array(spans.length).fill(false);
+  let suffixIsValid = isWhitespace(line, spans[spans.length - 1].end + 1, line.length);
+  for (let index = spans.length - 1; index >= 0; index -= 1) {
+    eligible[index] = suffixIsValid;
+    if (index > 0) {
+      suffixIsValid =
+        suffixIsValid && isWhitespace(line, spans[index - 1].end + 1, spans[index].start);
+    }
+  }
+  const candidates: ObjectSpan[] = [];
+  for (let index = spans.length - 1; index >= 0; index -= 1) {
+    if (eligible[index]) candidates.push(spans[index]);
   }
   return candidates;
 }
 
+function parseLeadingObject(trimmed: string): LineResult {
+  const scan = scanBalancedSpans(trimmed);
+  const candidate = scan.spans.find((span) => span.start === 0);
+  if (!candidate) return { kind: "malformed" };
+  try {
+    if (validateEvent(JSON.parse(trimmed.slice(0, candidate.end + 1)))) return { kind: "ignored" };
+  } catch {
+    // An object-looking parse failure is classified as malformed below.
+  }
+  return { kind: "malformed" };
+}
+
+function oversizedLine(line: string): boolean {
+  return line.length > MAX_LINE_LENGTH || Buffer.byteLength(line, "utf8") > MAX_LINE_LENGTH;
+}
+
 /** Parse one log line, scanning JSON object candidates from right to left. */
 export function parseEventLine(line: string): LineResult {
+  if (typeof line !== "string") return { kind: "malformed" };
+  if (oversizedLine(line)) return { kind: "malformed" };
   const trimmed = line.trim();
   if (!trimmed.endsWith("}")) {
     if (!trimmed.startsWith("{")) return { kind: "ignored" };
-    const end = matchingObjectEnd(trimmed, 0);
-    if (end !== undefined) {
-      try {
-        const parsed = JSON.parse(trimmed.slice(0, end + 1));
-        if (validateEvent(parsed)) return { kind: "ignored" };
-      } catch {
-        // A non-suffix candidate is not an event; the object-looking failure is malformed below.
-      }
-    }
-    return { kind: "malformed" };
+    return parseLeadingObject(trimmed);
   }
 
-  const candidates = objectCandidates(trimmed);
+  const scan = scanBalancedSpans(trimmed);
+  const candidates = suffixCandidateSpans(trimmed, scan.spans);
   let sawCandidate = false;
-  for (const candidate of candidates) {
+  for (const span of candidates) {
+    const candidate = trimmed.slice(span.start, span.end + 1);
     let parsed: unknown;
     try {
       parsed = JSON.parse(candidate);
@@ -469,7 +562,7 @@ export function parseEventLine(line: string): LineResult {
     const event = validateEvent(parsed);
     if (event) return { kind: "event", event };
   }
-  return sawCandidate || trimmed.includes("{") ? { kind: "malformed" } : { kind: "ignored" };
+  return sawCandidate || scan.hasOpeningBrace ? { kind: "malformed" } : { kind: "ignored" };
 }
 
 function zeroCounts(values: readonly string[]): Record<string, number> {
@@ -562,6 +655,8 @@ export function aggregateEvents(events: readonly unknown[]): AnalysisReport {
 
 /** Analyze newline-delimited log text. */
 export function analyzeText(text: string): AnalysisReport {
+  if (typeof text !== "string") throw new Error("Invalid input");
+  if (Buffer.byteLength(text, "utf8") > MAX_INPUT_BYTES) throw new Error("Input too large");
   const events: SafeEvent[] = [];
   const report = createReport(getContract());
   const lines = text === "" ? [] : text.split(/\r\n|\n|\r/);
@@ -598,6 +693,16 @@ export function stableJson(value: unknown): string {
   return `${JSON.stringify(sortRecursively(value), null, 2)}\n`;
 }
 
+function readInput(argument?: string): string {
+  const source: string | number = argument === undefined || argument === "-" ? 0 : argument;
+  if (typeof source === "string" && statSync(source).size > MAX_INPUT_BYTES) {
+    throw new Error("Input too large");
+  }
+  const bytes = readFileSync(source);
+  if (bytes.length > MAX_INPUT_BYTES) throw new Error("Input too large");
+  return bytes.toString("utf8");
+}
+
 /** Run the standalone analyzer CLI. Returns the process exit code. */
 export function main(argv: string[] = process.argv.slice(2)): number {
   if (argv.length > 1) {
@@ -606,7 +711,7 @@ export function main(argv: string[] = process.argv.slice(2)): number {
   }
 
   try {
-    const input = argv.length === 0 || argv[0] === "-" ? readFileSync(0, "utf8") : readFileSync(argv[0], "utf8");
+    const input = readInput(argv[0]);
     process.stdout.write(stableJson(analyzeText(input)));
     return 0;
   } catch {
