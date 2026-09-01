@@ -7,14 +7,20 @@ import {
   isRedirectLoopCause,
   isStaleUpstreamError,
   KULON_SESSION_PROBE,
+  SIAP_SESSION_PROBE,
   StaleUpstreamError,
   timedFetch,
   upstreamFetchJson,
   upstreamFetchText,
+  validateUpstreamAttempt,
   probeUpstreamSession,
 } from './upstream-fetch';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import type { TelemetryRuntime } from '../observability/telemetry';
+import {
+  UPSTREAM_ROUTES,
+  type UpstreamRoute,
+} from '../observability/telemetry-contract';
 
 /** Minimal Response-like stub: only the fields the scaffold reads. */
 function resStub(opts: {
@@ -55,6 +61,17 @@ function recordingRuntime(times: bigint[] = [0n, 4_000_000n]): TelemetryRuntime 
     wallNowMs: () => 0,
     monotonicNowNs: () => times[Math.min(clockIndex++, times.length - 1)],
   };
+}
+
+function inventoryRoute(
+  service: UpstreamRoute['service'],
+  operation: string,
+): UpstreamRoute {
+  const context = UPSTREAM_ROUTES.find(
+    (candidate) => candidate.service === service && candidate.operation === operation,
+  );
+  if (!context) throw new Error('test route missing from inventory');
+  return context;
 }
 
 describe('isLoginRedirect', () => {
@@ -498,6 +515,60 @@ describe('timedFetch', () => {
   });
 
   it.each([
+    [
+      'kulon',
+      KULON_SESSION_PROBE,
+      'https://kulon2.undip.ac.id/my/',
+      'GET',
+    ],
+    [
+      'siap',
+      SIAP_SESSION_PROBE,
+      'https://siap.undip.ac.id/pages/mhs/dashboard',
+      'GET',
+    ],
+    [
+      'siap-api',
+      inventoryRoute('siap-api', 'mintToken'),
+      'https://api.siap.undip.ac.id/index.php/mahasiswa_sso',
+      'POST',
+    ],
+    [
+      'sso',
+      inventoryRoute('sso', 'login_page'),
+      'https://sso.undip.ac.id/auth/user/login',
+      'GET',
+    ],
+    [
+      'microsoft',
+      inventoryRoute('microsoft', 'token_exchange'),
+      'https://login.microsoftonline.com/oauth2/v2.0/token',
+      'POST',
+    ],
+  ])('accepts the exact trusted %s origin', (_label, context, url, method) => {
+    expect(validateUpstreamAttempt(context, url, method)).toEqual(context);
+  });
+
+  it.each([
+    ['trusted host over HTTP', 'http://kulon2.undip.ac.id/my/'],
+    ['trusted host on a non-default port', 'https://kulon2.undip.ac.id:8443/my/'],
+  ])('rejects %s before calling fetch', async (_label, url) => {
+    const runtime = recordingRuntime();
+    const fetch = jest.spyOn(global, 'fetch');
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, url, {}, async () => ({
+        ok: true,
+        value: 'unreachable',
+        outcome: 'ok',
+      })),
+    ).rejects.toThrow('Upstream URL origin is not allowed');
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(runtime.events).toHaveLength(0);
+  });
+
+  it.each([
     ['method', 'https://kulon2.undip.ac.id/my/', { method: 'POST' }],
     ['path', 'https://kulon2.undip.ac.id/other/', {}],
   ])('rejects invalid route %s before calling fetch', async (_label, url, init) => {
@@ -591,6 +662,20 @@ describe('upstreamFetchText', () => {
       process.off('unhandledRejection', onUnhandled);
       errorLog.mockRestore();
     }
+  });
+
+  it('keeps the stale error when a synchronous onStale hook throws', async () => {
+    const onStale = jest.fn(() => {
+      throw new Error('callback failure must not leak');
+    });
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(resStub({ ok: false, status: 403 }));
+
+    await expect(
+      upstreamFetchText('https://up.test/x', {}, 'Siap', { onStale }),
+    ).rejects.toBeInstanceOf(StaleUpstreamError);
+    expect(onStale).toHaveBeenCalledWith('http-not-ok', null, undefined);
   });
 });
 

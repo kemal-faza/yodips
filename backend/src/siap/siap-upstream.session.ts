@@ -216,7 +216,7 @@ export class SiapUpstreamSession {
       ...extra,
       onStale: (reason, res, evidence) => {
         this.logStale(url, res, reason, evidence);
-        extra?.onStale?.(reason, res, evidence);
+        return extra?.onStale?.(reason, res, evidence);
       },
     };
   }
