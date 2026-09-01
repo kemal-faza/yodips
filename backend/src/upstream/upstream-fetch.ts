@@ -72,6 +72,14 @@ type TimedFetchTransportReason = 'fetch-threw' | 'redirect-loop';
 
 const transportReasons = new WeakMap<object, TimedFetchTransportReason>();
 
+const UPSTREAM_ORIGINS: Readonly<Record<UpstreamRoute['service'], string>> = {
+  kulon: 'https://kulon2.undip.ac.id',
+  siap: 'https://siap.undip.ac.id',
+  'siap-api': 'https://api.siap.undip.ac.id',
+  sso: 'https://sso.undip.ac.id',
+  microsoft: 'https://login.microsoftonline.com',
+};
+
 export function getTimedFetchTransportReason(
   error: unknown,
 ): TimedFetchTransportReason | undefined {
@@ -226,7 +234,11 @@ export interface UpstreamFetchOpts {
   /** Overrides the 401 message for the http-not-ok shape (e.g. Kulon "gangguan"). */
   notOkMessage?: string;
   /** Compatibility diagnostics hook; only bounded reason evidence is supplied. */
-  onStale?: (reason: string, res: Response | null, extra?: string) => void;
+  onStale?: (
+    reason: string,
+    res: Response | null,
+    extra?: string,
+  ) => void | PromiseLike<void>;
 }
 
 /** Validate a fixed inventory route and the URL path before any fetch occurs. */
@@ -261,6 +273,9 @@ export function validateUpstreamAttempt(
   const [expectedMethod, expectedPath] = canonical.route.split(' ');
   if (method.toUpperCase() !== expectedMethod || parsed.pathname !== expectedPath) {
     throw new TypeError('Upstream URL does not match route context');
+  }
+  if (parsed.origin !== UPSTREAM_ORIGINS[canonical.service]) {
+    throw new TypeError('Upstream URL origin is not allowed');
   }
   return canonical;
 }
@@ -452,7 +467,14 @@ function notifyStale(
   opts: UpstreamFetchOpts | undefined,
   reason: string,
 ): void {
-  opts?.onStale?.(reason, null, undefined);
+  try {
+    const result = opts?.onStale?.(reason, null, undefined);
+    if (result && typeof result.then === 'function') {
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } catch {
+    // Compatibility diagnostics must never replace the stale upstream error.
+  }
 }
 
 function responseFailure(
@@ -672,7 +694,7 @@ function throwStale(
   res: Response | null,
   notOkMessage?: string,
 ): never {
-  opts?.onStale?.(reason, null, undefined);
+  notifyStale(opts, reason);
   throw new StaleUpstreamError(service, reason, notOkMessage, res ?? undefined);
 }
 
