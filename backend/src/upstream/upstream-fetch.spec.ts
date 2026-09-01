@@ -1,15 +1,20 @@
 import 'reflect-metadata';
 import {
+  classifyUpstreamResponse,
   classifyUpstreamFetch,
+  getTimedFetchTransportReason,
   isLoginRedirect,
   isRedirectLoopCause,
   isStaleUpstreamError,
+  KULON_SESSION_PROBE,
   StaleUpstreamError,
+  timedFetch,
   upstreamFetchJson,
   upstreamFetchText,
   probeUpstreamSession,
 } from './upstream-fetch';
 import { HttpException, HttpStatus } from '@nestjs/common';
+import type { TelemetryRuntime } from '../observability/telemetry';
 
 /** Minimal Response-like stub: only the fields the scaffold reads. */
 function resStub(opts: {
@@ -38,6 +43,19 @@ function resStub(opts: {
 }
 
 afterEach(() => jest.restoreAllMocks());
+
+function recordingRuntime(times: bigint[] = [0n, 4_000_000n]): TelemetryRuntime & {
+  events: unknown[];
+} {
+  let clockIndex = 0;
+  const events: unknown[] = [];
+  return {
+    events,
+    sink: { record: (event) => events.push(event) },
+    wallNowMs: () => 0,
+    monotonicNowNs: () => times[Math.min(clockIndex++, times.length - 1)],
+  };
+}
 
 describe('isLoginRedirect', () => {
   it('matches /login variants and Microsoft OIDC host', () => {
@@ -157,12 +175,23 @@ describe('isStaleUpstreamError', () => {
 });
 
 describe('classifyUpstreamFetch', () => {
+  it('classifies an existing response without performing another fetch', () => {
+    const fetch = jest.spyOn(global, 'fetch');
+    const out = classifyUpstreamResponse(
+      resStub({ url: 'https://siap.undip.ac.id/login/' }),
+    );
+
+    expect(out.kind).toBe('stale');
+    expect(out.reason).toBe('login-redirect');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('network throw → gateway (caller picks stale vs 502 policy)', async () => {
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('ECONNRESET'));
     const out = await classifyUpstreamFetch('https://up.test/x', {});
     expect(out.kind).toBe('gateway');
     expect(out.reason).toBe('fetch-threw');
-    expect(out.networkMessage).toBe('ECONNRESET');
+    expect(out).not.toHaveProperty('networkMessage');
   });
 
   it('redirect-loop throw → classified, not gateway', async () => {
@@ -202,6 +231,249 @@ describe('classifyUpstreamFetch', () => {
     const out = await classifyUpstreamFetch('https://up.test/dashboard', {});
     expect(out.kind).toBe('ok');
     expect(await out.res!.text()).toContain('dashboard');
+  });
+});
+
+describe('timedFetch', () => {
+  it('records one safe terminal event after consuming a successful body', async () => {
+    const runtime = recordingRuntime();
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      resStub({
+        url: 'https://kulon2.undip.ac.id/my/',
+        text: 'page',
+      }),
+    );
+
+    const value = await timedFetch(
+      runtime,
+      KULON_SESSION_PROBE,
+      'https://kulon2.undip.ac.id/my/?x=secret',
+      {},
+      async (response) => ({
+        ok: true,
+        value: await response.text(),
+        outcome: 'ok',
+      }),
+    );
+
+    expect(value).toBe('page');
+    expect(runtime.events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        service: 'kulon',
+        operation: 'session_probe',
+        route: 'GET /my/',
+        outcome: 'ok',
+        status: 200,
+        durationMs: 4,
+      }),
+    ]);
+    expect(JSON.stringify(runtime.events)).not.toContain('?x=secret');
+  });
+
+  it('records HTTP errors and rethrows the consumer error unchanged', async () => {
+    const runtime = recordingRuntime();
+    const error = new StaleUpstreamError('Kulon', 'http-not-ok');
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(resStub({ ok: false, status: 503 }));
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async (response) => ({
+        ok: false,
+        error,
+        outcome: 'http_error',
+        reason: 'http-not-ok',
+        status: response.status,
+      })),
+    ).rejects.toBe(error);
+
+    expect(runtime.events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        outcome: 'http_error',
+        reason: 'http-not-ok',
+        status: 503,
+        durationMs: 4,
+      }),
+    ]);
+  });
+
+  it('marks a raw network throw without exposing its message', async () => {
+    const runtime = recordingRuntime();
+    const error = new Error('ECONNRESET secret=never-log');
+    jest.spyOn(global, 'fetch').mockRejectedValue(error);
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
+        ok: true,
+        value: 'unreachable',
+        outcome: 'ok',
+      })),
+    ).rejects.toBe(error);
+
+    expect(getTimedFetchTransportReason(error)).toBe('fetch-threw');
+    expect(runtime.events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        outcome: 'network_error',
+        reason: 'fetch-threw',
+        durationMs: 4,
+      }),
+    ]);
+    expect(JSON.stringify(runtime.events)).not.toContain('ECONNRESET');
+  });
+
+  it('marks redirect-loop transport failures distinctly', async () => {
+    const runtime = recordingRuntime();
+    const error = new Error('fetch failed');
+    (error as Error & { cause?: unknown }).cause = {
+      message: 'redirect count exceeded',
+    };
+    jest.spyOn(global, 'fetch').mockRejectedValue(error);
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
+        ok: true,
+        value: 'unreachable',
+        outcome: 'ok',
+      })),
+    ).rejects.toBe(error);
+
+    expect(getTimedFetchTransportReason(error)).toBe('redirect-loop');
+    expect(runtime.events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        outcome: 'network_error',
+        reason: 'redirect-loop',
+      }),
+    ]);
+  });
+
+  it('records malformed JSON as parse_error without body evidence', async () => {
+    const runtime = recordingRuntime();
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      resStub({
+        url: 'https://kulon2.undip.ac.id/my/',
+        contentType: 'application/json',
+        text: 'not-json{secret-body}',
+      }),
+    );
+
+    await expect(
+      upstreamFetchJson(
+        runtime,
+        KULON_SESSION_PROBE,
+        'https://kulon2.undip.ac.id/my/',
+        {},
+      ),
+    ).rejects.toBeInstanceOf(StaleUpstreamError);
+
+    expect(runtime.events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        outcome: 'parse_error',
+        reason: 'malformed-json',
+        status: 200,
+      }),
+    ]);
+    expect(JSON.stringify(runtime.events)).not.toContain('secret-body');
+  });
+
+  it('records an expected stale result exactly once', async () => {
+    const runtime = recordingRuntime();
+    const error = new StaleUpstreamError('Kulon', 'login-redirect');
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      resStub({ url: 'https://kulon2.undip.ac.id/login/' }),
+    );
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
+        ok: false,
+        error,
+        outcome: 'stale',
+        reason: 'login-redirect',
+        status: 200,
+      })),
+    ).rejects.toBe(error);
+
+    expect(runtime.events).toHaveLength(1);
+    expect(runtime.events[0]).toEqual(
+      expect.objectContaining({
+        event: 'upstream.request',
+        outcome: 'stale',
+        reason: 'login-redirect',
+        status: 200,
+      }),
+    );
+  });
+
+  it('records an unexpected consumer throw as parse_error/unknown', async () => {
+    const runtime = recordingRuntime();
+    const error = new Error('consumer failure must be rethrown');
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      resStub({ url: 'https://kulon2.undip.ac.id/my/' }),
+    );
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => {
+        throw error;
+      }),
+    ).rejects.toBe(error);
+
+    expect(runtime.events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        outcome: 'parse_error',
+        reason: 'unknown',
+        status: 200,
+      }),
+    ]);
+  });
+
+  it('turns a mismatched consumer status into parse_error/unknown', async () => {
+    const runtime = recordingRuntime();
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      resStub({ url: 'https://kulon2.undip.ac.id/my/', status: 200 }),
+    );
+
+    await expect(
+      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
+        ok: true,
+        value: 'value',
+        outcome: 'ok',
+        status: 201,
+      })),
+    ).rejects.toThrow();
+
+    expect(runtime.events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        outcome: 'parse_error',
+        reason: 'unknown',
+        status: 200,
+      }),
+    ]);
+  });
+
+  it('rejects invalid route context before calling fetch', async () => {
+    const runtime = recordingRuntime();
+    const fetch = jest.spyOn(global, 'fetch');
+    const invalidContext = {
+      ...KULON_SESSION_PROBE,
+      route: 'GET /not-in-inventory/',
+    } as never;
+
+    await expect(
+      timedFetch(runtime, invalidContext, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
+        ok: true,
+        value: 'unreachable',
+        outcome: 'ok',
+      })),
+    ).rejects.toThrow('Invalid upstream route context');
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(runtime.events).toHaveLength(0);
   });
 });
 
@@ -247,7 +519,7 @@ describe('upstreamFetchText', () => {
     }).catch(() => undefined);
     expect(onStale).toHaveBeenCalledWith(
       'http-not-ok',
-      expect.anything(),
+      null,
       undefined,
     );
   });
@@ -294,7 +566,7 @@ describe('upstreamFetchJson', () => {
 });
 
 describe('probeUpstreamSession evidence reporting', () => {
-  // Exact log lines the Kulon probe emits today must survive consolidation.
+  // Bounded evidence lines the Kulon probe emits today must survive consolidation.
   const authed = (_u: string, html: string) => html.includes('sesskey');
 
   it('reports redirect-loop evidence on network failure', async () => {
@@ -313,7 +585,7 @@ describe('probeUpstreamSession evidence reporting', () => {
     });
     expect(evidence).toHaveBeenCalledWith(
       'redirect loop',
-      expect.anything(),
+      undefined,
     );
   });
 
@@ -329,10 +601,10 @@ describe('probeUpstreamSession evidence reporting', () => {
       isAuthenticatedPage: authed,
       onEvidence: evidence,
     });
-    expect(evidence).toHaveBeenCalledWith('http 503', expect.anything());
+      expect(evidence).toHaveBeenCalledWith('http 503', undefined);
   });
 
-  it('reports redirected-to-url evidence on login redirect', async () => {
+  it('reports bounded login evidence without the final URL', async () => {
     jest
       .spyOn(global, 'fetch')
       .mockResolvedValue(resStub({ url: 'https://login.microsoftonline.com/x' }));
@@ -345,8 +617,8 @@ describe('probeUpstreamSession evidence reporting', () => {
       onEvidence: evidence,
     });
     expect(evidence).toHaveBeenCalledWith(
-      'redirected to https://login.microsoftonline.com/x',
-      expect.anything(),
+      'login redirect',
+      undefined,
     );
   });
 
@@ -364,7 +636,7 @@ describe('probeUpstreamSession evidence reporting', () => {
     });
     expect(evidence).toHaveBeenCalledWith(
       'page missing sesskey (login redirect)',
-      expect.anything(),
+      undefined,
     );
   });
 

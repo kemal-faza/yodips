@@ -1,4 +1,19 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
+import {
+  elapsedMs,
+  recordTelemetry,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
+import {
+  UPSTREAM_HTTP_ERROR_REASONS,
+  UPSTREAM_NETWORK_ERROR_REASONS,
+  UPSTREAM_PARSE_ERROR_REASONS,
+  UPSTREAM_ROUTES,
+  UPSTREAM_STALE_REASONS,
+  type UpstreamReason,
+  type UpstreamRequestEventInput,
+  type UpstreamRoute,
+} from '../observability/telemetry-contract';
 
 /**
  * One seam for authenticated upstream (SIAP/Kulon) session plumbing.
@@ -10,7 +25,8 @@ import { HttpException, HttpStatus } from '@nestjs/common';
  *    match on instead of "any 401".
  *
  * Pure transport policy: no cookies/sesskeys are resolved here (adapters in
- * kulon/siap hold their upstream's specifics), and no parsing happens here.
+ * kulon/siap hold their upstream's specifics); response consumption is supplied
+ * by each timed attempt's consumer.
  */
 
 /** Why an upstream response was classified as a stale session. */
@@ -32,13 +48,72 @@ export type UpstreamFetchOutcome =
       kind: 'stale';
       reason: UpstreamStaleReason;
       res?: Response;
-      /** Set on redirect-loop: the underlying fetch error (for evidence logs). */
-      error?: unknown;
     }
-  | { kind: 'gateway'; reason: 'fetch-threw'; networkMessage?: string };
+  | {
+      kind: 'gateway';
+      reason: 'fetch-threw';
+      /** Type-only compatibility; transport messages are never retained. */
+      networkMessage?: undefined;
+    };
+
+export type UpstreamRouteContext = UpstreamRoute;
+
+export type UpstreamAttemptResult<T> =
+  | { ok: true; value: T; outcome: 'ok'; status?: number }
+  | {
+      ok: false;
+      error?: unknown;
+      outcome: 'http_error' | 'parse_error' | 'stale';
+      reason?: UpstreamReason;
+      status?: number;
+    };
+
+type TimedFetchTransportReason = 'fetch-threw' | 'redirect-loop';
+
+const transportReasons = new WeakMap<object, TimedFetchTransportReason>();
+
+export function getTimedFetchTransportReason(
+  error: unknown,
+): TimedFetchTransportReason | undefined {
+  return typeof error === 'object' && error !== null
+    ? transportReasons.get(error)
+    : undefined;
+}
 
 /** How a service name renders inside user-facing messages ('Siap' → 'SIAP'). */
-const SERVICE_DISPLAY: Record<string, string> = { Siap: 'SIAP' };
+const SERVICE_DISPLAY: Record<string, string> = {
+  Siap: 'SIAP',
+  siap: 'SIAP',
+  Kulon: 'Kulon',
+  kulon: 'Kulon',
+};
+
+function fixedRoute(
+  service: UpstreamRoute['service'],
+  operation: UpstreamRoute['operation'],
+  route: UpstreamRoute['route'],
+): UpstreamRouteContext {
+  const candidate = UPSTREAM_ROUTES.find(
+    (item) =>
+      item.service === service &&
+      item.operation === operation &&
+      item.route === route,
+  );
+  if (!candidate) throw new Error('Invalid upstream route inventory');
+  return Object.freeze({ ...candidate });
+}
+
+export const KULON_SESSION_PROBE = fixedRoute(
+  'kulon',
+  'session_probe',
+  'GET /my/',
+);
+
+export const SIAP_SESSION_PROBE = fixedRoute(
+  'siap',
+  'session_probe',
+  'GET /pages/mhs/dashboard',
+);
 
 /**
  * True when the final URL landed on a login page: either upstream's own
@@ -118,27 +193,8 @@ export function isStaleUpstreamError(e: unknown): boolean {
   );
 }
 
-/**
- * Fetch an upstream URL and classify the result WITHOUT deciding policy:
- * callers map each shape onto their own stale/gateway semantics.
- */
-export async function classifyUpstreamFetch(
-  url: string,
-  init?: RequestInit,
-): Promise<UpstreamFetchOutcome> {
-  let res: Response;
-  try {
-    res = await fetch(url, init);
-  } catch (e) {
-    if (isRedirectLoopCause(e)) {
-      return { kind: 'stale', reason: 'redirect-loop', error: e };
-    }
-    return {
-      kind: 'gateway',
-      reason: 'fetch-threw',
-      networkMessage: (e as Error)?.message,
-    };
-  }
+/** Classify an already completed response without performing network I/O. */
+export function classifyUpstreamResponse(res: Response): UpstreamFetchOutcome {
   if (!res.ok) return { kind: 'stale', reason: 'http-not-ok', res };
   if (isLoginRedirect(res.url)) {
     return { kind: 'stale', reason: 'login-redirect', res };
@@ -146,31 +202,380 @@ export async function classifyUpstreamFetch(
   return { kind: 'ok', res };
 }
 
+/**
+ * Compatibility wrapper for owners that have not migrated to timedFetch yet.
+ * New code must classify the response inside timedFetch's consumer.
+ */
+export async function classifyUpstreamFetch(
+  url: string,
+  init?: RequestInit,
+): Promise<UpstreamFetchOutcome> {
+  try {
+    return classifyUpstreamResponse(await fetch(url, init));
+  } catch (e) {
+    const reason = isRedirectLoopCause(e) ? 'redirect-loop' : 'fetch-threw';
+    if (typeof e === 'object' && e !== null) transportReasons.set(e, reason);
+    if (reason === 'redirect-loop') {
+      return { kind: 'stale', reason };
+    }
+    return { kind: 'gateway', reason };
+  }
+}
+
 export interface UpstreamFetchOpts {
   /** Overrides the 401 message for the http-not-ok shape (e.g. Kulon "gangguan"). */
   notOkMessage?: string;
-  /** Diagnostics hook fired right before the stale error is thrown. */
+  /** Compatibility diagnostics hook; only bounded reason evidence is supplied. */
   onStale?: (reason: string, res: Response | null, extra?: string) => void;
 }
 
-/** Throw the uniform stale error after reporting evidence. */
-function throwStale(
-  service: string,
-  reason: UpstreamStaleReason | 'fetch-threw',
-  opts: UpstreamFetchOpts | undefined,
-  res: Response | null,
-  extra?: string,
-  notOkMessage?: string,
-): never {
-  opts?.onStale?.(reason, res, extra);
-  throw new StaleUpstreamError(service, reason, notOkMessage, res ?? undefined);
+/** Validate a fixed inventory route and the URL path before any fetch occurs. */
+export function validateUpstreamAttempt(
+  context: UpstreamRouteContext,
+  url: string,
+  method: string,
+): UpstreamRouteContext {
+  if (!context || typeof context !== 'object') {
+    throw new TypeError('Invalid upstream route context');
+  }
+  const canonical = UPSTREAM_ROUTES.find(
+    (candidate) =>
+      candidate.service === context.service &&
+      candidate.operation === context.operation &&
+      candidate.route === context.route,
+  );
+  if (!canonical) throw new TypeError('Invalid upstream route context');
+
+  if (typeof url !== 'string') {
+    throw new TypeError('Invalid upstream request URL');
+  }
+  if (typeof method !== 'string') {
+    throw new TypeError('Invalid upstream request method');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new TypeError('Invalid upstream request URL');
+  }
+  const [expectedMethod, expectedPath] = canonical.route.split(' ');
+  if (method.toUpperCase() !== expectedMethod || parsed.pathname !== expectedPath) {
+    throw new TypeError('Upstream URL does not match route context');
+  }
+  return canonical;
+}
+
+function safeStart(runtime: TelemetryRuntime): bigint {
+  try {
+    const value = runtime.monotonicNowNs();
+    return typeof value === 'bigint' ? value : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+function safeDuration(runtime: TelemetryRuntime, started: bigint): number {
+  try {
+    const ended = runtime.monotonicNowNs();
+    return typeof ended === 'bigint' ? elapsedMs(started, ended) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasReason<T extends readonly string[]>(
+  reason: unknown,
+  allowed: T,
+): reason is T[number] {
+  return typeof reason === 'string' && (allowed as readonly string[]).includes(reason);
+}
+
+function normalizeAttemptResult(
+  value: unknown,
+): UpstreamAttemptResult<unknown> {
+  if (!isRecord(value)) throw new Error('Invalid upstream attempt result');
+  if (value.ok === true && value.outcome === 'ok' && 'value' in value) {
+    return value as UpstreamAttemptResult<unknown>;
+  }
+  if (
+    value.ok === false &&
+    (value.outcome === 'http_error' ||
+      value.outcome === 'parse_error' ||
+      value.outcome === 'stale')
+  ) {
+    return value as UpstreamAttemptResult<unknown>;
+  }
+  throw new Error('Invalid upstream attempt result');
+}
+
+function responseStatus(responseStatus: number, consumerStatus?: number): number {
+  if (consumerStatus !== undefined && consumerStatus !== responseStatus) {
+    throw new Error('Upstream response status mismatch');
+  }
+  return Number.isSafeInteger(responseStatus) && responseStatus >= 100 && responseStatus <= 599
+    ? responseStatus
+    : HttpStatus.INTERNAL_SERVER_ERROR;
+}
+
+function terminalUpstreamEvent(
+  context: UpstreamRouteContext,
+  result: UpstreamAttemptResult<unknown>,
+  status: number,
+  durationMs: number,
+): UpstreamRequestEventInput {
+  const base = {
+    event: 'upstream.request' as const,
+    service: context.service,
+    operation: context.operation,
+    route: context.route,
+    durationMs,
+  };
+  if (result.outcome === 'ok') {
+    return { ...base, outcome: 'ok', status } as UpstreamRequestEventInput;
+  }
+  if (result.outcome === 'http_error') {
+    return {
+      ...base,
+      outcome: 'http_error',
+      status,
+      reason: UPSTREAM_HTTP_ERROR_REASONS[0],
+    } as UpstreamRequestEventInput;
+  }
+  if (result.outcome === 'parse_error') {
+    const reason = hasReason(result.reason, UPSTREAM_PARSE_ERROR_REASONS)
+      ? result.reason
+      : 'unknown';
+    return {
+      ...base,
+      outcome: 'parse_error',
+      status,
+      reason,
+    } as UpstreamRequestEventInput;
+  }
+  const reason = hasReason(result.reason, UPSTREAM_STALE_REASONS)
+    ? result.reason
+    : 'unknown';
+  return { ...base, outcome: 'stale', status, reason } as UpstreamRequestEventInput;
+}
+
+function parseUnknownEvent(
+  context: UpstreamRouteContext,
+  status: number,
+  durationMs: number,
+): UpstreamRequestEventInput {
+  return {
+    event: 'upstream.request',
+    service: context.service,
+    operation: context.operation,
+    route: context.route,
+    outcome: 'parse_error',
+    status: responseStatus(status),
+    reason: 'unknown',
+    durationMs,
+  } as UpstreamRequestEventInput;
+}
+
+function networkEvent(
+  context: UpstreamRouteContext,
+  reason: TimedFetchTransportReason,
+  durationMs: number,
+): UpstreamRequestEventInput {
+  return {
+    event: 'upstream.request',
+    service: context.service,
+    operation: context.operation,
+    route: context.route,
+    outcome: 'network_error',
+    reason: UPSTREAM_NETWORK_ERROR_REASONS.includes(reason) ? reason : 'fetch-threw',
+    durationMs,
+  } as UpstreamRequestEventInput;
 }
 
 /**
- * Fetch an upstream page and return the body text. Any non-ok response,
- * login redirect, or network failure maps to StaleUpstreamError (401).
+ * Execute one upstream network attempt and record exactly one terminal event.
+ * Response consumption is deliberately part of the attempt so parse/stale
+ * outcomes cannot be recorded separately from their transport.
  */
-export async function upstreamFetchText(
+export async function timedFetch<T>(
+  runtime: TelemetryRuntime,
+  context: UpstreamRouteContext,
+  url: string,
+  init: RequestInit | undefined,
+  consume: (response: Response) => Promise<UpstreamAttemptResult<T>>,
+): Promise<T> {
+  const canonical = validateUpstreamAttempt(context, url, init?.method ?? 'GET');
+  const started = safeStart(runtime);
+  let response: Response | undefined;
+  let responseReceived = false;
+  let terminalRecorded = false;
+
+  try {
+    response = await fetch(url, init);
+    responseReceived = true;
+    const result = normalizeAttemptResult(await consume(response));
+    const status = responseStatus(response.status, result.status);
+    recordTelemetry(
+      runtime,
+      terminalUpstreamEvent(canonical, result, status, safeDuration(runtime, started)),
+    );
+    terminalRecorded = true;
+    if (result.ok) return result.value as T;
+    throw result.error ?? new Error('Upstream attempt failed');
+  } catch (error) {
+    if (responseReceived) {
+      if (!terminalRecorded) {
+        recordTelemetry(
+          runtime,
+          parseUnknownEvent(
+            canonical,
+            response?.status ?? HttpStatus.INTERNAL_SERVER_ERROR,
+            safeDuration(runtime, started),
+          ),
+        );
+        terminalRecorded = true;
+      }
+      throw error;
+    }
+
+    const reason = isRedirectLoopCause(error) ? 'redirect-loop' : 'fetch-threw';
+    if (typeof error === 'object' && error !== null) transportReasons.set(error, reason);
+    recordTelemetry(runtime, networkEvent(canonical, reason, safeDuration(runtime, started)));
+    throw error;
+  }
+}
+
+function notifyStale(
+  opts: UpstreamFetchOpts | undefined,
+  reason: string,
+): void {
+  opts?.onStale?.(reason, null, undefined);
+}
+
+function responseFailure(
+  service: string,
+  res: Response,
+  opts: UpstreamFetchOpts | undefined,
+): UpstreamAttemptResult<never> | undefined {
+  const outcome = classifyUpstreamResponse(res);
+  if (outcome.kind === 'ok') return undefined;
+  notifyStale(opts, outcome.reason);
+  return {
+    ok: false,
+    error: new StaleUpstreamError(
+      service,
+      outcome.reason,
+      outcome.reason === 'http-not-ok' ? opts?.notOkMessage : undefined,
+      res,
+    ),
+    outcome: outcome.reason === 'http-not-ok' ? 'http_error' : 'stale',
+    reason: outcome.reason,
+    status: res.status,
+  };
+}
+
+async function consumeText(
+  res: Response,
+  service: string,
+  opts: UpstreamFetchOpts | undefined,
+): Promise<UpstreamAttemptResult<string>> {
+  const failure = responseFailure(service, res, opts);
+  if (failure) return failure;
+  return { ok: true, value: await res.text(), outcome: 'ok', status: res.status };
+}
+
+async function consumeJson<T>(
+  res: Response,
+  service: string,
+  opts: UpstreamFetchOpts | undefined,
+): Promise<UpstreamAttemptResult<T>> {
+  const failure = responseFailure(service, res, opts);
+  if (failure) return failure;
+  try {
+    return { ok: true, value: (await res.json()) as T, outcome: 'ok', status: res.status };
+  } catch {
+    const reason: UpstreamStaleReason = /text\/html/i.test(
+      res.headers.get('content-type') ?? '',
+    )
+      ? 'html-content-type'
+      : 'malformed-json';
+    notifyStale(opts, reason);
+    return {
+      ok: false,
+      error: new StaleUpstreamError(service, reason, undefined, res),
+      outcome: 'parse_error',
+      reason,
+      status: res.status,
+    };
+  }
+}
+
+function isTelemetryRuntime(value: unknown): value is TelemetryRuntime {
+  return (
+    isRecord(value) &&
+    isRecord(value.sink) &&
+    typeof value.monotonicNowNs === 'function'
+  );
+}
+
+function isFetchOpts(value: unknown): value is UpstreamFetchOpts {
+  return isRecord(value) && ('notOkMessage' in value || 'onStale' in value);
+}
+
+function splitHelperArgs(
+  initOrOpts: RequestInit | UpstreamFetchOpts | undefined,
+  opts: UpstreamFetchOpts | undefined,
+): { init: RequestInit | undefined; opts: UpstreamFetchOpts | undefined } {
+  return isFetchOpts(initOrOpts)
+    ? { init: undefined, opts: initOrOpts }
+    : { init: initOrOpts, opts };
+}
+
+/** New timed signature plus the pre-Task-5 compatibility signature. */
+export function upstreamFetchText(
+  runtime: TelemetryRuntime,
+  context: UpstreamRouteContext,
+  url: string,
+  initOrOpts?: RequestInit | UpstreamFetchOpts,
+  opts?: UpstreamFetchOpts,
+): Promise<string>;
+export function upstreamFetchText(
+  url: string,
+  init: RequestInit | undefined,
+  service: string,
+  opts?: UpstreamFetchOpts,
+): Promise<string>;
+export function upstreamFetchText(
+  runtimeOrUrl: TelemetryRuntime | string,
+  contextOrInit: UpstreamRouteContext | RequestInit | undefined,
+  urlOrService: string,
+  initOrOpts?: RequestInit | UpstreamFetchOpts,
+  opts?: UpstreamFetchOpts,
+): Promise<string> {
+  if (isTelemetryRuntime(runtimeOrUrl)) {
+    const args = splitHelperArgs(initOrOpts, opts);
+    const context = contextOrInit as UpstreamRouteContext;
+    return timedFetch(
+      runtimeOrUrl,
+      context,
+      urlOrService,
+      args.init,
+      (res) =>
+        consumeText(res, SERVICE_DISPLAY[context.service] ?? context.service, args.opts),
+    );
+  }
+  return legacyFetchText(
+    runtimeOrUrl,
+    contextOrInit as RequestInit | undefined,
+    urlOrService,
+    initOrOpts as UpstreamFetchOpts | undefined,
+  );
+}
+
+async function legacyFetchText(
   url: string,
   init: RequestInit | undefined,
   service: string,
@@ -178,87 +583,97 @@ export async function upstreamFetchText(
 ): Promise<string> {
   const outcome = await classifyUpstreamFetch(url, init);
   if (outcome.kind === 'ok') return outcome.res.text();
-  if (outcome.kind === 'gateway') {
-    throwStale(service, outcome.reason, opts, null, outcome.networkMessage);
-  }
+  if (outcome.kind === 'gateway') throwStale(service, outcome.reason, opts, null);
   throwStale(
     service,
     outcome.reason,
     opts,
     outcome.res ?? null,
-    undefined,
     outcome.reason === 'http-not-ok' ? opts?.notOkMessage : undefined,
   );
 }
 
-/**
- * Fetch an upstream AJAX endpoint and return the parsed JSON body. Tries
- * `res.json()` FIRST: real SIAP serves valid JSON behind a misleading
- * `text/html` content-type, so content-type alone would mislabel a working
- * session as expired. Only when parsing fails do we use the body shape
- * (content-type + preview) to decide html-content-type vs malformed-json —
- * both map to StaleUpstreamError.
- */
-export async function upstreamFetchJson<T = unknown>(
+/** New timed signature plus the pre-Task-5 compatibility signature. */
+export function upstreamFetchJson<T = unknown>(
+  runtime: TelemetryRuntime,
+  context: UpstreamRouteContext,
+  url: string,
+  initOrOpts?: RequestInit | UpstreamFetchOpts,
+  opts?: UpstreamFetchOpts,
+): Promise<T>;
+export function upstreamFetchJson<T = unknown>(
+  url: string,
+  init: RequestInit | undefined,
+  service: string,
+  opts?: UpstreamFetchOpts,
+): Promise<T>;
+export function upstreamFetchJson<T = unknown>(
+  runtimeOrUrl: TelemetryRuntime | string,
+  contextOrInit: UpstreamRouteContext | RequestInit | undefined,
+  urlOrService: string,
+  initOrOpts?: RequestInit | UpstreamFetchOpts,
+  opts?: UpstreamFetchOpts,
+): Promise<T> {
+  if (isTelemetryRuntime(runtimeOrUrl)) {
+    const args = splitHelperArgs(initOrOpts, opts);
+    const context = contextOrInit as UpstreamRouteContext;
+    return timedFetch(
+      runtimeOrUrl,
+      context,
+      urlOrService,
+      args.init,
+      (res) =>
+        consumeJson<T>(res, SERVICE_DISPLAY[context.service] ?? context.service, args.opts),
+    );
+  }
+  return legacyFetchJson(
+    runtimeOrUrl,
+    contextOrInit as RequestInit | undefined,
+    urlOrService,
+    initOrOpts as UpstreamFetchOpts | undefined,
+  );
+}
+
+async function legacyFetchJson<T>(
   url: string,
   init: RequestInit | undefined,
   service: string,
   opts?: UpstreamFetchOpts,
 ): Promise<T> {
   const outcome = await classifyUpstreamFetch(url, init);
-  if (outcome.kind === 'gateway') {
-    throwStale(service, outcome.reason, opts, null, outcome.networkMessage);
-  }
+  if (outcome.kind === 'gateway') throwStale(service, outcome.reason, opts, null);
   if (outcome.kind === 'stale') {
     throwStale(
       service,
       outcome.reason,
       opts,
       outcome.res ?? null,
-      undefined,
       outcome.reason === 'http-not-ok' ? opts?.notOkMessage : undefined,
     );
   }
   const res = outcome.res;
-  // Tee the body so we can preview it if parsing fails (res.json consumes the
-  // original stream first).
-  let previewTee: Response | null = null;
-  try {
-    previewTee = res.clone();
-  } catch {
-    previewTee = null;
-  }
   try {
     return (await res.json()) as T;
   } catch {
-    const contentType = res.headers.get('content-type') ?? '';
-    const preview = await readHtmlPreview(previewTee);
-    const reason: UpstreamStaleReason = /text\/html/i.test(contentType)
+    const reason: UpstreamStaleReason = /text\/html/i.test(
+      res.headers.get('content-type') ?? '',
+    )
       ? 'html-content-type'
       : 'malformed-json';
-    throwStale(service, reason, opts, res, `${contentType} body=${preview}`);
+    throwStale(service, reason, opts, res);
   }
 }
 
-/**
- * Read the first ~160 chars of an HTML body (tags stripped) for stale-evidence
- * logs. Only safe while the tee'd response is unconsumed.
- */
-async function readHtmlPreview(res: Response | null): Promise<string> {
-  try {
-    if (!res || typeof res.clone !== 'function') return 'no-preview';
-    const body = await res.clone().text();
-    return truncate(
-      body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
-      160,
-    );
-  } catch {
-    return 'unreadable';
-  }
-}
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : `${s.slice(0, n)}…`;
+/** Throw the uniform stale error after reporting only bounded evidence. */
+function throwStale(
+  service: string,
+  reason: UpstreamStaleReason | 'fetch-threw',
+  opts: UpstreamFetchOpts | undefined,
+  res: Response | null,
+  notOkMessage?: string,
+): never {
+  opts?.onStale?.(reason, null, undefined);
+  throw new StaleUpstreamError(service, reason, notOkMessage, res ?? undefined);
 }
 
 export interface ProbeUpstreamSessionInput {
@@ -294,14 +709,11 @@ export async function probeUpstreamSession(
       return { valid: false, reason: 'stale' };
     case 'stale': {
       if (outcome.reason === 'redirect-loop') {
-        input.onEvidence?.('redirect loop', outcome.error);
+        input.onEvidence?.('redirect loop', undefined);
       } else if (outcome.reason === 'http-not-ok') {
-        input.onEvidence?.(`http ${outcome.res?.status}`, outcome.res ?? null);
+        input.onEvidence?.(`http ${outcome.res?.status}`, undefined);
       } else if (outcome.reason === 'login-redirect') {
-        input.onEvidence?.(
-          `redirected to ${outcome.res?.url}`,
-          outcome.res ?? null,
-        );
+        input.onEvidence?.('login redirect', undefined);
       }
       return { valid: false, reason: 'stale' };
     }
@@ -310,7 +722,7 @@ export async function probeUpstreamSession(
       if (!input.isAuthenticatedPage(outcome.res.url, html)) {
         input.onEvidence?.(
           input.missingMarkerEvidence ?? 'page missing sesskey (login redirect)',
-          outcome.res,
+          undefined,
         );
         return { valid: false, reason: 'stale' };
       }
