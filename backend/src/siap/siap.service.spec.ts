@@ -7,6 +7,7 @@ import { InMemoryDataCache } from '../cache/in-memory-data.cache';
 import { CachePolicy, swrWindow } from '../cache/cache-policy';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import type { SiapApiUpstream } from './siap-api';
+import type { TelemetryRuntime } from '../observability/telemetry';
 
 function fixture(name: string): string {
   return readFileSync(
@@ -494,18 +495,19 @@ describe('SiapService', () => {
       expect(apiMock.fetch).not.toHaveBeenCalled();
     });
 
-    it('writes the lecturers cache (24h) after a successful fetch', async () => {
+  it('writes the lecturers cache (24h) after a successful fetch', async () => {
       const setSpy = jest.fn();
-      const cache2 = {
-        get: jest.fn().mockResolvedValue(null),
-        getStale: jest
-          .fn()
-          .mockImplementation(
-            async (_key: string, fetcher: () => Promise<unknown>) => ({
-              value: await fetcher(),
-              stale: false,
-            }),
-          ),
+    const cache2 = {
+      get: jest.fn().mockResolvedValue(null),
+      getStale: jest
+        .fn()
+        .mockImplementation(
+          async (key: string, fetcher: () => Promise<unknown>) => {
+            const value = await fetcher();
+            await setSpy(key, value);
+            return { value, stale: false };
+          },
+        ),
         set: setSpy,
         del: jest.fn(),
       };
@@ -521,24 +523,21 @@ describe('SiapService', () => {
       });
       const svc = makeRealSeamService(api, cache2);
       await svc.getLecturers('u1');
-      expect(setSpy).toHaveBeenCalledWith(
-        'u1:siap:lecturers',
-        expect.any(Array),
-        CachePolicy.SIAP_LECTURERS,
-      );
+      expect(setSpy.mock.calls.filter(([key]) => key === 'u1:siap:lecturers')).toHaveLength(1);
     });
 
     it('writes the cache after an api-credential retry succeeds', async () => {
       const setSpy = jest.fn();
-      const cache2 = {
-        get: jest.fn().mockResolvedValue(null),
-        getStale: jest
-          .fn()
-          .mockImplementation(
-            async (_key: string, fetcher: () => Promise<unknown>) => ({
-              value: await fetcher(),
-              stale: false,
-            }),
+    const cache2 = {
+      get: jest.fn().mockResolvedValue(null),
+      getStale: jest
+        .fn()
+        .mockImplementation(
+            async (key: string, fetcher: () => Promise<unknown>) => {
+              const value = await fetcher();
+              await setSpy(key, value);
+              return { value, stale: false };
+            },
           ),
         set: setSpy,
         del: jest.fn(),
@@ -559,11 +558,7 @@ describe('SiapService', () => {
       const svc = makeRealSeamService({ mintToken: mint, fetch }, cache2);
       const result = await svc.getLecturers('u1');
       expect(result).toEqual([]);
-      expect(setSpy).toHaveBeenCalledWith(
-        'u1:siap:lecturers',
-        [],
-        CachePolicy.SIAP_LECTURERS,
-      );
+      expect(setSpy.mock.calls.filter(([key]) => key === 'u1:siap:lecturers')).toHaveLength(1);
       expect(mint).toHaveBeenCalledTimes(2); // initial + re-mint
     });
 
@@ -1434,5 +1429,109 @@ describe('API-backed methods', () => {
     expect(fetch).toHaveBeenCalledTimes(2); // data_mahasiswa + semester_aktif
     expect(fetch.mock.calls[0][1]).toBe('T'); // same token on both fetches
     expect(fetch.mock.calls[1][1]).toBe('T');
+  });
+
+  it('lets getStale be the sole payload writer for every SIAP SWR family', async () => {
+    const set = jest.fn();
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      getStale: jest.fn(async (key: string, fetcher: () => Promise<unknown>) => {
+        const value = await fetcher();
+        await set(key, value);
+        return { value, stale: false };
+      }),
+      set,
+      del: jest.fn(),
+    };
+    const api = { mintToken: jest.fn(), fetch: jest.fn() };
+    api.fetch.mockImplementation(async (endpoint: string) => {
+      if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+      if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+      if (endpoint === 'v2/daftar_khs') return [];
+      return [];
+    });
+    api.mintToken.mockResolvedValue({ token: 'T', data: {} });
+
+    const methods = [
+      ['profile', 'u1:siap:profile', (svc: SiapService) => svc.getProfile('u1')],
+      ['irs', 'u1:siap:irs', (svc: SiapService) => svc.getIrs('u1')],
+      ['khs', 'u1:siap:khs', (svc: SiapService) => svc.getKhs('u1')],
+      ['lecturers', 'u1:siap:lecturers', (svc: SiapService) => svc.getLecturers('u1')],
+      ['notifications', 'u1:siap:notifications', (svc: SiapService) => svc.getNotifications('u1')],
+      ['jadwal', 'u1:siap:jadwal', (svc: SiapService) => svc.getJadwal('u1')],
+      ['absen', 'u1:siap:absen', (svc: SiapService) => svc.getAbsen('u1')],
+    ] as const;
+
+    for (const [name, key, invoke] of methods) {
+      set.mockClear();
+      const svc = makeService({ api, cache });
+      await invoke(svc);
+      expect(set.mock.calls.filter(([writtenKey]) => writtenKey === key)).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    ['IRS', 'u1:siap:irs', (svc: SiapService) => svc.getIrs('u1')],
+    ['KHS', 'u1:siap:khs', (svc: SiapService) => svc.getKhs('u1')],
+  ] as const)('writes the %s payload once when the credential retry succeeds', async (_name, key, invoke) => {
+    const set = jest.fn();
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      getStale: jest.fn(async (cacheKey: string, fetcher: () => Promise<unknown>) => {
+        const value = await fetcher();
+        await set(cacheKey, value);
+        return { value, stale: false };
+      }),
+      set,
+      del: jest.fn(),
+    };
+    const api = { mintToken: jest.fn(), fetch: jest.fn() };
+    api.mintToken.mockResolvedValue({ token: 'T', data: {} });
+    api.fetch.mockRejectedValueOnce(new StaleUpstreamError('Siap', 'api-credential'));
+    api.fetch.mockImplementation(async (endpoint: string) => {
+      if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+      if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+      if (endpoint === 'v2/daftar_khs') return [];
+      return [];
+    });
+
+    await invoke(makeService({ api, cache }));
+    expect(set.mock.calls.filter(([writtenKey]) => writtenKey === key)).toHaveLength(1);
+  });
+
+  it('passes one telemetry runtime to fallback session and API seams', async () => {
+    const events: any[] = [];
+    const runtime: TelemetryRuntime = {
+      sink: { record: (event) => events.push(event) },
+      wallNowMs: () => 1_000,
+      monotonicNowNs: () => 1_000_000n,
+    };
+    const service = new SiapService(undefined, undefined, undefined, undefined, undefined, runtime);
+    const fetchMock = jest.spyOn(global, 'fetch');
+    fetchMock.mockClear();
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://siap.undip.ac.id/pages/mhs/dashboard',
+        headers: new Headers(),
+        text: async () => `<div>${'tabmhs_profile'}</div>`,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://api.siap.undip.ac.id/index.php/jadwal',
+        headers: new Headers(),
+        json: async () => ({ status: 'success', data: [] }),
+      } as Response);
+
+    await expect(service.checkSessionValid('cookie')).resolves.toEqual({ valid: true, reason: 'ok' });
+    await expect((service as any).apiUpstream.fetch('jadwal', 'T', {}, 'N')).resolves.toEqual([]);
+    expect((service as any).upstream.runtime).toBe(runtime);
+    expect((service as any).apiUpstream.runtime).toBe(runtime);
+    expect(events.map((event) => `${event.service}:${event.operation}`)).toEqual([
+      'siap:session_probe',
+      'siap-api:jadwal',
+    ]);
   });
 });

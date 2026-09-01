@@ -3,6 +3,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SessionModule } from '../session/session.module';
 import { CacheModule } from '../cache/cache.module';
+import { ObservabilityModule } from '../observability/observability.module';
+import { TELEMETRY_RUNTIME, type TelemetryRuntime } from '../observability/telemetry';
 import { SiapController } from './siap.controller';
 import { SiapService } from './siap.service';
 import { SiapUpstreamSession } from './siap-upstream.session';
@@ -13,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
   imports: [
     SessionModule,
     CacheModule,
+    ObservabilityModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (c: ConfigService) => ({
@@ -26,11 +29,12 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
     SiapUpstreamSession,
     {
       provide: SiapApiUpstream,
-      inject: [ConfigService],
-      useFactory: (c: ConfigService) =>
+      inject: [ConfigService, TELEMETRY_RUNTIME],
+      useFactory: (c: ConfigService, runtime: TelemetryRuntime) =>
         new SiapApiUpstream(
           c.get<string>('SIAP_API_BASE') ?? 'https://api.siap.undip.ac.id/index.php',
           c.get<string>('SIAP_APP_VER') ?? '24',
+          runtime,
         ),
     },
     SiapService,
