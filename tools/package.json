@@ -5,7 +5,8 @@
   "scripts": {
     "probe": "ts-node tools/siap-probe.ts",
     "test:build": "tsc -p tsconfig.json --outDir .tmp-test",
-    "test": "npm run test:build && node --test .tmp-test/siap-probe.test.js"
+    "analyze:observability": "ts-node analyze-observability-log.ts",
+    "test": "npm run test:build && node --test .tmp-test/siap-probe.test.js .tmp-test/analyze-observability-log.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
