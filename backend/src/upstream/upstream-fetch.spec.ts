@@ -541,12 +541,46 @@ describe('timedFetch', () => {
     ],
     [
       'microsoft',
-      inventoryRoute('microsoft', 'token_exchange'),
-      'https://login.microsoftonline.com/oauth2/v2.0/token',
+      {
+        ...inventoryRoute('microsoft', 'token_exchange'),
+        tenantId: 'tenant-a',
+      },
+      'https://login.microsoftonline.com/tenant-a/oauth2/v2.0/token',
+      'POST',
+    ],
+    [
+      'microsoft common tenant',
+      {
+        ...inventoryRoute('microsoft', 'token_exchange'),
+        tenantId: 'common',
+      },
+      'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      'POST',
+    ],
+    [
+      'microsoft organizations tenant',
+      {
+        ...inventoryRoute('microsoft', 'token_exchange'),
+        tenantId: 'organizations',
+      },
+      'https://login.microsoftonline.com/organizations/oauth2/v2.0/token',
+      'POST',
+    ],
+    [
+      'microsoft domain tenant',
+      {
+        ...inventoryRoute('microsoft', 'token_exchange'),
+        tenantId: 'contoso.onmicrosoft.com',
+      },
+      'https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/token',
       'POST',
     ],
   ])('accepts the exact trusted %s origin', (_label, context, url, method) => {
-    expect(validateUpstreamAttempt(context, url, method)).toEqual(context);
+    expect(validateUpstreamAttempt(context, url, method)).toEqual({
+      service: context.service,
+      operation: context.operation,
+      route: context.route,
+    });
   });
 
   it.each([
@@ -585,6 +619,91 @@ describe('timedFetch', () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(runtime.events).toHaveLength(0);
+  });
+
+  describe('Microsoft tenant token routes', () => {
+    const context = {
+      ...inventoryRoute('microsoft', 'token_exchange'),
+      tenantId: 'tenant-a',
+    };
+    const tokenUrl =
+      'https://login.microsoftonline.com/tenant-a/oauth2/v2.0/token';
+
+    it('accepts the configured tenant URL and passes it to fetch', async () => {
+      const runtime = recordingRuntime();
+      const fetch = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(resStub({ status: 200, url: tokenUrl }));
+
+      await expect(
+        timedFetch(runtime, context, tokenUrl, { method: 'POST' }, async (response) => ({
+          ok: true,
+          value: 'ok',
+          outcome: 'ok',
+          status: response.status,
+        })),
+      ).resolves.toBe('ok');
+
+      expect(fetch).toHaveBeenCalledWith(tokenUrl, { method: 'POST' });
+      expect(runtime.events).toEqual([
+        expect.objectContaining({
+          event: 'upstream.request',
+          service: 'microsoft',
+          operation: 'token_exchange',
+          route: 'POST /oauth2/v2.0/token',
+          outcome: 'ok',
+          status: 200,
+          durationMs: 4,
+        }),
+      ]);
+    });
+
+    it.each([
+      ['wrong tenant', 'https://login.microsoftonline.com/tenant-b/oauth2/v2.0/token'],
+      ['dot traversal', 'https://login.microsoftonline.com/tenant-a/../oauth2/v2.0/token'],
+      ['encoded slash', 'https://login.microsoftonline.com/tenant-a%2Fother/oauth2/v2.0/token'],
+      ['encoded dot', 'https://login.microsoftonline.com/%2e%2e/oauth2/v2.0/token'],
+      ['wrong origin', 'https://evil.example/tenant-a/oauth2/v2.0/token'],
+    ])('rejects %s before network', async (_label, url) => {
+      const runtime = recordingRuntime();
+      const fetch = jest.spyOn(global, 'fetch');
+
+      await expect(
+        timedFetch(runtime, context, url, { method: 'POST' }, async () => ({
+          ok: true,
+          value: 'unreachable',
+          outcome: 'ok',
+        })),
+      ).rejects.toThrow();
+
+      expect(fetch).not.toHaveBeenCalled();
+      expect(runtime.events).toHaveLength(0);
+    });
+
+    it.each(['.', '..', 'tenant/a', 'tenant%2Fa', 'tenant%2ea'])(
+      'rejects unsafe configured tenant segment %s before network',
+      async (tenantId) => {
+        const unsafeContext = {
+          ...inventoryRoute('microsoft', 'token_exchange'),
+          tenantId,
+        };
+        const runtime = recordingRuntime();
+        const fetch = jest.spyOn(global, 'fetch');
+
+        await expect(
+          timedFetch(
+            runtime,
+            unsafeContext,
+            `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+            { method: 'POST' },
+            async () => ({ ok: true, value: 'unreachable', outcome: 'ok' }),
+          ),
+        ).rejects.toThrow();
+
+        expect(fetch).not.toHaveBeenCalled();
+        expect(runtime.events).toHaveLength(0);
+      },
+    );
   });
 });
 

@@ -171,6 +171,24 @@ describe('MicrosoftAuthService', () => {
     expect(JSON.stringify(events)).not.toContain(secretMessage);
   });
 
+  it('does not replace global fetch while exchanging the token', async () => {
+    const state = new URL(svc.getAuthUrl()).searchParams.get('state')!;
+    const originalFetch = global.fetch;
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      expect(global.fetch).toBe(originalFetch);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'at' }),
+        headers: new Headers(),
+      };
+    });
+
+    await expect(svc.handleCallback('authcode', state)).resolves.toMatchObject({
+      accessToken: 'at',
+    });
+  });
+
   it('preserves the configured tenant path and rejects a wrong tenant before network', async () => {
     const tenant = 'tenant-a';
     svc = new MicrosoftAuthService(
