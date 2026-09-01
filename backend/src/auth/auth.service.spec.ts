@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { AuthService } from './auth.service';
 import { CachePolicy } from '../cache/cache-policy';
+import type { TelemetryRuntime } from '../observability/telemetry';
 
 // Mock-heavy spec: the session-store double and fetch helpers intentionally deal
 // in arbitrary/dynamic `any` payloads, and several async helpers have no await.
@@ -77,6 +78,20 @@ const mockSiap = {
   })),
 };
 
+const clock = { wall: 1_700_000_000_000, monotonic: 0n };
+const events: unknown[] = [];
+
+function telemetryRuntime(): TelemetryRuntime {
+  return {
+    sink: { record: (event) => events.push(event) },
+    wallNowMs: () => clock.wall,
+    monotonicNowNs: () => {
+      clock.monotonic += 1_000_000n;
+      return clock.monotonic;
+    },
+  };
+}
+
 function makeService() {
   return new AuthService(
     mockSsoAuth as any,
@@ -88,12 +103,16 @@ function makeService() {
     mockConfig as any,
     mockKulon as any,
     mockSiap as any,
+    telemetryRuntime(),
   );
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockSessionStore._map.clear();
+  clock.wall = 1_700_000_000_000;
+  clock.monotonic = 0n;
+  events.length = 0;
   global.fetch = jest.fn();
 });
 
@@ -103,6 +122,27 @@ async function okFetch() {
     text: async () => '<input type="hidden" name="sesskey" value="abc">',
   });
 }
+
+describe('AuthService.login clock', () => {
+  it('stores the injected wall-clock capturedAt', async () => {
+    mockSsoAuth.login.mockResolvedValue({ cookie: 'ci_session_sso=sso', redirectUrl: '/dashboard' });
+    const svc = makeService();
+
+    const result = await svc.login('identity', 'password');
+
+    expect(result).toMatchObject({ accessToken: 'jwt-token', redirectUrl: '/dashboard' });
+    expect(mockSessionStore.get('identity').capturedAt).toBe(clock.wall);
+  });
+
+  it('uses the injected wall clock for freshness and expires at the TTL boundary', () => {
+    const svc = makeService();
+    const session = { capturedAt: clock.wall - CachePolicy.AUTH_PROBE };
+
+    expect((svc as any).isFresh(session)).toBe(true);
+    clock.wall += 30 * 60_000;
+    expect((svc as any).isFresh(session)).toBe(false);
+  });
+});
 
 describe('AuthService.captureSsoSession', () => {
   it('reuses a fresh valid session WITHOUT opening a browser window', async () => {
@@ -406,7 +446,9 @@ describe('AuthService.handleSessionHandoff', () => {
     });
 
     expect(res.hasKulon).toBe(true);
+    expect(res.capturedAt).toBe(clock.wall);
     expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+    expect(mockSessionStore.get('24060121130000').capturedAt).toBe(clock.wall);
     expect(mockSessionStore.get('24060121130000').kulonCookie).toContain(
       'MoodleSession=K',
     );
@@ -646,6 +688,8 @@ describe('AuthService.handleMicrosoftCallback', () => {
 
     // Two distinct login attempts must NOT overwrite each other's session.
     expect(mockSessionStore._map.size).toBe(2);
+    expect(mockSessionStore.get('microsoft:stateA').capturedAt).toBe(clock.wall);
+    expect(mockSessionStore.get('microsoft:stateB').capturedAt).toBe(clock.wall);
     const subs = [...mockSessionStore._map.keys()];
     expect(subs[0]).not.toBe(subs[1]);
     // The JWT sub for each resolves to its own stored session.
@@ -749,6 +793,45 @@ describe('AuthService.me', () => {
     // Probe should run once per service, cached for the subsequent calls.
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(1);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits plain probe read events, writes the probe cache, and expires by wall time', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: 'sso=x',
+      microsoftCookie: '',
+      kulonCookie: 'kulon=y',
+      siapCookie: 'ci_session_x=K',
+      capturedAt: clock.wall,
+    });
+    const svc = makeService();
+
+    await svc.me({ sub: '24060121130000', via: 'handoff' });
+    await svc.me({ sub: '24060121130000', via: 'handoff' });
+
+    expect(events.filter((event: any) => event.event === 'cache.read')).toEqual([
+      expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'miss' }),
+      expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'miss' }),
+      expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'hit' }),
+      expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'hit' }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain('24060121130000');
+    expect(JSON.stringify(events)).not.toContain('kulon=y');
+    expect(JSON.stringify(events)).not.toContain('ci_session_x=K');
+
+    clock.wall += CachePolicy.AUTH_PROBE;
+    await svc.me({ sub: '24060121130000', via: 'handoff' });
+
+    expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(2);
+    expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(2);
+    expect(events.filter((event: any) => event.event === 'cache.read')).toEqual([
+      expect.objectContaining({ outcome: 'miss' }),
+      expect.objectContaining({ outcome: 'miss' }),
+      expect.objectContaining({ outcome: 'hit' }),
+      expect.objectContaining({ outcome: 'hit' }),
+      expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'miss' }),
+      expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'miss' }),
+    ]);
   });
 
   it('AUTH_PROBE TTL matches the probe cache window', () => {

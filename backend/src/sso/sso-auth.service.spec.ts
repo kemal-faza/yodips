@@ -1,13 +1,29 @@
 import 'reflect-metadata';
 import { SSOAuthService } from './sso-auth.service';
 import { SSOTicketService } from './ticket.service';
+import type { TelemetryRuntime } from '../observability/telemetry';
 
 describe('SSOAuthService', () => {
   let svc: SSOAuthService;
   const baseUrl = 'https://sso.undip.ac.id';
+  const clock = { monotonic: 0n };
+  const events: unknown[] = [];
+
+  function runtime(): TelemetryRuntime {
+    return {
+      sink: { record: (event) => events.push(event) },
+      wallNowMs: () => 1_700_000_000_000,
+      monotonicNowNs: () => {
+        clock.monotonic += 1_000_000n;
+        return clock.monotonic;
+      },
+    };
+  }
 
   beforeEach(() => {
-    svc = new SSOAuthService(new SSOTicketService());
+    svc = new SSOAuthService(new SSOTicketService(), runtime());
+    clock.monotonic = 0n;
+    events.length = 0;
     global.fetch = jest.fn();
   });
 
@@ -18,24 +34,37 @@ describe('SSOAuthService', () => {
   it('extracts csrf token from login page', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
+      status: 200,
       headers: new Headers({}),
       text: async () =>
         `<input type="hidden" name="csrf_sso" value="abc123">`,
     });
     const token = await svc.getCsrfToken(baseUrl);
     expect(token).toBe('abc123');
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        service: 'sso',
+        operation: 'login_page',
+        route: 'GET /auth/user/login',
+        outcome: 'ok',
+      status: 200,
+        durationMs: 1,
+      }),
+    ]);
   });
 
   it('returns session cookie + redirect url from login', async () => {
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce({
         ok: true,
+        status: 200,
         headers: new Headers({}),
         text: async () =>
           `<input type="hidden" name="csrf_sso" value="csrf123">`,
       })
       .mockResolvedValueOnce({
-        ok: true,
+        ok: false,
         status: 302,
         headers: new Headers({
           'set-cookie': 'ci_session_sso=xyz; Path=/',
@@ -46,6 +75,24 @@ describe('SSOAuthService', () => {
     const { cookie, redirectUrl } = await svc.login(baseUrl, 'n2m', 'pass');
     expect(cookie).toContain('ci_session_sso=xyz');
     expect(redirectUrl).toContain('dashboard');
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        service: 'sso',
+        operation: 'login_page',
+        outcome: 'ok',
+        status: 200,
+      }),
+      expect.objectContaining({
+        event: 'upstream.request',
+        service: 'sso',
+        operation: 'session_exchange',
+        route: 'POST /sso/auth_v2',
+        outcome: 'ok',
+        status: 302,
+        durationMs: 1,
+      }),
+    ]);
   });
 
   it('throws when login returns no session cookie', async () => {
@@ -114,6 +161,27 @@ describe('SSOAuthService', () => {
     expect(postCall[1].headers.Cookie).toBe('ci_session_sso=prelogin');
     // The returned cookie is the PARSED (name=value only) set-cookie from the POST.
     expect(cookie).toBe('ci_session_sso=postlogin');
+  });
+
+  it('records transport failure without exposing credentials or exception text', async () => {
+    const secretMessage = 'network-secret-message';
+    const error = new Error(secretMessage);
+    (global.fetch as jest.Mock).mockRejectedValue(error);
+
+    await expect(svc.login(baseUrl, 'identity-secret', 'password-secret')).rejects.toBe(error);
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: 'upstream.request',
+        service: 'sso',
+        operation: 'login_page',
+        outcome: 'network_error',
+        reason: 'fetch-threw',
+        durationMs: 1,
+      }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain(secretMessage);
+    expect(JSON.stringify(events)).not.toContain('identity-secret');
+    expect(JSON.stringify(events)).not.toContain('password-secret');
   });
 
   it('generates a new ticket via ticket service', () => {
