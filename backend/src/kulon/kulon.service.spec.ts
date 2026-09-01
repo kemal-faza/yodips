@@ -20,6 +20,7 @@ import {
 } from './kulon-parse';
 import { CachePolicy, swrWindow } from '../cache/cache-policy';
 import { TELEMETRY_RUNTIME, type TelemetryRuntime } from '../observability/telemetry';
+import { NestTelemetrySink } from '../observability/nest-telemetry.sink';
 import { KulonModule } from './kulon.module';
 import type {
   KulonAssignment,
@@ -331,7 +332,7 @@ describe('Kulon timed owner compatibility', () => {
       const upstream = moduleRef.get(KulonUpstreamSession) as any;
 
       expect(runtime).toBeDefined();
-      expect(runtime.sink).toBeDefined();
+      expect(runtime.sink).toBeInstanceOf(NestTelemetrySink);
       expect(service.runtime).toBe(runtime);
       expect(upstream.runtime).toBe(runtime);
     } finally {
