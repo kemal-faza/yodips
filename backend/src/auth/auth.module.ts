@@ -7,6 +7,7 @@ import { PlaywrightModule } from '../playwright/playwright.module';
 import { SessionModule } from '../session/session.module';
 import { KulonModule } from '../kulon/kulon.module';
 import { SiapModule } from '../siap/siap.module';
+import { ObservabilityModule } from '../observability/observability.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -19,6 +20,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
     SessionModule,
     KulonModule,
     SiapModule,
+    ObservabilityModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (c: ConfigService) => ({

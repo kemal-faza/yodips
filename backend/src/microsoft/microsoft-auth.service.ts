@@ -1,5 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import {
+  createNoopTelemetryRuntime,
+  TELEMETRY_RUNTIME,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
+import {
+  timedFetch,
+  type UpstreamAttemptResult,
+  type UpstreamRouteContext,
+} from '../upstream/upstream-fetch';
 
 export interface MicrosoftConfig {
   tenantId: string;
@@ -8,15 +18,36 @@ export interface MicrosoftConfig {
   redirectUri: string;
 }
 
+const MICROSOFT_TOKEN_EXCHANGE: UpstreamRouteContext = {
+  service: 'microsoft',
+  operation: 'token_exchange',
+  route: 'POST /oauth2/v2.0/token',
+};
+
 @Injectable()
 export class MicrosoftAuthService {
   private readonly config: MicrosoftConfig;
   private readonly authorizeUrl: string;
+  private readonly runtime: TelemetryRuntime;
   /** In-memory map of issued `state` values -> expiry (single-user hint). */
   private readonly pendingStates = new Map<string, number>();
 
-  constructor(config: MicrosoftConfig) {
+  private tokenExchangeUrl(): string {
+    if (!/^[A-Za-z0-9._-]+$/.test(this.config.tenantId)) {
+      throw new Error('Invalid Microsoft tenant path');
+    }
+    return `https://login.microsoftonline.com/${this.config.tenantId}/oauth2/v2.0/token`;
+  }
+
+  constructor(
+    config: MicrosoftConfig,
+    @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
+  ) {
+    if (!/^[A-Za-z0-9._-]+$/.test(config.tenantId)) {
+      throw new Error('Invalid Microsoft tenant path');
+    }
     this.config = config;
+    this.runtime = runtime ?? createNoopTelemetryRuntime();
     this.authorizeUrl = `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/authorize`;
   }
 
@@ -25,9 +56,9 @@ export class MicrosoftAuthService {
    * callback (prevents login CSRF). Rotates out any expired entries.
    */
   private issueState(): string {
-    const now = Date.now();
+    const now = this.runtime.wallNowMs();
     for (const [k, exp] of this.pendingStates) {
-      if (exp < now) this.pendingStates.delete(k);
+      if (exp <= now) this.pendingStates.delete(k);
     }
     const state = randomBytes(24).toString('base64url');
     this.pendingStates.set(state, now + 10 * 60_000); // 10 min validity
@@ -51,12 +82,16 @@ export class MicrosoftAuthService {
     code: string,
     state?: string,
   ): Promise<{ accessToken: string; sessionCookies: string }> {
-    if (!state || !this.pendingStates.has(state)) {
+    const expiresAt = state ? this.pendingStates.get(state) : undefined;
+    const now = this.runtime.wallNowMs();
+    if (!state || expiresAt === undefined || now >= expiresAt) {
+      if (state) this.pendingStates.delete(state);
       throw new Error('Invalid or missing OIDC state (CSRF protection)');
     }
     this.pendingStates.delete(state);
 
-    const tokenUrl = `https://login.microsoftonline.com/${this.config.tenantId}/oauth2/v2.0/token`;
+    const tokenUrl = this.tokenExchangeUrl();
+    const routeUrl = 'https://login.microsoftonline.com/oauth2/v2.0/token';
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: this.config.clientId,
@@ -65,16 +100,76 @@ export class MicrosoftAuthService {
       redirect_uri: this.config.redirectUri,
       scope: 'openid profile email offline_access',
     });
-    const res = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
-    if (!res.ok) {
-      throw new Error(`Token exchange failed: ${res.status}`);
+    // The shared route inventory intentionally exposes the fixed operation path,
+    // while Microsoft requires the configured tenant in the request path. The
+    // timedFetch call invokes fetch synchronously before returning its promise,
+    // so adapt only that invocation and restore the global immediately.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (requestUrl, init) =>
+      originalFetch.call(
+        globalThis,
+        requestUrl === routeUrl ? tokenUrl : requestUrl,
+        init,
+      );
+    try {
+      return timedFetch(
+        this.runtime,
+        MICROSOFT_TOKEN_EXCHANGE,
+        routeUrl,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        },
+        async (res): Promise<UpstreamAttemptResult<{ accessToken: string; sessionCookies: string }>> => {
+          if (!res.ok) {
+            return {
+              ok: false,
+              error: new Error(`Token exchange failed: ${res.status}`),
+              outcome: 'http_error',
+              reason: 'http-not-ok',
+              status: res.status,
+            };
+          }
+          let data: unknown;
+          try {
+            data = await res.json();
+          } catch {
+            return {
+              ok: false,
+              error: new Error('Token exchange response invalid'),
+              outcome: 'parse_error',
+              reason: 'malformed-json',
+              status: res.status,
+            };
+          }
+          if (
+            typeof data !== 'object' ||
+            data === null ||
+            typeof (data as { access_token?: unknown }).access_token !== 'string' ||
+            (data as { access_token: string }).access_token.length === 0
+          ) {
+            return {
+              ok: false,
+              error: new Error('Token exchange response invalid'),
+              outcome: 'parse_error',
+              reason: 'malformed-json',
+              status: res.status,
+            };
+          }
+          return {
+            ok: true,
+            value: {
+              accessToken: (data as { access_token: string }).access_token,
+              sessionCookies: res.headers.get('set-cookie') ?? '',
+            },
+            outcome: 'ok',
+            status: res.status,
+          };
+        },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
     }
-    const data = await res.json();
-    const rawCookie = res.headers.get('set-cookie') ?? '';
-    return { accessToken: data.access_token, sessionCookies: rawCookie };
   }
 }

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -11,6 +11,14 @@ import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
 import { HandoffDto } from './dto/handoff.dto';
 import { CachePolicy } from '../cache/cache-policy';
+import {
+  createNoopTelemetryRuntime,
+  elapsedMs,
+  recordTelemetry,
+  TELEMETRY_RUNTIME,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
+import type { CacheReadEventInput } from '../observability/telemetry-contract';
 
 @Injectable()
 export class AuthService {
@@ -18,6 +26,7 @@ export class AuthService {
   // Reuse a stored session only if it was captured within this window.
   private readonly SESSION_TTL_MS = 30 * 60_000; // 30 minutes
   private readonly probeCache = new Map<string, { valid: boolean; at: number }>();
+  private readonly runtime: TelemetryRuntime;
 
   constructor(
     private readonly ssoAuth: SSOAuthService,
@@ -29,7 +38,10 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly kulon: KulonService,
     private readonly siap: SiapService,
-  ) {}
+    @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
+  ) {
+    this.runtime = runtime ?? createNoopTelemetryRuntime();
+  }
 
   async login(identity: string, password: string) {
     const baseUrl = this.config.get<string>('SSO_BASE_URL')!;
@@ -45,7 +57,7 @@ export class AuthService {
       microsoftCookie: '',
       kulonCookie: '',
       siapCookie: '',
-      capturedAt: Date.now(),
+      capturedAt: this.runtime.wallNowMs(),
     });
     const payload = { sub: identity, via: 'sso' };
     const accessToken = await this.jwt.signAsync(payload);
@@ -137,7 +149,7 @@ export class AuthService {
 
   /** A session is reusable if captured within the TTL window. */
   private isFresh(session: { capturedAt: number }): boolean {
-    return Date.now() - session.capturedAt < this.SESSION_TTL_MS;
+    return this.runtime.wallNowMs() - session.capturedAt < this.SESSION_TTL_MS;
   }
 
   /**
@@ -191,7 +203,7 @@ export class AuthService {
       microsoftCookie: sessionCookies,
       kulonCookie: '',
       siapCookie: '',
-      capturedAt: Date.now(),
+      capturedAt: this.runtime.wallNowMs(),
     });
     const payload = { sub: identity, via: 'oidc' };
     const jwt = await this.jwt.signAsync(payload);
@@ -278,6 +290,7 @@ export class AuthService {
         emailSso = ''; // ignore; resolveSiapIdentity will fallback-scrape once
       }
     }
+    const capturedAt = this.runtime.wallNowMs();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: dto.ssoCookie ?? '',
@@ -285,13 +298,13 @@ export class AuthService {
       kulonCookie: dto.kulonCookie,
       siapCookie: siapCheck.valid ? dto.siapCookie ?? '' : '',
       ...(emailSso ? { emailSso } : {}),
-      capturedAt: Date.now(),
+      capturedAt,
     });
     const payload = { sub: identity, via: 'handoff' };
     const accessToken = await this.jwt.signAsync(payload);
     return {
       accessToken,
-      capturedAt: Date.now(),
+      capturedAt,
       reused: false,
       hasSso: !!dto.ssoCookie,
       hasMicrosoft: !!dto.microsoftCookie,
@@ -392,10 +405,43 @@ export class AuthService {
     probe: () => Promise<{ valid: boolean }>,
   ): Promise<boolean> {
     const cacheKey = `${key}:${cookie}`;
+    const started = this.monotonicNowNs();
     const hit = this.probeCache.get(cacheKey);
-    if (hit && Date.now() - hit.at < CachePolicy.AUTH_PROBE) return hit.valid;
+    if (hit && this.runtime.wallNowMs() - hit.at < CachePolicy.AUTH_PROBE) {
+      this.emitProbeRead('hit', started);
+      return hit.valid;
+    }
+    this.emitProbeRead('miss', started);
     const result = await probe();
-    this.probeCache.set(cacheKey, { valid: result.valid, at: Date.now() });
+    this.probeCache.set(cacheKey, { valid: result.valid, at: this.runtime.wallNowMs() });
     return result.valid;
+  }
+
+  private emitProbeRead(outcome: 'hit' | 'miss', started: bigint): void {
+    const event: CacheReadEventInput = {
+      event: 'cache.read',
+      cache: 'auth.probe',
+      backend: 'memory',
+      outcome,
+      durationMs: this.durationMs(started),
+    };
+    recordTelemetry(this.runtime, event);
+  }
+
+  private monotonicNowNs(): bigint {
+    try {
+      const now = this.runtime.monotonicNowNs();
+      return typeof now === 'bigint' ? now : 0n;
+    } catch {
+      return 0n;
+    }
+  }
+
+  private durationMs(started: bigint): number {
+    try {
+      return elapsedMs(started, this.monotonicNowNs());
+    } catch {
+      return 0;
+    }
   }
 }
