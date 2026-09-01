@@ -56,7 +56,10 @@ export type UpstreamFetchOutcome =
       networkMessage?: undefined;
     };
 
-export type UpstreamRouteContext = UpstreamRoute;
+export type UpstreamRouteContext = UpstreamRoute & {
+  /** Required by the Microsoft token route; never included in telemetry. */
+  tenantId?: string;
+};
 
 export type UpstreamAttemptResult<T> =
   | { ok: true; value: T; outcome: 'ok'; status?: number }
@@ -79,6 +82,37 @@ const UPSTREAM_ORIGINS: Readonly<Record<UpstreamRoute['service'], string>> = {
   sso: 'https://sso.undip.ac.id',
   microsoft: 'https://login.microsoftonline.com',
 };
+
+const MICROSOFT_TENANT_SEGMENT =
+  /^(?:common|organizations|consumers|[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)$/i;
+
+function microsoftTokenPath(tenantId: unknown): string {
+  if (
+    typeof tenantId !== 'string' ||
+    !MICROSOFT_TENANT_SEGMENT.test(tenantId)
+  ) {
+    throw new TypeError('Invalid Microsoft tenant path');
+  }
+  return `/${tenantId}/oauth2/v2.0/token`;
+}
+
+function rawPathname(url: string): string {
+  const schemeEnd = url.indexOf('://');
+  if (schemeEnd < 0) return '';
+  const pathStart = url.indexOf('/', schemeEnd + 3);
+  if (pathStart < 0) return '/';
+  const queryStart = url.indexOf('?', pathStart);
+  const fragmentStart = url.indexOf('#', pathStart);
+  const pathEnd =
+    queryStart < 0
+      ? fragmentStart < 0
+        ? url.length
+        : fragmentStart
+      : fragmentStart < 0
+        ? queryStart
+        : Math.min(queryStart, fragmentStart);
+  return url.slice(pathStart, pathEnd);
+}
 
 export function getTimedFetchTransportReason(
   error: unknown,
@@ -270,8 +304,17 @@ export function validateUpstreamAttempt(
   } catch {
     throw new TypeError('Invalid upstream request URL');
   }
-  const [expectedMethod, expectedPath] = canonical.route.split(' ');
-  if (method.toUpperCase() !== expectedMethod || parsed.pathname !== expectedPath) {
+  const [expectedMethod, canonicalPath] = canonical.route.split(' ');
+  const expectedPath =
+    canonical.service === 'microsoft' &&
+    canonical.operation === 'token_exchange'
+      ? microsoftTokenPath(context.tenantId)
+      : canonicalPath;
+  const pathMatches =
+    canonical.service === 'microsoft' && canonical.operation === 'token_exchange'
+      ? rawPathname(url) === expectedPath && parsed.pathname === expectedPath
+      : parsed.pathname === expectedPath;
+  if (method.toUpperCase() !== expectedMethod || !pathMatches) {
     throw new TypeError('Upstream URL does not match route context');
   }
   if (parsed.origin !== UPSTREAM_ORIGINS[canonical.service]) {

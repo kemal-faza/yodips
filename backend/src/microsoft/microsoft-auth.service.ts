@@ -7,6 +7,7 @@ import {
 } from '../observability/telemetry';
 import {
   timedFetch,
+  validateUpstreamAttempt,
   type UpstreamAttemptResult,
   type UpstreamRouteContext,
 } from '../upstream/upstream-fetch';
@@ -33,20 +34,23 @@ export class MicrosoftAuthService {
   private readonly pendingStates = new Map<string, number>();
 
   private tokenExchangeUrl(): string {
-    if (!/^[A-Za-z0-9._-]+$/.test(this.config.tenantId)) {
-      throw new Error('Invalid Microsoft tenant path');
-    }
     return `https://login.microsoftonline.com/${this.config.tenantId}/oauth2/v2.0/token`;
+  }
+
+  private tokenExchangeContext(): UpstreamRouteContext {
+    return { ...MICROSOFT_TOKEN_EXCHANGE, tenantId: this.config.tenantId };
   }
 
   constructor(
     config: MicrosoftConfig,
     @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
-    if (!/^[A-Za-z0-9._-]+$/.test(config.tenantId)) {
-      throw new Error('Invalid Microsoft tenant path');
-    }
     this.config = config;
+    validateUpstreamAttempt(
+      this.tokenExchangeContext(),
+      this.tokenExchangeUrl(),
+      'POST',
+    );
     this.runtime = runtime ?? createNoopTelemetryRuntime();
     this.authorizeUrl = `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/authorize`;
   }
@@ -91,7 +95,6 @@ export class MicrosoftAuthService {
     this.pendingStates.delete(state);
 
     const tokenUrl = this.tokenExchangeUrl();
-    const routeUrl = 'https://login.microsoftonline.com/oauth2/v2.0/token';
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: this.config.clientId,
@@ -100,76 +103,61 @@ export class MicrosoftAuthService {
       redirect_uri: this.config.redirectUri,
       scope: 'openid profile email offline_access',
     });
-    // The shared route inventory intentionally exposes the fixed operation path,
-    // while Microsoft requires the configured tenant in the request path. The
-    // timedFetch call invokes fetch synchronously before returning its promise,
-    // so adapt only that invocation and restore the global immediately.
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (requestUrl, init) =>
-      originalFetch.call(
-        globalThis,
-        requestUrl === routeUrl ? tokenUrl : requestUrl,
-        init,
-      );
-    try {
-      return timedFetch(
-        this.runtime,
-        MICROSOFT_TOKEN_EXCHANGE,
-        routeUrl,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-        },
-        async (res): Promise<UpstreamAttemptResult<{ accessToken: string; sessionCookies: string }>> => {
-          if (!res.ok) {
-            return {
-              ok: false,
-              error: new Error(`Token exchange failed: ${res.status}`),
-              outcome: 'http_error',
-              reason: 'http-not-ok',
-              status: res.status,
-            };
-          }
-          let data: unknown;
-          try {
-            data = await res.json();
-          } catch {
-            return {
-              ok: false,
-              error: new Error('Token exchange response invalid'),
-              outcome: 'parse_error',
-              reason: 'malformed-json',
-              status: res.status,
-            };
-          }
-          if (
-            typeof data !== 'object' ||
-            data === null ||
-            typeof (data as { access_token?: unknown }).access_token !== 'string' ||
-            (data as { access_token: string }).access_token.length === 0
-          ) {
-            return {
-              ok: false,
-              error: new Error('Token exchange response invalid'),
-              outcome: 'parse_error',
-              reason: 'malformed-json',
-              status: res.status,
-            };
-          }
+    return timedFetch(
+      this.runtime,
+      this.tokenExchangeContext(),
+      tokenUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      },
+      async (res): Promise<UpstreamAttemptResult<{ accessToken: string; sessionCookies: string }>> => {
+        if (!res.ok) {
           return {
-            ok: true,
-            value: {
-              accessToken: (data as { access_token: string }).access_token,
-              sessionCookies: res.headers.get('set-cookie') ?? '',
-            },
-            outcome: 'ok',
+            ok: false,
+            error: new Error(`Token exchange failed: ${res.status}`),
+            outcome: 'http_error',
+            reason: 'http-not-ok',
             status: res.status,
           };
-        },
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+        }
+        let data: unknown;
+        try {
+          data = await res.json();
+        } catch {
+          return {
+            ok: false,
+            error: new Error('Token exchange response invalid'),
+            outcome: 'parse_error',
+            reason: 'malformed-json',
+            status: res.status,
+          };
+        }
+        if (
+          typeof data !== 'object' ||
+          data === null ||
+          typeof (data as { access_token?: unknown }).access_token !== 'string' ||
+          (data as { access_token: string }).access_token.length === 0
+        ) {
+          return {
+            ok: false,
+            error: new Error('Token exchange response invalid'),
+            outcome: 'parse_error',
+            reason: 'malformed-json',
+            status: res.status,
+          };
+        }
+        return {
+          ok: true,
+          value: {
+            accessToken: (data as { access_token: string }).access_token,
+            sessionCookies: res.headers.get('set-cookie') ?? '',
+          },
+          outcome: 'ok',
+          status: res.status,
+        };
+      },
+    );
   }
 }
