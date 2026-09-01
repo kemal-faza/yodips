@@ -7,10 +7,6 @@ export function configureHttp(app: INestApplication): void {
   adapter.set('etag', false);
   app.use(helmet());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  app.enableCors({
-    origin: process.env.CORS_ORIGIN?.split(',') ?? ['http://localhost:5173'],
-    credentials: true,
-  });
   app.use((req: Request, res: Response, next: NextFunction) => {
     const path = req.path.replace(/\/+$/, '') || '/';
     const api = path === '/api' || path.startsWith('/api/');
@@ -22,5 +18,9 @@ export function configureHttp(app: INestApplication): void {
       );
     }
     next();
+  });
+  app.enableCors({
+    origin: process.env.CORS_ORIGIN?.split(',') ?? ['http://localhost:5173'],
+    credentials: true,
   });
 }

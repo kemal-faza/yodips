@@ -94,6 +94,21 @@ describe('configureHttp', () => {
       });
   });
 
+  it('marks allowed API preflight responses private without storage', async () => {
+    const response = await request(app.getHttpServer())
+      .options('/api/dashboard')
+      .set('Origin', 'https://allowed.example')
+      .set('Access-Control-Request-Method', 'GET')
+      .set('Access-Control-Request-Headers', 'Authorization')
+      .expect(204)
+      .expect('Access-Control-Allow-Origin', 'https://allowed.example')
+      .expect('Access-Control-Allow-Credentials', 'true')
+      .expect('Cache-Control', 'private, no-store');
+
+    expect(response.headers['access-control-allow-methods']).toContain('GET');
+    expect(response.headers['access-control-allow-headers']).toContain('Authorization');
+  });
+
   it('retains DTO validation for API input', async () => {
     await request(app.getHttpServer())
       .post('/api/auth/login')
