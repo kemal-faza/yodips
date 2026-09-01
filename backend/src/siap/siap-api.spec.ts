@@ -227,6 +227,114 @@ describe('SiapApiUpstream', () => {
     });
   });
 
+  it('maps a generic mint 5xx failure to api-endpoint 502', async () => {
+    const { runtime, events } = recordingRuntime();
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+      runtime as any,
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 500,
+      url: 'https://api.siap.undip.ac.id/index.php/mahasiswa_sso',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ status: 'fail', message: 'Server error' }),
+    });
+
+    const err = await api.mintToken('x@y', '24060124120013').catch((e) => e);
+    expect(err).toBeInstanceOf(StaleUpstreamError);
+    expect(err).toMatchObject({ reason: 'api-endpoint' });
+    expect(err.getStatus()).toBe(502);
+    expect(events).toEqual([
+      expect.objectContaining({
+        service: 'siap-api',
+        operation: 'mintToken',
+        outcome: 'stale',
+        reason: 'api-endpoint',
+        status: 500,
+      }),
+    ]);
+  });
+
+  it('maps malformed mint JSON to api-endpoint 502', async () => {
+    const { runtime, events } = recordingRuntime();
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+      runtime as any,
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://api.siap.undip.ac.id/index.php/mahasiswa_sso',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => {
+        throw new Error('malformed SECRET');
+      },
+    });
+
+    const err = await api.mintToken('x@y', '24060124120013').catch((e) => e);
+    expect(err).toBeInstanceOf(StaleUpstreamError);
+    expect(err).toMatchObject({ reason: 'api-endpoint' });
+    expect(err.getStatus()).toBe(502);
+    expect(events).toEqual([
+      expect.objectContaining({
+        service: 'siap-api',
+        operation: 'mintToken',
+        outcome: 'parse_error',
+        reason: 'malformed-json',
+        status: 200,
+      }),
+    ]);
+  });
+
+  it.each([
+    ['missing token', {}],
+    ['empty token', { token: '' }],
+    ['non-string token', { token: { value: 'JWT.X.Y' } }],
+  ])('maps a %s mint token shape to api-endpoint 502', async (_label, token) => {
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://api.siap.undip.ac.id/index.php/mahasiswa_sso',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ status: 'success', data: token }),
+    });
+
+    const err = await api.mintToken('x@y', '24060124120013').catch((e) => e);
+    expect(err).toBeInstanceOf(StaleUpstreamError);
+    expect(err).toMatchObject({ reason: 'api-endpoint' });
+    expect(err.getStatus()).toBe(502);
+  });
+
+  it.each([
+    [401, 'upstream auth failure'],
+    [403, 'upstream auth failure'],
+    [500, 'Invalid credentials'],
+  ])('keeps mint credential failures at 401 (%s / %s)', async (status, message) => {
+    const api = new SiapApiUpstream(
+      'https://api.siap.undip.ac.id/index.php',
+      '24',
+    );
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status,
+      url: 'https://api.siap.undip.ac.id/index.php/mahasiswa_sso',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ status: 'fail', message }),
+    });
+
+    const err = await api.mintToken('x@y', '24060124120013').catch((e) => e);
+    expect(err).toBeInstanceOf(StaleUpstreamError);
+    expect(err).toMatchObject({ reason: 'api-credential' });
+    expect(err.getStatus()).toBe(401);
+  });
+
   it('maps message-based credential failures without logging payload details', async () => {
     const { runtime } = recordingRuntime();
     const api = new SiapApiUpstream(
