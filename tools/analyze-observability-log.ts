@@ -30,7 +30,7 @@ type ValidationRules = {
   upstreamReasonGroups: Record<string, string[]>;
 };
 
-type Contract = {
+export type Contract = {
   schemaVersion: number;
   cacheLabels: string[];
   cacheBackends: string[];
@@ -276,7 +276,8 @@ function loadStatusRules(value: unknown): StatusRules {
   if (
     !Number.isSafeInteger(result.minimum) ||
     !Number.isSafeInteger(result.maximum) ||
-    result.minimum < 0 ||
+    result.minimum < 100 ||
+    result.maximum > 599 ||
     result.maximum < result.minimum ||
     result.requiredFor.some((outcome) => result.forbiddenFor.includes(outcome))
   ) {
@@ -299,14 +300,34 @@ function loadAuthProbe(value: unknown): ValidationRules["authProbe"] {
   return result;
 }
 
-function loadReasonGroups(value: unknown): Record<string, string[]> {
+function loadReasonGroups(
+  value: unknown,
+  eventShapes: Contract["eventShapes"],
+  upstreamReasons: readonly string[],
+): Record<string, string[]> {
   const root = requiredRecord(value);
   const entries = Object.entries(root);
   if (entries.length === 0) throw new Error("Invalid observability contract");
-  return Object.fromEntries(entries.map(([name, reasons]) => [name, stringArray(reasons)]));
+  const knownReasons = new Set(upstreamReasons);
+  const groups: Record<string, string[]> = {};
+  for (const [name, value] of entries) {
+    const reasons = stringArray(value);
+    if (!eventShapes["upstream.request"][name] || reasons.length === 0) {
+      throw new Error("Invalid observability contract");
+    }
+    if (reasons.some((reason) => !knownReasons.has(reason))) {
+      throw new Error("Invalid observability contract");
+    }
+    groups[name] = reasons;
+  }
+  return groups;
 }
 
-function loadValidationRules(value: unknown): ValidationRules {
+function loadValidationRules(
+  value: unknown,
+  eventShapes: Contract["eventShapes"],
+  upstreamReasons: readonly string[],
+): ValidationRules {
   const root = requiredRecord(value);
   const cacheRead = requiredRecord(root.cacheRead);
   const cacheRefresh = requiredRecord(root.cacheRefresh);
@@ -318,22 +339,26 @@ function loadValidationRules(value: unknown): ValidationRules {
     upstreamStatus: loadStatusRules(root.upstreamStatus),
     authProbe: loadAuthProbe(cacheRead.authProbe),
     hardExpireReason,
-    upstreamReasonGroups: loadReasonGroups(root.upstreamReasons),
+    upstreamReasonGroups: loadReasonGroups(root.upstreamReasons, eventShapes, upstreamReasons),
   };
 }
 
-function loadContract(): Contract {
-  const root = parseContractRoot(readContractRaw());
+export function validateContract(value: unknown): Contract {
+  const root = requiredRecord(value);
   const catalog = loadContractCatalog(root);
-  const validationRules = loadValidationRules(root.validationRules);
   const eventShapes = loadEventShapes(root.eventShapes);
   validateOutcomeCoverage(eventShapes, catalog);
+  const validationRules = loadValidationRules(root.validationRules, eventShapes, catalog.upstreamReasons);
   return {
     ...catalog,
     upstreamRoutes: loadRoutes(root.upstreamRoutes, catalog.upstreamServices),
     eventShapes,
     ...validationRules,
   };
+}
+
+function loadContract(): Contract {
+  return validateContract(parseContractRoot(readContractRaw()));
 }
 
 function getContract(): Contract {
@@ -596,6 +621,14 @@ function zeroCounts(values: readonly string[]): Record<string, number> {
   return result;
 }
 
+function incrementCounter(counters: Record<string, number>, key: string): void {
+  const current = counters[key];
+  if (!Number.isFinite(current)) throw new Error("Invalid observability contract");
+  const next = current + 1;
+  if (!Number.isFinite(next)) throw new Error("Invalid observability contract");
+  counters[key] = next;
+}
+
 function routeKey(route: { service: string; operation: string; route: string }): string {
   return `${route.service}.${route.operation}.${route.route}`;
 }
@@ -648,21 +681,22 @@ export function aggregateEvents(events: readonly unknown[]): AnalysisReport {
     if (!event) continue;
     if (event.event === "cache.read") {
       const cache = report.cache[String(event.cache)];
-      if (cache) cache.reads[String(event.outcome)] += 1;
+      if (!cache) throw new Error("Invalid observability contract");
+      incrementCounter(cache.reads, String(event.outcome));
       continue;
     }
     if (event.event === "cache.refresh") {
       const cache = report.cache[String(event.cache)];
-      if (!cache) continue;
-      cache.refreshes[String(event.outcome)] += 1;
-      if (has(event, "reason")) cache.refreshes.reasons[String(event.reason)] += 1;
+      if (!cache) throw new Error("Invalid observability contract");
+      incrementCounter(cache.refreshes, String(event.outcome));
+      if (has(event, "reason")) incrementCounter(cache.refreshes.reasons, String(event.reason));
       continue;
     }
     if (event.event === "upstream.request") {
       const key = `${event.service}.${event.operation}.${event.route}`;
       const group = report.upstream[key];
-      if (!group) continue;
-      group.outcomes[String(event.outcome)] += 1;
+      if (!group) throw new Error("Invalid observability contract");
+      incrementCounter(group.outcomes, String(event.outcome));
       const sample = durations.get(key) ?? [];
       sample.push(event.durationMs as number);
       durations.set(key, sample);
