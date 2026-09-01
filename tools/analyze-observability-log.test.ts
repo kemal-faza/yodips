@@ -12,6 +12,7 @@ import {
   nearestRank,
   parseEventLine,
   stableJson,
+  validateContract,
   validateEvent,
   type SafeEvent,
 } from "./analyze-observability-log";
@@ -107,13 +108,43 @@ async function runCliWithOpenStdin(byteCount: number) {
 type ContractFixture = {
   cacheReadOutcomes: string[];
   cacheRefreshOutcomes: string[];
+  cacheRefreshReasons: string[];
   upstreamOutcomes: string[];
+  upstreamReasons: string[];
   cacheLabels: string[];
   eventShapes: Record<string, Record<string, { outcomes: string[] }>>;
+  validationRules: {
+    upstreamStatus: { minimum: number; maximum: number; requiredFor: string[]; forbiddenFor: string[] };
+    upstreamReasons: Record<string, string[]>;
+  };
 };
 
 function readContractFixture(): ContractFixture {
   return JSON.parse(readFileSync(join(__dirname, "..", "observability-contract.json"), "utf8")) as ContractFixture;
+}
+
+function cloneContractFixture(): ContractFixture {
+  return JSON.parse(JSON.stringify(readContractFixture())) as ContractFixture;
+}
+
+function assertFiniteReportCounters(report: ReturnType<typeof aggregateEvents>): void {
+  for (const value of Object.values(report.lines)) assert.equal(Number.isFinite(value), true);
+  for (const cache of Object.values(report.cache)) {
+    for (const value of Object.values(cache.reads)) assert.equal(Number.isFinite(value), true);
+    for (const [key, value] of Object.entries(cache.refreshes)) {
+      if (key === "reasons") {
+        for (const reasonCount of Object.values(value)) assert.equal(Number.isFinite(reasonCount), true);
+      } else {
+        assert.equal(Number.isFinite(value), true);
+      }
+    }
+  }
+  for (const group of Object.values(report.upstream)) {
+    for (const value of Object.values(group.outcomes)) assert.equal(Number.isFinite(value), true);
+    for (const value of Object.values(group.durationMs)) {
+      if (value !== null) assert.equal(Number.isFinite(value), true);
+    }
+  }
 }
 
 function contractEventSamples(): Record<string, unknown>[] {
@@ -374,10 +405,41 @@ describe("strict event validation", () => {
         Object.keys(report.cache[label].refreshes).filter((key) => key !== "reasons").sort(),
         [...new Set(contract.cacheRefreshOutcomes)].sort(),
       );
+      assert.deepEqual(
+        Object.keys(report.cache[label].refreshes.reasons).sort(),
+        [...new Set(contract.cacheRefreshReasons)].sort(),
+      );
     }
     for (const group of Object.values(report.upstream)) {
       assert.deepEqual(Object.keys(group.outcomes).sort(), [...new Set(contract.upstreamOutcomes)].sort());
     }
+    assertFiniteReportCounters(report);
+  });
+
+  it("rejects HTTP status bounds outside the protocol range in cloned contracts", () => {
+    for (const [field, value] of [["minimum", 99], ["maximum", 600]] as const) {
+      const malformed = cloneContractFixture();
+      malformed.validationRules.upstreamStatus[field] = value;
+
+      assert.throws(() => validateContract(malformed), /Invalid observability contract/);
+    }
+  });
+
+  it("rejects shape outcomes that are absent from the matching aggregate catalog", () => {
+    const malformed = cloneContractFixture();
+    malformed.eventShapes["upstream.request"].ok.outcomes.push("not-in-catalog");
+
+    assert.throws(() => validateContract(malformed), /Invalid observability contract/);
+  });
+
+  it("rejects reason groups with unknown shapes or reasons", () => {
+    const unknownShape = cloneContractFixture();
+    unknownShape.validationRules.upstreamReasons.unknownShape = ["http-not-ok"];
+    assert.throws(() => validateContract(unknownShape), /Invalid observability contract/);
+
+    const unknownReason = cloneContractFixture();
+    unknownReason.validationRules.upstreamReasons.httpError = ["not-in-catalog"];
+    assert.throws(() => validateContract(unknownReason), /Invalid observability contract/);
   });
 });
 
