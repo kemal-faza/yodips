@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { describe, expect, it } from '@jest/globals';
-import { CachePolicy, isSwrKey, swrWindow, SWR_KEYS } from './cache-policy';
+import { CachePolicy, classifyCacheKey, isSwrKey, swrWindow } from './cache-policy';
 
 describe('CachePolicy', () => {
   it('defines every cache key with a positive finite TTL (ms)', () => {
@@ -17,19 +17,24 @@ describe('CachePolicy', () => {
     }
   });
 
-  it('keeps behavior-preserving values', () => {
-    expect(CachePolicy.KULON_ASSIGNMENTS_ALL).toBe(180_000);
-    expect(CachePolicy.SIAP_IRS).toBe(15 * 60_000);
-    expect(CachePolicy.SIAP_KHS).toBe(30 * 60_000);
-    expect(CachePolicy.SIAP_LECTURERS).toBe(24 * 60 * 60_000);
-    expect(CachePolicy.KULON_SESSKEY).toBe(5 * 60_000);
-    expect(CachePolicy.SIAP_TOKEN).toBe(10 * 60_000);
-    expect(CachePolicy.SIAP_IDENTITY).toBe(24 * 60 * 60_000);
-    expect(CachePolicy.AUTH_PROBE).toBe(60_000);
-    // The 5 formerly-global keys are explicit 300 s (effective default).
-    for (const k of ['KULON_COURSES', 'SIAP_PROFILE', 'SIAP_NOTIFICATIONS', 'SIAP_JADWAL', 'SIAP_ABSEN'] as const) {
-      expect(CachePolicy[k]).toBe(300_000);
-    }
+  it('keeps every behavior-preserving numeric value', () => {
+    expect(CachePolicy).toEqual({
+      KULON_COURSES: 300_000,
+      KULON_ASSIGNMENTS_ALL: 180_000,
+      KULON_ASSIGNMENT_DETAIL: 60_000,
+      KULON_COURSE_CONTENT: 60_000,
+      KULON_SESSKEY: 300_000,
+      SIAP_PROFILE: 300_000,
+      SIAP_IRS: 900_000,
+      SIAP_KHS: 1_800_000,
+      SIAP_LECTURERS: 86_400_000,
+      SIAP_NOTIFICATIONS: 300_000,
+      SIAP_JADWAL: 300_000,
+      SIAP_ABSEN: 300_000,
+      SIAP_IDENTITY: 86_400_000,
+      SIAP_TOKEN: 600_000,
+      AUTH_PROBE: 60_000,
+    });
   });
 });
 
@@ -41,37 +46,83 @@ describe('swrWindow', () => {
   });
 });
 
-describe('SWR_KEYS', () => {
-  it('covers exactly the 11 payload key prefixes', () => {
-    expect(SWR_KEYS).toEqual(new Set([
-      'kulon:courses',
-      'kulon:assignments:all',
-      'kulon:assignment-detail:',
-      'kulon:course-content:',
-      'siap:profile',
-      'siap:irs',
-      'siap:khs',
-      'siap:lecturers',
-      'siap:notifications',
-      'siap:jadwal',
-      'siap:absen',
-    ]));
+describe('classifyCacheKey', () => {
+  const validCases = [
+    ['123:kulon:courses', { label: 'kulon.courses', policyKey: 'KULON_COURSES', swr: true }],
+    ['123:kulon:assignments:all', { label: 'kulon.assignments_all', policyKey: 'KULON_ASSIGNMENTS_ALL', swr: true }],
+    ['123:kulon:assignment-detail:42', { label: 'kulon.assignment_detail', policyKey: 'KULON_ASSIGNMENT_DETAIL', swr: true }],
+    ['123:kulon:course-content:456', { label: 'kulon.course_content', policyKey: 'KULON_COURSE_CONTENT', swr: true }],
+    ['123:kulon:sesskey:abcdef0123456789', { label: 'kulon.sesskey', policyKey: 'KULON_SESSKEY', swr: false }],
+    ['123:siap:profile', { label: 'siap.profile', policyKey: 'SIAP_PROFILE', swr: true }],
+    ['123:siap:irs', { label: 'siap.irs', policyKey: 'SIAP_IRS', swr: true }],
+    ['123:siap:khs', { label: 'siap.khs', policyKey: 'SIAP_KHS', swr: true }],
+    ['123:siap:lecturers', { label: 'siap.lecturers', policyKey: 'SIAP_LECTURERS', swr: true }],
+    ['123:siap:notifications', { label: 'siap.notifications', policyKey: 'SIAP_NOTIFICATIONS', swr: true }],
+    ['123:siap:jadwal', { label: 'siap.jadwal', policyKey: 'SIAP_JADWAL', swr: true }],
+    ['123:siap:absen', { label: 'siap.absen', policyKey: 'SIAP_ABSEN', swr: true }],
+    ['123:siap:identity', { label: 'siap.identity', policyKey: 'SIAP_IDENTITY', swr: false }],
+    ['123:siap:token', { label: 'siap.token', policyKey: 'SIAP_TOKEN', swr: false }],
+  ] as const;
+
+  for (const [key, expected] of validCases) {
+    it(`classifies ${key} and preserves its SWR flag`, () => {
+      expect(classifyCacheKey(key)).toEqual(expected);
+      expect(isSwrKey(key)).toBe(expected.swr);
+    });
+  }
+
+  const invalidCases = [
+    ['missing subject', 'kulon:courses'],
+    ['missing subject separator', 'xkulon:courses'],
+    ['empty subject atom', 'x::siap:profile'],
+    ['wrong family', 'x:kulon:assignments'],
+    ['extra family suffix', 'x:siap:profile:extra'],
+    ['invalid numeric assignment suffix', 'x:kulon:assignment-detail:not-a-number'],
+    ['invalid numeric content suffix', 'x:kulon:course-content:1.5'],
+    ['resource suffix on assignment', 'x:kulon:assignment-detail:42:resource'],
+    ['resource suffix on content', 'x:kulon:course-content:42:resource'],
+    ['short fingerprint', 'x:kulon:sesskey:abcdef012345678'],
+    ['long fingerprint', 'x:kulon:sesskey:abcdef01234567890'],
+    ['non-hex fingerprint', 'x:kulon:sesskey:abcdef012345678g'],
+    ['uppercase fingerprint', 'x:kulon:sesskey:ABCDEF0123456789'],
+    ['fingerprint resource suffix', 'x:kulon:sesskey:abcdef0123456789:resource'],
+    ['whitespace in subject', 'x y:siap:profile'],
+    ['whitespace in subject atom', 'x:tenant :siap:profile'],
+    ['trailing whitespace', 'x:siap:profile '],
+    ['control character in subject', 'x:\t:siap:profile'],
+    ['control character in family', 'x:siap:\rprofile'],
+    ['embedded substring', 'x:prefix-kulon:courses'],
+    ['substring with suffix', 'prefix-kulon:courses-suffix'],
+    ['uncached assignments feed', 'x:kulon:assignments'],
+    ['auth probe is not a DataCache family', 'x:auth:probe'],
+  ] as const;
+
+  it.each(invalidCases)('fails closed for %s', (_reason, key) => {
+    expect(classifyCacheKey(key)).toEqual({ label: 'unknown', swr: false });
+    expect(isSwrKey(key)).toBe(false);
   });
-  it('excludes credentials, probe, and the uncached assignments feed (negative guard)', () => {
-    expect(SWR_KEYS.has('kulon:sesskey')).toBe(false);
-    expect(SWR_KEYS.has('siap:identity')).toBe(false);
-    expect(SWR_KEYS.has('siap:token')).toBe(false);
-    // AUTH_PROBE is never a DataCache key (auth.service private Map) — but guard it too
-    expect(SWR_KEYS.has('auth:probe')).toBe(false);
-    // Feed key that must stay uncached/fresh for the poller
-    expect(SWR_KEYS.has('kulon:assignments')).toBe(false);
+
+  it('rejects valid-looking keys with a final newline despite RegExp $ behavior', () => {
+    for (const key of ['x:kulon:courses\n', 'x:siap:profile\r\n']) {
+      expect(classifyCacheKey(key)).toEqual({ label: 'unknown', swr: false });
+      expect(isSwrKey(key)).toBe(false);
+    }
   });
-  it('isSwrKey matches by exact key and by prefix for suffixed keys', () => {
-    expect(isSwrKey('u1:kulon:courses')).toBe(true);
-    expect(isSwrKey('u1:kulon:assignment-detail:123')).toBe(true);
-    expect(isSwrKey('u1:kulon:course-content:456')).toBe(true);
-    expect(isSwrKey('u1:siap:khs')).toBe(true);
-    expect(isSwrKey('u1:kulon:sesskey:abc')).toBe(false);
-    expect(isSwrKey('u1:siap:token')).toBe(false);
+
+  it('supports valid multi-atom subjects without substring matching', () => {
+    expect(classifyCacheKey('microsoft:abc_DEF-12:siap:token')).toEqual({
+      label: 'siap.token',
+      policyKey: 'SIAP_TOKEN',
+      swr: false,
+    });
+    expect(classifyCacheKey('org~2:tenant-01:kulon:assignment-detail:42')).toEqual({
+      label: 'kulon.assignment_detail',
+      policyKey: 'KULON_ASSIGNMENT_DETAIL',
+      swr: true,
+    });
+  });
+
+  it('does not classify a family name embedded in a larger key', () => {
+    expect(isSwrKey('prefix-kulon:courses-suffix')).toBe(false);
   });
 });
