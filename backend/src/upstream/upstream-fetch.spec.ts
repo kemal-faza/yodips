@@ -192,6 +192,21 @@ describe('isStaleUpstreamError', () => {
 });
 
 describe('classifyUpstreamFetch', () => {
+  it('routes arbitrary legacy URLs through the timed transport seam', async () => {
+    let fetchStack = '';
+    jest.spyOn(global, 'fetch').mockImplementation(async () => {
+      fetchStack = new Error().stack ?? '';
+      return resStub({ text: '<html>legacy</html>' });
+    });
+
+    await expect(
+      classifyUpstreamFetch('https://up.test/legacy/arbitrary', { method: 'GET' }),
+    ).resolves.toEqual(expect.objectContaining({ kind: 'ok' }));
+
+    expect(fetchStack).toMatch(/timedFetch/);
+    expect(fetchStack).not.toMatch(/classifyUpstreamFetch/);
+  });
+
   it('classifies an existing response without performing another fetch', () => {
     const fetch = jest.spyOn(global, 'fetch');
     const out = classifyUpstreamResponse(
