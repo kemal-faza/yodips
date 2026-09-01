@@ -84,3 +84,38 @@ describe('SiapUpstreamSession.getContext', () => {
     await expect(seam.getContext(NIM)).rejects.toMatchObject({ reason: 'no-emailSso' });
   });
 });
+
+describe('SiapUpstreamSession.fetchText', () => {
+  it('preserves a stale error and handles a rejecting async onStale callback', async () => {
+    const { seam } = makeSeam({});
+    const hookError = new Error('callback failure must not leak');
+    const onStale = jest.fn(async () => {
+      throw hookError;
+    });
+    const response = {
+      ok: false,
+      status: 403,
+      url: 'https://siap.undip.ac.id/pages/mhs/dashboard',
+      headers: new Headers(),
+    } as unknown as Response;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      jest.spyOn(global, 'fetch').mockResolvedValue(response);
+
+      const outward = await seam
+        .fetchText('https://up.test/x', undefined, { onStale })
+        .catch((error: unknown) => error);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(outward).toBeInstanceOf(StaleUpstreamError);
+      expect((outward as StaleUpstreamError).reason).toBe('http-not-ok');
+      expect(onStale).toHaveBeenCalledWith('http-not-ok', null, undefined);
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+});
