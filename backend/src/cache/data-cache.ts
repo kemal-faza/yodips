@@ -1,5 +1,9 @@
-import { HttpStatus, Logger, OnModuleDestroy } from '@nestjs/common';
-import { StaleUpstreamError } from '../upstream/upstream-fetch';
+import { HttpStatus, OnModuleDestroy } from '@nestjs/common';
+import {
+  getTimedFetchTransportReason,
+  StaleUpstreamError,
+} from '../upstream/upstream-fetch';
+import type { CacheRefreshReason } from '../observability/telemetry-contract';
 
 export interface SwrOptions {
   freshTtlMs: number;
@@ -39,23 +43,24 @@ const TRANSIENT_REASONS = new Set([
 ]);
 const BAD_GATEWAY_STATUS: number = HttpStatus.BAD_GATEWAY;
 
-function isTransientFailure(e: StaleUpstreamError): boolean {
-  if (TRANSIENT_REASONS.has(e.reason)) return true;
-  return e.reason === 'http-not-ok' && e.getStatus() === BAD_GATEWAY_STATUS;
+/** Storage failures are branded without mutating or replacing the thrown value. */
+const storageFailures = new WeakMap<object, true>();
+
+export function markCacheStorageFailure(error: unknown): void {
+  if (typeof error === 'object' && error !== null) {
+    storageFailures.set(error, true);
+  }
 }
 
-function isDeadSession(e: StaleUpstreamError): boolean {
-  if (DEAD_SESSION_REASONS.has(e.reason)) return true;
-  // http-not-ok is 502 (transient) ONLY when the upstream status was >= 500 —
-  // which `statusForStaleReason` already encoded as the error's HTTP status.
-  // DO NOT read `e.getResponse()`: it returns the `{ message }` object passed
-  // to `super()`, never the upstream `Response` (the 4th constructor arg is
-  // consumed inside `statusForStaleReason` and not stored on the instance).
-  // `e.getStatus()` is the reliable discriminator.
-  if (e.reason === 'http-not-ok') {
-    return e.getStatus() !== BAD_GATEWAY_STATUS; // 401 → dead session; 502 → transient
-  }
-  return false;
+function isCacheStorageFailure(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && storageFailures.has(error);
+}
+
+function isKulonCompatibilityError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /^(?:Kulon page (?:failed|not found)|(?:ASSIGNMENT|COURSE)_NOT_FOUND$|sesskey not found in Kulon page)/i.test(
+    error.message,
+  );
 }
 
 /**
@@ -63,47 +68,58 @@ function isDeadSession(e: StaleUpstreamError): boolean {
  * dead-session 401 → hard-expire (del) so the next request sync-fetches a
  * clean 401; transient → keep stale. Sync-path errors NEVER go through this.
  *
- * `onKeep` fires whenever the stale entry is kept (transient or unexpected
- * failure) so the caller can back off background refresh attempts — without
- * it, every stale read re-hits a failing upstream forever.
+ * Cache implementations apply their own backoff after receiving a keep-stale
+ * decision; this helper deliberately has no telemetry or logging side effects.
  */
 export interface BackgroundErrorHooks {
   del(key: string): Promise<void>;
-  /** Called after a keep-stale outcome (transient or unexpected error). */
+  /** Retained for source compatibility; policy decisions do not invoke hooks. */
   onKeep?: (key: string) => void;
+}
+
+export type BackgroundRefreshDecision =
+  | { outcome: 'hard_expire'; reason: 'dead-session'; keepStale: false }
+  | { outcome: 'error'; reason: CacheRefreshReason; keepStale: true };
+
+export function classifyBackgroundError(error: unknown): CacheRefreshReason {
+  // A timed transport marker is stronger evidence than the stale error that
+  // may be wrapped around or raised after the transport attempt.
+  const transportReason = getTimedFetchTransportReason(error);
+  if (transportReason === 'fetch-threw') return 'transient';
+  if (transportReason === 'redirect-loop') return 'dead-session';
+
+  if (error instanceof StaleUpstreamError) {
+    if (error.reason === 'stale') return 'unexpected';
+    if (DEAD_SESSION_REASONS.has(error.reason)) return 'dead-session';
+    if (TRANSIENT_REASONS.has(error.reason)) return 'transient';
+    if (error.reason === 'http-not-ok') {
+      return error.getStatus() === BAD_GATEWAY_STATUS ? 'transient' : 'dead-session';
+    }
+    return 'unknown';
+  }
+
+  if (isCacheStorageFailure(error) || isKulonCompatibilityError(error)) {
+    return 'unexpected';
+  }
+  return 'unknown';
 }
 
 export async function handleBackgroundError(
   cache: BackgroundErrorHooks,
   key: string,
   e: unknown,
-): Promise<void> {
-  const logger = new Logger('DataCache');
-  if (e instanceof StaleUpstreamError) {
-    if (isDeadSession(e)) {
-      try {
-        await cache.del(key);
-        logger.warn(`[cache] swr hard-expire ${key} reason=${e.reason}`);
-      } catch (deleteError) {
-        logger.error(
-          `[cache] swr hard-expire failed ${key}`,
-          deleteError instanceof Error
-            ? deleteError.stack
-            : String(deleteError),
-        );
-      }
-      return;
-    }
-    if (isTransientFailure(e)) {
-      logger.debug(
-        `[cache] swr refresh failed ${key} reason=${e.reason} (transient, keeping stale)`,
-      );
-      cache.onKeep?.(key);
-      return;
-    }
+): Promise<BackgroundRefreshDecision> {
+  const reason = classifyBackgroundError(e);
+  if (reason !== 'dead-session') {
+    return { outcome: 'error', reason, keepStale: true };
   }
-  logger.warn(`[cache] swr refresh failed ${key}`, e);
-  cache.onKeep?.(key);
+
+  try {
+    await cache.del(key);
+    return { outcome: 'hard_expire', reason: 'dead-session', keepStale: false };
+  } catch {
+    return { outcome: 'error', reason: 'unexpected', keepStale: true };
+  }
 }
 
 /** How long a failed refresh blocks new background attempts for the same key.
