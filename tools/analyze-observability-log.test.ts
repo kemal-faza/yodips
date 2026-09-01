@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import {
   aggregateEvents,
   analyzeText,
+  MAX_INPUT_BYTES,
+  MAX_LINE_LENGTH,
   nearestRank,
   parseEventLine,
   stableJson,
@@ -65,10 +67,20 @@ describe("observability event parser", () => {
 
   it("chooses a valid candidate even when an invalid candidate is to its right", () => {
     const valid = upstream({ durationMs: 11 });
-    const invalid = { ...upstream(), outcome: "not-an-outcome" };
-    const result = parseEventLine(`prefix ${JSON.stringify(valid)} ${JSON.stringify(invalid)}`);
+    const invalidSchema = { ...upstream(), outcome: "not-an-outcome" };
+    const result = parseEventLine(`prefix ${JSON.stringify(valid)} ${JSON.stringify(invalidSchema)}`);
 
     assert.deepEqual(result, { kind: "event", event: valid });
+    assert.deepEqual(parseEventLine(`${JSON.stringify(valid)} {not-json}`), {
+      kind: "event",
+      event: valid,
+    });
+  });
+
+  it("does not accept an event before non-object text that ends in a brace", () => {
+    const valid = JSON.stringify(upstream());
+
+    assert.deepEqual(parseEventLine(`${valid} junk}`), { kind: "malformed" });
   });
 
   it("continues past schema-invalid nested objects to the valid outer object", () => {
@@ -84,6 +96,17 @@ describe("observability event parser", () => {
   it("rejects JSON candidates that do not end the trimmed line", () => {
     assert.deepEqual(parseEventLine(`${JSON.stringify(upstream())} trailing`), { kind: "ignored" });
     assert.deepEqual(parseEventLine("ordinary text"), { kind: "ignored" });
+  });
+
+  it("does not scan an oversized object-looking line", () => {
+    const oversizedLine = `${JSON.stringify(upstream())}${"x".repeat(MAX_LINE_LENGTH)} }`;
+
+    assert.deepEqual(parseEventLine(oversizedLine), { kind: "malformed" });
+    assert.deepEqual(analyzeText(oversizedLine).lines, {
+      events: 0,
+      ignoredLines: 0,
+      malformedEvents: 1,
+    });
   });
 
   it("marks parseable-invalid and unparseable object suffixes as malformed", () => {
@@ -179,6 +202,18 @@ describe("strict event validation", () => {
     ];
 
     for (const event of events) assert.ok(validateEvent(event));
+  });
+
+  it("follows contract status requiredFor and forbiddenFor rules", () => {
+    const networkError = upstream({ outcome: "network_error", reason: "fetch-threw" });
+    const parseErrorWithoutStatus = upstream({ outcome: "parse_error", reason: "malformed-json" });
+    delete networkError.status;
+    delete parseErrorWithoutStatus.status;
+
+    assert.ok(validateEvent(upstream({ outcome: "parse_error", status: 204, reason: "malformed-json" })));
+    assert.ok(validateEvent(networkError));
+    assert.equal(validateEvent(upstream({ outcome: "network_error", status: 503, reason: "fetch-threw" })), undefined);
+    assert.equal(validateEvent(parseErrorWithoutStatus), undefined);
   });
 
   it("enforces status, duration, route, and conditional-field rules", () => {
@@ -352,5 +387,15 @@ describe("observability analyzer CLI", () => {
       ignoredLines: 1,
       malformedEvents: 1,
     });
+  });
+
+  it("returns exit 2 with no stdout for oversized input", () => {
+    const sentinel = "OVERSIZE_INPUT_MUST_NOT_ECHO";
+    const input = `${"x".repeat(MAX_INPUT_BYTES)}${sentinel}`;
+    const result = runCli([], input);
+
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr.includes(sentinel), false);
   });
 });
