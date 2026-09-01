@@ -159,4 +159,63 @@ describe('KulonService SWR course refresh', () => {
     expect(cache.get).toHaveBeenCalledWith('u1:kulon:courses');
     expect(upstream.ajax).not.toHaveBeenCalled();
   });
+
+  it('uses getStale as the sole payload writer for all four Kulon families', async () => {
+    const cases: Array<{
+      key: string;
+      run: (service: KulonService) => Promise<unknown>;
+      prepare?: (service: KulonService, upstream: UpstreamMock) => void;
+    }> = [
+      {
+        key: 'u1:kulon:courses',
+        run: (service) => service.getCourses('u1'),
+      },
+      {
+        key: 'u1:kulon:assignments:all',
+        run: (service) => service.getAllAssignments('u1'),
+        prepare: (_service, upstream) => {
+          upstream.ajax.mockResolvedValue({ courses: [] });
+        },
+      },
+      {
+        key: 'u1:kulon:assignment-detail:7',
+        run: (service) => service.getAssignmentDetail('u1', 9, 7),
+      },
+      {
+        key: 'u1:kulon:course-content:7',
+        run: (service) => service.getCourseContent('u1', 7),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const cache = makeCache();
+      const upstream = makeUpstream();
+      const service = new KulonService(
+        cache as unknown as DataCache,
+        undefined,
+        upstream as unknown as KulonUpstreamSession,
+      );
+      cache.getStale.mockImplementation(
+        async (key: string, fetcher: () => Promise<unknown>) => {
+          const value = await fetcher();
+          await cache.set(key, value);
+          return { value, stale: false };
+        },
+      );
+      if (testCase.prepare) testCase.prepare(service, upstream);
+      if (testCase.key.includes('assignment-detail')) {
+        global.fetch = jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=7',
+          text: async () => '<html><head><title>Assignment</title></head><div id="intro"><div class="no-overflow">Description</div></div></html>',
+        }) as any;
+      }
+
+      await testCase.run(service);
+
+      expect(cache.set).toHaveBeenCalledTimes(1);
+      expect(cache.set).toHaveBeenCalledWith(testCase.key, expect.anything());
+    }
+  });
 });

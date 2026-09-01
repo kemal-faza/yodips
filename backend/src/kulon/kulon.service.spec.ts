@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 import fs from 'fs';
 import path from 'path';
+import { Test } from '@nestjs/testing';
+import { ConfigModule } from '@nestjs/config';
 import {
   KulonService,
   parseSemester,
@@ -17,11 +19,29 @@ import {
   parseQuizIndex,
 } from './kulon-parse';
 import { CachePolicy, swrWindow } from '../cache/cache-policy';
+import { TELEMETRY_RUNTIME, type TelemetryRuntime } from '../observability/telemetry';
+import { KulonModule } from './kulon.module';
 import type {
   KulonAssignment,
   KulonAssignmentDetail,
   KulonCourseContent,
 } from './kulon-parse';
+
+function recordingRuntime(): { runtime: TelemetryRuntime; events: unknown[] } {
+  const events: unknown[] = [];
+  let now = 0n;
+  return {
+    events,
+    runtime: {
+      sink: { record: (event) => events.push(event) },
+      wallNowMs: () => 0,
+      monotonicNowNs: () => {
+        now += 1_000_000n;
+        return now;
+      },
+    },
+  };
+}
 
 describe('parseSemester', () => {
   it('extracts semester from fullname', () => {
@@ -204,6 +224,121 @@ describe('sub-based session resolution (endpoint API)', () => {
       svcWith({ kulonCookie: 'MoodleSession=OLD' }).getCourseContent('u1', 77),
     ).rejects.toBeInstanceOf(StaleUpstreamError);
   });
+});
+
+describe('Kulon timed owner compatibility', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('records session identity, site-info fallback, and profile identity with fixed routes', async () => {
+    const { runtime, events } = recordingRuntime();
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/my/',
+        text: async () => '<input name="sesskey" value="sess123">',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/lib/ajax/service.php?sesskey=sess123',
+        json: async () => [{ error: true, exception: { message: 'disabled' } }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/user/profile.php',
+        text: async () => '<title>Name 24060124120013: Public profile</title>',
+      });
+    const service = new KulonService(undefined, undefined, undefined, undefined, runtime);
+
+    await expect(service.getSessionIdentity('cookie')).resolves.toBe('24060124120013');
+    expect(events).toEqual([
+      expect.objectContaining({ operation: 'session_identity', route: 'GET /my/', outcome: 'ok' }),
+      expect.objectContaining({ operation: 'ajax', route: 'POST /lib/ajax/service.php', outcome: 'stale' }),
+      expect.objectContaining({ operation: 'profile_identity', route: 'GET /user/profile.php', outcome: 'ok' }),
+    ]);
+    expect(events).toHaveLength(3);
+    expect(JSON.stringify(events)).not.toContain('sess123');
+  });
+
+  it('propagates a recording runtime to the fallback upstream session', async () => {
+    const { runtime, events } = recordingRuntime();
+    const store = {
+      get: jest.fn().mockResolvedValue({ kulonCookie: 'cookie' }),
+    } as any;
+    global.fetch = jest.fn(async (input: string) => {
+      if (input.includes('/my/')) {
+        return {
+          ok: true,
+          status: 200,
+          url: input,
+          text: async () => '<input name="sesskey" value="sess123">',
+        } as any;
+      }
+      return {
+        ok: true,
+        status: 200,
+        url: input,
+        json: async () => [{ error: false, data: { courses: [] } }],
+      } as any;
+    }) as any;
+    const service = new KulonService(undefined, undefined, undefined, store, runtime);
+
+    await expect(service.getCourses('u1')).resolves.toEqual([]);
+    expect(events.some((event: any) => event.operation === 'sesskey')).toBe(true);
+    expect(events.filter((event: any) => event.operation === 'ajax')).toHaveLength(3);
+  });
+
+  it('uses timed fixed contexts for all four page operations', async () => {
+    const { runtime, events } = recordingRuntime();
+    const service = new KulonService(undefined, undefined, undefined, undefined, runtime);
+    const internals = service as any;
+    const page = '<html><head><title>Assignment</title></head><div id="intro"><div class="no-overflow">Description</div></div></html>';
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/mod/assign/index.php?id=1',
+      text: async () => page,
+    });
+
+    await internals.fetchAssignmentIndex('cookie', 1, 'Course');
+    await internals.fetchQuizIndex('cookie', 1, 'Course');
+    await internals.fetchAssignmentDetail('cookie', 1, 9);
+    await internals.contentFromHTML('cookie', 1);
+
+    expect(events.map((event: any) => [event.operation, event.route])).toEqual([
+      ['assignments_index', 'GET /mod/assign/index.php'],
+      ['quiz_index', 'GET /mod/quiz/index.php'],
+      ['assignment_detail', 'GET /mod/assign/view.php'],
+      ['course_content', 'GET /course/view.php'],
+    ]);
+    expect(events).toHaveLength(4);
+  });
+
+  it('Nest KulonModule wires one non-noop runtime into both production owners', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        KulonModule,
+      ],
+    }).compile();
+
+    try {
+      const runtime = moduleRef.get<TelemetryRuntime>(TELEMETRY_RUNTIME);
+      const service = moduleRef.get(KulonService) as any;
+      const upstream = moduleRef.get(KulonUpstreamSession) as any;
+
+      expect(runtime).toBeDefined();
+      expect(runtime.sink).toBeDefined();
+      expect(service.runtime).toBe(runtime);
+      expect(upstream.runtime).toBe(runtime);
+    } finally {
+      await moduleRef.close();
+    }
+  });
+
 });
 
 /**
@@ -491,10 +626,11 @@ describe('KulonService', () => {
     const setSpy = jest.fn();
     const cacheMock = {
       get: jest.fn().mockResolvedValue(null),
-      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
-        value: await fetcher(),
-        stale: false,
-      })),
+      getStale: jest.fn(async (key: string, fetcher: () => unknown) => {
+        const value = await fetcher();
+        await setSpy(key, value, CachePolicy.KULON_ASSIGNMENTS_ALL);
+        return { value, stale: false };
+      }),
       set: setSpy,
       del: jest.fn(),
     };
@@ -551,10 +687,11 @@ describe('KulonService', () => {
     const setSpy = jest.fn();
     const cacheMock = {
       get: jest.fn().mockResolvedValue(null), // cold miss
-      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
-        value: await fetcher(),
-        stale: false,
-      })),
+      getStale: jest.fn(async (key: string, fetcher: () => unknown) => {
+        const value = await fetcher();
+        await setSpy(key, value, CachePolicy.KULON_ASSIGNMENTS_ALL);
+        return { value, stale: false };
+      }),
       set: setSpy,
       del: jest.fn(),
     };
@@ -575,7 +712,7 @@ describe('KulonService', () => {
     await svc.getAllAssignments('u1');
     expect(progressSpy).not.toHaveBeenCalled();
     expect(setSpy).not.toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
-    // assignments:all still written (existing behavior)
+    // assignments:all is written by getStale, the sole payload owner.
     expect(setSpy).toHaveBeenCalledWith('u1:kulon:assignments:all', expect.anything(), CachePolicy.KULON_ASSIGNMENTS_ALL);
     progressSpy.mockRestore();
   });
@@ -629,13 +766,14 @@ describe('KulonService', () => {
     expect(out).toEqual([]);
   });
 
-  it('public getCourses (no opts) still writes cache with progress', async () => {
+  it('public getCourses (no opts) lets getStale write the progress-complete payload', async () => {
     const cache = {
       get: jest.fn().mockResolvedValue(null),
-      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
-        value: await fetcher(),
-        stale: false,
-      })),
+      getStale: jest.fn(async (key: string, fetcher: () => unknown) => {
+        const value = await fetcher();
+        await cache.set(key, value, CachePolicy.KULON_COURSES);
+        return { value, stale: false };
+      }),
       set: jest.fn(),
       del: jest.fn(),
     };
@@ -1262,10 +1400,11 @@ describe('KulonService', () => {
     global.fetch = jest.fn();
     const cache = {
       get: jest.fn().mockResolvedValue(null),
-      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
-        value: await fetcher(),
-        stale: false,
-      })),
+      getStale: jest.fn(async (key: string, fetcher: () => unknown) => {
+        const value = await fetcher();
+        await cache.set(key, value, CachePolicy.KULON_COURSES);
+        return { value, stale: false };
+      }),
       set: jest.fn(),
       del: jest.fn(),
     };
