@@ -160,7 +160,12 @@ function createInMemoryProgram(fileName: string, sourceText: string): ts.Program
   host.getSourceFile = (requestedFileName, languageVersion, onError, shouldCreateNewSourceFile) =>
     requestedFileName === fileName
       ? sourceFile
-      : originalGetSourceFile(requestedFileName, languageVersion, onError, shouldCreateNewSourceFile);
+      : originalGetSourceFile(
+          requestedFileName,
+          languageVersion ?? ts.ScriptTarget.ES2023,
+          onError,
+          shouldCreateNewSourceFile,
+        );
   host.fileExists = (requestedFileName) =>
     requestedFileName === fileName || originalFileExists(requestedFileName);
   host.readFile = (requestedFileName) =>

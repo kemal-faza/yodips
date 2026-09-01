@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import {
+  createNoopTelemetryRuntime,
   elapsedMs,
   recordTelemetry,
   type TelemetryRuntime,
@@ -157,6 +158,9 @@ export const SIAP_SESSION_PROBE = fixedRoute(
   'GET /pages/mhs/dashboard',
 );
 
+/** Internal-only mode for preserving the pre-Task-5 arbitrary-URL helpers. */
+const LEGACY_COMPATIBILITY = Symbol('legacy-upstream-fetch');
+
 /**
  * True when the final URL landed on a login page: either upstream's own
  * login route or the Microsoft OIDC host both SSO flows funnel through.
@@ -245,23 +249,41 @@ export function classifyUpstreamResponse(res: Response): UpstreamFetchOutcome {
 }
 
 /**
- * Compatibility wrapper for owners that have not migrated to timedFetch yet.
- * New code must classify the response inside timedFetch's consumer.
+ * Compatibility wrapper for pre-Task-5 callers. It retains arbitrary test/tool
+ * URLs, but delegates the actual network attempt to timedFetch so production
+ * has one global-fetch seam and transport errors keep their private marker.
  */
-export async function classifyUpstreamFetch(
+export function classifyUpstreamFetch(
   url: string,
   init?: RequestInit,
 ): Promise<UpstreamFetchOutcome> {
-  try {
-    return classifyUpstreamResponse(await fetch(url, init));
-  } catch (e) {
-    const reason = isRedirectLoopCause(e) ? 'redirect-loop' : 'fetch-threw';
-    if (typeof e === 'object' && e !== null) transportReasons.set(e, reason);
-    if (reason === 'redirect-loop') {
-      return { kind: 'stale', reason };
-    }
-    return { kind: 'gateway', reason };
-  }
+  return Promise.resolve()
+    .then(() =>
+      timedFetch(
+        createNoopTelemetryRuntime(),
+        KULON_SESSION_PROBE,
+        url,
+        init,
+        (res): Promise<UpstreamAttemptResult<UpstreamFetchOutcome>> => {
+          return Promise.resolve({
+            ok: true as const,
+            value: classifyUpstreamResponse(res),
+            outcome: 'ok' as const,
+            status: res.status,
+          });
+        },
+        LEGACY_COMPATIBILITY,
+      ),
+    )
+    .catch((e: unknown): UpstreamFetchOutcome => {
+      const reason =
+        getTimedFetchTransportReason(e) ??
+        (isRedirectLoopCause(e) ? 'redirect-loop' : 'fetch-threw');
+      if (reason === 'redirect-loop') {
+        return { kind: 'stale', reason };
+      }
+      return { kind: 'gateway', reason: 'fetch-threw' };
+    });
 }
 
 export interface UpstreamFetchOpts {
@@ -464,8 +486,12 @@ export async function timedFetch<T>(
   url: string,
   init: RequestInit | undefined,
   consume: (response: Response) => Promise<UpstreamAttemptResult<T>>,
+  compatibility?: typeof LEGACY_COMPATIBILITY,
 ): Promise<T> {
-  const canonical = validateUpstreamAttempt(context, url, init?.method ?? 'GET');
+  const canonical =
+    compatibility === LEGACY_COMPATIBILITY
+      ? context
+      : validateUpstreamAttempt(context, url, init?.method ?? 'GET');
   const started = safeStart(runtime);
   let response: Response | undefined;
   let responseReceived = false;
