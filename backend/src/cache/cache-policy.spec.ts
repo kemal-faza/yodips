@@ -52,7 +52,7 @@ describe('classifyCacheKey', () => {
     ['123:kulon:assignments:all', { label: 'kulon.assignments_all', policyKey: 'KULON_ASSIGNMENTS_ALL', swr: true }],
     ['123:kulon:assignment-detail:42', { label: 'kulon.assignment_detail', policyKey: 'KULON_ASSIGNMENT_DETAIL', swr: true }],
     ['123:kulon:course-content:456', { label: 'kulon.course_content', policyKey: 'KULON_COURSE_CONTENT', swr: true }],
-    ['123:kulon:sesskey:abcdef0123456789', { label: 'kulon.sesskey', policyKey: 'KULON_SESSKEY', swr: false }],
+    ['123:kulon:sesskey:abcdef0123456789', { label: 'kulon.sesskey', policyKey: 'KULON_SESSKEY', swr: false }], // gitleaks:allow test fixture
     ['123:siap:profile', { label: 'siap.profile', policyKey: 'SIAP_PROFILE', swr: true }],
     ['123:siap:irs', { label: 'siap.irs', policyKey: 'SIAP_IRS', swr: true }],
     ['123:siap:khs', { label: 'siap.khs', policyKey: 'SIAP_KHS', swr: true }],
@@ -81,10 +81,10 @@ describe('classifyCacheKey', () => {
     ['invalid numeric content suffix', 'x:kulon:course-content:1.5'],
     ['resource suffix on assignment', 'x:kulon:assignment-detail:42:resource'],
     ['resource suffix on content', 'x:kulon:course-content:42:resource'],
-    ['short fingerprint', 'x:kulon:sesskey:abcdef012345678'],
-    ['long fingerprint', 'x:kulon:sesskey:abcdef01234567890'],
-    ['non-hex fingerprint', 'x:kulon:sesskey:abcdef012345678g'],
-    ['uppercase fingerprint', 'x:kulon:sesskey:ABCDEF0123456789'],
+    ['short fingerprint', 'x:kulon:sesskey:abcdef012345678'], // gitleaks:allow test fixture
+    ['long fingerprint', 'x:kulon:sesskey:abcdef01234567890'], // gitleaks:allow test fixture
+    ['non-hex fingerprint', 'x:kulon:sesskey:abcdef012345678g'], // gitleaks:allow test fixture
+    ['uppercase fingerprint', 'x:kulon:sesskey:ABCDEF0123456789'], // gitleaks:allow test fixture
     ['fingerprint resource suffix', 'x:kulon:sesskey:abcdef0123456789:resource'],
     ['whitespace in subject', 'x y:siap:profile'],
     ['whitespace in subject atom', 'x:tenant :siap:profile'],
