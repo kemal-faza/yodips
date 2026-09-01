@@ -1,10 +1,15 @@
 import 'reflect-metadata';
-import { Logger } from '@nestjs/common';
 import { InMemoryDataCache } from './in-memory-data.cache';
 import { RedisDataCache } from './redis-data.cache';
 import { defaultStaleTtlMs, handleBackgroundError } from './data-cache';
-import { StaleUpstreamError } from '../upstream/upstream-fetch';
+import {
+  SIAP_SESSION_PROBE,
+  StaleUpstreamError,
+  timedFetch,
+} from '../upstream/upstream-fetch';
 import Redis from 'ioredis';
+import type { TelemetryRuntime } from '../observability/telemetry';
+import type { TelemetryEventInput } from '../observability/telemetry-contract';
 
 jest.mock('ioredis');
 const mockClient = {
@@ -47,6 +52,20 @@ function clearHold(c: InMemoryDataCache | RedisDataCache, key: string): void {
   const holds = (c as unknown as { refreshHold: Map<string, number> })
     .refreshHold;
   holds.delete(key);
+}
+
+function recordingRuntime(): TelemetryRuntime & { events: TelemetryEventInput[] } {
+  const events: TelemetryEventInput[] = [];
+  let monotonic = 1_000_000_000n;
+  return {
+    events,
+    sink: { record: (event) => events.push(event) },
+    wallNowMs: () => Date.now(),
+    monotonicNowNs: () => {
+      monotonic += 4_000_000n;
+      return monotonic;
+    },
+  };
 }
 
 describe('getStale (shared behavior)', () => {
@@ -490,65 +509,37 @@ describe('getStale (shared behavior)', () => {
 });
 
 describe('SWR observability', () => {
-  it('logs swr refresh ok after a successful background refresh', async () => {
-    await withInMemory(async (c) => {
-      const logger = c['logger'] as unknown as { debug: jest.Mock };
-      const spy = jest
-        .spyOn(logger, 'debug')
-        .mockImplementation(() => undefined);
-      await c.set('k', 'old');
-      ageInMemory(c, 'k', 60_000);
-      const fetcher = jest.fn().mockResolvedValue('new');
-      await c.getStale('k', fetcher, {
-        freshTtlMs: 30_000,
-        staleTtlMs: 120_000,
-      });
-      await new Promise((r) => setTimeout(r, 5));
-      expect(
-        spy.mock.calls.some((call) =>
-          String(call[0]).includes('swr refresh ok'),
-        ),
-      ).toBe(true);
-      spy.mockRestore();
+  it('records refresh ok only after the in-memory write succeeds', async () => {
+    const runtime = recordingRuntime();
+    const cache = new InMemoryDataCache(60_000, runtime);
+    await cache.set('123:kulon:courses', 'old');
+    ageInMemory(cache, '123:kulon:courses', 60_000);
+
+    let resolveWrite!: () => void;
+    const pendingWrite = new Promise<void>((resolve) => {
+      resolveWrite = resolve;
     });
-  });
+    const setSpy = jest.spyOn(cache, 'set').mockReturnValue(pendingWrite);
 
-  it('does not log swr refresh ok before the in-memory write succeeds', async () => {
-    await withInMemory(async (c) => {
-      const logger = c['logger'] as unknown as { debug: jest.Mock };
-      const spy = jest
-        .spyOn(logger, 'debug')
-        .mockImplementation(() => undefined);
-      await c.set('k', 'old');
-      ageInMemory(c, 'k', 60_000);
-
-      let resolveWrite!: () => void;
-      const pendingWrite = new Promise<void>((resolve) => {
-        resolveWrite = resolve;
-      });
-      const setSpy = jest.spyOn(c, 'set').mockReturnValue(pendingWrite);
-
-      await c.getStale('k', jest.fn().mockResolvedValue('new'), {
-        freshTtlMs: 30_000,
-        staleTtlMs: 120_000,
-      });
-      await new Promise((r) => setTimeout(r, 5));
-      expect(
-        spy.mock.calls.some((call) =>
-          String(call[0]).includes('swr refresh ok'),
-        ),
-      ).toBe(false);
-
-      resolveWrite();
-      await new Promise((r) => setTimeout(r, 5));
-      expect(
-        spy.mock.calls.some((call) =>
-          String(call[0]).includes('swr refresh ok'),
-        ),
-      ).toBe(true);
-      setSpy.mockRestore();
-      spy.mockRestore();
+    await cache.getStale('123:kulon:courses', jest.fn().mockResolvedValue('new'), {
+      freshTtlMs: 30_000,
+      staleTtlMs: 120_000,
     });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(runtime.events.map(({ event, outcome }) => `${event}:${outcome}`)).toEqual([
+      'cache.read:stale',
+      'cache.refresh:started',
+    ]);
+
+    resolveWrite();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(runtime.events.map(({ event, outcome }) => `${event}:${outcome}`)).toEqual([
+      'cache.read:stale',
+      'cache.refresh:started',
+      'cache.refresh:ok',
+    ]);
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    setSpy.mockRestore();
   });
 });
 
@@ -576,30 +567,34 @@ describe('handleBackgroundError', () => {
       'non-json-process',
     ]) {
       const e = new StaleUpstreamError('Siap', reason);
-      await handleBackgroundError({ del }, 'k', e);
+      await expect(handleBackgroundError({ del }, 'k', e)).resolves.toEqual({
+        outcome: 'hard_expire',
+        reason: 'dead-session',
+        keepStale: false,
+      });
     }
     expect(del).toHaveBeenCalledTimes(8);
   });
   it('transient reasons → keep (no del)', async () => {
     const del = jest.fn().mockResolvedValue(undefined);
     for (const reason of ['fetch-threw', 'api-endpoint']) {
-      await handleBackgroundError(
+      await expect(handleBackgroundError(
         { del },
         'k',
         new StaleUpstreamError('Kulon', reason),
-      );
+      )).resolves.toEqual({ outcome: 'error', reason: 'transient', keepStale: true });
     }
     // http-not-ok with upstream 500+ → statusForStaleReason maps to 502 → transient
-    await handleBackgroundError(
+    await expect(handleBackgroundError(
       { del },
       'k',
       new StaleUpstreamError('Kulon', 'http-not-ok', undefined, {
         status: 502,
       } as Response),
-    );
+    )).resolves.toEqual({ outcome: 'error', reason: 'transient', keepStale: true });
     expect(del).not.toHaveBeenCalled();
   });
-  it('onKeep fires for transient and unexpected failures, never for dead sessions', async () => {
+  it('does not invoke hooks for keep-stale decisions', async () => {
     const del = jest.fn().mockResolvedValue(undefined);
     const onKeep = jest.fn();
     await handleBackgroundError(
@@ -613,80 +608,247 @@ describe('handleBackgroundError', () => {
       'k',
       new StaleUpstreamError('Siap', 'login-redirect'),
     );
-    expect(onKeep).toHaveBeenCalledTimes(2);
+    expect(onKeep).not.toHaveBeenCalled();
     expect(del).toHaveBeenCalledTimes(1);
   });
-  it('cache deletion failure is contained and logged', async () => {
+  it('cache deletion failure is contained as an unexpected keep', async () => {
     const del = jest.fn().mockRejectedValue(new Error('redis unavailable'));
-    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
-    try {
-      await expect(
-        handleBackgroundError(
-          { del },
-          'k',
-          new StaleUpstreamError('Kulon', 'login-redirect'),
-        ),
-      ).resolves.toBeUndefined();
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining('[cache] swr hard-expire failed k'),
-        expect.stringContaining('redis unavailable'),
-      );
-    } finally {
-      error.mockRestore();
-    }
+    await expect(
+      handleBackgroundError(
+        { del },
+        'k',
+        new StaleUpstreamError('Kulon', 'login-redirect'),
+      ),
+    ).resolves.toEqual({ outcome: 'error', reason: 'unexpected', keepStale: true });
   });
   it('http-not-ok with upstream 4xx → statusForStaleReason maps to 401 → dead-session (hard-expire)', async () => {
     const del = jest.fn().mockResolvedValue(undefined);
-    await handleBackgroundError(
+    await expect(handleBackgroundError(
       { del },
       'k',
       new StaleUpstreamError('Kulon', 'http-not-ok', undefined, {
         status: 401,
       } as Response),
-    );
+    )).resolves.toEqual({
+      outcome: 'hard_expire',
+      reason: 'dead-session',
+      keepStale: false,
+    });
     expect(del).toHaveBeenCalledTimes(1);
   });
-  it('transient 502 reasons → debug log without warning or deletion', async () => {
+  it('transient 502 reasons → keep without deletion', async () => {
     const del = jest.fn().mockResolvedValue(undefined);
-    const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation();
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
-    try {
-      await handleBackgroundError(
-        { del },
-        'k',
-        new StaleUpstreamError('Kulon', 'fetch-threw'),
-      );
-      await handleBackgroundError(
-        { del },
-        'k',
-        new StaleUpstreamError('Kulon', 'api-endpoint'),
-      );
-      await handleBackgroundError(
-        { del },
-        'k',
-        new StaleUpstreamError('Kulon', 'http-not-ok', undefined, {
-          status: 502,
-        } as Response),
-      );
-      expect(debug).toHaveBeenCalledTimes(3);
-      expect(debug).toHaveBeenCalledWith(
-        expect.stringContaining('(transient, keeping stale)'),
-      );
-      expect(warn).not.toHaveBeenCalled();
-      expect(del).not.toHaveBeenCalled();
-    } finally {
-      debug.mockRestore();
-      warn.mockRestore();
-    }
+    await expect(handleBackgroundError(
+      { del },
+      'k',
+      new StaleUpstreamError('Kulon', 'fetch-threw'),
+    )).resolves.toEqual({ outcome: 'error', reason: 'transient', keepStale: true });
+    await expect(handleBackgroundError(
+      { del },
+      'k',
+      new StaleUpstreamError('Kulon', 'api-endpoint'),
+    )).resolves.toEqual({ outcome: 'error', reason: 'transient', keepStale: true });
+    await expect(handleBackgroundError(
+      { del },
+      'k',
+      new StaleUpstreamError('Kulon', 'http-not-ok', undefined, {
+        status: 502,
+      } as Response),
+    )).resolves.toEqual({ outcome: 'error', reason: 'transient', keepStale: true });
+    expect(del).not.toHaveBeenCalled();
   });
 
   it('no-api-upstream → transient (no del)', async () => {
     const del = jest.fn().mockResolvedValue(undefined);
-    await handleBackgroundError(
+    await expect(handleBackgroundError(
       { del },
       'k',
       new StaleUpstreamError('Siap', 'no-api-upstream'),
-    );
+    )).resolves.toEqual({ outcome: 'error', reason: 'transient', keepStale: true });
     expect(del).not.toHaveBeenCalled();
+  });
+});
+
+describe('Task 7 policy and telemetry contracts', () => {
+  it('returns a pure decision and emits no telemetry', async () => {
+    const del = jest.fn().mockResolvedValue(undefined);
+    const transient = await handleBackgroundError(
+      { del },
+      'private-user-key',
+      new StaleUpstreamError('Siap', 'fetch-threw'),
+    );
+    expect(transient).toEqual({
+      outcome: 'error',
+      reason: 'transient',
+      keepStale: true,
+    });
+    expect(del).not.toHaveBeenCalled();
+
+    const deadSession = await handleBackgroundError(
+      { del },
+      'private-user-key',
+      new StaleUpstreamError('Siap', 'no-cookie'),
+    );
+    expect(deadSession).toEqual({
+      outcome: 'hard_expire',
+      reason: 'dead-session',
+      keepStale: false,
+    });
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies stale, Kulon compatibility, storage, and unknown failures safely', async () => {
+    const del = jest.fn().mockResolvedValue(undefined);
+    await expect(
+      handleBackgroundError(
+        { del },
+        'k',
+        new StaleUpstreamError('Siap', 'stale'),
+      ),
+    ).resolves.toEqual({ outcome: 'error', reason: 'unexpected', keepStale: true });
+    await expect(
+      handleBackgroundError({ del }, 'k', new Error('Kulon page failed: 500')),
+    ).resolves.toEqual({ outcome: 'error', reason: 'unexpected', keepStale: true });
+    await expect(
+      handleBackgroundError({ del }, 'k', new Error('unrelated failure')),
+    ).resolves.toEqual({ outcome: 'error', reason: 'unknown', keepStale: true });
+  });
+
+  it('prioritizes timed transport markers over stale-error classification', async () => {
+    const originalFetch = global.fetch;
+    const fetchFailure = new Error('network down');
+    global.fetch = jest.fn().mockRejectedValue(fetchFailure);
+    try {
+      await expect(
+        timedFetch(
+          recordingRuntime(),
+          SIAP_SESSION_PROBE,
+          'https://siap.undip.ac.id/pages/mhs/dashboard',
+          undefined,
+          async () => ({ ok: true, value: 'unused', outcome: 'ok' as const }),
+        ),
+      ).rejects.toBe(fetchFailure);
+      await expect(
+        handleBackgroundError({ del: jest.fn() }, 'k', fetchFailure),
+      ).resolves.toEqual({ outcome: 'error', reason: 'transient', keepStale: true });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('classifies a timed redirect-loop marker as dead-session', async () => {
+    const originalFetch = global.fetch;
+    const redirectFailure = Object.assign(new Error('fetch failed'), {
+      cause: new Error('redirect count exceeded'),
+    });
+    global.fetch = jest.fn().mockRejectedValue(redirectFailure);
+    try {
+      await expect(
+        timedFetch(
+          recordingRuntime(),
+          SIAP_SESSION_PROBE,
+          'https://siap.undip.ac.id/pages/mhs/dashboard',
+          undefined,
+          async () => ({ ok: true, value: 'unused', outcome: 'ok' as const }),
+        ),
+      ).rejects.toBe(redirectFailure);
+      await expect(
+        handleBackgroundError({ del: jest.fn().mockResolvedValue(undefined) }, 'k', redirectFailure),
+      ).resolves.toEqual({ outcome: 'hard_expire', reason: 'dead-session', keepStale: false });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('turns a hard-expire deletion failure into unexpected while keeping stale', async () => {
+    const deleteFailure = new Error('storage unavailable');
+    await expect(
+      handleBackgroundError(
+        { del: jest.fn().mockRejectedValue(deleteFailure) },
+        'k',
+        new StaleUpstreamError('Siap', 'no-cookie'),
+      ),
+    ).resolves.toEqual({ outcome: 'error', reason: 'unexpected', keepStale: true });
+  });
+
+  it('preserves the original storage failure value while marking it for policy', async () => {
+    const cache = new InMemoryDataCache(60_000);
+    const original = new Error('storage failure with secret');
+    const entries = (
+      cache as unknown as { entries: Map<string, unknown> }
+    ).entries;
+    jest.spyOn(entries, 'set').mockImplementation(() => {
+      throw original;
+    });
+
+    await expect(
+      Promise.resolve().then(() => cache.set('k', 'value')),
+    ).rejects.toBe(original);
+    await expect(
+      handleBackgroundError(
+        { del: jest.fn().mockResolvedValue(undefined) },
+        'k',
+        original,
+      ),
+    ).resolves.toEqual({ outcome: 'error', reason: 'unexpected', keepStale: true });
+  });
+
+  it('records one owner refresh lifecycle with classified labels for memory', async () => {
+    const runtime = recordingRuntime();
+    const cache = new InMemoryDataCache(60_000, runtime);
+    await cache.set('123:kulon:courses', 'old');
+    ageInMemory(cache, '123:kulon:courses', 60_000);
+    const setSpy = jest.spyOn(cache, 'set');
+
+    await expect(
+      cache.getStale('123:kulon:courses', jest.fn().mockResolvedValue('new'), {
+        freshTtlMs: 30_000,
+        staleTtlMs: 120_000,
+      }),
+    ).resolves.toEqual({ value: 'old', stale: true });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(runtime.events.map(({ event, outcome }) => `${event}:${outcome}`)).toEqual([
+      'cache.read:stale',
+      'cache.refresh:started',
+      'cache.refresh:ok',
+    ]);
+    expect(JSON.stringify(runtime.events)).not.toContain('123:kulon:courses');
+    for (const event of runtime.events) {
+      expect(
+        event.durationMs === undefined ||
+          (Number.isSafeInteger(event.durationMs) && event.durationMs >= 0),
+      ).toBe(true);
+    }
+  });
+
+  it('records the same owner lifecycle with classified labels for Redis', async () => {
+    const runtime = recordingRuntime();
+    mockClient.get.mockResolvedValue(
+      JSON.stringify({
+        v: 'old',
+        fa: Date.now() - 60_000,
+        ex: Date.now() + 120_000,
+      }),
+    );
+    const cache = new RedisDataCache(mockClient as unknown as Redis, 60_000, runtime);
+    mockClient.set.mockClear();
+
+    await expect(
+      cache.getStale('123:kulon:courses', jest.fn().mockResolvedValue('new'), {
+        freshTtlMs: 30_000,
+        staleTtlMs: 120_000,
+      }),
+    ).resolves.toEqual({ value: 'old', stale: true });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(mockClient.set).toHaveBeenCalledTimes(1);
+    expect(runtime.events.map(({ event, outcome }) => `${event}:${outcome}`)).toEqual([
+      'cache.read:stale',
+      'cache.refresh:started',
+      'cache.refresh:ok',
+    ]);
+    expect(JSON.stringify(runtime.events)).not.toContain('123:kulon:courses');
   });
 });
