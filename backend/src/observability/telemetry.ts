@@ -29,7 +29,10 @@ export function elapsedMs(startNs: bigint, endNs: bigint): number {
 }
 
 export function safeAgeMs(now: number, fetchedAt: number): number {
-  return Math.max(0, Math.floor(now - fetchedAt));
+  if (!Number.isFinite(now) || !Number.isFinite(fetchedAt)) return 0;
+  const age = now - fetchedAt;
+  if (!Number.isFinite(age)) return age > 0 ? Number.MAX_SAFE_INTEGER : 0;
+  return age > Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : Math.max(0, Math.floor(age));
 }
 
 export function recordTelemetry(runtime: TelemetryRuntime, event: TelemetryEventInput): void {

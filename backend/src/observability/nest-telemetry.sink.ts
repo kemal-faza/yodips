@@ -5,30 +5,22 @@ import {
   CACHE_REFRESH_REASONS,
   CACHE_REFRESH_OUTCOMES,
   CACHE_READ_OUTCOMES,
-  CacheRefreshReason,
   CacheReadOutcome,
+  TELEMETRY_EVENT_SHAPES,
   TELEMETRY_SCHEMA_VERSION,
+  TELEMETRY_VALIDATION_RULES,
   TelemetryEventInput,
+  UPSTREAM_HTTP_ERROR_REASONS,
+  UPSTREAM_NETWORK_ERROR_REASONS,
   UPSTREAM_OUTCOMES,
+  UPSTREAM_PARSE_ERROR_REASONS,
   UPSTREAM_ROUTES,
   UPSTREAM_REASONS,
+  UPSTREAM_STALE_REASONS,
 } from './telemetry-contract';
 
 type SafeSerializedEvent = Record<string, unknown>;
 type LoggerLevel = 'debug' | 'warn' | 'error';
-
-const PARSE_REASONS = new Set(['html-content-type', 'malformed-json', 'non-json-process', 'unknown']);
-const NETWORK_REASONS = new Set(['fetch-threw', 'redirect-loop']);
-const STALE_REASONS = new Set([
-  'login-redirect',
-  'no-cookie',
-  'api-credential',
-  'api-endpoint',
-  'no-api-upstream',
-  'no-emailSso',
-  'stale',
-  'unknown',
-]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -39,19 +31,73 @@ function has(value: Record<string, unknown>, key: string): boolean {
 }
 
 function isSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= TELEMETRY_VALIDATION_RULES.numeric.minimum &&
+    value <= TELEMETRY_VALIDATION_RULES.numeric.maximum
+  );
 }
 
 function isOneOf<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
   return typeof value === 'string' && (values as readonly string[]).includes(value);
 }
 
-function hasOnlyPlainReadShape(value: Record<string, unknown>): boolean {
-  return !has(value, 'ageMs') && !has(value, 'freshTtlMs') && !has(value, 'staleTtlMs');
+function hasForbiddenField(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  return fields.some((field) => has(value, field));
 }
 
 function ttlFields(value: Record<string, unknown>): boolean {
   return isSafeInteger(value.freshTtlMs) && isSafeInteger(value.staleTtlMs);
+}
+
+function cacheReadEnvelope(
+  value: Record<string, unknown>,
+  ts: string,
+  outcome: CacheReadOutcome,
+): SafeSerializedEvent {
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    ts,
+    event: 'cache.read',
+    cache: value.cache,
+    backend: value.backend,
+    outcome,
+    durationMs: value.durationMs,
+  };
+}
+
+function buildPlainCacheRead(
+  value: Record<string, unknown>,
+  ts: string,
+  outcome: CacheReadOutcome,
+  forbiddenFields: readonly string[] = TELEMETRY_EVENT_SHAPES['cache.read'].plain.forbidden,
+): SafeSerializedEvent | undefined {
+  if (hasForbiddenField(value, forbiddenFields)) return undefined;
+  return cacheReadEnvelope(value, ts, outcome);
+}
+
+function buildStaleMissCacheRead(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
+  if (!ttlFields(value) || has(value, 'ageMs')) return undefined;
+  return {
+    ...cacheReadEnvelope(value, ts, 'miss'),
+    freshTtlMs: value.freshTtlMs,
+    staleTtlMs: value.staleTtlMs,
+  };
+}
+
+function buildExistingCacheRead(
+  value: Record<string, unknown>,
+  ts: string,
+  outcome: CacheReadOutcome,
+): SafeSerializedEvent | undefined {
+  if (!has(value, 'ageMs') || !ttlFields(value) || !isSafeInteger(value.ageMs)) return undefined;
+  return {
+    ...cacheReadEnvelope(value, ts, outcome),
+    ageMs: value.ageMs,
+    freshTtlMs: value.freshTtlMs,
+    staleTtlMs: value.staleTtlMs,
+  };
 }
 
 function buildCacheRead(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
@@ -65,71 +111,18 @@ function buildCacheRead(value: Record<string, unknown>, ts: string): SafeSeriali
   }
 
   const outcome = value.outcome as CacheReadOutcome;
-  const isProbe = value.cache === 'auth.probe';
-  if (isProbe && value.backend !== 'memory') return undefined;
-  const plain = isProbe;
-  if (plain && outcome !== 'hit' && outcome !== 'miss') return undefined;
-
-  if (outcome === 'hit') {
-    if (!hasOnlyPlainReadShape(value)) return undefined;
-    return {
-      v: TELEMETRY_SCHEMA_VERSION,
-      ts,
-      event: 'cache.read',
-      cache: value.cache,
-      backend: value.backend,
-      outcome,
-      durationMs: value.durationMs,
-    };
+  const authProbe = TELEMETRY_VALIDATION_RULES.cacheRead.authProbe;
+  if (value.cache === authProbe.cache) {
+    if (value.backend !== authProbe.backend || !isOneOf(authProbe.outcomes, outcome)) return undefined;
+    return buildPlainCacheRead(value, ts, outcome, authProbe.forbidden);
   }
-
-  if (outcome === 'miss' && has(value, 'freshTtlMs')) {
-    if (plain || !ttlFields(value) || has(value, 'ageMs')) return undefined;
-    return {
-      v: TELEMETRY_SCHEMA_VERSION,
-      ts,
-      event: 'cache.read',
-      cache: value.cache,
-      backend: value.backend,
-      outcome,
-      freshTtlMs: value.freshTtlMs,
-      staleTtlMs: value.staleTtlMs,
-      durationMs: value.durationMs,
-    };
-  }
-
+  if (outcome === 'hit') return buildPlainCacheRead(value, ts, outcome);
   if (outcome === 'miss') {
-    if (!hasOnlyPlainReadShape(value)) return undefined;
-    return {
-      v: TELEMETRY_SCHEMA_VERSION,
-      ts,
-      event: 'cache.read',
-      cache: value.cache,
-      backend: value.backend,
-      outcome,
-      durationMs: value.durationMs,
-    };
+    return has(value, 'freshTtlMs')
+      ? buildStaleMissCacheRead(value, ts)
+      : buildPlainCacheRead(value, ts, outcome);
   }
-
-  if (
-    !has(value, 'ageMs') ||
-    !ttlFields(value) ||
-    !isSafeInteger(value.ageMs)
-  ) {
-    return undefined;
-  }
-  return {
-    v: TELEMETRY_SCHEMA_VERSION,
-    ts,
-    event: 'cache.read',
-    cache: value.cache,
-    backend: value.backend,
-    outcome,
-    ageMs: value.ageMs,
-    freshTtlMs: value.freshTtlMs,
-    staleTtlMs: value.staleTtlMs,
-    durationMs: value.durationMs,
-  };
+  return buildExistingCacheRead(value, ts, outcome);
 }
 
 function buildCacheRefresh(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
@@ -141,7 +134,7 @@ function buildCacheRefresh(value: Record<string, unknown>, ts: string): SafeSeri
   ) {
     return undefined;
   }
-  if (value.cache === 'auth.probe') return undefined;
+  if (value.cache === TELEMETRY_VALIDATION_RULES.cacheRead.authProbe.cache) return undefined;
 
   const outcome = value.outcome;
   const base = {
@@ -161,8 +154,13 @@ function buildCacheRefresh(value: Record<string, unknown>, ts: string): SafeSeri
   if (!isSafeInteger(value.durationMs)) return undefined;
   if (outcome === 'ok') return has(value, 'reason') ? undefined : { ...base, durationMs: value.durationMs };
   if (!isOneOf(CACHE_REFRESH_REASONS, value.reason)) return undefined;
-  if (outcome === 'hard_expire' && value.reason !== 'dead-session') return undefined;
-  return { ...base, durationMs: value.durationMs, reason: value.reason as CacheRefreshReason };
+  if (
+    outcome === 'hard_expire' &&
+    value.reason !== TELEMETRY_VALIDATION_RULES.cacheRefresh.hardExpire.requiredReason
+  ) {
+    return undefined;
+  }
+  return { ...base, durationMs: value.durationMs, reason: value.reason };
 }
 
 function buildUpstream(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
@@ -187,26 +185,36 @@ function buildUpstream(value: Record<string, unknown>, ts: string): SafeSerializ
   };
 
   if (outcome === 'network_error') {
-    if (!isOneOf(UPSTREAM_REASONS, value.reason) || !NETWORK_REASONS.has(value.reason) || has(value, 'status')) {
+    if (
+      !isOneOf(UPSTREAM_REASONS, value.reason) ||
+      !isOneOf(UPSTREAM_NETWORK_ERROR_REASONS, value.reason) ||
+      has(value, 'status')
+    ) {
       return undefined;
     }
     return { ...base, durationMs: value.durationMs, reason: value.reason };
   }
 
-  if (!isSafeInteger(value.status) || value.status < 100 || value.status > 599) return undefined;
+  if (
+    !isSafeInteger(value.status) ||
+    value.status < TELEMETRY_VALIDATION_RULES.upstreamStatus.minimum ||
+    value.status > TELEMETRY_VALIDATION_RULES.upstreamStatus.maximum
+  ) {
+    return undefined;
+  }
   if (outcome === 'ok') return has(value, 'reason') ? undefined : { ...base, status: value.status, durationMs: value.durationMs };
   if (outcome === 'http_error') {
-    return value.reason === 'http-not-ok'
-      ? { ...base, status: value.status, durationMs: value.durationMs, reason: 'http-not-ok' }
+    return isOneOf(UPSTREAM_HTTP_ERROR_REASONS, value.reason)
+      ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
       : undefined;
   }
   if (outcome === 'parse_error') {
-    return isOneOf(UPSTREAM_REASONS, value.reason) && PARSE_REASONS.has(value.reason)
+    return isOneOf(UPSTREAM_REASONS, value.reason) && isOneOf(UPSTREAM_PARSE_ERROR_REASONS, value.reason)
       ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
       : undefined;
   }
   if (outcome === 'stale') {
-    return isOneOf(UPSTREAM_REASONS, value.reason) && STALE_REASONS.has(value.reason)
+    return isOneOf(UPSTREAM_REASONS, value.reason) && isOneOf(UPSTREAM_STALE_REASONS, value.reason)
       ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
       : undefined;
   }
