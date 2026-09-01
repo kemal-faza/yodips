@@ -18,6 +18,7 @@ import {
   UPSTREAM_REASONS,
   UPSTREAM_STALE_REASONS,
 } from './telemetry-contract';
+import type { UpstreamOutcome, UpstreamRoute } from './telemetry-contract';
 
 type SafeSerializedEvent = Record<string, unknown>;
 type LoggerLevel = 'debug' | 'warn' | 'error';
@@ -163,46 +164,64 @@ function buildCacheRefresh(value: Record<string, unknown>, ts: string): SafeSeri
   return { ...base, durationMs: value.durationMs, reason: value.reason };
 }
 
-function buildUpstream(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
-  const route = UPSTREAM_ROUTES.find(
+type UpstreamResponseOutcome = Exclude<UpstreamOutcome, 'network_error'>;
+
+function findUpstreamRoute(value: Record<string, unknown>): UpstreamRoute | undefined {
+  return UPSTREAM_ROUTES.find(
     (candidate) =>
       candidate.service === value.service &&
       candidate.operation === value.operation &&
       candidate.route === value.route,
   );
-  if (!route || value.event !== 'upstream.request' || !isSafeInteger(value.durationMs)) return undefined;
+}
 
-  if (!isOneOf(UPSTREAM_OUTCOMES, value.outcome)) return undefined;
-  const outcome = value.outcome;
-  const base = {
+function upstreamEnvelope(
+  route: UpstreamRoute,
+  outcome: UpstreamOutcome,
+  ts: string,
+): SafeSerializedEvent {
+  return {
     v: TELEMETRY_SCHEMA_VERSION,
     ts,
-    event: 'upstream.request' as const,
+    event: 'upstream.request',
     service: route.service,
     operation: route.operation,
     route: route.route,
     outcome,
   };
+}
 
-  if (outcome === 'network_error') {
-    if (
-      !isOneOf(UPSTREAM_REASONS, value.reason) ||
-      !isOneOf(UPSTREAM_NETWORK_ERROR_REASONS, value.reason) ||
-      has(value, 'status')
-    ) {
-      return undefined;
-    }
-    return { ...base, durationMs: value.durationMs, reason: value.reason };
-  }
+function isValidUpstreamStatus(value: unknown): value is number {
+  return (
+    isSafeInteger(value) &&
+    value >= TELEMETRY_VALIDATION_RULES.upstreamStatus.minimum &&
+    value <= TELEMETRY_VALIDATION_RULES.upstreamStatus.maximum
+  );
+}
 
+function buildUpstreamNetworkError(
+  value: Record<string, unknown>,
+  base: SafeSerializedEvent,
+): SafeSerializedEvent | undefined {
   if (
-    !isSafeInteger(value.status) ||
-    value.status < TELEMETRY_VALIDATION_RULES.upstreamStatus.minimum ||
-    value.status > TELEMETRY_VALIDATION_RULES.upstreamStatus.maximum
+    !isOneOf(UPSTREAM_REASONS, value.reason) ||
+    !isOneOf(UPSTREAM_NETWORK_ERROR_REASONS, value.reason) ||
+    has(value, 'status')
   ) {
     return undefined;
   }
-  if (outcome === 'ok') return has(value, 'reason') ? undefined : { ...base, status: value.status, durationMs: value.durationMs };
+  return { ...base, durationMs: value.durationMs, reason: value.reason };
+}
+
+function buildUpstreamResponse(
+  value: Record<string, unknown>,
+  base: SafeSerializedEvent,
+  outcome: UpstreamResponseOutcome,
+): SafeSerializedEvent | undefined {
+  if (!isValidUpstreamStatus(value.status)) return undefined;
+  if (outcome === 'ok') {
+    return has(value, 'reason') ? undefined : { ...base, status: value.status, durationMs: value.durationMs };
+  }
   if (outcome === 'http_error') {
     return isOneOf(UPSTREAM_HTTP_ERROR_REASONS, value.reason)
       ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
@@ -213,12 +232,21 @@ function buildUpstream(value: Record<string, unknown>, ts: string): SafeSerializ
       ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
       : undefined;
   }
-  if (outcome === 'stale') {
-    return isOneOf(UPSTREAM_REASONS, value.reason) && isOneOf(UPSTREAM_STALE_REASONS, value.reason)
-      ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
-      : undefined;
-  }
-  return undefined;
+  return isOneOf(UPSTREAM_REASONS, value.reason) && isOneOf(UPSTREAM_STALE_REASONS, value.reason)
+    ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
+    : undefined;
+}
+
+function buildUpstream(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
+  const route = findUpstreamRoute(value);
+  if (!route || value.event !== 'upstream.request' || !isSafeInteger(value.durationMs)) return undefined;
+  if (!isOneOf(UPSTREAM_OUTCOMES, value.outcome)) return undefined;
+
+  const outcome = value.outcome;
+  const base = upstreamEnvelope(route, outcome, ts);
+  return outcome === 'network_error'
+    ? buildUpstreamNetworkError(value, base)
+    : buildUpstreamResponse(value, base, outcome);
 }
 
 export function serializeTelemetryEvent(
