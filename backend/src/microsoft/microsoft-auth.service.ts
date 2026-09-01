@@ -24,6 +24,12 @@ const MICROSOFT_TOKEN_EXCHANGE: UpstreamRouteContext = {
   operation: 'token_exchange',
   route: 'POST /oauth2/v2.0/token',
 };
+const MAX_AUTH_CODE_LENGTH = 4096;
+
+type TokenExchangeResult = {
+  accessToken: string;
+  sessionCookies: string;
+};
 
 @Injectable()
 export class MicrosoftAuthService {
@@ -82,6 +88,81 @@ export class MicrosoftAuthService {
     return `${this.authorizeUrl}?${params.toString()}`;
   }
 
+  private validateAuthorizationCode(code: unknown): asserts code is string {
+    if (
+      typeof code !== 'string' ||
+      code.trim().length === 0 ||
+      code.length > MAX_AUTH_CODE_LENGTH
+    ) {
+      throw new Error('Invalid Microsoft authorization code');
+    }
+  }
+
+  private tokenExchangeRequest(code: string): RequestInit {
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: this.config.clientId,
+      client_secret: this.config.clientSecret,
+      code,
+      redirect_uri: this.config.redirectUri,
+      scope: 'openid profile email offline_access',
+    });
+    return {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    };
+  }
+
+  private async consumeTokenResponse(
+    res: Response,
+  ): Promise<UpstreamAttemptResult<TokenExchangeResult>> {
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: new Error(`Token exchange failed: ${res.status}`),
+        outcome: 'http_error',
+        reason: 'http-not-ok',
+        status: res.status,
+      };
+    }
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return {
+        ok: false,
+        error: new Error('Token exchange response invalid'),
+        outcome: 'parse_error',
+        reason: 'malformed-json',
+        status: res.status,
+      };
+    }
+    if (
+      typeof data !== 'object' ||
+      data === null ||
+      typeof (data as { access_token?: unknown }).access_token !== 'string' ||
+      (data as { access_token: string }).access_token.length === 0
+    ) {
+      return {
+        ok: false,
+        error: new Error('Token exchange response invalid'),
+        outcome: 'parse_error',
+        reason: 'malformed-json',
+        status: res.status,
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        accessToken: (data as { access_token: string }).access_token,
+        sessionCookies: res.headers.get('set-cookie') ?? '',
+      },
+      outcome: 'ok',
+      status: res.status,
+    };
+  }
+
   async handleCallback(
     code: string,
     state?: string,
@@ -93,71 +174,14 @@ export class MicrosoftAuthService {
       throw new Error('Invalid or missing OIDC state (CSRF protection)');
     }
     this.pendingStates.delete(state);
+    this.validateAuthorizationCode(code);
 
-    const tokenUrl = this.tokenExchangeUrl();
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
-      client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
-      code,
-      redirect_uri: this.config.redirectUri,
-      scope: 'openid profile email offline_access',
-    });
     return timedFetch(
       this.runtime,
       this.tokenExchangeContext(),
-      tokenUrl,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
-      },
-      async (res): Promise<UpstreamAttemptResult<{ accessToken: string; sessionCookies: string }>> => {
-        if (!res.ok) {
-          return {
-            ok: false,
-            error: new Error(`Token exchange failed: ${res.status}`),
-            outcome: 'http_error',
-            reason: 'http-not-ok',
-            status: res.status,
-          };
-        }
-        let data: unknown;
-        try {
-          data = await res.json();
-        } catch {
-          return {
-            ok: false,
-            error: new Error('Token exchange response invalid'),
-            outcome: 'parse_error',
-            reason: 'malformed-json',
-            status: res.status,
-          };
-        }
-        if (
-          typeof data !== 'object' ||
-          data === null ||
-          typeof (data as { access_token?: unknown }).access_token !== 'string' ||
-          (data as { access_token: string }).access_token.length === 0
-        ) {
-          return {
-            ok: false,
-            error: new Error('Token exchange response invalid'),
-            outcome: 'parse_error',
-            reason: 'malformed-json',
-            status: res.status,
-          };
-        }
-        return {
-          ok: true,
-          value: {
-            accessToken: (data as { access_token: string }).access_token,
-            sessionCookies: res.headers.get('set-cookie') ?? '',
-          },
-          outcome: 'ok',
-          status: res.status,
-        };
-      },
+      this.tokenExchangeUrl(),
+      this.tokenExchangeRequest(code),
+      (res) => this.consumeTokenResponse(res),
     );
   }
 }

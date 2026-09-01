@@ -99,6 +99,26 @@ describe('MicrosoftAuthService', () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['empty', ''],
+    ['non-string', 123 as unknown as string],
+    ['overlong', 'x'.repeat(4097)],
+  ])('rejects %s authorization code before any upstream attempt', async (_label, code) => {
+    const state = new URL(svc.getAuthUrl()).searchParams.get('state')!;
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: 'at' }),
+      headers: new Headers(),
+    });
+
+    await expect(svc.handleCallback(code, state)).rejects.toThrow(
+      'Invalid Microsoft authorization code',
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
   it('throws on token exchange failure', async () => {
     const authUrl = svc.getAuthUrl();
     const state = new URL(authUrl).searchParams.get('state')!;
