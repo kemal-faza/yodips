@@ -32,7 +32,7 @@ export interface KeyedSingleFlight<T> {
 
 /** Keyed variant: one identity-safe slot per key, removed on settle. */
 export function createKeyedSingleFlight<T>(): KeyedSingleFlight<T> {
-  type Slot = { promise: Promise<T> };
+  type Slot = { promise: Promise<T>; settled: boolean };
   const flights = new Map<string, Slot>();
 
   const runOwned = (
@@ -41,24 +41,33 @@ export function createKeyedSingleFlight<T>(): KeyedSingleFlight<T> {
     onOwnerStart?: () => void,
   ): OwnedFlight<T> => {
     const active = flights.get(key);
-    if (active) return { owner: false, promise: active.promise };
+    if (active && !active.settled) return { owner: false, promise: active.promise };
 
-    let resolve!: (value: T | PromiseLike<T>) => void;
-    let reject!: (reason?: unknown) => void;
+    let settlePromise!: (value: T | PromiseLike<T>) => void;
+    let rejectPromise!: (reason?: unknown) => void;
     const slot: Slot = {
       promise: new Promise<T>((ok, fail) => {
-        resolve = ok;
-        reject = fail;
+        settlePromise = ok;
+        rejectPromise = fail;
       }),
+      settled: false,
+    };
+    const resolve = (value: T | PromiseLike<T>) => {
+      slot.settled = true;
+      settlePromise(value);
+    };
+    const reject = (reason?: unknown) => {
+      slot.settled = true;
+      rejectPromise(reason);
     };
     flights.set(key, slot);
     onOwnerStart?.();
     Promise.resolve()
       .then(task)
+      .then(resolve, reject)
       .finally(() => {
         if (flights.get(key) === slot) flights.delete(key);
-      })
-      .then(resolve, reject);
+      });
     return { owner: true, promise: slot.promise };
   };
 

@@ -133,18 +133,25 @@ describe('createKeyedSingleFlight', () => {
     const oldTask = deferred<number>();
     const newerTask = deferred<number>();
     const old = run('k', () => oldTask.promise);
-    let interleaved: Promise<number> | undefined;
-
-    void oldTask.promise.then(() => {
-      interleaved = run('k', () => newerTask.promise);
+    let newer!: Promise<number>;
+    const newerStarted = new Promise<void>((resolve) => {
+      void old.then(() => {
+        newer = run('k', () => newerTask.promise);
+        resolve();
+      });
     });
 
     oldTask.resolve(1);
     await expect(old).resolves.toBe(1);
-    expect(interleaved).toBe(old);
+    await newerStarted;
+    expect(newer).not.toBe(old);
+    await Promise.resolve();
+
+    const follower = run('k', () => Promise.resolve(99));
+    expect(follower).toBe(newer);
 
     newerTask.resolve(2);
-    await expect(interleaved).resolves.toBe(1);
+    await expect(follower).resolves.toBe(2);
     await expect(run('k', async () => 3)).resolves.toBe(3);
   }
 
