@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -29,6 +29,18 @@ const cacheRead = (overrides: Record<string, unknown> = {}): Record<string, unkn
   ...overrides,
 });
 
+const cacheRefresh = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  v: 1,
+  ts,
+  event: "cache.refresh",
+  cache: "siap.profile",
+  backend: "memory",
+  outcome: "started",
+  freshTtlMs: 1,
+  staleTtlMs: 2,
+  ...overrides,
+});
+
 const upstream = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   v: 1,
   ts,
@@ -49,6 +61,80 @@ function runCli(args: string[], input?: string) {
     input,
     encoding: "utf8",
   });
+}
+
+async function runCliWithOpenStdin(byteCount: number) {
+  const cli = join(__dirname, "analyze-observability-log.js");
+  const child = spawn(process.execPath, [cli], { cwd: join(__dirname, "..") });
+  const stdin = child.stdin;
+  const stdout = child.stdout;
+  const stderr = child.stderr;
+  if (!stdin || !stdout || !stderr) throw new Error("CLI pipes were not created");
+
+  let stdoutText = "";
+  let stderrText = "";
+  stdout.setEncoding("utf8");
+  stderr.setEncoding("utf8");
+  stdout.on("data", (chunk: string) => (stdoutText += chunk));
+  stderr.on("data", (chunk: string) => (stderrText += chunk));
+  stdin.on("error", () => undefined);
+
+  let timer: NodeJS.Timeout | undefined;
+  const result = new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("CLI did not reject oversized open stdin promptly"));
+    }, 2_000);
+    child.once("error", reject);
+    child.once("close", (status) => resolve({ status, stdout: stdoutText, stderr: stderrText }));
+  });
+
+  try {
+    let remaining = byteCount;
+    while (remaining > 0) {
+      const size = Math.min(64 * 1024, remaining);
+      stdin.write(Buffer.alloc(size, "x"));
+      remaining -= size;
+    }
+    return await result;
+  } finally {
+    if (timer) clearTimeout(timer);
+    stdin.destroy();
+    if (child.exitCode === null) child.kill("SIGKILL");
+  }
+}
+
+type ContractFixture = {
+  cacheReadOutcomes: string[];
+  cacheRefreshOutcomes: string[];
+  upstreamOutcomes: string[];
+  cacheLabels: string[];
+  eventShapes: Record<string, Record<string, { outcomes: string[] }>>;
+};
+
+function readContractFixture(): ContractFixture {
+  return JSON.parse(readFileSync(join(__dirname, "..", "observability-contract.json"), "utf8")) as ContractFixture;
+}
+
+function contractEventSamples(): Record<string, unknown>[] {
+  const networkError = upstream({ outcome: "network_error", reason: "fetch-threw" });
+  delete networkError.status;
+  return [
+    cacheRead({ outcome: "hit" }),
+    cacheRead({ outcome: "miss" }),
+    cacheRead({ outcome: "fresh", ageMs: 1, freshTtlMs: 2, staleTtlMs: 3 }),
+    cacheRead({ outcome: "stale", ageMs: 1, freshTtlMs: 2, staleTtlMs: 3 }),
+    cacheRead({ outcome: "expired", ageMs: 1, freshTtlMs: 2, staleTtlMs: 3 }),
+    cacheRefresh(),
+    cacheRefresh({ outcome: "ok", durationMs: 3 }),
+    cacheRefresh({ outcome: "error", durationMs: 3, reason: "unexpected" }),
+    cacheRefresh({ outcome: "hard_expire", durationMs: 3, reason: "dead-session" }),
+    upstream(),
+    upstream({ outcome: "http_error", status: 502, reason: "http-not-ok" }),
+    networkError,
+    upstream({ outcome: "parse_error", reason: "malformed-json" }),
+    upstream({ outcome: "stale", status: 401, reason: "login-redirect" }),
+  ];
 }
 
 describe("observability event parser", () => {
@@ -262,6 +348,37 @@ describe("strict event validation", () => {
     assert.deepEqual(result, upstream());
     assert.equal(JSON.stringify(result).includes("secret"), false);
   });
+
+  it("keeps real event-shape outcomes aligned with aggregate catalogs", () => {
+    const contract = readContractFixture();
+    const catalogs = [
+      ["cache.read", contract.cacheReadOutcomes],
+      ["cache.refresh", contract.cacheRefreshOutcomes],
+      ["upstream.request", contract.upstreamOutcomes],
+    ] as const;
+
+    for (const [eventName, catalog] of catalogs) {
+      const covered = new Set(
+        Object.values(contract.eventShapes[eventName]).flatMap((shape) => shape.outcomes),
+      );
+      assert.deepEqual([...covered].sort(), [...new Set(catalog)].sort());
+    }
+
+    const accepted = contractEventSamples().map(validateEvent);
+    assert.ok(accepted.every((event): event is SafeEvent => event !== undefined));
+
+    const report = aggregateEvents(accepted);
+    for (const label of contract.cacheLabels) {
+      assert.deepEqual(Object.keys(report.cache[label].reads).sort(), [...new Set(contract.cacheReadOutcomes)].sort());
+      assert.deepEqual(
+        Object.keys(report.cache[label].refreshes).filter((key) => key !== "reasons").sort(),
+        [...new Set(contract.cacheRefreshOutcomes)].sort(),
+      );
+    }
+    for (const group of Object.values(report.upstream)) {
+      assert.deepEqual(Object.keys(group.outcomes).sort(), [...new Set(contract.upstreamOutcomes)].sort());
+    }
+  });
 });
 
 describe("aggregation and deterministic formatting", () => {
@@ -397,5 +514,13 @@ describe("observability analyzer CLI", () => {
     assert.equal(result.status, 2);
     assert.equal(result.stdout, "");
     assert.equal(result.stderr.includes(sentinel), false);
+  });
+
+  it("rejects oversized stdin before EOF with bounded generic diagnostics", async () => {
+    const result = await runCliWithOpenStdin(MAX_INPUT_BYTES + 1);
+
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "Unable to read or analyze standard input.\n");
   });
 });

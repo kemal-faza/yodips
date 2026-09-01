@@ -1,10 +1,11 @@
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
 
 type JsonRecord = Record<string, unknown>;
 
 export const MAX_LINE_LENGTH = 64 * 1024;
 export const MAX_INPUT_BYTES = 10 * 1024 * 1024;
+const INPUT_CHUNK_BYTES = 64 * 1024;
 const EVENT_NAMES = ["cache.read", "cache.refresh", "upstream.request"] as const;
 const NUMERIC_FIELDS = ["durationMs", "ageMs", "freshTtlMs", "staleTtlMs"] as const;
 
@@ -225,6 +226,28 @@ function loadEventShapes(value: unknown): Contract["eventShapes"] {
   return eventShapes;
 }
 
+function validateOutcomeCoverage(
+  eventShapes: Contract["eventShapes"],
+  catalog: Pick<Contract, "cacheReadOutcomes" | "cacheRefreshOutcomes" | "upstreamOutcomes">,
+): void {
+  const catalogs = [
+    ["cache.read", catalog.cacheReadOutcomes],
+    ["cache.refresh", catalog.cacheRefreshOutcomes],
+    ["upstream.request", catalog.upstreamOutcomes],
+  ] as const;
+  for (const [eventName, outcomes] of catalogs) {
+    const catalogOutcomes = new Set(outcomes);
+    const shapeOutcomes = new Set<string>();
+    for (const shape of Object.values(eventShapes[eventName])) {
+      for (const outcome of shape.outcomes) {
+        if (!catalogOutcomes.has(outcome)) throw new Error("Invalid observability contract");
+        shapeOutcomes.add(outcome);
+      }
+    }
+    if (shapeOutcomes.size !== catalogOutcomes.size) throw new Error("Invalid observability contract");
+  }
+}
+
 function loadNumericRules(value: unknown): { minimum: number; maximum: number } {
   const root = requiredRecord(value);
   const result = {
@@ -303,10 +326,12 @@ function loadContract(): Contract {
   const root = parseContractRoot(readContractRaw());
   const catalog = loadContractCatalog(root);
   const validationRules = loadValidationRules(root.validationRules);
+  const eventShapes = loadEventShapes(root.eventShapes);
+  validateOutcomeCoverage(eventShapes, catalog);
   return {
     ...catalog,
     upstreamRoutes: loadRoutes(root.upstreamRoutes, catalog.upstreamServices),
-    eventShapes: loadEventShapes(root.eventShapes),
+    eventShapes,
     ...validationRules,
   };
 }
@@ -695,12 +720,29 @@ export function stableJson(value: unknown): string {
 
 function readInput(argument?: string): string {
   const source: string | number = argument === undefined || argument === "-" ? 0 : argument;
-  if (typeof source === "string" && statSync(source).size > MAX_INPUT_BYTES) {
-    throw new Error("Input too large");
+  let fileDescriptor = 0;
+  let shouldClose = false;
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  try {
+    if (typeof source === "string") {
+      fileDescriptor = openSync(source, "r");
+      shouldClose = true;
+    }
+    const buffer = Buffer.alloc(INPUT_CHUNK_BYTES);
+    while (totalBytes <= MAX_INPUT_BYTES) {
+      const remaining = MAX_INPUT_BYTES + 1 - totalBytes;
+      const bytesRead = readSync(fileDescriptor, buffer, 0, Math.min(buffer.length, remaining), null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      if (totalBytes > MAX_INPUT_BYTES) throw new Error("Input too large");
+    }
+    return Buffer.concat(chunks, totalBytes).toString("utf8");
+  } finally {
+    if (shouldClose) closeSync(fileDescriptor);
   }
-  const bytes = readFileSync(source);
-  if (bytes.length > MAX_INPUT_BYTES) throw new Error("Input too large");
-  return bytes.toString("utf8");
 }
 
 /** Run the standalone analyzer CLI. Returns the process exit code. */
