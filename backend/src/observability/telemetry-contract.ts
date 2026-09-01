@@ -43,6 +43,25 @@ export const UPSTREAM_REASONS = [
   'unknown',
 ] as const;
 
+export const UPSTREAM_HTTP_ERROR_REASONS = ['http-not-ok'] as const;
+export const UPSTREAM_NETWORK_ERROR_REASONS = ['fetch-threw', 'redirect-loop'] as const;
+export const UPSTREAM_PARSE_ERROR_REASONS = [
+  'html-content-type',
+  'malformed-json',
+  'non-json-process',
+  'unknown',
+] as const;
+export const UPSTREAM_STALE_REASONS = [
+  'login-redirect',
+  'no-cookie',
+  'api-credential',
+  'api-endpoint',
+  'no-api-upstream',
+  'no-emailSso',
+  'stale',
+  'unknown',
+] as const;
+
 export const UPSTREAM_ROUTES = [
   { service: 'kulon', operation: 'session_probe', route: 'GET /my/' },
   { service: 'siap', operation: 'session_probe', route: 'GET /pages/mhs/dashboard' },
@@ -143,25 +162,17 @@ type UpstreamRequestBase = UpstreamRoute & {
   durationMs: number;
 };
 
-type UpstreamStaleReason =
-  | 'login-redirect'
-  | 'no-cookie'
-  | 'api-credential'
-  | 'api-endpoint'
-  | 'no-api-upstream'
-  | 'no-emailSso'
-  | 'stale'
-  | 'unknown';
+type UpstreamStaleReason = (typeof UPSTREAM_STALE_REASONS)[number];
 
 export type UpstreamRequestEventInput = UpstreamRequestBase &
   (
     | { outcome: 'ok'; status: number; reason?: never }
-    | { outcome: 'http_error'; status: number; reason: 'http-not-ok' }
-    | { outcome: 'network_error'; reason: 'fetch-threw' | 'redirect-loop'; status?: never }
+    | { outcome: 'http_error'; status: number; reason: (typeof UPSTREAM_HTTP_ERROR_REASONS)[number] }
+    | { outcome: 'network_error'; reason: (typeof UPSTREAM_NETWORK_ERROR_REASONS)[number]; status?: never }
     | {
         outcome: 'parse_error';
         status: number;
-        reason: 'html-content-type' | 'malformed-json' | 'non-json-process' | 'unknown';
+        reason: (typeof UPSTREAM_PARSE_ERROR_REASONS)[number];
       }
     | { outcome: 'stale'; status: number; reason: UpstreamStaleReason }
   );
@@ -232,5 +243,38 @@ export const TELEMETRY_EVENT_SHAPES = {
       required: ['service', 'operation', 'route', 'outcome', 'status', 'durationMs', 'reason'],
       forbidden: [],
     },
+  },
+} as const;
+
+export const TELEMETRY_VALIDATION_RULES = {
+  numeric: {
+    kind: 'safe-integer',
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER,
+  },
+  upstreamStatus: {
+    minimum: 100,
+    maximum: 599,
+    requiredFor: ['ok', 'http_error', 'parse_error', 'stale'],
+    forbiddenFor: ['network_error'],
+  },
+  cacheRead: {
+    authProbe: {
+      cache: 'auth.probe',
+      backend: 'memory',
+      outcomes: ['hit', 'miss'],
+      forbidden: ['ageMs', 'freshTtlMs', 'staleTtlMs'],
+    },
+  },
+  cacheRefresh: {
+    hardExpire: {
+      requiredReason: 'dead-session',
+    },
+  },
+  upstreamReasons: {
+    httpError: UPSTREAM_HTTP_ERROR_REASONS,
+    networkError: UPSTREAM_NETWORK_ERROR_REASONS,
+    parseError: UPSTREAM_PARSE_ERROR_REASONS,
+    stale: UPSTREAM_STALE_REASONS,
   },
 } as const;

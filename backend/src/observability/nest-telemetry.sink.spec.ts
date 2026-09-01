@@ -198,6 +198,101 @@ describe('NestTelemetrySink', () => {
     }
   });
 
+  it('serializes the exact field set for every conditional shape', () => {
+    const cases: Array<{
+      event: TelemetryEventInput;
+      expected: Record<string, unknown>;
+      level: 'debug' | 'warn' | 'error';
+    }> = [
+      {
+        event: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'hit', durationMs: 1 },
+        expected: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'hit', durationMs: 1 },
+        level: 'debug',
+      },
+      {
+        event: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'miss', durationMs: 1 },
+        expected: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'miss', durationMs: 1 },
+        level: 'debug',
+      },
+      {
+        event: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'miss', freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        expected: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'miss', freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        level: 'debug',
+      },
+      {
+        event: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'fresh', ageMs: 1, freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        expected: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'fresh', ageMs: 1, freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        level: 'debug',
+      },
+      {
+        event: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'stale', ageMs: 2, freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        expected: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'stale', ageMs: 2, freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        level: 'warn',
+      },
+      {
+        event: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'expired', ageMs: 5, freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        expected: { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'expired', ageMs: 5, freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        level: 'debug',
+      },
+      {
+        event: { event: 'cache.refresh', cache: 'siap.profile', backend: 'redis', outcome: 'started', freshTtlMs: 2, staleTtlMs: 3 },
+        expected: { event: 'cache.refresh', cache: 'siap.profile', backend: 'redis', outcome: 'started', freshTtlMs: 2, staleTtlMs: 3 },
+        level: 'debug',
+      },
+      {
+        event: { event: 'cache.refresh', cache: 'siap.profile', backend: 'redis', outcome: 'ok', freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        expected: { event: 'cache.refresh', cache: 'siap.profile', backend: 'redis', outcome: 'ok', freshTtlMs: 2, staleTtlMs: 3, durationMs: 1 },
+        level: 'debug',
+      },
+      {
+        event: { event: 'cache.refresh', cache: 'siap.profile', backend: 'redis', outcome: 'error', freshTtlMs: 2, staleTtlMs: 3, durationMs: 1, reason: 'dead-session' },
+        expected: { event: 'cache.refresh', cache: 'siap.profile', backend: 'redis', outcome: 'error', freshTtlMs: 2, staleTtlMs: 3, durationMs: 1, reason: 'dead-session' },
+        level: 'warn',
+      },
+      {
+        event: { event: 'cache.refresh', cache: 'siap.profile', backend: 'redis', outcome: 'hard_expire', freshTtlMs: 2, staleTtlMs: 3, durationMs: 1, reason: 'dead-session' },
+        expected: { event: 'cache.refresh', cache: 'siap.profile', backend: 'redis', outcome: 'hard_expire', freshTtlMs: 2, staleTtlMs: 3, durationMs: 1, reason: 'dead-session' },
+        level: 'warn',
+      },
+      {
+        event: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'ok', status: 200, durationMs: 1 },
+        expected: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'ok', status: 200, durationMs: 1 },
+        level: 'debug',
+      },
+      {
+        event: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'http_error', status: 502, durationMs: 1, reason: 'http-not-ok' },
+        expected: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'http_error', status: 502, durationMs: 1, reason: 'http-not-ok' },
+        level: 'warn',
+      },
+      {
+        event: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'network_error', durationMs: 1, reason: 'fetch-threw' },
+        expected: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'network_error', durationMs: 1, reason: 'fetch-threw' },
+        level: 'warn',
+      },
+      {
+        event: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'parse_error', status: 200, durationMs: 1, reason: 'malformed-json' },
+        expected: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'parse_error', status: 200, durationMs: 1, reason: 'malformed-json' },
+        level: 'warn',
+      },
+      {
+        event: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'stale', status: 401, durationMs: 1, reason: 'login-redirect' },
+        expected: { event: 'upstream.request', service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard', outcome: 'stale', status: 401, durationMs: 1, reason: 'login-redirect' },
+        level: 'warn',
+      },
+    ];
+
+    for (const current of cases) {
+      jest.clearAllMocks();
+      record(current.event);
+      const spies = { debug, warn, error };
+      const payload = logged(spies[current.level]);
+      expect(payload).toEqual({ v: 1, ts: '2024-09-01T00:00:00.000Z', ...current.expected });
+      for (const [name, spy] of Object.entries(spies)) {
+        if (name !== current.level) expect(spy).not.toHaveBeenCalled();
+      }
+    }
+  });
+
   it('requires conditional fields and drops invalid numeric or wall-clock values', () => {
     const invalidEvents: unknown[] = [
       { event: 'cache.read', cache: 'siap.profile', backend: 'memory', outcome: 'fresh', ageMs: 1, freshTtlMs: 2, staleTtlMs: 3 },

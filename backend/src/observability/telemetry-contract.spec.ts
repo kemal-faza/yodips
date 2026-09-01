@@ -8,6 +8,7 @@ import {
   CACHE_REFRESH_OUTCOMES,
   CACHE_REFRESH_REASONS,
   TELEMETRY_EVENT_SHAPES,
+  TELEMETRY_VALIDATION_RULES,
   TELEMETRY_SCHEMA_VERSION,
   UPSTREAM_OUTCOMES,
   UPSTREAM_REASONS,
@@ -167,6 +168,7 @@ describe('telemetry contract and runtime', () => {
   });
 
   it('matches the checked standalone contract fixture', () => {
+    expect(TELEMETRY_VALIDATION_RULES).toBeDefined();
     const fixture = JSON.parse(
       readFileSync(resolve(__dirname, '../../../tools/observability-contract.json'), 'utf8'),
     ) as Record<string, unknown>;
@@ -183,6 +185,7 @@ describe('telemetry contract and runtime', () => {
       upstreamReasons: [...UPSTREAM_REASONS],
       upstreamRoutes: UPSTREAM_ROUTES,
       eventShapes: TELEMETRY_EVENT_SHAPES,
+      validationRules: TELEMETRY_VALIDATION_RULES,
     });
   });
 
@@ -194,6 +197,12 @@ describe('telemetry contract and runtime', () => {
     );
     expect(safeAgeMs(100, 120)).toBe(0);
     expect(safeAgeMs(120.9, 100)).toBe(20);
+    expect(safeAgeMs(Number.NaN, 100)).toBe(0);
+    expect(safeAgeMs(100, Number.NaN)).toBe(0);
+    expect(safeAgeMs(Number.POSITIVE_INFINITY, 100)).toBe(0);
+    expect(safeAgeMs(100, Number.NEGATIVE_INFINITY)).toBe(0);
+    expect(safeAgeMs(Number.MAX_SAFE_INTEGER + 1, 0)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(safeAgeMs(Number.MAX_VALUE, -Number.MAX_VALUE)).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   it('provides production clocks and swallows sink failures', () => {
