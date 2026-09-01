@@ -202,17 +202,51 @@ describe('KulonService SWR course refresh', () => {
           return { value, stale: false };
         },
       );
+      const fetchMock = jest.fn();
+      global.fetch = fetchMock as any;
       if (testCase.prepare) testCase.prepare(service, upstream);
       if (testCase.key.includes('assignment-detail')) {
-        global.fetch = jest.fn().mockResolvedValue({
+        fetchMock.mockResolvedValue({
           ok: true,
           status: 200,
           url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=7',
           text: async () => '<html><head><title>Assignment</title></head><div id="intro"><div class="no-overflow">Description</div></div></html>',
-        }) as any;
+        });
+      }
+      if (testCase.key.includes('course-content')) {
+        fetchMock.mockResolvedValue({
+          ok: true,
+          status: 200,
+          url: 'https://kulon2.undip.ac.id/course/view.php?id=7',
+          text: async () =>
+            '<li id="section-1" data-sectionname="Week 1"><div class="activity-item" data-activityname="Read syllabus"><a href="/mod/resource/view.php?id=42"></a></div></ul>',
+        });
       }
 
-      await testCase.run(service);
+      const result = await testCase.run(service);
+
+      if (testCase.key.includes('course-content')) {
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringContaining('/course/view.php?id=7'),
+          expect.anything(),
+        );
+        expect(result).toEqual({
+          courseId: 7,
+          sections: [
+            expect.objectContaining({
+              id: 1,
+              items: [
+                expect.objectContaining({
+                  kind: 'file',
+                  name: 'Read syllabus',
+                  url: '/mod/resource/view.php?id=42',
+                  cmid: 42,
+                }),
+              ],
+            }),
+          ],
+        });
+      }
 
       expect(cache.set).toHaveBeenCalledTimes(1);
       expect(cache.set).toHaveBeenCalledWith(testCase.key, expect.anything());
