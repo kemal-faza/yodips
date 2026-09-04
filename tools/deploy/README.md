@@ -80,6 +80,10 @@ podman run -d --name undip-sso-backend -p 127.0.0.1:3000:3000 --env-file .env \
 
 ## Aturan penting sebelum go-live (dari docs/DEPLOYMENT.md)
 
+- `TRUST_PROXY_HOPS` (YD-RATE-001) per topologi — lihat `env.production.example`:
+  **Heroku prod `backend.crunchy.my.id` = `2`** (Cloudflare + Heroku router; verified
+  2026-09-04: DNS→CF IP, `server: cloudflare`, router `fwd=[client, cf-edge]`), **VPS
+  Caddy = `1`** (satu proxy), direct = `0`/unset (default fail-safe).
 - `MS_*` boleh dummy non-empty — jalur OIDC `/api/auth/microsoft/*` deprecated & tak dipakai
   login real (extension/mobile via handoff), jadi tidak perlu daftar Microsoft Entra.
 - Redis localhost + password (VPS) / add-on (Heroku).
