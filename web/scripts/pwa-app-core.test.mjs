@@ -29,6 +29,45 @@ describe('assertNoInlineScript', () => {
   it('throws on an inline event handler', () => {
     expect(() => assertNoInlineScript('<div onclick="doEvil()">x</div>')).toThrow(/inline event handler/);
   });
+
+  // A <script src> is only acceptable when it loads a same-origin classic
+  // script. CSP-executable schemes (data:/blob:/javascript:) are blocked by
+  // script-src 'self' but would otherwise let executable code ride in via a
+  // "non-inline" looking tag — fail loudly. Variants: case, extra
+  // whitespace/newlines around the equals, and single/double quoting.
+  const scriptSchemeFixtures = [
+    '<script src="data:text/javascript,evil()"></script>',
+    "<script src='data:text/javascript,evil()'></script>",
+    '<script src = "data:text/javascript,evil()"></script>',
+    '<script\n  src="data:text/javascript,evil()">\n</script>',
+    '<script src="DATA:TEXT/JAVASCRIPT,evil()"></script>',
+    '<script src="data:text/html,<script>evil()</script>"></script>',
+    '<script src="blob:https://sso.crunchy.my.id/abc-123"></script>',
+    '<script src="BLOB:https://sso.crunchy.my.id/abc-123"></script>',
+    '<script src = \'blob:https://sso.crunchy.my.id/abc-123\'></script>',
+    '<script src="javascript:evil()"></script>',
+    '<script src="JaVaScRiPt:evil()"></script>',
+    '<script src=javascript:evil()></script>',
+  ];
+  it.each(scriptSchemeFixtures)('throws on CSP-blocked script src scheme: %s', (html) => {
+    // A src-scheme violation throws its own message; a src-less inline body
+    // would throw the inline-body message. Either is a loud failure — assert
+    // the shared FATAL prefix so the test stays meaningful for both.
+    expect(() => assertNoInlineScript(html)).toThrow(/^FATAL: \/app\/index\.html contains/);
+  });
+
+  // Schemes that are NOT executable script sources under CSP must stay allowed.
+  const harmlessSrcFixtures = [
+    '<script src="composeApp.js"></script>',
+    '<script src="loader.js"></script>',
+    '<script src="/app/composeApp.js"></script>',
+    '<script src="https://sso.crunchy.my.id/app/composeApp.js"></script>',
+    '<script src="app.js?ver=1&x=2"></script>',
+    '<script type="module" src="main.mjs"></script>',
+  ];
+  it.each(harmlessSrcFixtures)('allows same-origin external script src: %s', (html) => {
+    expect(() => assertNoInlineScript(html)).not.toThrow();
+  });
 });
 
 describe('collectFiles', () => {

@@ -188,14 +188,19 @@ export async function gzipTotalBytes(files) {
 
 /**
  * Fail the /app/ build if the assembled index.html still contains inline
- * <script> bodies or inline event handlers. The /app/* CSP (web/vercel.json)
- * drops script-src 'unsafe-inline'; any inline script would be silently
- * blocked and the PWA would ship a dead page, so we fail at build time
- * instead.
+ * <script> bodies, inline event handlers, or external scripts whose src uses a
+ * scheme the /app/* CSP would block (data:/blob:/javascript:). The /app/* CSP
+ * (web/vercel.json) drops script-src 'unsafe-inline' and allows only 'self'
+ * ('wasm-unsafe-eval' covers the fetched .wasm binaries); any inline script or
+ * blocked-scheme src would be silently blocked and the PWA would ship a dead
+ * page, so we fail at build time instead.
  *
- * A <script> with a src= attribute is fine (external, same-origin, allowed by
- * script-src 'self'). <style> blocks are also fine (style-src 'unsafe-inline'
- * is retained for Compose-wasm).
+ * A <script> with a src= attribute is fine only when it points at a same-origin
+ * classic script (relative, '/app/...', or https://sso.crunchy.my.id/... — the
+ * app's own origin). data:/blob:/javascript: srcs are NOT inline in the "no
+ * body" sense, but they are executable under a permissive CSP and dead under
+ * ours — either way they must never ship. <style> blocks stay fine
+ * (style-src 'unsafe-inline' is retained for Compose-wasm).
  */
 export function assertNoInlineScript(html) {
   const inlineScript = /<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i;
@@ -205,5 +210,19 @@ export function assertNoInlineScript(html) {
   }
   if (inlineHandler.test(html)) {
     throw new Error('FATAL: /app/index.html contains an inline event handler (on*="..."). Remove it — CSP for /app/* blocks inline handlers.');
+  }
+  // External <script src> is allowed only for same-origin classic scripts.
+  // Reject scripts whose src is (or resolves to) an executable data:/blob:/
+  // javascript: URL. Attribute value may be single/double/unquoted, with
+  // whitespace around '='; scheme matching is case-insensitive.
+  const SRC_ATTR = "\\bsrc\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))";
+  const scheme = new RegExp(`^\\s*(data|blob|javascript)\\s*:`, 'i');
+  const badSrc = new RegExp(`<script[^>]*\\b${SRC_ATTR}[^>]*>`, 'gi');
+  let m;
+  while ((m = badSrc.exec(html)) !== null) {
+    const value = m[1] ?? m[2] ?? m[3] ?? '';
+    if (scheme.test(value)) {
+      throw new Error('FATAL: /app/index.html contains a <script src> with an executable data:/blob:/javascript: scheme, which /app/* CSP would block. Use a same-origin external script.');
+    }
   }
 }
