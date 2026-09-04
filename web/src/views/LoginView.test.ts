@@ -161,6 +161,22 @@ describe("LoginView", () => {
     expect(w.text()).toContain("jalankan tool capture");
   });
 
+  it("handoff mode instruction includes the mandatory --app-url <spaUrl> flag", () => {
+    makeStore({ isHandoffMode: true });
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: { query: {}, hash: "" },
+          $router: { push: vi.fn() },
+        },
+      },
+    });
+    expect(w.text()).toContain("--app-url &lt;spaUrl&gt;");
+    // Legacy optional-app-url form must be gone from the instruction.
+    expect(w.text()).not.toContain("--api &lt;serverUrl&gt;]");
+    expect(w.text()).not.toMatch(/--app-url\s+\[?&lt;spaUrl&gt;\]?/);
+  });
+
   it("shows an incomplete-session notice when reason=incomplete", () => {
     makeStore();
     const w = mount(LoginView, {
@@ -381,8 +397,10 @@ describe("LoginView", () => {
   });
 
 describe("LoginView fragment handoff (YD-AUTH-002)", () => {
-  // Valid-looking three-segment JWT (header.payload.signature), base64url-safe.
+  // Valid-looking strict three-segment JWT (header.payload.signature),
+  // base64url-safe. Same shape the capture tool's #access_token delivers.
   const GOOD_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3";
+  const GOOD_HASH = `#access_token=${GOOD_TOKEN}`;
   const makeRoute = (hash: string, query: Record<string, unknown> = {}) => ({
     hash,
     query,
@@ -401,7 +419,7 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
     const w = mount(LoginView, {
       global: {
         mocks: {
-          $route: makeRoute(`#access_token=${GOOD_TOKEN}`),
+          $route: makeRoute(GOOD_HASH),
           $router: router,
         },
       },
@@ -411,14 +429,47 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
     const rsIndex = replaceState.mock.invocationCallOrder[0];
     const fhIndex = store.finishHandoff.mock.invocationCallOrder[0];
     expect(rsIndex).toBeLessThan(fhIndex);
-    // replaceState preserves the existing history state object (never null).
+    // Scrub is EXACT: pathname + search only (no token, no other query/hash
+    // residue), and the existing history state object is preserved (never null).
+    const { pathname, search } = window.location;
     expect(replaceState).toHaveBeenCalledWith(
       window.history.state,
       "",
-      expect.not.stringContaining("access_token"),
+      `${pathname}${search}`,
     );
     expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
     expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("scrubs the fragment BEFORE extension detection/messaging when the extension is installed", async () => {
+    const store = makeStore({
+      isHandoffMode: true,
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+    });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(GOOD_HASH),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    // replaceState fires BEFORE any extension detection/messaging call and
+    // before any store write.
+    const rsOrder = replaceState.mock.invocationCallOrder[0];
+    const extCheckOrder = store.isExtensionInstalled.mock.invocationCallOrder[0];
+    const extListenOrder = store.onExtensionResult.mock.invocationCallOrder[0];
+    const fhOrder = store.finishHandoff.mock.invocationCallOrder[0];
+    expect(rsOrder).toBeLessThan(extCheckOrder);
+    expect(rsOrder).toBeLessThan(extListenOrder);
+    expect(rsOrder).toBeLessThan(fhOrder);
+    expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
     expect(router.replace).toHaveBeenCalledWith("/");
     replaceState.mockRestore();
     w.unmount();
@@ -452,6 +503,28 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
       global: {
         mocks: {
           $route: makeRoute("#access_token=not-a-jwt"), // no dots -> not JWT-shaped
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("handoff mode with a JWT-shaped but non-strict token is rejected and never persisted", async () => {
+    // Three dot-separated segments but NOT strict base64url (space in a
+    // segment) — must not scrub, consume, or reach any store write.
+    const store = makeStore({ isHandoffMode: true, token: null });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute("#access_token=aaa.bbb.c cc"),
           $router: router,
         },
       },
