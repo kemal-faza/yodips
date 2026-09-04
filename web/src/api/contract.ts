@@ -93,7 +93,19 @@ export function isServiceSessionPath(url: string): boolean {
   return url.startsWith('/api/kulon') || url.startsWith('/api/siap');
 }
 
-/** A service-stale marker either by explicit backend code or by route family. */
+/**
+ * True for a 401 that keeps the JWT: the UPSTREAM Kulon/SIAP session went
+ * stale while the JWT itself is still valid — let the view show a re-login
+ * card instead of a full re-auth.
+ *
+ * Note: the backend's JwtAuthGuard and StaleUpstreamError both emit a bare
+ * 401 `{ message: "Unauthorized" }` with NO code, so a service-path 401 alone
+ * cannot distinguish "JWT invalid" from "upstream stale". The interceptor
+ * therefore probes: it always silent-refreshes a service-path 401, and only
+ * if refresh SUCCEEDS (JWT alive) does it treat the 401 as upstream-stale.
+ * This helper is kept for the explicit-code case (refresh endpoint) and as
+ * the no-refresh fallback for routes that never probe.
+ */
 export function isServiceStale(url: string, code?: string): boolean {
   if (code && SERVICE_STALE_CODES.has(code)) return true;
   return isServiceSessionPath(url);
