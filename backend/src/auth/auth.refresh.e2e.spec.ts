@@ -143,4 +143,48 @@ describe('AuthModule refresh E2E (temporary)', () => {
       .expect(401);
     expect(res.body.code ?? res.body.message?.code).toBe('INVALID_TOKEN');
   });
+
+  it('after POST /api/auth/logout the same (still valid) JWT can no longer refresh', async () => {
+    // Seed a fresh session via handoff.
+    const handoff = await request(app.getHttpServer())
+      .post('/api/auth/session/handoff')
+      .send({ kulonCookie: 'MoodleSession=E2E-LOGOUT', siapCookie: 'sia_app_session=E2E-LOGOUT' })
+      .expect(201);
+    const token = handoff.body.accessToken;
+
+    // Guard passes (token valid) before logout.
+    await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    // Logout clears the server session.
+    await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+
+    // The SAME unexpired JWT now hits a dead session on refresh → SESSION_DEAD.
+    const res = await request(app.getHttpServer())
+      .post('/api/auth/refresh')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(401);
+    expect(res.body.code ?? res.body.message?.code).toBe('SESSION_DEAD');
+  });
+
+  it('POST /api/auth/logout without a bearer token is 401 (guarded)', async () => {
+    await request(app.getHttpServer()).post('/api/auth/logout').expect(401);
+  });
+
+  it('an EXPIRED validly-signed JWT cannot log out (guard rejects), and the absolute cap means refresh is dead anyway', async () => {
+    const expired = await jwt.signAsync(
+      { sub: 'logout-expired-e2e', via: 'handoff' },
+      { expiresIn: '-1h' },
+    );
+    // The guard verifies exp, so the expired token cannot reach logout.
+    await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${expired}`)
+      .expect(401);
+  });
 });

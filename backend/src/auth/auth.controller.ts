@@ -65,4 +65,13 @@ export class AuthController {
   me(@Req() req: any) {
     return this.authService.me(req.user);
   }
+
+  // Server-side logout: JWT-guarded (a valid bearer identifies the session
+  // owner). Clears the server session so the token can no longer be refreshed.
+  // `req.user` is set by JwtAuthGuard before this runs (same contract as me()).
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  logout(@Req() req: any) {
+    return this.authService.logout(req.user.sub);
+  }
 }

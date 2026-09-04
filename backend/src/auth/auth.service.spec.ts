@@ -866,3 +866,24 @@ describe('AuthService.me', () => {
     expect(res.complete).toBe(false);
   });
 });
+
+describe('AuthService.logout', () => {
+  it('clears the server session for the subject', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+    });
+    const svc = makeService();
+    await expect(svc.logout('24060121130000')).resolves.toEqual({ ok: true });
+    expect(mockSessionStore.get('24060121130000')).toBeNull();
+  });
+
+  it('is idempotent when the session is already gone', async () => {
+    const svc = makeService();
+    await expect(svc.logout('nobody')).resolves.toEqual({ ok: true });
+  });
+});

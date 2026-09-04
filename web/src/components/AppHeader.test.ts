@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { mount, flushPromises } from '@vue/test-utils';
 import AppHeader from './AppHeader.vue';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
@@ -38,10 +38,11 @@ describe('AppHeader', () => {
   });
 
   it('calls store.logout when Keluar is clicked', async () => {
-    const auth = { isAuthenticated: true, logout: vi.fn(), user: null };
+    const auth = { isAuthenticated: true, logout: vi.fn().mockResolvedValue(undefined), user: null };
     mockStores(auth);
     const w = mount(AppHeader);
     await w.findAll('button').find((b) => b.text().includes('Keluar'))!.trigger('click');
+    await flushPromises();
     expect(auth.logout).toHaveBeenCalled();
   });
 
