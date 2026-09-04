@@ -19,10 +19,14 @@ function bad() { alias('https://example.test'); api.fetch('https://example.test'
 `,
     );
 
-    const violations = collectGlobalFetchCalls(program, program.getTypeChecker(), {
-      allowedFile: path.resolve('src/upstream/upstream-fetch.ts'),
-      excludedSegments: [`${path.sep}playwright${path.sep}`],
-    });
+    const violations = collectGlobalFetchCalls(
+      program,
+      program.getTypeChecker(),
+      {
+        allowedFile: path.resolve('src/upstream/upstream-fetch.ts'),
+        excludedSegments: [`${path.sep}playwright${path.sep}`],
+      },
+    );
 
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain('alias');
@@ -33,17 +37,30 @@ function bad() { alias('https://example.test'); api.fetch('https://example.test'
     const sourceRoot = path.resolve('src');
     const files = ts.sys
       .readDirectory(sourceRoot, ['.ts'])
-      .filter((fileName) => isProductionFile(fileName, [`${path.sep}playwright${path.sep}`]));
+      .filter((fileName) =>
+        isProductionFile(fileName, [`${path.sep}playwright${path.sep}`]),
+      );
     const configPath = path.resolve('tsconfig.json');
     const config = ts.readConfigFile(configPath, ts.sys.readFile);
     if (config.error) throw new Error(formatDiagnostic(config.error));
-    const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath));
-    const program = ts.createProgram(files, { ...parsed.options, noEmit: true });
-
-    const violations = collectGlobalFetchCalls(program, program.getTypeChecker(), {
-      allowedFile: path.resolve('src/upstream/upstream-fetch.ts'),
-      excludedSegments: [`${path.sep}playwright${path.sep}`],
+    const parsed = ts.parseJsonConfigFileContent(
+      config.config,
+      ts.sys,
+      path.dirname(configPath),
+    );
+    const program = ts.createProgram(files, {
+      ...parsed.options,
+      noEmit: true,
     });
+
+    const violations = collectGlobalFetchCalls(
+      program,
+      program.getTypeChecker(),
+      {
+        allowedFile: path.resolve('src/upstream/upstream-fetch.ts'),
+        excludedSegments: [`${path.sep}playwright${path.sep}`],
+      },
+    );
 
     expect(violations).toEqual([]);
   });
@@ -57,22 +74,30 @@ function collectGlobalFetchCalls(
   const productionFiles = new Set(
     program
       .getRootFileNames()
-      .filter((fileName) => isProductionFile(fileName, options.excludedSegments))
+      .filter((fileName) =>
+        isProductionFile(fileName, options.excludedSegments),
+      )
       .map((fileName) => path.normalize(fileName)),
   );
   const sourceFile = program
     .getSourceFiles()
-    .find((candidate) => productionFiles.has(path.normalize(candidate.fileName)));
-  if (!sourceFile) throw new Error('No production source files were added to the program');
+    .find((candidate) =>
+      productionFiles.has(path.normalize(candidate.fileName)),
+    );
+  if (!sourceFile)
+    throw new Error('No production source files were added to the program');
 
   const globalFetch = checker
     .getSymbolsInScope(sourceFile, ts.SymbolFlags.Value)
     .find(
       (symbol) =>
         symbol.name === 'fetch' &&
-        symbol.declarations?.some((declaration) => declaration.getSourceFile().isDeclarationFile),
+        symbol.declarations?.some(
+          (declaration) => declaration.getSourceFile().isDeclarationFile,
+        ),
     );
-  if (!globalFetch) throw new Error('Could not resolve the global fetch symbol');
+  if (!globalFetch)
+    throw new Error('Could not resolve the global fetch symbol');
 
   const violations: string[] = [];
   for (const candidate of program.getSourceFiles()) {
@@ -80,8 +105,13 @@ function collectGlobalFetchCalls(
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node)) {
         const symbol = resolveCallSymbol(node.expression, checker);
-        if (symbol === globalFetch && !isInsideTimedFetch(node, options.allowedFile)) {
-          const position = candidate.getLineAndCharacterOfPosition(node.getStart(candidate));
+        if (
+          symbol === globalFetch &&
+          !isInsideTimedFetch(node, options.allowedFile)
+        ) {
+          const position = candidate.getLineAndCharacterOfPosition(
+            node.getStart(candidate),
+          );
           violations.push(
             `${path.relative(process.cwd(), candidate.fileName)}:${position.line + 1}:${position.character + 1} ${node.expression.getText(candidate)}`,
           );
@@ -121,21 +151,32 @@ function resolveSymbol(
     (ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) &&
     declaration.initializer
   ) {
-    const initializerSymbol = checker.getSymbolAtLocation(declaration.initializer);
-    if (initializerSymbol) return resolveSymbol(initializerSymbol, checker, seen);
+    const initializerSymbol = checker.getSymbolAtLocation(
+      declaration.initializer,
+    );
+    if (initializerSymbol)
+      return resolveSymbol(initializerSymbol, checker, seen);
   }
   return symbol;
 }
 
 function isInsideTimedFetch(node: ts.Node, allowedFile: string): boolean {
-  if (path.normalize(node.getSourceFile().fileName) !== path.normalize(allowedFile)) return false;
+  if (
+    path.normalize(node.getSourceFile().fileName) !==
+    path.normalize(allowedFile)
+  )
+    return false;
   for (let parent = node.parent; parent; parent = parent.parent) {
-    if (ts.isFunctionLike(parent) && parent.name?.getText() === 'timedFetch') return true;
+    if (ts.isFunctionLike(parent) && parent.name?.getText() === 'timedFetch')
+      return true;
   }
   return false;
 }
 
-function isProductionFile(fileName: string, excludedSegments: readonly string[]): boolean {
+function isProductionFile(
+  fileName: string,
+  excludedSegments: readonly string[],
+): boolean {
   const normalized = path.normalize(fileName);
   return (
     normalized.endsWith('.ts') &&
@@ -144,7 +185,10 @@ function isProductionFile(fileName: string, excludedSegments: readonly string[])
   );
 }
 
-function createInMemoryProgram(fileName: string, sourceText: string): ts.Program {
+function createInMemoryProgram(
+  fileName: string,
+  sourceText: string,
+): ts.Program {
   const compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2023,
     module: ts.ModuleKind.CommonJS,
@@ -153,11 +197,21 @@ function createInMemoryProgram(fileName: string, sourceText: string): ts.Program
     skipLibCheck: true,
   };
   const host = ts.createCompilerHost(compilerOptions, true);
-  const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.ES2023, true);
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    sourceText,
+    ts.ScriptTarget.ES2023,
+    true,
+  );
   const originalGetSourceFile = host.getSourceFile.bind(host);
   const originalFileExists = host.fileExists.bind(host);
   const originalReadFile = host.readFile.bind(host);
-  host.getSourceFile = (requestedFileName, languageVersion, onError, shouldCreateNewSourceFile) =>
+  host.getSourceFile = (
+    requestedFileName,
+    languageVersion,
+    onError,
+    shouldCreateNewSourceFile,
+  ) =>
     requestedFileName === fileName
       ? sourceFile
       : originalGetSourceFile(
@@ -169,7 +223,9 @@ function createInMemoryProgram(fileName: string, sourceText: string): ts.Program
   host.fileExists = (requestedFileName) =>
     requestedFileName === fileName || originalFileExists(requestedFileName);
   host.readFile = (requestedFileName) =>
-    requestedFileName === fileName ? sourceText : originalReadFile(requestedFileName);
+    requestedFileName === fileName
+      ? sourceText
+      : originalReadFile(requestedFileName);
   return ts.createProgram([fileName], compilerOptions, host);
 }
 

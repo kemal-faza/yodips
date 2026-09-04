@@ -175,13 +175,9 @@ export function isLoginRedirect(finalUrl?: string): boolean {
 /** True when a fetch failure was undici's "redirect count exceeded" loop. */
 export function isRedirectLoopCause(e: unknown): boolean {
   const cause = (e as Error | null | undefined)?.cause as
-    | string
-    | Error
-    | undefined
-    | null;
+    string | Error | undefined | null;
   if (!cause) return false;
-  const text =
-    typeof cause === 'string' ? cause : ((cause as Error)?.message ?? '');
+  const text = typeof cause === 'string' ? cause : (cause?.message ?? '');
   return /redirect count exceeded/i.test(text);
 }
 
@@ -333,7 +329,8 @@ export function validateUpstreamAttempt(
       ? microsoftTokenPath(context.tenantId)
       : canonicalPath;
   const pathMatches =
-    canonical.service === 'microsoft' && canonical.operation === 'token_exchange'
+    canonical.service === 'microsoft' &&
+    canonical.operation === 'token_exchange'
       ? rawPathname(url) === expectedPath && parsed.pathname === expectedPath
       : parsed.pathname === expectedPath;
   if (method.toUpperCase() !== expectedMethod || !pathMatches) {
@@ -371,7 +368,10 @@ function hasReason<T extends readonly string[]>(
   reason: unknown,
   allowed: T,
 ): reason is T[number] {
-  return typeof reason === 'string' && (allowed as readonly string[]).includes(reason);
+  return (
+    typeof reason === 'string' &&
+    (allowed as readonly string[]).includes(reason)
+  );
 }
 
 function normalizeAttemptResult(
@@ -392,11 +392,16 @@ function normalizeAttemptResult(
   throw new Error('Invalid upstream attempt result');
 }
 
-function responseStatus(responseStatus: number, consumerStatus?: number): number {
+function responseStatus(
+  responseStatus: number,
+  consumerStatus?: number,
+): number {
   if (consumerStatus !== undefined && consumerStatus !== responseStatus) {
     throw new Error('Upstream response status mismatch');
   }
-  return Number.isSafeInteger(responseStatus) && responseStatus >= 100 && responseStatus <= 599
+  return Number.isSafeInteger(responseStatus) &&
+    responseStatus >= 100 &&
+    responseStatus <= 599
     ? responseStatus
     : HttpStatus.INTERNAL_SERVER_ERROR;
 }
@@ -439,7 +444,12 @@ function terminalUpstreamEvent(
   const reason = hasReason(result.reason, UPSTREAM_STALE_REASONS)
     ? result.reason
     : 'unknown';
-  return { ...base, outcome: 'stale', status, reason } as UpstreamRequestEventInput;
+  return {
+    ...base,
+    outcome: 'stale',
+    status,
+    reason,
+  } as UpstreamRequestEventInput;
 }
 
 function parseUnknownEvent(
@@ -470,7 +480,9 @@ function networkEvent(
     operation: context.operation,
     route: context.route,
     outcome: 'network_error',
-    reason: UPSTREAM_NETWORK_ERROR_REASONS.includes(reason) ? reason : 'fetch-threw',
+    reason: UPSTREAM_NETWORK_ERROR_REASONS.includes(reason)
+      ? reason
+      : 'fetch-threw',
     durationMs,
   } as UpstreamRequestEventInput;
 }
@@ -504,7 +516,12 @@ export async function timedFetch<T>(
     const status = responseStatus(response.status, result.status);
     recordTelemetry(
       runtime,
-      terminalUpstreamEvent(canonical, result, status, safeDuration(runtime, started)),
+      terminalUpstreamEvent(
+        canonical,
+        result,
+        status,
+        safeDuration(runtime, started),
+      ),
     );
     terminalRecorded = true;
     if (result.ok) return result.value as T;
@@ -526,8 +543,12 @@ export async function timedFetch<T>(
     }
 
     const reason = isRedirectLoopCause(error) ? 'redirect-loop' : 'fetch-threw';
-    if (typeof error === 'object' && error !== null) transportReasons.set(error, reason);
-    recordTelemetry(runtime, networkEvent(canonical, reason, safeDuration(runtime, started)));
+    if (typeof error === 'object' && error !== null)
+      transportReasons.set(error, reason);
+    recordTelemetry(
+      runtime,
+      networkEvent(canonical, reason, safeDuration(runtime, started)),
+    );
     throw error;
   }
 }
@@ -575,7 +596,12 @@ async function consumeText(
 ): Promise<UpstreamAttemptResult<string>> {
   const failure = responseFailure(service, res, opts);
   if (failure) return failure;
-  return { ok: true, value: await res.text(), outcome: 'ok', status: res.status };
+  return {
+    ok: true,
+    value: await res.text(),
+    outcome: 'ok',
+    status: res.status,
+  };
 }
 
 async function consumeJson<T>(
@@ -586,7 +612,12 @@ async function consumeJson<T>(
   const failure = responseFailure(service, res, opts);
   if (failure) return failure;
   try {
-    return { ok: true, value: (await res.json()) as T, outcome: 'ok', status: res.status };
+    return {
+      ok: true,
+      value: (await res.json()) as T,
+      outcome: 'ok',
+      status: res.status,
+    };
   } catch {
     const reason: UpstreamStaleReason = /text\/html/i.test(
       res.headers.get('content-type') ?? '',
@@ -649,13 +680,12 @@ export function upstreamFetchText(
   if (isTelemetryRuntime(runtimeOrUrl)) {
     const args = splitHelperArgs(initOrOpts, opts);
     const context = contextOrInit as UpstreamRouteContext;
-    return timedFetch(
-      runtimeOrUrl,
-      context,
-      urlOrService,
-      args.init,
-      (res) =>
-        consumeText(res, SERVICE_DISPLAY[context.service] ?? context.service, args.opts),
+    return timedFetch(runtimeOrUrl, context, urlOrService, args.init, (res) =>
+      consumeText(
+        res,
+        SERVICE_DISPLAY[context.service] ?? context.service,
+        args.opts,
+      ),
     );
   }
   return legacyFetchText(
@@ -674,7 +704,8 @@ async function legacyFetchText(
 ): Promise<string> {
   const outcome = await classifyUpstreamFetch(url, init);
   if (outcome.kind === 'ok') return outcome.res.text();
-  if (outcome.kind === 'gateway') throwStale(service, outcome.reason, opts, null);
+  if (outcome.kind === 'gateway')
+    throwStale(service, outcome.reason, opts, null);
   throwStale(
     service,
     outcome.reason,
@@ -708,13 +739,12 @@ export function upstreamFetchJson<T = unknown>(
   if (isTelemetryRuntime(runtimeOrUrl)) {
     const args = splitHelperArgs(initOrOpts, opts);
     const context = contextOrInit as UpstreamRouteContext;
-    return timedFetch(
-      runtimeOrUrl,
-      context,
-      urlOrService,
-      args.init,
-      (res) =>
-        consumeJson<T>(res, SERVICE_DISPLAY[context.service] ?? context.service, args.opts),
+    return timedFetch(runtimeOrUrl, context, urlOrService, args.init, (res) =>
+      consumeJson<T>(
+        res,
+        SERVICE_DISPLAY[context.service] ?? context.service,
+        args.opts,
+      ),
     );
   }
   return legacyFetchJson(
@@ -732,7 +762,8 @@ async function legacyFetchJson<T>(
   opts?: UpstreamFetchOpts,
 ): Promise<T> {
   const outcome = await classifyUpstreamFetch(url, init);
-  if (outcome.kind === 'gateway') throwStale(service, outcome.reason, opts, null);
+  if (outcome.kind === 'gateway')
+    throwStale(service, outcome.reason, opts, null);
   if (outcome.kind === 'stale') {
     throwStale(
       service,
@@ -812,7 +843,8 @@ export async function probeUpstreamSession(
       const html = await outcome.res.text();
       if (!input.isAuthenticatedPage(outcome.res.url, html)) {
         input.onEvidence?.(
-          input.missingMarkerEvidence ?? 'page missing sesskey (login redirect)',
+          input.missingMarkerEvidence ??
+            'page missing sesskey (login redirect)',
           undefined,
         );
         return { valid: false, reason: 'stale' };

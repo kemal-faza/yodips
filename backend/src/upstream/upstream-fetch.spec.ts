@@ -50,7 +50,9 @@ function resStub(opts: {
 
 afterEach(() => jest.restoreAllMocks());
 
-function recordingRuntime(times: bigint[] = [0n, 4_000_000n]): TelemetryRuntime & {
+function recordingRuntime(
+  times: bigint[] = [0n, 4_000_000n],
+): TelemetryRuntime & {
   events: unknown[];
 } {
   let clockIndex = 0;
@@ -68,7 +70,8 @@ function inventoryRoute(
   operation: string,
 ): UpstreamRoute {
   const context = UPSTREAM_ROUTES.find(
-    (candidate) => candidate.service === service && candidate.operation === operation,
+    (candidate) =>
+      candidate.service === service && candidate.operation === operation,
   );
   if (!context) throw new Error('test route missing from inventory');
   return context;
@@ -200,7 +203,9 @@ describe('classifyUpstreamFetch', () => {
     });
 
     await expect(
-      classifyUpstreamFetch('https://up.test/legacy/arbitrary', { method: 'GET' }),
+      classifyUpstreamFetch('https://up.test/legacy/arbitrary', {
+        method: 'GET',
+      }),
     ).resolves.toEqual(expect.objectContaining({ kind: 'ok' }));
 
     expect(fetchStack).toMatch(/timedFetch/);
@@ -311,13 +316,19 @@ describe('timedFetch', () => {
       .mockResolvedValue(resStub({ ok: false, status: 503 }));
 
     await expect(
-      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async (response) => ({
-        ok: false,
-        error,
-        outcome: 'http_error',
-        reason: 'http-not-ok',
-        status: response.status,
-      })),
+      timedFetch(
+        runtime,
+        KULON_SESSION_PROBE,
+        'https://kulon2.undip.ac.id/my/',
+        {},
+        async (response) => ({
+          ok: false,
+          error,
+          outcome: 'http_error',
+          reason: 'http-not-ok',
+          status: response.status,
+        }),
+      ),
     ).rejects.toBe(error);
 
     expect(runtime.events).toEqual([
@@ -337,11 +348,17 @@ describe('timedFetch', () => {
     jest.spyOn(global, 'fetch').mockRejectedValue(error);
 
     await expect(
-      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
-        ok: true,
-        value: 'unreachable',
-        outcome: 'ok',
-      })),
+      timedFetch(
+        runtime,
+        KULON_SESSION_PROBE,
+        'https://kulon2.undip.ac.id/my/',
+        {},
+        async () => ({
+          ok: true,
+          value: 'unreachable',
+          outcome: 'ok',
+        }),
+      ),
     ).rejects.toBe(error);
 
     expect(getTimedFetchTransportReason(error)).toBe('fetch-threw');
@@ -365,11 +382,17 @@ describe('timedFetch', () => {
     jest.spyOn(global, 'fetch').mockRejectedValue(error);
 
     await expect(
-      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
-        ok: true,
-        value: 'unreachable',
-        outcome: 'ok',
-      })),
+      timedFetch(
+        runtime,
+        KULON_SESSION_PROBE,
+        'https://kulon2.undip.ac.id/my/',
+        {},
+        async () => ({
+          ok: true,
+          value: 'unreachable',
+          outcome: 'ok',
+        }),
+      ),
     ).rejects.toBe(error);
 
     expect(getTimedFetchTransportReason(error)).toBe('redirect-loop');
@@ -415,18 +438,24 @@ describe('timedFetch', () => {
   it('records an expected stale result exactly once', async () => {
     const runtime = recordingRuntime();
     const error = new StaleUpstreamError('Kulon', 'login-redirect');
-    jest.spyOn(global, 'fetch').mockResolvedValue(
-      resStub({ url: 'https://kulon2.undip.ac.id/login/' }),
-    );
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(resStub({ url: 'https://kulon2.undip.ac.id/login/' }));
 
     await expect(
-      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
-        ok: false,
-        error,
-        outcome: 'stale',
-        reason: 'login-redirect',
-        status: 200,
-      })),
+      timedFetch(
+        runtime,
+        KULON_SESSION_PROBE,
+        'https://kulon2.undip.ac.id/my/',
+        {},
+        async () => ({
+          ok: false,
+          error,
+          outcome: 'stale',
+          reason: 'login-redirect',
+          status: 200,
+        }),
+      ),
     ).rejects.toBe(error);
 
     expect(runtime.events).toHaveLength(1);
@@ -443,14 +472,20 @@ describe('timedFetch', () => {
   it('records an unexpected consumer throw as parse_error/unknown', async () => {
     const runtime = recordingRuntime();
     const error = new Error('consumer failure must be rethrown');
-    jest.spyOn(global, 'fetch').mockResolvedValue(
-      resStub({ url: 'https://kulon2.undip.ac.id/my/' }),
-    );
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(resStub({ url: 'https://kulon2.undip.ac.id/my/' }));
 
     await expect(
-      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => {
-        throw error;
-      }),
+      timedFetch(
+        runtime,
+        KULON_SESSION_PROBE,
+        'https://kulon2.undip.ac.id/my/',
+        {},
+        async () => {
+          throw error;
+        },
+      ),
     ).rejects.toBe(error);
 
     expect(runtime.events).toEqual([
@@ -465,17 +500,25 @@ describe('timedFetch', () => {
 
   it('turns a mismatched consumer status into parse_error/unknown', async () => {
     const runtime = recordingRuntime();
-    jest.spyOn(global, 'fetch').mockResolvedValue(
-      resStub({ url: 'https://kulon2.undip.ac.id/my/', status: 200 }),
-    );
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        resStub({ url: 'https://kulon2.undip.ac.id/my/', status: 200 }),
+      );
 
     await expect(
-      timedFetch(runtime, KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
-        ok: true,
-        value: 'value',
-        outcome: 'ok',
-        status: 201,
-      })),
+      timedFetch(
+        runtime,
+        KULON_SESSION_PROBE,
+        'https://kulon2.undip.ac.id/my/',
+        {},
+        async () => ({
+          ok: true,
+          value: 'value',
+          outcome: 'ok',
+          status: 201,
+        }),
+      ),
     ).rejects.toThrow();
 
     expect(runtime.events).toEqual([
@@ -497,11 +540,17 @@ describe('timedFetch', () => {
     } as never;
 
     await expect(
-      timedFetch(runtime, invalidContext, 'https://kulon2.undip.ac.id/my/', {}, async () => ({
-        ok: true,
-        value: 'unreachable',
-        outcome: 'ok',
-      })),
+      timedFetch(
+        runtime,
+        invalidContext,
+        'https://kulon2.undip.ac.id/my/',
+        {},
+        async () => ({
+          ok: true,
+          value: 'unreachable',
+          outcome: 'ok',
+        }),
+      ),
     ).rejects.toThrow('Invalid upstream route context');
 
     expect(fetch).not.toHaveBeenCalled();
@@ -530,12 +579,7 @@ describe('timedFetch', () => {
   });
 
   it.each([
-    [
-      'kulon',
-      KULON_SESSION_PROBE,
-      'https://kulon2.undip.ac.id/my/',
-      'GET',
-    ],
+    ['kulon', KULON_SESSION_PROBE, 'https://kulon2.undip.ac.id/my/', 'GET'],
     [
       'siap',
       SIAP_SESSION_PROBE,
@@ -600,7 +644,10 @@ describe('timedFetch', () => {
 
   it.each([
     ['trusted host over HTTP', 'http://kulon2.undip.ac.id/my/'],
-    ['trusted host on a non-default port', 'https://kulon2.undip.ac.id:8443/my/'],
+    [
+      'trusted host on a non-default port',
+      'https://kulon2.undip.ac.id:8443/my/',
+    ],
   ])('rejects %s before calling fetch', async (_label, url) => {
     const runtime = recordingRuntime();
     const fetch = jest.spyOn(global, 'fetch');
@@ -620,21 +667,24 @@ describe('timedFetch', () => {
   it.each([
     ['method', 'https://kulon2.undip.ac.id/my/', { method: 'POST' }],
     ['path', 'https://kulon2.undip.ac.id/other/', {}],
-  ])('rejects invalid route %s before calling fetch', async (_label, url, init) => {
-    const runtime = recordingRuntime();
-    const fetch = jest.spyOn(global, 'fetch');
+  ])(
+    'rejects invalid route %s before calling fetch',
+    async (_label, url, init) => {
+      const runtime = recordingRuntime();
+      const fetch = jest.spyOn(global, 'fetch');
 
-    await expect(
-      timedFetch(runtime, KULON_SESSION_PROBE, url, init, async () => ({
-        ok: true,
-        value: 'unreachable',
-        outcome: 'ok',
-      })),
-    ).rejects.toThrow('Upstream URL does not match route context');
+      await expect(
+        timedFetch(runtime, KULON_SESSION_PROBE, url, init, async () => ({
+          ok: true,
+          value: 'unreachable',
+          outcome: 'ok',
+        })),
+      ).rejects.toThrow('Upstream URL does not match route context');
 
-    expect(fetch).not.toHaveBeenCalled();
-    expect(runtime.events).toHaveLength(0);
-  });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(runtime.events).toHaveLength(0);
+    },
+  );
 
   describe('Microsoft tenant token routes', () => {
     const context = {
@@ -651,12 +701,18 @@ describe('timedFetch', () => {
         .mockResolvedValue(resStub({ status: 200, url: tokenUrl }));
 
       await expect(
-        timedFetch(runtime, context, tokenUrl, { method: 'POST' }, async (response) => ({
-          ok: true,
-          value: 'ok',
-          outcome: 'ok',
-          status: response.status,
-        })),
+        timedFetch(
+          runtime,
+          context,
+          tokenUrl,
+          { method: 'POST' },
+          async (response) => ({
+            ok: true,
+            value: 'ok',
+            outcome: 'ok',
+            status: response.status,
+          }),
+        ),
       ).resolves.toBe('ok');
 
       expect(fetch).toHaveBeenCalledWith(tokenUrl, { method: 'POST' });
@@ -674,10 +730,22 @@ describe('timedFetch', () => {
     });
 
     it.each([
-      ['wrong tenant', 'https://login.microsoftonline.com/tenant-b/oauth2/v2.0/token'],
-      ['dot traversal', 'https://login.microsoftonline.com/tenant-a/../oauth2/v2.0/token'],
-      ['encoded slash', 'https://login.microsoftonline.com/tenant-a%2Fother/oauth2/v2.0/token'],
-      ['encoded dot', 'https://login.microsoftonline.com/%2e%2e/oauth2/v2.0/token'],
+      [
+        'wrong tenant',
+        'https://login.microsoftonline.com/tenant-b/oauth2/v2.0/token',
+      ],
+      [
+        'dot traversal',
+        'https://login.microsoftonline.com/tenant-a/../oauth2/v2.0/token',
+      ],
+      [
+        'encoded slash',
+        'https://login.microsoftonline.com/tenant-a%2Fother/oauth2/v2.0/token',
+      ],
+      [
+        'encoded dot',
+        'https://login.microsoftonline.com/%2e%2e/oauth2/v2.0/token',
+      ],
       ['wrong origin', 'https://evil.example/tenant-a/oauth2/v2.0/token'],
     ])('rejects %s before network', async (_label, url) => {
       const runtime = recordingRuntime();
@@ -762,11 +830,7 @@ describe('upstreamFetchText', () => {
     await upstreamFetchText('https://up.test/x', {}, 'Siap', {
       onStale,
     }).catch(() => undefined);
-    expect(onStale).toHaveBeenCalledWith(
-      'http-not-ok',
-      null,
-      undefined,
-    );
+    expect(onStale).toHaveBeenCalledWith('http-not-ok', null, undefined);
   });
 
   it('keeps the stale error when an async onStale hook rejects', async () => {
@@ -776,7 +840,9 @@ describe('upstreamFetchText', () => {
     });
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
-    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const errorLog = jest
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
     process.on('unhandledRejection', onUnhandled);
 
     try {
@@ -871,10 +937,7 @@ describe('probeUpstreamSession evidence reporting', () => {
       isAuthenticatedPage: authed,
       onEvidence: evidence,
     });
-    expect(evidence).toHaveBeenCalledWith(
-      'redirect loop',
-      undefined,
-    );
+    expect(evidence).toHaveBeenCalledWith('redirect loop', undefined);
   });
 
   it('reports http status evidence', async () => {
@@ -889,13 +952,15 @@ describe('probeUpstreamSession evidence reporting', () => {
       isAuthenticatedPage: authed,
       onEvidence: evidence,
     });
-      expect(evidence).toHaveBeenCalledWith('http 503', undefined);
+    expect(evidence).toHaveBeenCalledWith('http 503', undefined);
   });
 
   it('reports bounded login evidence without the final URL', async () => {
     jest
       .spyOn(global, 'fetch')
-      .mockResolvedValue(resStub({ url: 'https://login.microsoftonline.com/x' }));
+      .mockResolvedValue(
+        resStub({ url: 'https://login.microsoftonline.com/x' }),
+      );
     const evidence = jest.fn();
     await probeUpstreamSession({
       url: 'u',
@@ -904,10 +969,7 @@ describe('probeUpstreamSession evidence reporting', () => {
       isAuthenticatedPage: authed,
       onEvidence: evidence,
     });
-    expect(evidence).toHaveBeenCalledWith(
-      'login redirect',
-      undefined,
-    );
+    expect(evidence).toHaveBeenCalledWith('login redirect', undefined);
   });
 
   it('reports missing-marker evidence when page is not authenticated', async () => {
