@@ -11,9 +11,24 @@
  *
  * Values here are dummy/test-safe and must never be used as real credentials;
  * real secrets live in backend/.env (gitignored) / Heroku config vars.
+ *
+ * NOTE (2026-09-04, wave-3 merge): NOTIFICATIONS_ENABLED / FIREBASE_SERVICE_ACCOUNT_JSON
+ * are explicitly DISABLED here so a developer's local backend/.env (which enables
+ * Firebase) cannot leak into specs that boot the FULL AppModule. With Firebase
+ * enabled, every booted app initializes the process-global firebase-admin app
+ * "yodips-push", and specs that boot + close MULTIPLE AppModules (configure-http.spec,
+ * throttler-trust-proxy.integration.spec) then call FcmService.onModuleDestroy ->
+ * deleteApp() on an already-deleted app -> teardown throws "Firebase app ... has
+ * already been deleted" (suite fails despite all tests passing). CI has no .env,
+ * which is why the wave-3 branches stayed green there; this pin makes local runs
+ * CI-equivalent. FCM-only specs construct FcmService with their own config mocks
+ * and are unaffected.
  */
 
 process.env.NODE_ENV = 'test';
+process.env.NOTIFICATIONS_ENABLED = '';
+process.env.FIREBASE_SERVICE_ACCOUNT_JSON = '';
+process.env.WEB_PUSH_ENABLED = '';
 process.env.SSO_BASE_URL = 'https://sso.undip.ac.id';
 process.env.SSO_LOGIN_PATH = '/sso/auth_v2';
 process.env.JWT_SECRET = 'test-secret-that-is-at-least-32-chars-long!!';
