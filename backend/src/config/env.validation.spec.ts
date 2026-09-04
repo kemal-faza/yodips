@@ -121,6 +121,57 @@ describe('validateEnv', () => {
       }),
     ).toThrow();
   });
+
+  it('defaults SESSION_ABSOLUTE_TTL_MS to 7 days (604800000)', () => {
+    const cfg = validateEnv({
+      SSO_BASE_URL: 'https://sso.undip.ac.id',
+      JWT_SECRET: TEST_JWT_SECRET,
+      MS_TENANT_ID: 'tenant',
+      MS_CLIENT_ID: 'client',
+      MS_CLIENT_SECRET: 'secret',
+      MS_REDIRECT_URI: 'http://localhost:3000/callback',
+      CDP_URL: 'http://127.0.0.1:9223',
+      SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
+      SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+      CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
+    });
+    expect(cfg.SESSION_ABSOLUTE_TTL_MS).toBe(604800000);
+  });
+
+  it('accepts an explicit SESSION_ABSOLUTE_TTL_MS', () => {
+    const cfg = validateEnv({
+      SSO_BASE_URL: 'https://sso.undip.ac.id',
+      JWT_SECRET: TEST_JWT_SECRET,
+      MS_TENANT_ID: 'tenant',
+      MS_CLIENT_ID: 'client',
+      MS_CLIENT_SECRET: 'secret',
+      MS_REDIRECT_URI: 'http://localhost:3000/callback',
+      CDP_URL: 'http://127.0.0.1:9223',
+      SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
+      SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+      CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
+      SESSION_ABSOLUTE_TTL_MS: '86400000',
+    });
+    expect(cfg.SESSION_ABSOLUTE_TTL_MS).toBe(86400000);
+  });
+
+  it('rejects SESSION_ABSOLUTE_TTL_MS below 1 minute', () => {
+    expect(() =>
+      validateEnv({
+        SSO_BASE_URL: 'https://sso.undip.ac.id',
+        JWT_SECRET: TEST_JWT_SECRET,
+        MS_TENANT_ID: 'tenant',
+        MS_CLIENT_ID: 'client',
+        MS_CLIENT_SECRET: 'secret',
+        MS_REDIRECT_URI: 'http://localhost:3000/callback',
+        CDP_URL: 'http://127.0.0.1:9223',
+        SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
+        SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+        CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
+        SESSION_ABSOLUTE_TTL_MS: '1000',
+      }),
+    ).toThrow();
+  });
 });
 
 describe('validateEnv - notification vars', () => {
