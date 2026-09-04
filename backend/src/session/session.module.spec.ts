@@ -76,4 +76,40 @@ describe('createSessionStore', () => {
       ),
     ).rejects.toThrow('connect ECONNREFUSED');
   });
+
+  it('forwards SESSION_ABSOLUTE_TTL_MS to the in-memory store (absolute cap enforced)', async () => {
+    const now = Date.now();
+    const store = (await createSessionStore(
+      config({
+        SESSION_TTL_MS: '604800000',
+        SESSION_ABSOLUTE_TTL_MS: '200',
+      }),
+    )) as InMemorySessionStore;
+    await store.set('a', {
+      identity: 'a',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'K',
+      siapCookie: '',
+      capturedAt: now - 250,
+    });
+    // 250ms elapsed > 200ms cap → dead even though the 7-day sliding TTL is fresh.
+    expect(await store.get('a')).toBeNull();
+  });
+
+  it('defaults the absolute cap to SESSION_TTL_MS when SESSION_ABSOLUTE_TTL_MS is unset', async () => {
+    const now = Date.now();
+    const store = (await createSessionStore(
+      config({ SESSION_TTL_MS: '60000' }),
+    )) as InMemorySessionStore;
+    await store.set('a', {
+      identity: 'a',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'K',
+      siapCookie: '',
+      capturedAt: now - 61_000, // older than the 60s default cap
+    });
+    expect(await store.get('a')).toBeNull();
+  });
 });
