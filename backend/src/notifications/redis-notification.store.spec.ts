@@ -72,6 +72,21 @@ function fakeRedis() {
         expired(key);
         return [...(sets.get(key) ?? [])];
       },
+      // Deterministic Lua simulator: mirrors the atomic addWebSubscription
+      // script (read -> duplicate-check -> cap-check -> append -> set) over the
+      // same `strings` map. The `script`/`numKeys` args are ignored.
+      async eval(script: string, numKeys: number, key: string, payloadJson: string, capStr: string) {
+        expired(key);
+        const cap = Number(capStr);
+        const list: Array<{ endpoint: string; p256dh: string; auth: string }> =
+          strings.has(key) ? JSON.parse(strings.get(key)!) : [];
+        const incoming = JSON.parse(payloadJson);
+        if (list.some((e) => e.endpoint === incoming.endpoint)) return 'duplicate';
+        if (list.length >= cap) return 'cap-reached';
+        list.push(incoming);
+        strings.set(key, JSON.stringify(list));
+        return 'added';
+      },
     },
   };
 }
@@ -124,5 +139,66 @@ describe('RedisNotificationStore', () => {
     expect(await s.tryLockCycle()).toBe(true);
     f.advance(901_000);
     expect(await s.tryLockCycle()).toBe(true);
+  });
+
+  it('web subscriptions honor the per-user cap atomically (via Lua)', async () => {
+    const f = fakeRedis();
+    const s = new RedisNotificationStore(f.client as any, () => f.now);
+    for (let i = 0; i < 8; i++) {
+      expect(
+        await s.addWebSubscription('u1', {
+          endpoint: `https://pusher/${i}`,
+          p256dh: 'p',
+          auth: 'a',
+        }),
+      ).toBe('added');
+    }
+    expect(
+      await s.addWebSubscription('u1', {
+        endpoint: 'https://pusher/9',
+        p256dh: 'p',
+        auth: 'a',
+      }),
+    ).toBe('cap-reached');
+    expect(await s.getWebSubscriptions('u1')).toHaveLength(8);
+    expect(await s.listSubsWithWeb()).toEqual(['u1']);
+  });
+
+  it('re-adding the same endpoint reports duplicate (via Lua)', async () => {
+    const f = fakeRedis();
+    const s = new RedisNotificationStore(f.client as any, () => f.now);
+    await s.addWebSubscription('u1', {
+      endpoint: 'https://pusher/1',
+      p256dh: 'p',
+      auth: 'a',
+    });
+    expect(
+      await s.addWebSubscription('u1', {
+        endpoint: 'https://pusher/1',
+        p256dh: 'p',
+        auth: 'a',
+      }),
+    ).toBe('duplicate');
+    expect(await s.getWebSubscriptions('u1')).toHaveLength(1);
+  });
+
+  it('addWebSubscription issues a single atomic EVAL (no lock key, no get/set RMW)', async () => {
+    const f = fakeRedis();
+    const s = new RedisNotificationStore(f.client as any, () => f.now);
+    const evalSpy = jest.spyOn(f.client, 'eval');
+    await s.addWebSubscription('u1', {
+      endpoint: 'https://pusher/1',
+      p256dh: 'p',
+      auth: 'a',
+    });
+    expect(evalSpy).toHaveBeenCalledTimes(1);
+    const [script, numKeys, key] = evalSpy.mock.calls[0];
+    expect(numKeys).toBe(1);
+    expect(key).toBe('notif:web:u1');
+    expect(String(script)).toContain('redis.call');
+    // no lock key anywhere
+    expect(evalSpy.mock.calls[0].slice(1)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/lock/)])
+    );
   });
 });
