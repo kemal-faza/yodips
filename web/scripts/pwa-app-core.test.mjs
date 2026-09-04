@@ -7,12 +7,29 @@ import {
   buildSwSource,
   buildManifest,
   gzipTotalBytes,
+  assertNoInlineScript,
   GZIP_GATE_BYTES,
 } from './pwa-app-core.mjs';
 
 let dir;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'pwa-core-')); });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+describe('assertNoInlineScript', () => {
+  it('passes on clean external-script HTML with inline styles', () => {
+    expect(() =>
+      assertNoInlineScript('<script src="composeApp.js"></script><script src="loader.js"></script><style>.a{}</style>'),
+    ).not.toThrow();
+  });
+
+  it('throws on an inline <script> body (no src)', () => {
+    expect(() => assertNoInlineScript('<script>var x = 1;</script>')).toThrow(/inline <script> body/);
+  });
+
+  it('throws on an inline event handler', () => {
+    expect(() => assertNoInlineScript('<div onclick="doEvil()">x</div>')).toThrow(/inline event handler/);
+  });
+});
 
 describe('collectFiles', () => {
   it('rekursif, rel posix, dan membuang sourcemap', async () => {

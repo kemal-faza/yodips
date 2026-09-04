@@ -185,3 +185,25 @@ export async function gzipTotalBytes(files) {
   for (const f of files) total += gzipSync(await readFile(f.abs)).length;
   return total;
 }
+
+/**
+ * Fail the /app/ build if the assembled index.html still contains inline
+ * <script> bodies or inline event handlers. The /app/* CSP (web/vercel.json)
+ * drops script-src 'unsafe-inline'; any inline script would be silently
+ * blocked and the PWA would ship a dead page, so we fail at build time
+ * instead.
+ *
+ * A <script> with a src= attribute is fine (external, same-origin, allowed by
+ * script-src 'self'). <style> blocks are also fine (style-src 'unsafe-inline'
+ * is retained for Compose-wasm).
+ */
+export function assertNoInlineScript(html) {
+  const inlineScript = /<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i;
+  const inlineHandler = /\son[a-z]+\s*=/i;
+  if (inlineScript.test(html)) {
+    throw new Error('FATAL: /app/index.html contains an inline <script> body. Move it to an external loader.js — CSP script-src for /app/* has no unsafe-inline.');
+  }
+  if (inlineHandler.test(html)) {
+    throw new Error('FATAL: /app/index.html contains an inline event handler (on*="..."). Remove it — CSP for /app/* blocks inline handlers.');
+  }
+}
