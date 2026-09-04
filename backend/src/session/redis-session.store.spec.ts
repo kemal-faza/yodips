@@ -158,4 +158,27 @@ describe('RedisSessionStore', () => {
     mockClient.get.mockResolvedValue(`v1:${iv}:${tag}:${ct}:extra`);
     expect(await store.get('a')).toBeNull();
   });
+
+  it('natural re-login: a session past the absolute cap is dead, and a fresh set() for the same identity is readable again', async () => {
+    const now = Date.now();
+    const storeAbs = new RedisSessionStore(mockClient as unknown as Redis, 1000, 'test-enc-key', 200);
+    // Old session captured 250ms ago > 200ms cap → dead on read (DELeted).
+    const oldSession = makeSession('a', 'MoodleSession=OLD');
+    mockClient.set.mockResolvedValue('OK');
+    await storeAbs.set('a', { ...oldSession, capturedAt: now - 250 });
+    const oldEnvelope = mockClient.set.mock.calls[0][1];
+    mockClient.get.mockResolvedValue(oldEnvelope);
+    mockClient.del.mockResolvedValue(1);
+    expect(await storeAbs.get('a')).toBeNull();
+
+    // The user re-logins: a new handoff stores a fresh session under the SAME
+    // identity with a current capturedAt → must be readable again (sliding EXPIRE).
+    mockClient.set.mockResolvedValue('OK');
+    await storeAbs.set('a', { ...makeSession('a', 'MoodleSession=NEW'), capturedAt: Date.now() });
+    const newEnvelope = mockClient.set.mock.calls[1][1];
+    mockClient.get.mockResolvedValue(newEnvelope);
+    mockClient.expire.mockResolvedValue(1);
+    const result = await storeAbs.get('a');
+    expect(result?.kulonCookie).toContain('MoodleSession=NEW');
+  });
 });

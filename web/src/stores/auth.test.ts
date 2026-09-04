@@ -23,6 +23,34 @@ vi.mock('../api/client', () => ({
 // sendToExtension guard passes and messages reach the stubbed chrome.runtime.
 vi.mock('../config/extension', () => ({ EXTENSION_ID: 'test-extension-id' }));
 
+// vi.hoisted factory references that per-test overrides can control.
+const extMockState = vi.hoisted(() => ({
+  logoutImpl: undefined as undefined | (() => Promise<void>),
+  logoutMock: undefined as undefined | ReturnType<typeof vi.fn>,
+}));
+
+// Mock useExtension: delegate EVERY method to the real module (existing suites
+// stub globalThis.chrome and expect real sendHandoff/readStatus/sendDone
+// behavior) EXCEPT logout, which defaults to the real module's logout unless a
+// test overrides it via extMockState.logoutImpl. The SAME mocked useExtension
+// instance is shared by the store and the test.
+vi.mock('../composables/useExtension', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../composables/useExtension')>();
+  const extLogout = vi.fn((...args: Parameters<typeof actual.useExtension extends () => infer R ? (R extends { logout: infer L } ? L : never) : never>) =>
+    extMockState.logoutImpl
+      ? extMockState.logoutImpl(...args)
+      : actual.useExtension().logout(...args),
+  );
+  extMockState.logoutMock = extLogout;
+  return {
+    useExtension: () => {
+      const api = actual.useExtension();
+      return { ...api, logout: extLogout };
+    },
+  };
+});
+import { useExtension } from '../composables/useExtension';
+
 describe('auth store', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -226,6 +254,40 @@ describe('auth store', () => {
     store.token = null;
     await store.logout();
     expect(api.logoutSession).not.toHaveBeenCalled();
+  });
+
+  it('logout resolves only AFTER the extension cookie-wipe promise settles (fire-and-forget race)', async () => {
+    // The extension wipe is async; logout() must await it before resolving, so
+    // navigation/UI teardown after `await store.logout()` cannot race the
+    // cookie clear. Track settlement via a flag flipped by a microtask chained
+    // onto the extension logout promise.
+    let extensionLogoutSettled = false;
+    let extResolve: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      extResolve = resolve;
+    });
+    const extensionLogoutPromise = gate.then(() => {
+      extensionLogoutSettled = true;
+    });
+    extMockState.logoutImpl = () => extensionLogoutPromise;
+    localStorage.setItem('sso_token', 'x');
+    const store = useAuthStore();
+    store.token = 'x';
+    const logoutPromise = store.logout();
+    let logoutSettled = false;
+    void logoutPromise.then(() => {
+      logoutSettled = true;
+    });
+    // Drain pending microtasks so logout() reaches the extension await.
+    await flushPromises();
+    await new Promise((r) => setTimeout(r, 0));
+    // Logout must NOT have resolved while the extension wipe is still pending.
+    expect(logoutSettled).toBe(false);
+    // Settle the extension wipe → logout resolves after it.
+    extResolve();
+    await logoutPromise;
+    expect(extensionLogoutSettled).toBe(true);
+    expect(logoutSettled).toBe(true);
   });
 
   it('isHandoffMode reflects VITE_LOGIN_MODE', () => {
