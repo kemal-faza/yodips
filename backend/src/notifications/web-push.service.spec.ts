@@ -219,10 +219,33 @@ describe('WebPushService', () => {
     await svc.send(Array.from({ length: 20 }, (_, i) => sub(100 + i)), payload, budget);
     const { invalid } = await svc.send(Array.from({ length: 20 }, (_, i) => sub(200 + i)), payload, budget);
 
-    expect(invalid).toEqual([]); // nothing invalid — the 10 not sent are silently deferred
+    expect(invalid).toEqual([]); // over-budget subs are best-effort DROPPED for this cycle:
+    // not invalid (kept in the store), not queued for retry — see the HONEST
+    // BUDGET SEMANTICS comment in web-push.service.ts.
     expect(sendNotification).toHaveBeenCalledTimes(50); // 20 + 20 + 10 = global cap
     expect(budget.remaining).toBe(0);
     expect(budget.exhausted).toBe(true);
+  });
+
+  it('over-budget subscriptions are silently dropped: not invalid, not marked for removal', async () => {
+    const svc = makeService();
+    sendNotification.mockResolvedValue({ statusCode: 201 });
+    const sub = (i: number): WebSubscriptionRecord => ({
+      endpoint: `https://fcm.googleapis.com/fcm/send/${i}`,
+      p256dh: 'p',
+      auth: 'a',
+    });
+    const budget = BUDGET(2);
+    // 5 subs against a 2-slot budget: exactly 2 network sends, the other 3 are
+    // dropped for this cycle but reported as VALID (the poller must keep them).
+    const { invalid } = await svc.send(
+      Array.from({ length: 5 }, (_, i) => sub(i)),
+      { title: 't', body: 'b', collapseKey: 'c', data: {} },
+      budget,
+    );
+    expect(invalid).toEqual([]); // dropped != invalid: poller keeps + retries nothing
+    expect(sendNotification).toHaveBeenCalledTimes(2);
+    expect(budget.remaining).toBe(0);
   });
 
   it('exhausted budget sends nothing (no reset per call)', async () => {

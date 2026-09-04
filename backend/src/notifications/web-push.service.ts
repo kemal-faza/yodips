@@ -25,7 +25,11 @@ export class CycleSendBudget {
   constructor(readonly max: number) {
     this.remaining = max;
   }
-  /** Reserve `n` sends; returns the number actually reserved (0 when exhausted). */
+  /**
+   * Reserve `n` sends; returns the number actually reserved (0 when exhausted).
+   * Unreserved sends in an over-budget cycle are best-effort dropped — see the
+   * HONEST BUDGET SEMANTICS note in WebPushService.send.
+   */
   take(n: number): number {
     const granted = Math.min(n, this.remaining);
     this.remaining -= granted;
@@ -131,6 +135,19 @@ export class WebPushService implements OnModuleInit {
         //    Shape/DNS-pruned subs never consume cycle budget. The budget is
         //    the SINGLE shared per-cycle counter, so the aggregate across
         //    users/events/pool-workers can never exceed budget.max.
+        //
+        //    HONEST BUDGET SEMANTICS (chosen): a Web Push delivery that does
+        //    not get a slot is BEST-EFFORT DROPPED for this cycle — it is
+        //    deliberately NOT queued for a retry, NOT marked invalid, and NOT
+        //    removed from the store. There is no per-channel retry ledger. The
+        //    poller has already advanced its snapshot/sent-keys for the event
+        //    by the time deliveries run, so an over-budget new_task/reschedule
+        //    Web Push will NOT be retried on the next 15-minute cycle (its
+        //    upstream diff is consumed). Only FCM (sendEach multicast) and
+        //    future genuinely-new events can carry it again. This keeps the
+        //    cap a hard bound on one cycle's fan-out without unbounded ledger
+        //    state; the default budget (50) and per-user cap (8) make silent
+        //    drops rare and bounded.
         if (budget.exhausted || budget.take(1) === 0) return;
         const pinned = buildPinnedAgent(dns.records[0]);
         try {

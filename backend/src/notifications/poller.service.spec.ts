@@ -340,15 +340,19 @@ describe('NotificationsPoller.runCycle', () => {
     }
   });
 
-  it('an exhausted cycle budget suppresses web delivery for ALL users in the cycle', async () => {
+  it('exhausted cycle budget gates ONLY Web Push; FCM delivery is independent and pushesSent counts event deliveries', async () => {
     const f = makeFakes();
     (f as any).webPush.configured = true;
     f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    // u1 has BOTH an FCM token and a web subscription; u2 has only a web sub —
+    // so an exhausted budget must suppress u1's AND u2's web delivery while
+    // u1's FCM (independent, multicast) still goes out.
+    await f.store.addDeviceToken('u1', 'tok-u1');
     await f.store.addWebSubscription('u1', {
-      endpoint: 'https://pusher/a', p256dh: 'pk', auth: 'auth',
+      endpoint: 'https://pusher/u1', p256dh: 'pk', auth: 'auth',
     });
     await f.store.addWebSubscription('u2', {
-      endpoint: 'https://pusher/b', p256dh: 'pk', auth: 'auth',
+      endpoint: 'https://pusher/u2', p256dh: 'pk', auth: 'auth',
     });
     await f.poller.runCycle(NOW); // baseline snapshots
 
@@ -356,9 +360,19 @@ describe('NotificationsPoller.runCycle', () => {
       A(1, { duedate: DUE_FAR_SEC }),
       A(2, { duedate: DUE_FAR_SEC }),
     ];
-    await f.poller.runCycle(NOW, undefined, new CycleSendBudget(0)); // pre-exhausted
+    const sum = await f.poller.runCycle(NOW, undefined, new CycleSendBudget(0)); // pre-exhausted
 
-    expect(f.webSent).toHaveLength(0); // no web delivery at all this cycle
+    expect(f.webSent).toHaveLength(0); // NO web delivery at all this cycle
+    // FCM is independent of the web budget: u1's event still fans out to FCM
+    // (the fake records u2's web-only event as an FCM batch with zero tokens —
+    // deliver() always runs sendEach; the real FCM service no-ops on empty).
+    expect(f.sent).toHaveLength(2);
+    expect(f.sent[0]).toMatchObject({ title: 'Tugas baru', tokens: ['tok-u1'] });
+    expect(f.sent[1]).toMatchObject({ title: 'Tugas baru', tokens: [] });
+    // pushesSent = event deliveries (FCM multicast batches), NOT device/web
+    // sends: TWO events were delivered this cycle (u1 FCM-only + u2 web-only
+    // with the web batch budget-dropped), each counting 1.
+    expect(sum.pushesSent).toBe(2);
   });
 });
 

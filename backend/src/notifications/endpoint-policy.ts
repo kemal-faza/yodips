@@ -16,11 +16,14 @@ export type EndpointPolicy =
 
 /**
  * True when the raw (pre-normalization) URL text carries an explicit port.
- * WHATWG URL drops a default ":443" into url.port === '', so we inspect the
- * raw authority: the port separator is the first ':' after the authority's
- * '@' (userinfo is rejected separately) — a ':' inside bracketed IPv6
- * ([::1]:8443) belongs to the literal and is not a port separator, hence we
- * scan after stripping any leading '[' ... ']' host portion.
+ * Verified on Node 22.23.1: WHATWG URL drops an explicit DEFAULT port into the
+ * empty string — `new URL('https://fcm.googleapis.com:443/x').port === ''` and
+ * its `.href` is `'https://fcm.googleapis.com/x'` — so `url.port` cannot
+ * distinguish `https://host:443/x` from `https://host/x`. We therefore inspect
+ * the raw authority text: the port separator is the first ':' after the
+ * authority's '@' (userinfo is rejected separately) — a ':' inside bracketed
+ * IPv6 ([::1]:8443) belongs to the literal and is not a port separator, hence
+ * we scan after stripping any leading '[' ... ']' host portion.
  */
 function hasExplicitPort(raw: string): boolean {
   // Extract the authority component: scheme://authority/path...
@@ -207,11 +210,35 @@ export function v4MappedEmbeddedIpv4(g: string[]): string {
 }
 
 /**
+ * True when the address carries a globally well-known IPv6 prefix that exists
+ * ONLY to tunnel/translate/relay to an IPv4 target over the public Internet.
+ * No legitimate Web Push provider (FCM/Mozilla/Apple) is reachable through
+ * such a transport, so fail closed at the classifier rather than rely on the
+ * OS refusing to route them:
+ *   - 64:ff9b::/96        RFC 6052 well-known NAT64 prefix (IPv4 in low 32 bits)
+ *   - 64:ff9b:1::/48      RFC 6052 local-use NAT64 prefix (network-specific)
+ *   - 2002::/16           6to4 (RFC 3056; IPv4 in hextets 2-3)
+ *   - 2001::/32           Teredo (RFC 4380; relays v4 connectivity over IPv6)
+ * Embedded IPv4 can be public (64:ff9b::808:808, 2002:0808:0808::) — still
+ * blocked: the transport itself is never needed for a direct provider connect.
+ * Hextets are 4-char zero-padded by parseIpv6, so short prefixes ("64") are
+ * compared in their padded form ("0064").
+ */
+function hasIpv4TranslationPrefix(g: string[]): boolean {
+  if (g[0] === '0064' && g[1] === 'ff9b') return true; // NAT64 well-known + local-use
+  if (g[0] === '2002') return true; // 6to4
+  if (g[0] === '2001' && g[1] === '0000') return true; // Teredo
+  return false;
+}
+
+/**
  * IPv6 classification: block the unspecified/loopback (:: / ::1), ULA
  * fc00::/7, link-local fe80::/10, multicast ff00::/8, documentation
- * 2001:db8::/32, ORCHID 2001:10::/28, and every v4-mapped address whose
- * embedded IPv4 is itself non-public (::ffff:0:0/96 policy — a v4-mapped
- * address is a v4 transport, so its embedded v4 is classified).
+ * 2001:db8::/32, ORCHID 2001:10::/28, IPv4-translation/tunneling prefixes
+ * (64:ff9b::/96 + 64:ff9b:1::/48 NAT64, 2002::/16 6to4, 2001::/32 Teredo),
+ * and every v4-mapped address whose embedded IPv4 is itself non-public
+ * (::ffff:0:0/96 policy — a v4-mapped address is a v4 transport, so its
+ * embedded v4 is classified).
  */
 export function isPublicIpv6(ip: string): boolean {
   const g = parseIpv6(ip);
@@ -238,6 +265,7 @@ export function isPublicIpv6(ip: string): boolean {
     if (second === 0x0db8) return false; // 2001:db8::/32 documentation
     if (second === 0x0010) return false; // 2001:10::/28 ORCHID
   }
+  if (hasIpv4TranslationPrefix(g)) return false; // NAT64 / 6to4 / Teredo
   if (isV4MappedIpv6(ip)) {
     return isPublicIpv4(v4MappedEmbeddedIpv4(g)); // transparent v4-mapped
   }
