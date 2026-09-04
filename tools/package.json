@@ -6,7 +6,7 @@
     "probe": "ts-node siap-probe.ts",
     "test:build": "tsc -p tsconfig.json --outDir .tmp-test",
     "analyze:observability": "ts-node analyze-observability-log.ts",
-    "test": "npm run test:build && node --test .tmp-test/siap-probe.test.js .tmp-test/analyze-observability-log.test.js"
+    "test": "npm run test:build && node --test .tmp-test/siap-probe.test.js .tmp-test/analyze-observability-log.test.js .tmp-test/ci-audit-policy.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
