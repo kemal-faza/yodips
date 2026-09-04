@@ -86,7 +86,10 @@ apiClient.interceptors.response.use(
     const method: string = (error?.config?.method ?? 'get').toLowerCase();
     if (status === 401) {
       // The refresh endpoint's OWN 401 must be terminal — never re-refresh (loop).
-      if (url === API.auth.refresh) {
+      // /api/auth/logout's own 401 is equally terminal: the session is already
+      // gone or the token invalid, and a silent refresh would re-mint the very
+      // JWT the logout is destroying (refresh recursion on logout).
+      if (url === API.auth.refresh || url === API.auth.logout) {
         return Promise.reject(error);
       }
       const alreadyRetried = (error.config as { _retried?: boolean } | undefined)?._retried;
@@ -159,6 +162,13 @@ export async function me(): Promise<User> {
 export async function refreshToken(): Promise<string> {
   const { data } = await apiClient.post<{ accessToken: string }>('API.auth.refresh');
   return data.accessToken;
+}
+
+/** Server-side logout: revoke the session so no leaked JWT can be refreshed.
+ *  Best-effort by callers; the response interceptor treats /logout's own 401
+ *  as terminal (session already dead) and never triggers a silent refresh. */
+export async function logoutSession(): Promise<void> {
+  await apiClient.post(API.auth.logout);
 }
 
 export async function getAssignments(): Promise<Assignment[]> {
