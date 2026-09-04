@@ -1,0 +1,19 @@
+{
+  "refs": [
+    "actions/checkout@v7",
+    "actions/setup-node@v7",
+    "actions/setup-java@v4",
+    "actions/setup-java@v5",
+    "actions/upload-artifact@v7",
+    "actions/download-artifact@v8",
+    "gitleaks/gitleaks-action@v3",
+    "android-actions/setup-android@v4",
+    "softprops/action-gh-release@v3"
+  ],
+  "workflows": [
+    ".github/workflows/ci.yaml",
+    ".github/workflows/deploy-backend.yml",
+    ".github/workflows/deploy-web.yml",
+    ".github/workflows/release.yml"
+  ]
+}
