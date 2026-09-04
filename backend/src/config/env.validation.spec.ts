@@ -206,4 +206,18 @@ describe('validateEnv - notification vars', () => {
     expect(cfg.NOTIF_POLL_CRON).toBe('*/5 * * * *');
     expect(cfg.FIREBASE_SERVICE_ACCOUNT_JSON).toBe('e30=');
   });
+
+  it('web-push limits default to 8 and 50 when absent', () => {
+    const cfg = validateEnv(base);
+    expect(cfg.WEB_PUSH_MAX_SUBSCRIPTIONS).toBe(8);
+    expect(cfg.WEB_PUSH_CYCLE_BUDGET).toBe(50);
+  });
+
+  it('web-push limits accept explicit values and reject < 1', () => {
+    const cfg = validateEnv({ ...base, WEB_PUSH_MAX_SUBSCRIPTIONS: '3', WEB_PUSH_CYCLE_BUDGET: '10' });
+    expect(cfg.WEB_PUSH_MAX_SUBSCRIPTIONS).toBe(3);
+    expect(cfg.WEB_PUSH_CYCLE_BUDGET).toBe(10);
+    expect(() => validateEnv({ ...base, WEB_PUSH_MAX_SUBSCRIPTIONS: '0' })).toThrow();
+    expect(() => validateEnv({ ...base, WEB_PUSH_CYCLE_BUDGET: '0' })).toThrow();
+  });
 });

@@ -20,9 +20,16 @@ class StoreMock implements Partial<NotificationStore> {
   async getDeviceTokens(sub: string) {
     return this.tokens[sub] ?? [];
   }
-  async addWebSubscription(sub: string, s: { endpoint: string; p256dh: string; auth: string }) {
+  async addWebSubscription(
+    sub: string,
+    s: { endpoint: string; p256dh: string; auth: string },
+    cap = 8,
+  ) {
     const list = this.web[sub] ?? (this.web[sub] = []);
-    if (!list.some((e) => e.endpoint === s.endpoint)) list.push(s);
+    if (list.some((e) => e.endpoint === s.endpoint)) return 'duplicate';
+    if (list.length >= cap) return 'cap-reached';
+    list.push(s);
+    return 'added';
   }
   async removeWebSubscription(sub: string, s: { endpoint: string; p256dh: string; auth: string }) {
     const list = this.web[sub] ?? [];
@@ -142,5 +149,48 @@ describe('NotificationsController', () => {
   it('GET vapid-public-key mengembalikan publicKey dari WebPushService', async () => {
     const { controller } = makeController({ vapidPublicKey: 'vapid-pub' });
     expect(await controller.vapidPublicKey()).toEqual({ publicKey: 'vapid-pub' });
+  });
+
+  it('registerWeb: duplicate endpoint is idempotent (second call returns ok, single stored)', async () => {
+    const { store, controller } = makeController();
+    const sub = { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' };
+    await controller.registerWeb({ user: { sub: 'u1' } }, sub);
+    await expect(controller.registerWeb({ user: { sub: 'u1' } }, sub)).resolves.toEqual({ ok: true });
+    expect(await store.getWebSubscriptions('u1')).toEqual([sub]);
+  });
+
+  it('registerWeb: 9th subscription for one user -> 409 WEB_PUSH_CAP_REACHED', async () => {
+    const { store, controller } = makeController();
+    for (let i = 0; i < 8; i++) {
+      await controller.registerWeb(
+        { user: { sub: 'u1' } },
+        { endpoint: `https://pusher/${i}`, p256dh: 'pk', auth: 'auth' },
+      );
+    }
+    const err = await controller
+      .registerWeb(
+        { user: { sub: 'u1' } },
+        { endpoint: 'https://pusher/9', p256dh: 'pk', auth: 'auth' },
+      )
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect((err as HttpException).getStatus()).toBe(HttpStatus.CONFLICT);
+    expect((err as HttpException).getResponse()).toMatchObject({ code: 'WEB_PUSH_CAP_REACHED' });
+    expect(await store.getWebSubscriptions('u1')).toHaveLength(8);
+  });
+
+  it('registerWeb: over-cap for user u2 does not affect u1', async () => {
+    const { store, controller } = makeController();
+    for (let i = 0; i < 8; i++) {
+      await controller.registerWeb(
+        { user: { sub: 'u1' } },
+        { endpoint: `https://pusher/${i}`, p256dh: 'pk', auth: 'auth' },
+      );
+    }
+    await controller.registerWeb(
+      { user: { sub: 'u2' } },
+      { endpoint: 'https://pusher/only', p256dh: 'pk', auth: 'auth' },
+    );
+    expect(await store.getWebSubscriptions('u2')).toHaveLength(1);
   });
 });
