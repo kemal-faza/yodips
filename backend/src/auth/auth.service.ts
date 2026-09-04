@@ -356,6 +356,19 @@ export class AuthService {
     return { accessToken };
   }
 
+  /**
+   * Server-side logout: drop the session record so no (possibly leaked) JWT for
+   * this subject can be silently refreshed again (YD-AUTH-001). Idempotent —
+   * clearing an already-dead record succeeds. The owner is `sub` set by
+   * JwtAuthGuard from the verified token; a body-supplied identity is never
+   * trusted (B4).
+   */
+  async logout(sub: string): Promise<{ ok: true }> {
+    await this.sessionStore.clear(sub);
+    this.logger.log(`SSO session cleared for ${sub}`);
+    return { ok: true };
+  }
+
   async me(user: any) {
     const session = await this.sessionStore.get(user?.sub);
     const present = !!session;
