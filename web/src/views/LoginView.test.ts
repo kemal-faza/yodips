@@ -124,23 +124,39 @@ describe("LoginView", () => {
     expect(w.text()).toContain("selesaikan login di window browser");
   });
 
-  it("handoff mode with ?token= calls finishHandoff and routes home", async () => {
+  it("handoff mode with #access_token= calls finishHandoff once and replaces history (never push)", async () => {
     const store = makeStore({ isHandoffMode: true });
-    const router = { push: vi.fn() };
+    const router = { replace: vi.fn(), push: vi.fn() };
     const w = mount(LoginView, {
       global: {
-        mocks: { $route: { query: { token: "jwt-handoff" } }, $router: router },
+        mocks: {
+          $route: {
+            hash: "#access_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3",
+            query: {},
+          },
+          $router: router,
+        },
       },
     });
     await flushPromises();
-    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-handoff");
-    expect(router.push).toHaveBeenCalledWith("/");
+    expect(store.finishHandoff).toHaveBeenCalledTimes(1);
+    expect(store.finishHandoff).toHaveBeenCalledWith(
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3",
+    );
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith("/");
+    w.unmount();
   });
 
   it("handoff mode without token shows capture instructions", () => {
     makeStore({ isHandoffMode: true });
     const w = mount(LoginView, {
-      global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
+      global: {
+        mocks: {
+          $route: { query: {}, hash: "" },
+          $router: { push: vi.fn() },
+        },
+      },
     });
     expect(w.text()).toContain("jalankan tool capture");
   });
