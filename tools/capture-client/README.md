@@ -24,4 +24,15 @@ node capture-handoff.mjs \
 ```
 
 `--identity` is optional — the server derives the NIM from the Kulon session
-when possible. `--app-url` opens the SPA at `/login?token=<JWT>` after success.
+when possible.
+
+`--app-url` is **required and validated at startup** (before the tool connects to
+Chrome or sends any handoff): it must be an absolute `http://` or `https://` URL
+with no credentials and no fragment. It opens the SPA at `/login#access_token=<JWT>`.
+The JWT is carried ONLY in the URL **fragment** (`#`), which browsers never send
+to the server — so request/proxy/CDN logs cannot capture it. The tool never
+prints the JWT or a full URL containing it; if `--app-url` is missing or invalid
+the tool exits with an error before any session is created. The SPA reads the
+fragment only when `VITE_LOGIN_MODE=handoff` (dev/test fallback), consumes it
+once, and removes it from the address bar/history immediately. Treat the JWT
+like a password: anyone who obtains it can act as you until it expires.
