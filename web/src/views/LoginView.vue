@@ -80,6 +80,28 @@ async function checkExtension() {
   }
 }
 
+/**
+ * YD-AUTH-002: the deprecated capture tool delivers the JWT via a URL
+ * FRAGMENT (`#access_token=…`), which browsers never send to the server, so
+ * request/proxy logs cannot capture it. Parse + validate it here (returns null
+ * for absent/malformed); the caller SCRUBS the URL first, then consumes the
+ * token exactly once.
+ */
+const FRAGMENT_TOKEN_MAX_LEN = 4096;
+function parseFragmentAccessToken(hash: string | undefined): string | null {
+  if (!hash || hash.length === 0) return null;
+  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  const match = /^access_token=([^&]+)/.exec(raw);
+  if (!match) return null;
+  const token = match[1];
+  if (!token || token.length === 0 || token.length > FRAGMENT_TOKEN_MAX_LEN) return null;
+  // Loose JWT-shape guard: exactly three NONEMPTY segments separated by '.',
+  // each segment URL-safe base64url (header.payload.signature). Enough to drop
+  // garbage before it reaches localStorage; the backend fully verifies on use.
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return null;
+  return token;
+}
+
 onMounted(async () => {
   await checkExtension();
   // Listen for the extension's final result (posted to the window by the
@@ -107,10 +129,18 @@ onMounted(async () => {
     document.removeEventListener('visibilitychange', onFocus);
   };
   if (store.isHandoffMode) {
-    const token = proxy().$route?.query?.token as string | undefined;
+    const token = parseFragmentAccessToken(proxy().$route?.hash as string | undefined);
     if (token) {
+      // History hygiene FIRST — synchronously, before any store write or await —
+      // so no async storage/navigation work can run while the secret is still in
+      // the URL. Preserve the existing history state object (never null), which
+      // keeps history.back() behavior intact; a null state would corrupt it.
+      const cleanUrl = `${window.location.pathname}${window.location.search}`;
+      window.history.replaceState(window.history.state, '', cleanUrl);
       store.finishHandoff(token);
-      proxy().$router?.push('/');
+      // router.replace re-writes the SAME history entry via vue-router's own
+      // replaceState — no extra replaceState call is needed or wanted.
+      await proxy().$router?.replace('/');
     }
   }
 });
