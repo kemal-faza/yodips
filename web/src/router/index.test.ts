@@ -3,6 +3,7 @@ import { createMemoryHistory } from 'vue-router';
 import { createPinia, setActivePinia } from 'pinia';
 import { useAuthStore } from '../stores/auth';
 import { buildRouter } from './index';
+import { isHandoffAccessTokenHash } from '../lib/handoff-token';
 
 // vitest 4 does not export a `flushPromises` import; use a local helper.
 const flushPromises = async () => {
@@ -93,5 +94,58 @@ describe('router guard', () => {
     const router = buildRouter(createMemoryHistory());
     await router.push('/profile');
     expect(router.currentRoute.value.name).toBe('profile');
+  });
+});
+
+describe('router guard + handoff fragment (YD-AUTH-002)', () => {
+  // Strict three-segment base64url JWT fixture (same shape the capture tool's
+  // #access_token fragment delivers). See helper unit tests below.
+  const GOOD_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3';
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it('RED: authenticated user with a valid #access_token= fragment on /login is NOT redirected to dashboard', async () => {
+    // Simulate an old-but-still-present local JWT (the store read it from
+    // localStorage on boot): isAuthenticated=true. The handoff visit must NOT
+    // be bounced — the fragment carries a NEWER token LoginView must consume.
+    const store = { isAuthenticated: true, fetchMe: vi.fn(), attemptReauth: vi.fn() };
+    (useAuthStore as any).mockReturnValue(store);
+    const router = buildRouter(createMemoryHistory());
+    await router.push(`/login#access_token=${GOOD_TOKEN}`);
+    expect(router.currentRoute.value.path).toBe('/login');
+    expect(router.currentRoute.value.hash).toBe(`#access_token=${GOOD_TOKEN}`);
+  });
+
+  it('RED: a malformed handoff hash on /login does NOT bypass the authenticated redirect', async () => {
+    const store = { isAuthenticated: true, fetchMe: vi.fn(), attemptReauth: vi.fn() };
+    (useAuthStore as any).mockReturnValue(store);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/login#access_token=not-a-jwt');
+    expect(router.currentRoute.value.path).toBe('/');
+    expect(router.currentRoute.value.name).toBe('dashboard');
+  });
+
+  it('RED: an authenticated user on /login WITHOUT a handoff hash is still redirected to dashboard', async () => {
+    const store = { isAuthenticated: true, fetchMe: vi.fn(), attemptReauth: vi.fn() };
+    (useAuthStore as any).mockReturnValue(store);
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/login');
+    expect(router.currentRoute.value.path).toBe('/');
+    expect(router.currentRoute.value.name).toBe('dashboard');
+  });
+
+  it('the guard predicate reuses the shared strict-shape handoff hash helper', () => {
+    // The guard gates on this exact helper — a valid strict-shape hash must
+    // classify true (reaching LoginView), malformed ones false (still bounced).
+    const GOOD_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3';
+    expect(isHandoffAccessTokenHash(`#access_token=${GOOD_TOKEN}`)).toBe(true);
+    expect(isHandoffAccessTokenHash('#access_token=not-a-jwt')).toBe(false);
+    expect(isHandoffAccessTokenHash('#access_token=')).toBe(false);
+    expect(isHandoffAccessTokenHash('#access_token=aaa.bbb.c cc')).toBe(false);
+    expect(isHandoffAccessTokenHash('')).toBe(false);
+    expect(isHandoffAccessTokenHash(undefined)).toBe(false);
   });
 });
