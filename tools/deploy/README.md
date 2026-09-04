@@ -22,7 +22,7 @@ cp env.production.example backend/.env
 vi backend/.env
 
 # 2. buat app + Redis add-on
-heroku create undip-sso
+heroku create sso-undip
 heroku addons:create heroku-kvstore:mini
 
 # 3. push backend (root package.json + Procfile harus di sini)
@@ -43,8 +43,8 @@ heroku config:set REDIS_URL="$(heroku config:get REDIS_URL)"
 #     header respons `server: cloudflare`/`cf-ray` — bukan klaim verifikasi
 #     internal; kebenaran di-acceptance via perilaku bucket XFF spoof setelah
 #     deploy. Caddy VPS same-origin cukup TRUST_PROXY_HOPS=1.
-heroku config:set TRUST_PROXY_HOPS=2 --app undip-sso
-heroku restart --app undip-sso
+heroku config:set TRUST_PROXY_HOPS=2 --app sso-undip
+heroku restart --app sso-undip
 
 # 5. web → deploy ke static host (Cloudflare Pages/Netlify) pakai web/
 #    lalu set backend CORS_ORIGIN ke URL static host. Note: web TIDAK diserve oleh Heroku.
@@ -89,6 +89,11 @@ podman run -d --name undip-sso-backend -p 127.0.0.1:3000:3000 --env-file .env \
 #   client satu bucket). Nilai 2 hanya utk topologi Cloudflare→Heroku (menambah
 #   range CIDR Cloudflare resmi — lihat catatan MAINTENANCE di bawah); jangan
 #   pernah set `true`/hop-count numerik.
+# - KONSTRAIN OPERASIONAL: bind `-p 127.0.0.1:3000:3000` (loopback) WAJIB
+#   dipertahankan — peer lokal/privat hanya tepercaya selama socket backend
+#   TIDAK bisa dijangkau langsung dari LAN/host lain (jangan ganti ke `-p
+#   3000:3000` / bind 0.0.0.0 di luar proxy Caddy; firewall host juga harus
+#   membatasi port ini ke 127.0.0.1 / IP Caddy saja).
 
 # 4. env → cp env.production.example ke .env lalu jalankan
 ```
@@ -107,6 +112,12 @@ podman run -d --name undip-sso-backend -p 127.0.0.1:3000:3000 --env-file .env \
   Cloudflare di-pin di `src/http/trust-proxy.ts` (dengan tanggal sumber);
   re-fetch `https://www.cloudflare.com/ips-v4` & `/ips-v6` saat CF merilis
   perubahan.
+  **KONSTRAIN OPERASIONAL:** grup `loopback`/`linklocal`/`uniquelocal` dipercaya
+  HANYA karena socket backend diasumsikan hanya bisa dijangkau dari router
+  Heroku / Caddy yang nyata — JANGAN pernah bind/men-expose socket backend
+  (mis. `0.0.0.0`/port publik, atau `PORT` yang tembus ke LAN tak tepercaya) ke
+  peer lokal/privat yang bukan proxy resmi; kalau host VPS di LAN bersama, pastikan
+  firewall hanya mengizinkan koneksi ke port backend dari 127.0.0.1 / IP Caddy.
 - `MS_*` boleh dummy non-empty — jalur OIDC `/api/auth/microsoft/*` deprecated & tak dipakai
   login real (extension/mobile via handoff), jadi tidak perlu daftar Microsoft Entra.
 - Redis localhost + password (VPS) / add-on (Heroku).
