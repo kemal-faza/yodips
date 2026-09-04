@@ -16,6 +16,7 @@ vi.mock('../api/client', () => ({
   capture: vi.fn(),
   me: vi.fn(),
   getSiapProfile: vi.fn().mockResolvedValue(null),
+  logoutSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Test env has no VITE_EXTENSION_ID; give the store a stable non-empty ID so the
@@ -62,7 +63,7 @@ describe('auth store', () => {
     localStorage.setItem('sso_token', 'x');
     const store = useAuthStore();
     store.token = 'x';
-    store.logout();
+    await store.logout();
     expect(store.token).toBeNull();
     expect(localStorage.getItem('sso_token')).toBeNull();
   });
@@ -88,7 +89,7 @@ describe('auth store', () => {
   it('logout clears the shared cache', async () => {
     const spy = vi.spyOn(cache, 'clearCache');
     const store = useAuthStore();
-    store.logout();
+    await store.logout();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
@@ -99,7 +100,6 @@ describe('auth store', () => {
     await store.logout();
     expect(store.token).toBeNull();
   });
-
   it('finishHandoff stores the token and authenticates', () => {
     const store = useAuthStore();
     store.finishHandoff('jwt-handoff');
@@ -179,12 +179,53 @@ describe('auth store', () => {
     expect(store.fotoUrl).toBeNull();
   });
 
-  it('logout clears fotoUrl', () => {
+  it('logout clears fotoUrl', async () => {
     localStorage.setItem('sso_token', 'x');
     const store = useAuthStore();
     store.fotoUrl = 'https://example.com/x.jpg';
-    store.logout();
+    await store.logout();
     expect(store.fotoUrl).toBeNull();
+  });
+
+  it('logout calls the server logout endpoint best-effort before local cleanup', async () => {
+    (api.logoutSession as any).mockClear();
+    localStorage.setItem('sso_token', 'jwt-logout');
+    const store = useAuthStore();
+    store.token = 'jwt-logout';
+    await store.logout();
+    expect(api.logoutSession).toHaveBeenCalledTimes(1);
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+  });
+
+  it('logout swallows a server logout failure and ALWAYS completes local cleanup', async () => {
+    (api.logoutSession as any).mockRejectedValue(new Error('network down'));
+    localStorage.setItem('sso_token', 'jwt-logout');
+    const store = useAuthStore();
+    store.token = 'jwt-logout';
+    store.user = { sub: 'n', nama: 'X' } as any;
+    await expect(store.logout()).resolves.toBeUndefined();
+    expect(store.token).toBeNull();
+    expect(store.user).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+  });
+
+  it('logout clears the token locally even when the server logout 401s (session already dead)', async () => {
+    (api.logoutSession as any).mockRejectedValue({ response: { status: 401 } });
+    localStorage.setItem('sso_token', 'jwt-logout');
+    const store = useAuthStore();
+    store.token = 'jwt-logout';
+    await store.logout();
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+  });
+
+  it('logout does not call the server when there is no local JWT', async () => {
+    (api.logoutSession as any).mockClear();
+    const store = useAuthStore();
+    store.token = null;
+    await store.logout();
+    expect(api.logoutSession).not.toHaveBeenCalled();
   });
 
   it('isHandoffMode reflects VITE_LOGIN_MODE', () => {
@@ -386,7 +427,7 @@ describe('reauth (auto-recover expired session)', () => {
     stubChrome('ok', 'jwt-a');
     const store = useAuthStore();
     expect(await store.attemptReauth()).toBe('recovered');
-    store.logout(); // genuine logout resets guard + clears cookies
+    await store.logout(); // genuine logout resets guard + clears cookies
     store.token = null;
     stubChrome('ok', 'jwt-b');
     expect(await store.attemptReauth()).toBe('recovered');

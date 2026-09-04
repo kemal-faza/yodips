@@ -41,7 +41,7 @@ describe('AppSidebar', () => {
   });
 
   it('calls logout when Keluar button is clicked', async () => {
-    const logoutMock = vi.fn();
+    const logoutMock = vi.fn().mockResolvedValue(undefined);
     (useAuthStore as any).mockReturnValue({
       isAuthenticated: true,
       logout: logoutMock,
@@ -53,6 +53,9 @@ describe('AppSidebar', () => {
     const w = mount(AppSidebar, { global: { plugins: [router] } });
     const logoutBtn = w.find('[data-test="sidebar-logout"]');
     await logoutBtn.trigger('click');
+    await flushPromises();
+    // The async handler awaits the (promise-returning) store logout before it
+    // navigates — the mock store logout must have been called (and settled).
     expect(logoutMock).toHaveBeenCalled();
   });
 });
