@@ -80,6 +80,13 @@ export function validateWebPushEndpointShape(raw: string): EndpointPolicy {
   return { ok: true, hostname: url.hostname };
 }
 
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
+
+/** True when `s` is a non-empty, unpadded base64url string (URL-safe alphabet). */
+export function isBase64Url(s: string): boolean {
+  return typeof s === 'string' && s.length > 0 && BASE64URL_RE.test(s);
+}
+
 const ipv4ToInt = (ip: string): number => {
   const parts = ip.split('.').map(Number);
   return (
@@ -145,7 +152,7 @@ const ipv6Expand = (ip: string): string[] | null => {
     v4Tail = [hi.toString(16).padStart(4, '0'), lo.toString(16).padStart(4, '0')];
     head = pre;
   }
-  let groups: (string | null)[] = head.split('::');
+  const groups: string[] = head.split('::');
   if (groups.length > 2) return null; // more than one '::'
   const left = groups[0] === '' ? [] : groups[0].split(':');
   const right =
