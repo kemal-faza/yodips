@@ -40,8 +40,8 @@ function navigate(path: string) {
   emit('close-mobile');
 }
 
-function logout() {
-  auth.logout();
+async function logout() {
+  await auth.logout();
   router.push('/login');
   emit('close-mobile');
 }

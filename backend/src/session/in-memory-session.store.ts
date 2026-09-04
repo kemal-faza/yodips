@@ -15,9 +15,11 @@ interface StoredRecord {
 export class InMemorySessionStore extends SessionStore {
   private readonly logger = new Logger(InMemorySessionStore.name);
   private readonly records = new Map<string, StoredRecord>();
+  private readonly absoluteMs?: number;
 
-  constructor(private readonly ttlMs: number) {
+  constructor(private readonly ttlMs: number, absoluteMs?: number) {
     super();
+    this.absoluteMs = absoluteMs && absoluteMs > 0 ? absoluteMs : undefined;
   }
 
   async set(identity: string, session: CapturedSession): Promise<void> {
@@ -32,6 +34,17 @@ export class InMemorySessionStore extends SessionStore {
       this.records.delete(identity);
       return null;
     }
+    // Absolute lifetime: independent of the sliding TTL. A session captured
+    // longer than absoluteMs ago is dead even while the sliding TTL keeps the
+    // record alive — refresh can no longer extend a session forever.
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - record.session.capturedAt >= this.absoluteMs
+    ) {
+      this.records.delete(identity);
+      return null;
+    }
+    // Sliding TTL: refresh on access (unchanged).
     record.expiresAt = Date.now() + this.ttlMs;
     return record.session;
   }

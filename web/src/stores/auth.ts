@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { capture, me, getSiapProfile } from '../api/client';
+import { capture, me, getSiapProfile, logoutSession } from '../api/client';
 import type { User } from '../types';
 import { clearCache } from '../api/cache';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
@@ -208,7 +208,24 @@ export const useAuthStore = defineStore('auth', {
       this.reauthing = false;
       return 'failed';
     },
-    logout() {
+    async logout() {
+      // Server-side revocation FIRST, while this JWT still exists and can
+      // authenticate the request: drop the server session so a leaked JWT
+      // cannot be silently refreshed after logout (YD-AUTH-001). Best-effort —
+      // a network/5xx/401 failure must NEVER block or throw the UI: local
+      // cleanup below always runs regardless. A failure here (backend down or
+      // the bearer already expired) leaves the SERVER session revocable only
+      // by its absolute cap — never refresh-on-logout and never accept an
+      // expired JWT to force the clear: local cleanup proceeds either way.
+      if (this.token) {
+        try {
+          await logoutSession();
+        } catch {
+          // Logout 401 = session already dead (terminal in the interceptor);
+          // network/5xx = backend unreachable. Either way, local cleanup below
+          // still proceeds — never enter a refresh-retry on logout.
+        }
+      }
       clearCache();
       this.reauthAttempted = false; // a next expiry event may auto-reauth again
       this.token = null;
@@ -217,8 +234,10 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem(TOKEN_KEY);
       // Best-effort: ask the extension to clear the SSO/Kulon/SIAP session
       // cookies so the next login cannot fast-path-reuse a stale session and is
-      // forced to open a fresh tab. Never blocks or throws the UI.
-      useExtension().logout();
+      // forced to open a fresh tab. Awaited so logout() does not resolve while
+      // the cookie wipe is still in flight (useExtension().logout() already
+      // swallows extension-messaging errors). Never blocks or throws the UI.
+      await useExtension().logout();
     },
   },
 });

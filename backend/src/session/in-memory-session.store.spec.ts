@@ -72,4 +72,48 @@ describe('InMemorySessionStore (per-user, TTL)', () => {
     await store.set('a', makeSession('a', 'MoodleSession=B'));
     expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=B');
   });
+
+  it('absolute cap: get() returns null once capturedAt + absoluteMs passes, even while the sliding TTL is fresh', async () => {
+    const now = Date.now();
+    store = new InMemorySessionStore(1000, 200); // sliding 1s, absolute 200ms
+    await store.set('a', { ...makeSession('a', 'MoodleSession=A'), capturedAt: now - 250 });
+    expect(await store.get('a')).toBeNull();
+  });
+
+  it('absolute cap: get() returns the session while within the cap', async () => {
+    const now = Date.now();
+    store = new InMemorySessionStore(1000, 1000);
+    await store.set('a', { ...makeSession('a', 'MoodleSession=A'), capturedAt: now });
+    expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=A');
+  });
+
+  it('absolute cap: get() slides the TTL when within the cap (sliding semantics preserved)', async () => {
+    const now = Date.now();
+    store = new InMemorySessionStore(1000, 1000);
+    await store.set('a', { ...makeSession('a', 'MoodleSession=A'), capturedAt: now - 500 });
+    // First get() must succeed (within the cap) and re-arm expiresAt.
+    expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=A');
+    // Access does NOT extend the absolute bound: past 1000ms from capturedAt it dies.
+    await new Promise((r) => setTimeout(r, 600));
+    expect(await store.get('a')).toBeNull();
+  });
+
+  it('absolute cap disabled when absoluteMs is undefined (legacy sliding-only behavior)', async () => {
+    const now = Date.now();
+    store = new InMemorySessionStore(1000); // no absolute cap
+    await store.set('a', { ...makeSession('a', 'MoodleSession=A'), capturedAt: now - 5000 });
+    expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=A');
+  });
+
+  it('natural re-login: a session past the absolute cap is dead, and a fresh set() for the same identity is readable again', async () => {
+    const now = Date.now();
+    store = new InMemorySessionStore(1000, 200); // sliding 1s, absolute 200ms
+    // Old session captured 250ms ago > 200ms cap → dead.
+    await store.set('a', { ...makeSession('a', 'MoodleSession=OLD'), capturedAt: now - 250 });
+    expect(await store.get('a')).toBeNull();
+    // The user re-logins: a new handoff stores a fresh session under the SAME
+    // identity with a current capturedAt → must be readable again.
+    await store.set('a', { ...makeSession('a', 'MoodleSession=NEW'), capturedAt: Date.now() });
+    expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=NEW');
+  });
 });
