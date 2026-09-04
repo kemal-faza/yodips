@@ -48,6 +48,33 @@ sudo caddy run --config Caddyfile
 # 3. jalankan backend (di belakang 127.0.0.1:3000)
 cd backend && node dist/main.js   # atau via PM2/systemd / Dockerfile
 
+# 3b. jalankan backend via container (HARDENED — YD-INFRA-001; runtime-only flags):
+#     Runtime-only controls TIDAK bisa diekspresikan di Dockerfile — ini command
+#     resmi yang di-repo (rootfs read-only, tmpfs /tmp, cap-drop ALL,
+#     no-new-privileges, pids-limit). Dockerfile sudah `USER node` (non-root).
+podman run -d --name undip-sso-backend -p 127.0.0.1:3000:3000 --env-file .env \
+  --read-only \
+  --tmpfs /tmp:size=64m \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 256 \
+  undip-sso-backend
+# (docker: ganti `podman` → `docker`; command lain identik.)
+
+# Catatan hardening:
+# - USER node: proses berjalan uid 1000, bukan root (sebelumnya root).
+# - --read-only: rootfs tidak bisa ditulis; /tmp satu-satunya tmpfs (backend
+#   hanya menulis /tmp saat runtime; session/cache di Redis/in-memory).
+# - --cap-drop ALL + no-new-privileges: tanpa capability tambahan.
+# - Bila CHROME_PROFILE_DIR diarahkan ke path lain (bukan /tmp), mount tmpfs
+#   atau volume di path itu.
+# - Healthcheck dari host: curl http://127.0.0.1:3000/ (jangan dari dalam
+#   container yang tak punya curl/tooling).
+# - WAJIB (YD-RATE-001): set TRUST_PROXY_HOPS=1 di .env — backend DI BELAKANG
+#   Caddy (satu proxy tepercaya). Tanpa ini default 0 (fail-safe) → throttling
+#   key socket 127.0.0.1 (semua client satu bucket). JANGAN set >1 kecuali ada
+#   proxy kedua; jangan pernah true.
+
 # 4. env → cp env.production.example ke .env lalu jalankan
 ```
 
