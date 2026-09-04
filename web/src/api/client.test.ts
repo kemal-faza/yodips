@@ -371,6 +371,38 @@ describe('api client', () => {
     expect(r.status).toBe('success');
   });
 
+  it('logoutSession POSTs /api/auth/logout with the stored bearer', async () => {
+    localStorage.setItem('sso_token', 'logout-bearer');
+    mockRequest.mockResolvedValue({ data: { ok: true } });
+    await vi.resetModules();
+    const { logoutSession } = await import('./client');
+    await logoutSession();
+    const call = mockRequest.mock.calls[0][0];
+    expect(call.method).toBe('post');
+    expect(call.url).toBe('/api/auth/logout');
+  });
+
+  it('anti-loop: a 401 on /api/auth/logout is terminal (no silent-refresh retry)', async () => {
+    // The logout POST 401s (session already dead). The interceptor must reject
+    // WITHOUT calling the refresh endpoint — a refresh here would re-mint the
+    // very JWT being destroyed (refresh recursion on logout).
+    mockRequest.mockRejectedValueOnce({
+      response: { status: 401, data: { code: 'SESSION_DEAD' } },
+    });
+    localStorage.setItem('sso_token', 'old-jwt');
+    await vi.resetModules();
+    const { apiClient } = await import('./client');
+    const onRejected = responseHandlers.onRejected!;
+    const error = {
+      response: { status: 401, data: { code: 'SESSION_DEAD' } },
+      config: { method: 'post', url: '/api/auth/logout' },
+    };
+    await expect(onRejected(error)).rejects.toBeTruthy();
+    // No refresh POST, no retry — a single terminal reject.
+    expect(mockRequest).toHaveBeenCalledTimes(0);
+    expect(localStorage.getItem('sso_token')).toBe('old-jwt');
+  });
+
   describe('getDashboard', () => {
     it('getDashboard fetches /api/dashboard and routes through getCached with key dashboard + 60s TTLs', async () => {
       getCachedMock.mockClear();
