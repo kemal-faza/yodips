@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Rakit PWA /app/: salin dist wasm → out, tambah manifest + sw.js, gate gzip.
 // Pemakaian: node scripts/build-pwa-app.mjs --dist <wasmDist> --out <dir> [--web-public <dir>]
-import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectFiles, buildSwSource, buildManifest, gzipTotalBytes, GZIP_GATE_BYTES } from './pwa-app-core.mjs';
+import { collectFiles, buildSwSource, buildManifest, gzipTotalBytes, assertNoInlineScript, GZIP_GATE_BYTES } from './pwa-app-core.mjs';
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
@@ -20,6 +20,22 @@ if (!dist) { console.error('--dist wajib'); process.exit(2); }
 
 mkdirSync(out, { recursive: true });
 cpSync(dist, out, { recursive: true, filter: (s) => !s.endsWith('.map') });
+
+// Gate inline script (CSP /app/* sudah tanpa 'unsafe-inline' — lihat vercel.json).
+// index.html di dist berasal dari wasmJsMain/resources; inline <script> di sana
+// akan senyap mati di produksi, jadi build GAGAL lebih dulu. Loader checks are
+// unconditional: /app/index.html MUST reference loader.js and the file MUST be
+// present in the output, or the pre-paint FOUC guard silently vanishes.
+const indexHtml = readFileSync(resolve(out, 'index.html'), 'utf8');
+assertNoInlineScript(indexHtml);
+if (!indexHtml.includes('loader.js')) {
+  console.error('FATAL: /app/index.html tidak mereferensikan loader.js (FOUC guard inline-free).');
+  process.exit(1);
+}
+if (!existsSync(resolve(out, 'loader.js'))) {
+  console.error('FATAL: loader.js tidak ikut tersalin ke output /app/.');
+  process.exit(1);
+}
 
 for (const icon of ['favicon-192.png', 'yodips-logo-512.png']) {
   cpSync(resolve(webPublic, icon), resolve(out, icon));
