@@ -85,21 +85,17 @@ apiClient.interceptors.response.use(
     const url: string = error?.config?.url ?? '';
     const method: string = (error?.config?.method ?? 'get').toLowerCase();
     if (status === 401) {
-      // A backend session can report 401 even when the JWT is still valid
-      // (Kulon/SIAP cookies expired server-side). Those carry a service-stale
-      // marker — by backend error code or by route family (see contract.ts) —
-      // and keep the token: the view shows a re-login card. Only a genuine
-      // auth-token 401 (invalid/expired JWT) is a full logout + redirect.
-      const { code } = parseErrorEnvelope(error?.response?.data);
-      const serviceStale = isServiceStale(url, code);
       // The refresh endpoint's OWN 401 must be terminal — never re-refresh (loop).
-      if (serviceStale || url === API.auth.refresh) {
+      if (url === API.auth.refresh) {
         return Promise.reject(error);
       }
-      // Auth-token 401: try silent refresh first. Only if that fails do we
-      // clear the token and ask the app to re-auth.
       const alreadyRetried = (error.config as { _retried?: boolean } | undefined)?._retried;
       if (!alreadyRetried) {
+        // Silent refresh FIRST — this is also the probe that distinguishes
+        // "JWT invalid" from "upstream session stale" on /api/kulon|/api/siap:
+        // the backend's JwtAuthGuard and StaleUpstreamError both emit a bare
+        // 401 `{ message }` with no code, so the envelope cannot tell them
+        // apart. Only refresh() carries the code (INVALID_TOKEN / SESSION_DEAD).
         let newToken: string;
         try {
           // Single-flight: concurrent 401s share one refresh POST.
@@ -107,7 +103,10 @@ apiClient.interceptors.response.use(
         } catch (refreshErr) {
           const refreshStatus = (refreshErr as any)?.response?.status;
           if (refreshStatus === 401) {
-            // Genuinely dead session (SESSION_DEAD / INVALID_TOKEN).
+            // Genuinely dead session (SESSION_DEAD / INVALID_TOKEN): wipe the
+            // token and re-auth — INCLUDING for service paths, whose bare 401
+            // would otherwise be misread as "upstream stale" and strand the
+            // user with no re-login path.
             localStorage.removeItem(TOKEN_KEY);
             emitReauthRequested();
           }
@@ -116,12 +115,27 @@ apiClient.interceptors.response.use(
         }
         localStorage.setItem(TOKEN_KEY, newToken);
         emitTokenRefreshed(newToken); // keep auth store in sync
+        // Refresh succeeded → the JWT is alive. A 401 on a service path with
+        // a valid JWT is upstream-stale (view shows the re-login card); a 401
+        // on a non-service path with a valid JWT is an unexpected auth failure
+        // — retry once so a transient race (e.g. refresh just rotated the
+        // token) settles before we treat it as fatal.
+        const serviceStale = isServiceStale(url, parseErrorEnvelope(error?.response?.data).code);
+        if (serviceStale) {
+          // Upstream session expired, JWT fine — keep token, view handles.
+          return Promise.reject(error);
+        }
         // Only retry idempotent requests; a POST must not be re-sent.
-        // The retry propagates as-is: a 401 here carries `_retried`, so a
-        // re-entry into this interceptor goes straight to the re-login path.
         if (method === 'get' || method === 'head') {
           return apiClient.request({ ...error.config, _retried: true });
         }
+        return Promise.reject(error);
+      }
+      // Already retried with a fresh token and still 401: either an upstream
+      // session gone stale mid-flight (service path — keep token, view
+      // handles) or a genuine auth failure on a non-service path.
+      const { code } = parseErrorEnvelope(error?.response?.data);
+      if (isServiceStale(url, code)) {
         return Promise.reject(error);
       }
       localStorage.removeItem(TOKEN_KEY);

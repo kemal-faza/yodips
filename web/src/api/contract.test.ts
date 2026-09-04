@@ -4,6 +4,7 @@ import {
   BACKEND_ERROR_CODES,
   buildSsoTicket,
   isServiceSessionPath,
+  isServiceStale,
   parseErrorEnvelope,
 } from './contract';
 
@@ -50,6 +51,24 @@ describe('isServiceSessionPath', () => {
     expect(isServiceSessionPath('/api/siap/profile')).toBe(true);
     expect(isServiceSessionPath('/api/auth/me')).toBe(false);
     expect(isServiceSessionPath('/api/auth/refresh')).toBe(false);
+  });
+});
+
+describe('isServiceStale', () => {
+  // The backend's JwtAuthGuard and StaleUpstreamError BOTH emit a bare 401
+  // { message } with no code, so a service-path 401 cannot be classified from
+  // the envelope alone — the interceptor must probe refresh instead. This
+  // helper keeps route-family fallback for the no-code case.
+  it('an explicit upstream-stale code wins over the route family', () => {
+    expect(isServiceStale('/api/auth/me', 'KULON_STALE')).toBe(true);
+    expect(isServiceStale('/api/dashboard', 'SIAP_STALE')).toBe(true);
+  });
+
+  it('without a code, falls back to the route family (legacy behavior)', () => {
+    expect(isServiceStale('/api/kulon/assignments')).toBe(true);
+    expect(isServiceStale('/api/siap/profile')).toBe(true);
+    expect(isServiceStale('/api/auth/me')).toBe(false);
+    expect(isServiceStale('/api/dashboard')).toBe(false);
   });
 });
 
