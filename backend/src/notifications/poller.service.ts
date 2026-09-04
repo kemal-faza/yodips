@@ -87,7 +87,9 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     this.running = true;
     // Global web-push budget for THIS cycle: shared across every user/event so
     // aggregate fan-out can never exceed WEB_PUSH_CYCLE_BUDGET in one poll.
-    // budgetOverride is a test seam (deterministic budget in specs).
+    // budgetOverride is a test seam (deterministic budget in specs). Over-budget
+    // Web Push deliveries are best-effort dropped this cycle (NOT retried next
+    // cycle — snapshots/sent-keys advance regardless); FCM is not budget-gated.
     const webBudget =
       budgetOverride ??
       new CycleSendBudget(
@@ -173,6 +175,24 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     await this.store.setSentKeys(sub, 'reschedule', resched.fingerprints);
   }
 
+  /**
+   * Deliver ONE event to a user: FCM multicast first (independent of the web
+   * budget), then Web Push through the shared per-cycle `budget`. `budget` is
+   * the SINGLE instance owned by runCycle and threaded through every event,
+   * user and delivery, so the aggregate fan-out of one poll can never exceed
+   * WEB_PUSH_CYCLE_BUDGET.
+   *
+   * Summary semantics: `pushesSent` counts EVENT deliveries (FCM multicast
+   * batches), not individual device/web sends — an FCM batch may fan out to
+   * many tokens and a web batch to many subscriptions under one count.
+   *
+   * Web Push over budget is best-effort DROPPED for this cycle (WebPushService
+   * reports nothing invalid, so nothing is removed here). NOTE: the poller has
+   * already advanced snapshot/sent-keys by this point, so an over-budget
+   * new_task/reschedule web push is NOT retried next cycle — its upstream diff
+   * is consumed. FCM is independent and always sent (its own server-side
+   * multicast bound applies).
+   */
   private async deliver(
     sub: string,
     tokens: string[],
