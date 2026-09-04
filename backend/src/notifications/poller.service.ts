@@ -20,7 +20,11 @@ import { SiapService } from '../siap/siap.service';
 import { FcmService } from './fcm.service';
 import { KulonAssignment } from '../kulon/kulon.service';
 import { SiapJadwal } from '../siap/siap.service';
-import { WebPushService } from './web-push.service';
+import {
+  CycleSendBudget,
+  DEFAULT_CYCLE_BUDGET,
+  WebPushService,
+} from './web-push.service';
 
 export interface CycleSummary {
   usersChecked: number;
@@ -74,12 +78,21 @@ export class NotificationsPoller implements OnApplicationBootstrap {
   async runCycle(
     nowMs: number = Date.now(),
     deadlineWindowMs?: number,
+    budgetOverride?: CycleSendBudget,
   ): Promise<CycleSummary> {
     const summary: CycleSummary = { usersChecked: 0, pushesSent: 0 };
     if (this.running) return summary;
     const locked = await this.store.tryLockCycle();
     if (!locked) return summary;
     this.running = true;
+    // Global web-push budget for THIS cycle: shared across every user/event so
+    // aggregate fan-out can never exceed WEB_PUSH_CYCLE_BUDGET in one poll.
+    // budgetOverride is a test seam (deterministic budget in specs).
+    const webBudget =
+      budgetOverride ??
+      new CycleSendBudget(
+        this.config.get<number>('WEB_PUSH_CYCLE_BUDGET') ?? DEFAULT_CYCLE_BUDGET,
+      );
     try {
       const fcmSubs = await this.store.listSubsWithTokens();
       const webSubs = await this.store.listSubsWithWeb();
@@ -90,10 +103,10 @@ export class NotificationsPoller implements OnApplicationBootstrap {
             await this.sleep(Math.random() * JITTER_MAX_MS);
             summary.usersChecked += 1;
             try {
-              await this.processUser(sub, nowMs, summary, deadlineWindowMs);
+              await this.processUser(sub, nowMs, summary, webBudget, deadlineWindowMs);
             } catch (e) {
               if (isStaleUpstreamError(e)) {
-                await this.sendReloginOnce(sub, summary);
+                await this.sendReloginOnce(sub, summary, webBudget);
               } else {
                 // Upstream/network failure: skip diam — snapshot dipertahankan.
                 this.logger.warn('[notification.poll] user_skipped');
@@ -113,6 +126,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     sub: string,
     nowMs: number,
     summary: CycleSummary,
+    budget: CycleSendBudget,
     deadlineWindowMs?: number,
   ): Promise<void> {
     const tokens = await this.store.getDeviceTokens(sub);
@@ -145,7 +159,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
 
     const events: NotifEvent[] = [...newRes.events, ...resched.events, ...due.events];
     for (const ev of events) {
-      await this.deliver(sub, tokens, webSubs, eventToPush(ev), summary);
+      await this.deliver(sub, tokens, webSubs, eventToPush(ev), summary, budget);
     }
 
     // Persist state — snapshot hanya saat fetch tampak sehat (guard detector).
@@ -165,14 +179,15 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     webSubs: WebSubscriptionRecord[],
     copy: PushCopy,
     summary: CycleSummary,
+    budget: CycleSendBudget,
   ): Promise<void> {
     const { invalidTokens } = await this.fcm.sendEach(tokens, copy);
     summary.pushesSent += 1;
     for (const bad of invalidTokens) {
       await this.store.removeDeviceToken(sub, bad);
     }
-    if (webSubs.length > 0 && this.webPush.configured) {
-      const { invalid } = await this.webPush.send(webSubs, copy);
+    if (webSubs.length > 0 && this.webPush.configured && !budget.exhausted) {
+      const { invalid } = await this.webPush.send(webSubs, copy, budget);
       for (const bad of invalid) {
         await this.store.removeWebSubscription(sub, bad);
       }
@@ -183,6 +198,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
   private async sendReloginOnce(
     sub: string,
     summary: CycleSummary,
+    budget: CycleSendBudget,
   ): Promise<void> {
     if (await this.store.getReloginFlagged(sub)) return;
     const tokens = await this.store.getDeviceTokens(sub);
@@ -202,6 +218,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
         data: { type: 'session_expired', target: '', payload: '{}' },
       },
       summary,
+      budget,
     );
     await this.store.setReloginFlagged(sub, true);
   }

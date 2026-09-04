@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { NotificationsPoller } from './poller.service';
 import { InMemoryNotificationStore } from './notification-store';
+import { CycleSendBudget } from './web-push.service';
 import { KulonAssignment } from '../kulon/kulon.service';
 import { SiapJadwal } from '../siap/siap.service';
 const NOW = 1_756_000_000_000;
@@ -305,6 +306,59 @@ describe('NotificationsPoller.runCycle', () => {
 
     expect(sum.usersChecked).toBe(1);
     expect(f.webSent).toHaveLength(0);
+  });
+
+  it('runCycle owns ONE budget and passes the SAME instance to every web delivery', async () => {
+    const f = makeFakes();
+    (f as any).webPush.configured = true;
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    await f.store.addWebSubscription('u1', {
+      endpoint: 'https://pusher/a', p256dh: 'pk', auth: 'auth',
+    });
+    await f.store.addWebSubscription('u2', {
+      endpoint: 'https://pusher/b', p256dh: 'pk', auth: 'auth',
+    });
+    const seenBudgets: unknown[] = [];
+    (f as any).webPush.send = async (
+      _subs: unknown, _msg: unknown, budget: unknown,
+    ) => {
+      seenBudgets.push(budget);
+      return { invalid: [] };
+    };
+    const override = new CycleSendBudget(50);
+    await f.poller.runCycle(NOW, undefined, override); // baseline (no events)
+
+    f.kulon.getAllAssignments = async () => [
+      A(1, { duedate: DUE_FAR_SEC }),
+      A(2, { duedate: DUE_FAR_SEC }),
+    ];
+    await f.poller.runCycle(NOW, undefined, override); // one new-task event per user
+
+    expect(seenBudgets.length).toBeGreaterThan(0);
+    for (const b of seenBudgets) {
+      expect(b).toBe(override); // same instance threaded through every deliver()
+    }
+  });
+
+  it('an exhausted cycle budget suppresses web delivery for ALL users in the cycle', async () => {
+    const f = makeFakes();
+    (f as any).webPush.configured = true;
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    await f.store.addWebSubscription('u1', {
+      endpoint: 'https://pusher/a', p256dh: 'pk', auth: 'auth',
+    });
+    await f.store.addWebSubscription('u2', {
+      endpoint: 'https://pusher/b', p256dh: 'pk', auth: 'auth',
+    });
+    await f.poller.runCycle(NOW); // baseline snapshots
+
+    f.kulon.getAllAssignments = async () => [
+      A(1, { duedate: DUE_FAR_SEC }),
+      A(2, { duedate: DUE_FAR_SEC }),
+    ];
+    await f.poller.runCycle(NOW, undefined, new CycleSendBudget(0)); // pre-exhausted
+
+    expect(f.webSent).toHaveLength(0); // no web delivery at all this cycle
   });
 });
 
