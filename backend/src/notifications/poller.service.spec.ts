@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { NotificationsPoller } from './poller.service';
 import { InMemoryNotificationStore } from './notification-store';
+import { CycleSendBudget } from './web-push.service';
 import { KulonAssignment } from '../kulon/kulon.service';
 import { SiapJadwal } from '../siap/siap.service';
 const NOW = 1_756_000_000_000;
@@ -305,6 +306,73 @@ describe('NotificationsPoller.runCycle', () => {
 
     expect(sum.usersChecked).toBe(1);
     expect(f.webSent).toHaveLength(0);
+  });
+
+  it('runCycle owns ONE budget and passes the SAME instance to every web delivery', async () => {
+    const f = makeFakes();
+    (f as any).webPush.configured = true;
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    await f.store.addWebSubscription('u1', {
+      endpoint: 'https://pusher/a', p256dh: 'pk', auth: 'auth',
+    });
+    await f.store.addWebSubscription('u2', {
+      endpoint: 'https://pusher/b', p256dh: 'pk', auth: 'auth',
+    });
+    const seenBudgets: unknown[] = [];
+    (f as any).webPush.send = async (
+      _subs: unknown, _msg: unknown, budget: unknown,
+    ) => {
+      seenBudgets.push(budget);
+      return { invalid: [] };
+    };
+    const override = new CycleSendBudget(50);
+    await f.poller.runCycle(NOW, undefined, override); // baseline (no events)
+
+    f.kulon.getAllAssignments = async () => [
+      A(1, { duedate: DUE_FAR_SEC }),
+      A(2, { duedate: DUE_FAR_SEC }),
+    ];
+    await f.poller.runCycle(NOW, undefined, override); // one new-task event per user
+
+    expect(seenBudgets.length).toBeGreaterThan(0);
+    for (const b of seenBudgets) {
+      expect(b).toBe(override); // same instance threaded through every deliver()
+    }
+  });
+
+  it('exhausted cycle budget gates ONLY Web Push; FCM delivery is independent and pushesSent counts event deliveries', async () => {
+    const f = makeFakes();
+    (f as any).webPush.configured = true;
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    // u1 has BOTH an FCM token and a web subscription; u2 has only a web sub —
+    // so an exhausted budget must suppress u1's AND u2's web delivery while
+    // u1's FCM (independent, multicast) still goes out.
+    await f.store.addDeviceToken('u1', 'tok-u1');
+    await f.store.addWebSubscription('u1', {
+      endpoint: 'https://pusher/u1', p256dh: 'pk', auth: 'auth',
+    });
+    await f.store.addWebSubscription('u2', {
+      endpoint: 'https://pusher/u2', p256dh: 'pk', auth: 'auth',
+    });
+    await f.poller.runCycle(NOW); // baseline snapshots
+
+    f.kulon.getAllAssignments = async () => [
+      A(1, { duedate: DUE_FAR_SEC }),
+      A(2, { duedate: DUE_FAR_SEC }),
+    ];
+    const sum = await f.poller.runCycle(NOW, undefined, new CycleSendBudget(0)); // pre-exhausted
+
+    expect(f.webSent).toHaveLength(0); // NO web delivery at all this cycle
+    // FCM is independent of the web budget: u1's event still fans out to FCM
+    // (the fake records u2's web-only event as an FCM batch with zero tokens —
+    // deliver() always runs sendEach; the real FCM service no-ops on empty).
+    expect(f.sent).toHaveLength(2);
+    expect(f.sent[0]).toMatchObject({ title: 'Tugas baru', tokens: ['tok-u1'] });
+    expect(f.sent[1]).toMatchObject({ title: 'Tugas baru', tokens: [] });
+    // pushesSent = event deliveries (FCM multicast batches), NOT device/web
+    // sends: TWO events were delivered this cycle (u1 FCM-only + u2 web-only
+    // with the web batch budget-dropped), each counting 1.
+    expect(sum.pushesSent).toBe(2);
   });
 });
 
