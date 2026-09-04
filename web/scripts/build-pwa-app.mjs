@@ -23,14 +23,16 @@ cpSync(dist, out, { recursive: true, filter: (s) => !s.endsWith('.map') });
 
 // Gate inline script (CSP /app/* sudah tanpa 'unsafe-inline' — lihat vercel.json).
 // index.html di dist berasal dari wasmJsMain/resources; inline <script> di sana
-// akan senyap mati di produksi, jadi build GAGAL lebih dulu.
+// akan senyap mati di produksi, jadi build GAGAL lebih dulu. Loader checks are
+// unconditional: /app/index.html MUST reference loader.js and the file MUST be
+// present in the output, or the pre-paint FOUC guard silently vanishes.
 const indexHtml = readFileSync(resolve(out, 'index.html'), 'utf8');
 assertNoInlineScript(indexHtml);
-if (!process.argv.some((a) => a === '--no-loader-require') && !indexHtml.includes('loader.js')) {
+if (!indexHtml.includes('loader.js')) {
   console.error('FATAL: /app/index.html tidak mereferensikan loader.js (FOUC guard inline-free).');
   process.exit(1);
 }
-if (!process.argv.some((a) => a === '--no-loader-file') && !existsSync(resolve(out, 'loader.js'))) {
+if (!existsSync(resolve(out, 'loader.js'))) {
   console.error('FATAL: loader.js tidak ikut tersalin ke output /app/.');
   process.exit(1);
 }
