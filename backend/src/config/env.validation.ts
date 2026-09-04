@@ -155,12 +155,13 @@ export class EnvConfig {
   CORS_ORIGIN?: string;
 
   // ---- Proxy / throttling (YD-RATE-001) ------------------------------------
-  /** Jumlah hop proxy tepercaya di depan backend (Express `trust proxy`, ANGKA
-   *  — jangan pernah `true`/blanket). DEFAULT 0 = FAIL-SAFE: tanpa nilai, TIDAK
-   *  ada header forwarded yang dipercaya (tracker = socket IP; X-Forwarded-For
-   *  diabaikan → spoof tidak mempan). Operator produksi WAJIB set eksplisit:
-   *  1 = Heroku router / Caddy (topologi prod sekarang), 2 = cadangan bila nanti
-   *  ada proxy kedua di depan Heroku/Caddy. */
+  /** Selektor topologi proxy untuk Express `trust proxy` (bukan hop-count numerik
+   *  mentah — lihat http/trust-proxy.ts: nilai di-map ke policy CIDR fail-closed).
+   *  DEFAULT 0 = FAIL-SAFE: trust none (X-Forwarded-For diabaikan; tracker =
+   *  socket IP; spoof tidak mempan). Operator WAJIB set eksplisit per topologi:
+   *  1 = satu proxy lokal/privat (VPS Caddy same-origin / Heroku router saja),
+   *  2 = Heroku prod `backend.crunchy.my.id` = Cloudflare + Heroku router
+   *  (trust group lokal/privat + seluruh range CIDR Cloudflare resmi). */
   @IsOptional()
   @Min(0)
   @Max(2)
