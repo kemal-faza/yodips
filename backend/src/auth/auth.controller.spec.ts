@@ -6,7 +6,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 
 describe('AuthController', () => {
   let controller: AuthController;
-  const authService = { login: jest.fn(), me: jest.fn(), getMicrosoftAuthUrl: jest.fn(), handleMicrosoftCallback: jest.fn(), captureSsoSession: jest.fn(), refresh: jest.fn() };
+  const authService = { login: jest.fn(), me: jest.fn(), getMicrosoftAuthUrl: jest.fn(), handleMicrosoftCallback: jest.fn(), captureSsoSession: jest.fn(), refresh: jest.fn(), logout: jest.fn() };
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -80,5 +80,12 @@ describe('AuthController', () => {
       status: 401,
       response: { code: 'INVALID_TOKEN' },
     });
+  });
+
+  it('logout delegates req.user.sub to the service', async () => {
+    authService.logout.mockResolvedValue({ ok: true });
+    const res = await controller.logout({ user: { sub: 'n2m' } } as any);
+    expect(res).toEqual({ ok: true });
+    expect(authService.logout).toHaveBeenCalledWith('n2m');
   });
 });
