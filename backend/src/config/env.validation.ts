@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsEnum,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -163,6 +164,7 @@ export class EnvConfig {
    *  2 = Heroku prod `backend.crunchy.my.id` = Cloudflare + Heroku router
    *  (trust group lokal/privat + seluruh range CIDR Cloudflare resmi). */
   @IsOptional()
+  @IsInt()
   @Min(0)
   @Max(2)
   TRUST_PROXY_HOPS: number = 0;
