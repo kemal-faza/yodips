@@ -103,30 +103,56 @@ describe('api client', () => {
     );
   });
 
-  it('Kulon 401 does NOT clear token or redirect (view handles re-login)', async () => {
+  it('Kulon 401 after successful refresh = upstream stale: keeps token, view handles', async () => {
+    // A 401 on /api/kulon with a VALID JWT (refresh succeeds) is upstream
+    // session stale — token is kept, the view shows the re-login card.
     localStorage.setItem('sso_token', 'keep-me');
+    mockRequest.mockResolvedValueOnce({ data: { accessToken: 'new-jwt' } }); // refresh ok
     await vi.resetModules();
     const { apiClient } = await import('./client');
     const onRejected = responseHandlers.onRejected!;
     const error = {
       response: { status: 401, data: { message: 'Session Kulon expired' } },
-      config: { url: '/api/kulon/assignments' },
+      config: { method: 'get', url: '/api/kulon/assignments' },
     };
     await expect(onRejected(error)).rejects.toMatchObject(error);
-    expect(localStorage.getItem('sso_token')).toBe('keep-me');
+    expect(localStorage.getItem('sso_token')).toBe('new-jwt'); // refreshed, kept
   });
 
-  it('SIAP 401 does NOT clear token or redirect (back-end session stale, JWT valid)', async () => {
+  it('SIAP 401 after successful refresh = upstream stale: keeps token, view handles', async () => {
     localStorage.setItem('sso_token', 'keep-me');
+    mockRequest.mockResolvedValueOnce({ data: { accessToken: 'new-jwt' } }); // refresh ok
     await vi.resetModules();
     const { apiClient } = await import('./client');
     const onRejected = responseHandlers.onRejected!;
     const error = {
       response: { status: 401, data: { message: 'SIAP session expired' } },
-      config: { url: '/api/siap/profile' },
+      config: { method: 'get', url: '/api/siap/profile' },
     };
     await expect(onRejected(error)).rejects.toMatchObject(error);
-    expect(localStorage.getItem('sso_token')).toBe('keep-me');
+    expect(localStorage.getItem('sso_token')).toBe('new-jwt');
+  });
+
+  it('SIAP 401 with a dead refresh session IS auth-401: clears token + reauth (2026-09-02 regression)', async () => {
+    // A 401 on /api/siap with a DEAD JWT must not be misread as upstream
+    // stale: refresh fails 401 → token wiped + reauth requested, same as
+    // /api/auth/me. Before the fix the service-path branch rejected without
+    // refreshing, stranding the user on a 401 with no re-login path.
+    (emitReauthRequested as any).mockClear();
+    localStorage.setItem('sso_token', 'drop-me');
+    mockRequest.mockRejectedValueOnce({
+      response: { status: 401, data: { code: 'SESSION_DEAD' } },
+    }); // refresh fails with dead session
+    await vi.resetModules();
+    const { apiClient } = await import('./client');
+    const onRejected = responseHandlers.onRejected!;
+    const error = {
+      response: { status: 401, data: { message: 'Unauthorized' } },
+      config: { method: 'get', url: '/api/siap/notifications' },
+    };
+    await expect(onRejected(error)).rejects.toBeTruthy();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(emitReauthRequested).toHaveBeenCalledTimes(1);
   });
 
   it('auth 401 with a dead refresh session clears token and requests re-auth (no hard redirect)', async () => {
