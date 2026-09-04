@@ -363,3 +363,108 @@ describe("LoginView", () => {
   });
 
   });
+
+describe("LoginView fragment handoff (YD-AUTH-002)", () => {
+  // Valid-looking three-segment JWT (header.payload.signature), base64url-safe.
+  const GOOD_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3";
+  const makeRoute = (hash: string, query: Record<string, unknown> = {}) => ({
+    hash,
+    query,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cfg.ssoCaptureEnabled = true;
+    cfg.mobile = false;
+  });
+
+  it("scrubs the URL first (history.state preserved), then finishHandoff, then router.replace (never push)", async () => {
+    const store = makeStore({ isHandoffMode: true });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(`#access_token=${GOOD_TOKEN}`),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    // Scrub happens BEFORE any store write: replaceState precedes finishHandoff.
+    const rsIndex = replaceState.mock.invocationCallOrder[0];
+    const fhIndex = store.finishHandoff.mock.invocationCallOrder[0];
+    expect(rsIndex).toBeLessThan(fhIndex);
+    // replaceState preserves the existing history state object (never null).
+    expect(replaceState).toHaveBeenCalledWith(
+      window.history.state,
+      "",
+      expect.not.stringContaining("access_token"),
+    );
+    expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("handoff mode with a malformed or empty fragment does not scrub or consume", async () => {
+    const store = makeStore({ isHandoffMode: true });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute("#access_token="), // empty value
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("handoff mode with a non-JWT fragment value is rejected (garbage token)", async () => {
+    const store = makeStore({ isHandoffMode: true });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute("#access_token=not-a-jwt"), // no dots -> not JWT-shaped
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("non-handoff mode never reads the fragment token (production behavior preserved)", async () => {
+    const store = makeStore({ isHandoffMode: false });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(`#access_token=${GOOD_TOKEN}`),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+});
