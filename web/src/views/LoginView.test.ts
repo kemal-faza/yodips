@@ -124,25 +124,58 @@ describe("LoginView", () => {
     expect(w.text()).toContain("selesaikan login di window browser");
   });
 
-  it("handoff mode with ?token= calls finishHandoff and routes home", async () => {
+  it("handoff mode with #access_token= calls finishHandoff once and replaces history (never push)", async () => {
     const store = makeStore({ isHandoffMode: true });
-    const router = { push: vi.fn() };
+    const router = { replace: vi.fn(), push: vi.fn() };
     const w = mount(LoginView, {
       global: {
-        mocks: { $route: { query: { token: "jwt-handoff" } }, $router: router },
+        mocks: {
+          $route: {
+            hash: "#access_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3",
+            query: {},
+          },
+          $router: router,
+        },
       },
     });
     await flushPromises();
-    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-handoff");
-    expect(router.push).toHaveBeenCalledWith("/");
+    expect(store.finishHandoff).toHaveBeenCalledTimes(1);
+    expect(store.finishHandoff).toHaveBeenCalledWith(
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3",
+    );
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith("/");
+    w.unmount();
   });
 
   it("handoff mode without token shows capture instructions", () => {
     makeStore({ isHandoffMode: true });
     const w = mount(LoginView, {
-      global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
+      global: {
+        mocks: {
+          $route: { query: {}, hash: "" },
+          $router: { push: vi.fn() },
+        },
+      },
     });
     expect(w.text()).toContain("jalankan tool capture");
+  });
+
+  it("handoff mode instruction includes the mandatory --app-url <spaUrl> flag", () => {
+    makeStore({ isHandoffMode: true });
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: { query: {}, hash: "" },
+          $router: { push: vi.fn() },
+        },
+      },
+    });
+    // Rendered text() decodes HTML entities, so <spaUrl> appears literally.
+    expect(w.text()).toContain("--app-url <spaUrl>");
+    // The flag is mandatory: no bracketed/optional form may remain.
+    expect(w.text()).not.toContain("--app-url [<spaUrl>]");
+    expect(w.text()).not.toContain("--app-url &lt;spaUrl&gt;]");
   });
 
   it("shows an incomplete-session notice when reason=incomplete", () => {
@@ -363,3 +396,196 @@ describe("LoginView", () => {
   });
 
   });
+
+describe("LoginView fragment handoff (YD-AUTH-002)", () => {
+  // Valid-looking strict three-segment JWT (header.payload.signature),
+  // base64url-safe. Same shape the capture tool's #access_token delivers.
+  const GOOD_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3";
+  const GOOD_HASH = `#access_token=${GOOD_TOKEN}`;
+  const makeRoute = (hash: string, query: Record<string, unknown> = {}) => ({
+    hash,
+    query,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cfg.ssoCaptureEnabled = true;
+    cfg.mobile = false;
+  });
+
+  it("scrubs the URL first (history.state preserved), then finishHandoff, then router.replace (never push)", async () => {
+    const store = makeStore({ isHandoffMode: true });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(GOOD_HASH),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    // Scrub happens BEFORE any store write: replaceState precedes finishHandoff.
+    const rsIndex = replaceState.mock.invocationCallOrder[0];
+    const fhIndex = store.finishHandoff.mock.invocationCallOrder[0];
+    expect(rsIndex).toBeLessThan(fhIndex);
+    // Scrub is EXACT: pathname + search only (no token, no other query/hash
+    // residue), and the existing history state object is preserved (never null).
+    const { pathname, search } = window.location;
+    expect(replaceState).toHaveBeenCalledWith(
+      window.history.state,
+      "",
+      `${pathname}${search}`,
+    );
+    expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("scrubs the fragment BEFORE extension detection/messaging when the extension is installed", async () => {
+    const store = makeStore({
+      isHandoffMode: true,
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+    });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(GOOD_HASH),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    // replaceState fires BEFORE any extension detection/messaging call and
+    // before any store write.
+    const rsOrder = replaceState.mock.invocationCallOrder[0];
+    const extCheckOrder = store.isExtensionInstalled.mock.invocationCallOrder[0];
+    const extListenOrder = store.onExtensionResult.mock.invocationCallOrder[0];
+    const fhOrder = store.finishHandoff.mock.invocationCallOrder[0];
+    expect(rsOrder).toBeLessThan(extCheckOrder);
+    expect(rsOrder).toBeLessThan(extListenOrder);
+    expect(rsOrder).toBeLessThan(fhOrder);
+    expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
+    expect(router.replace).toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("a late extension 'ok' result cannot overwrite the fragment-consume token or re-scrub", async () => {
+    // Fragment-consume path finishes handoff synchronously (before the
+    // extension listener is even registered). A subsequent extension 'ok'
+    // (different token) would be a competing write — assert it does NOT
+    // overwrite the fragment token (no double-write, no second scrub).
+    const store = makeStore({ isHandoffMode: true, token: null });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(GOOD_HASH),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
+    const goodCalls = store.finishHandoff.mock.calls.length;
+    const scrubCalls = replaceState.mock.calls.length;
+    // The extension posts an 'ok' with a DIFFERENT token after mount.
+    const handler = (store.onExtensionResult as any).mock.calls[0][0];
+    handler({ status: "ok", accessToken: "ext.jwt.other" });
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledTimes(goodCalls);
+    expect(store.finishHandoff).not.toHaveBeenCalledWith("ext.jwt.other");
+    expect(replaceState).toHaveBeenCalledTimes(scrubCalls);
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("handoff mode with a malformed or empty fragment does not scrub or consume", async () => {
+    const store = makeStore({ isHandoffMode: true });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute("#access_token="), // empty value
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("handoff mode with a non-JWT fragment value is rejected (garbage token)", async () => {
+    const store = makeStore({ isHandoffMode: true });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute("#access_token=not-a-jwt"), // no dots -> not JWT-shaped
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("handoff mode with a JWT-shaped but non-strict token is rejected and never persisted", async () => {
+    // Three dot-separated segments but NOT strict base64url (space in a
+    // segment) — must not scrub, consume, or reach any store write.
+    const store = makeStore({ isHandoffMode: true, token: null });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute("#access_token=aaa.bbb.c cc"),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("non-handoff mode never reads the fragment token (production behavior preserved)", async () => {
+    const store = makeStore({ isHandoffMode: false });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(`#access_token=${GOOD_TOKEN}`),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+});
