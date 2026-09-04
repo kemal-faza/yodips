@@ -4,9 +4,11 @@ import {
   IsBoolean,
   IsEnum,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Max,
   Min,
   MinLength,
 } from 'class-validator';
@@ -152,6 +154,20 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   CORS_ORIGIN?: string;
+
+  // ---- Proxy / throttling (YD-RATE-001) ------------------------------------
+  /** Selektor topologi proxy untuk Express `trust proxy` (bukan hop-count numerik
+   *  mentah — lihat http/trust-proxy.ts: nilai di-map ke policy CIDR fail-closed).
+   *  DEFAULT 0 = FAIL-SAFE: trust none (X-Forwarded-For diabaikan; tracker =
+   *  socket IP; spoof tidak mempan). Operator WAJIB set eksplisit per topologi:
+   *  1 = satu proxy lokal/privat (VPS Caddy same-origin / Heroku router saja),
+   *  2 = Heroku prod `backend.crunchy.my.id` = Cloudflare + Heroku router
+   *  (trust group lokal/privat + seluruh range CIDR Cloudflare resmi). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2)
+  TRUST_PROXY_HOPS: number = 0;
 
   // ---- Push notifications (FCM) -------------------------------------------
   // Scheduler hanya hidup bila enabled DAN kredensial Firebase ada;
