@@ -171,10 +171,11 @@ describe("LoginView", () => {
         },
       },
     });
-    expect(w.text()).toContain("--app-url &lt;spaUrl&gt;");
-    // Legacy optional-app-url form must be gone from the instruction.
-    expect(w.text()).not.toContain("--api &lt;serverUrl&gt;]");
-    expect(w.text()).not.toMatch(/--app-url\s+\[?&lt;spaUrl&gt;\]?/);
+    // Rendered text() decodes HTML entities, so <spaUrl> appears literally.
+    expect(w.text()).toContain("--app-url <spaUrl>");
+    // The flag is mandatory: no bracketed/optional form may remain.
+    expect(w.text()).not.toContain("--app-url [<spaUrl>]");
+    expect(w.text()).not.toContain("--app-url &lt;spaUrl&gt;]");
   });
 
   it("shows an incomplete-session notice when reason=incomplete", () => {
@@ -471,6 +472,37 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
     expect(rsOrder).toBeLessThan(fhOrder);
     expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
     expect(router.replace).toHaveBeenCalledWith("/");
+    replaceState.mockRestore();
+    w.unmount();
+  });
+
+  it("a late extension 'ok' result cannot overwrite the fragment-consume token or re-scrub", async () => {
+    // Fragment-consume path finishes handoff synchronously (before the
+    // extension listener is even registered). A subsequent extension 'ok'
+    // (different token) would be a competing write — assert it does NOT
+    // overwrite the fragment token (no double-write, no second scrub).
+    const store = makeStore({ isHandoffMode: true, token: null });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(GOOD_HASH),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
+    const goodCalls = store.finishHandoff.mock.calls.length;
+    const scrubCalls = replaceState.mock.calls.length;
+    // The extension posts an 'ok' with a DIFFERENT token after mount.
+    const handler = (store.onExtensionResult as any).mock.calls[0][0];
+    handler({ status: "ok", accessToken: "ext.jwt.other" });
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledTimes(goodCalls);
+    expect(store.finishHandoff).not.toHaveBeenCalledWith("ext.jwt.other");
+    expect(replaceState).toHaveBeenCalledTimes(scrubCalls);
     replaceState.mockRestore();
     w.unmount();
   });
