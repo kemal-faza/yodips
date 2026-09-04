@@ -3,6 +3,7 @@ import { createMemoryHistory } from 'vue-router';
 import { createPinia, setActivePinia } from 'pinia';
 import { useAuthStore } from '../stores/auth';
 import { buildRouter } from './index';
+import { isHandoffAccessTokenHash } from '../lib/handoff-token';
 
 // vitest 4 does not export a `flushPromises` import; use a local helper.
 const flushPromises = async () => {
@@ -134,5 +135,17 @@ describe('router guard + handoff fragment (YD-AUTH-002)', () => {
     await router.push('/login');
     expect(router.currentRoute.value.path).toBe('/');
     expect(router.currentRoute.value.name).toBe('dashboard');
+  });
+
+  it('the guard predicate reuses the shared strict-shape handoff hash helper', () => {
+    // The guard gates on this exact helper — a valid strict-shape hash must
+    // classify true (reaching LoginView), malformed ones false (still bounced).
+    const GOOD_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3';
+    expect(isHandoffAccessTokenHash(`#access_token=${GOOD_TOKEN}`)).toBe(true);
+    expect(isHandoffAccessTokenHash('#access_token=not-a-jwt')).toBe(false);
+    expect(isHandoffAccessTokenHash('#access_token=')).toBe(false);
+    expect(isHandoffAccessTokenHash('#access_token=aaa.bbb.c cc')).toBe(false);
+    expect(isHandoffAccessTokenHash('')).toBe(false);
+    expect(isHandoffAccessTokenHash(undefined)).toBe(false);
   });
 });
