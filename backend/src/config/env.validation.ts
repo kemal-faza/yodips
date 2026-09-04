@@ -122,8 +122,10 @@ export class EnvConfig {
   /** Absolute maximum session age (ms). Independent of the sliding TTL: a
    *  session captured longer ago than this can no longer be refreshed, even
    *  while the sliding TTL keeps its record alive. Default equals SESSION_TTL_MS
-   *  (7 days), so production behavior is unchanged unless an operator opts into
-   *  a shorter cap. */
+   *  (7 days). NOTE: the default is an INTENTIONAL behavior change — a session
+   *  now dies hard at capturedAt + 7 days even when it is refreshed daily
+   *  (previously refresh within each 7-day idle window could keep it alive
+   *  indefinitely). Set shorter (e.g. 86400000 = 24h) to tighten the cap. */
   SESSION_ABSOLUTE_TTL_MS: number = 604800000; // 7 days
 
   @IsOptional()
