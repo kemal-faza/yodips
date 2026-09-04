@@ -4,9 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#01637E">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121212">
     <link rel="manifest" href="manifest.webmanifest">
     <title>YoDips</title>
+    <!-- FOUC guard: apply saved/system theme before first paint while the
+         bundle downloads. No inline script — /app/ CSP stays inline-free. -->
+    <script src="loader.js"></script>
     <style>
+        /* FOUC-guard theming: loader.js adds html.theme-dark pre-paint, so the
+           first paint is already dark when the user prefers dark. */
+        html.theme-dark {
+            background: #121212;
+        }
         html, body {
             margin: 0;
             padding: 0;
@@ -14,6 +24,9 @@
             height: 100%;
             overflow: hidden;
             background: #ffffff;
+        }
+        html.theme-dark body {
+            background: #121212;
         }
         /* ComposeViewport mengambil alih canvas ini; ukuran wajib penuh viewport */
         #ComposeTarget {
@@ -36,6 +49,14 @@
             color: #01637E;
             background: #ffffff;
         }
+        html.theme-dark #loader {
+            color: #7fd4e6;
+            background: #121212;
+        }
+        html.theme-dark .spinner {
+            border-color: #264e5c;
+            border-top-color: #7fd4e6;
+        }
         #loader.hidden { display: none; }
         .spinner {
             width: 36px;
@@ -55,35 +76,5 @@
     <div>Memuat YoDips…</div>
 </div>
 <script src="composeApp.js"></script>
-<script>
-    // Sembunyikan loader begitu runtime Compose siap menggambar (fallback: tetap
-    // hilang setelah 20 dtk supaya user tidak pernah terjebak di layar loading).
-    var hideLoader = function () {
-        var l = document.getElementById('loader');
-        if (l) l.classList.add('hidden');
-    };
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(hideLoader);
-    setTimeout(hideLoader, 20000);
-
-    // Kode pairing/token QR selalu uppercase: Compose wasm mengetik lewat <input>
-    // tersembunyi yang TIDAK meneruskan KeyboardCapitalization ke IME — paksa
-    // autocapitalize di level DOM tepat sebelum keyboard muncul (focusin).
-    document.addEventListener('focusin', function (e) {
-        var el = e.target;
-        if (!el) return;
-        var tag = el.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') {
-            el.setAttribute('autocapitalize', 'characters');
-            el.setAttribute('autocorrect', 'off');
-            el.setAttribute('spellcheck', 'false');
-        }
-    }, true);
-
-    // PWA: SW hanya ada pada penyajian produksi di bawah /app/ (file sw.js
-    // digenerate scripts/build-pwa-app.mjs; dev webpack :8080 tidak punya).
-    if ('serviceWorker' in navigator && location.pathname.startsWith('/app/')) {
-        navigator.serviceWorker.register('sw.js').catch(function () { /* offline bukan syarat hard */ });
-    }
-</script>
 </body>
 </html>
