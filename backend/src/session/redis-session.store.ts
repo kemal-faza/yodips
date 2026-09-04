@@ -19,11 +19,13 @@ const IV_LEN = 12;
 export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
   private readonly logger = new Logger(RedisSessionStore.name);
   private readonly key: Buffer;
+  private readonly absoluteMs?: number;
 
   constructor(
     private readonly client: Redis,
     private readonly ttlMs: number,
     encKey: string,
+    absoluteMs?: number,
   ) {
     super();
     // Derive the AES-256 key from the config secret with scrypt (a memory-hard
@@ -31,6 +33,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     // secret is weak. 32-byte salt + 256-bit output; same salt per key is fine
     // here because the SESSION_ENC_KEY is a deployment secret, not per-user.
     this.key = scryptSync(encKey, 'yodips-session', 32);
+    this.absoluteMs = absoluteMs && absoluteMs > 0 ? absoluteMs : undefined;
   }
 
   async set(identity: string, session: CapturedSession): Promise<void> {
@@ -45,6 +48,16 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     if (!envelope) return null;
     const session = this.decrypt(envelope);
     if (!session) return null;
+    // Absolute lifetime: independent of the sliding TTL. Even though the Redis
+    // record is still alive (sliding EXPIRE on access), a session captured
+    // longer than absoluteMs ago is dead — refresh cannot extend it forever.
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - session.capturedAt >= this.absoluteMs
+    ) {
+      await this.client.del(key);
+      return null;
+    }
     // Sliding TTL: refresh on access.
     await this.client.expire(key, this.ttlSeconds());
     return session;
@@ -89,10 +102,16 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
 
   private decrypt(envelope: string): CapturedSession | null {
     try {
-      const [version, ivB64, tagB64, ctB64] = envelope.split(':');
+      const parts = envelope.split(':');
+      if (parts.length !== 4) return null;
+      const [version, ivB64, tagB64, ctB64] = parts;
       if (version !== 'v1' || !ivB64 || !tagB64 || !ctB64) return null;
-      const decipher = createDecipheriv(ALGO, this.key, Buffer.from(ivB64, 'base64'));
-      decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
+      const iv = Buffer.from(ivB64, 'base64');
+      const tag = Buffer.from(tagB64, 'base64');
+      if (iv.length !== IV_LEN) return null; // 12-byte IV enforced
+      if (tag.length !== 16) return null; // 16-byte GCM tag enforced
+      const decipher = createDecipheriv(ALGO, this.key, iv);
+      decipher.setAuthTag(tag);
       const plaintext = Buffer.concat([
         decipher.update(Buffer.from(ctB64, 'base64')),
         decipher.final(),
