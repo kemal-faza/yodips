@@ -24,7 +24,11 @@ jobs:
   security-scan:
     name: gitleaks + npm audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20 menit (sebelumnya 10): npm audit (web) dengan npm@12 Bulk Advisory
+    # endpoint intermittently 503/timeout; default fetch timeout 300s membuat
+    # attempt pertama ~5 menit dan retry berikutnya terbunuh job timeout.
+    # Budget ini menampung 3x attempt (bounded fetch flags, lihat bawah).
+    timeout-minutes: 20
     steps:
       # gitleaks-action butuh full history (diff dari base commit). Default
       # checkout adalah shallow (fetch-depth: 1) yang membuat git log pada
@@ -49,6 +53,32 @@ jobs:
       # intermittently 503/400s — setup-node has no npm-version input, so
       # upgrade npm explicitly. The npm advisory service has also been
       # flaky (503/timeouts), so each audit retries a few times.
+      #
+      # Fetch flags dibatasi (bounded) supaya satu attempt npm audit TIDAK
+      # menggantung ~5 menit (default --fetch-timeout=300000):
+      #   --fetch-timeout=60000           1 request ≤ 60s
+      #   --fetch-retries/mintimeout/maxtimeout backoff 10..60s — retry npm
+      #     HANYA utk request idempotent GET (packument dll); lihat catatan.
+      # Verifikasi source npm@12 (2026-09-04): make-fetch-happen/remote.js
+      # hard-gate retry utk method POST (isRetriable memerlukan non-POST;
+      # catch melempar langsung saat method === 'POST'), dan bulk advisory
+      # memang dikirim sebagai POST → --fetch-retries TIDAK menambah durasi
+      # audit; mekanisme retry yg sebenarnya adalah loop shell `for i in 1 2 3`
+      # di bawah (3x attempt, masing-masing ≤ 60s timeout, sleep 10s antar
+      # attempt). Worst-case jujur 3 step audit sequential:
+      #   3 x (3 x 60s + 2 x 10s) = 600s = 10m, masih < budget job 20m
+      #   (sisa ~10m utk npm install -g npm & step lain).
+      # Regression test: tools/ci-audit-policy.test.ts — meng-parse jumlah
+      # attempt & sleep DARI tiap step di file ini (bukan hardcode), lalu
+      # menghitung budget per-step (< 20m) dan total worst-case ketiga step
+      # (<= 20m - 60s reserve) dari nilai parse tsb; gagal kalau melanggar.
+      # Test fail-loud hanya menjaga struktur (parseable, && exit 0,
+      # terminal exit 1) — tidak ada literal jumlah attempt/sleep di test.
+      # CATATAN MASA DEPAN: verifikasi di atas berlaku utk npm@12 SEKARANG.
+      # Kalau versi npm kelak me-retry request POST (bulk audit) secara
+      # internal, batas atas tiap attempt = 60s + 5 backoff 10..60s ≈ 250s →
+      # 3 step x 3 attempt x 250s ≈ 38m > budget 20m; saat itu job budget
+      # DAN guard test harus dihitung ulang (lihat tools/ci-audit-policy.test.ts).
       - name: upgrade npm for bulk-advisory audit
         run: npm install -g npm@12.0.2
 
@@ -56,7 +86,7 @@ jobs:
         working-directory: backend
         run: |
           for i in 1 2 3; do
-            npm audit --omit=dev && exit 0
+            npm audit --omit=dev --fetch-timeout=60000 --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=60000 && exit 0
             echo "npm audit attempt $i failed (registry flake?), retrying..." >&2
             sleep 10
           done
@@ -66,7 +96,7 @@ jobs:
         working-directory: web
         run: |
           for i in 1 2 3; do
-            npm audit --omit=dev && exit 0
+            npm audit --omit=dev --fetch-timeout=60000 --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=60000 && exit 0
             echo "npm audit attempt $i failed (registry flake?), retrying..." >&2
             sleep 10
           done
@@ -76,7 +106,7 @@ jobs:
         working-directory: extension
         run: |
           for i in 1 2 3; do
-            npm audit --omit=dev && exit 0
+            npm audit --omit=dev --fetch-timeout=60000 --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=60000 && exit 0
             echo "npm audit attempt $i failed (registry flake?), retrying..." >&2
             sleep 10
           done
