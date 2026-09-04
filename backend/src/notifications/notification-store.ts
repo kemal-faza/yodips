@@ -5,6 +5,8 @@ export const SNAPSHOT_TTL_MS = 14 * 24 * 3600 * 1000;
 export const SENT_TTL_MS = 14 * 24 * 3600 * 1000;
 export const RELOGIN_TTL_MS = 30 * 24 * 3600 * 1000;
 export const LOCK_TTL_S = 900;
+/** Maks subscription web push per user (default cap saat caller tidak override). */
+export const MAX_WEB_SUBSCRIPTIONS = 8;
 
 /**
  * Web Push subscription yang disimpan per-user (mirror PushSubscription).
@@ -27,7 +29,11 @@ export abstract class NotificationStore {
   abstract getDeviceTokens(sub: string): Promise<string[]>;
   abstract listSubsWithTokens(): Promise<string[]>;
 
-  abstract addWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void>;
+  abstract addWebSubscription(
+    sub: string,
+    s: WebSubscriptionRecord,
+    cap?: number,
+  ): Promise<'added' | 'duplicate' | 'cap-reached'>;
   abstract removeWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void>;
   abstract getWebSubscriptions(sub: string): Promise<WebSubscriptionRecord[]>;
   abstract listSubsWithWeb(): Promise<string[]>;
@@ -81,10 +87,20 @@ export class InMemoryNotificationStore extends NotificationStore {
     return [...this.subs.keys()];
   }
 
-  async addWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void> {
+  async addWebSubscription(
+    sub: string,
+    s: WebSubscriptionRecord,
+    cap: number = MAX_WEB_SUBSCRIPTIONS,
+  ): Promise<'added' | 'duplicate' | 'cap-reached'> {
+    // No `await` before the mutation: on the single-threaded event loop this
+    // read-modify-write is atomic, so concurrent registerWeb calls for the same
+    // user cannot both pass the cap check.
     const cur = this.web.get(sub) ?? [];
-    if (!cur.some((e) => e.endpoint === s.endpoint)) cur.push(s);
+    if (cur.some((e) => e.endpoint === s.endpoint)) return 'duplicate';
+    if (cur.length >= cap) return 'cap-reached';
+    cur.push(s);
     this.web.set(sub, cur);
+    return 'added';
   }
 
   async removeWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void> {
