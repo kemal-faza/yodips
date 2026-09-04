@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { capture, me, getSiapProfile } from '../api/client';
+import { capture, me, getSiapProfile, logoutSession } from '../api/client';
 import type { User } from '../types';
 import { clearCache } from '../api/cache';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
@@ -208,7 +208,21 @@ export const useAuthStore = defineStore('auth', {
       this.reauthing = false;
       return 'failed';
     },
-    logout() {
+    async logout() {
+      // Server-side revocation FIRST, while this JWT still exists and can
+      // authenticate the request: drop the server session so a leaked JWT
+      // cannot be silently refreshed after logout (YD-AUTH-001). Best-effort —
+      // a network/5xx/401 failure must NEVER block or throw the UI: local
+      // cleanup below always runs regardless.
+      if (this.token) {
+        try {
+          await logoutSession();
+        } catch {
+          // Logout 401 = session already dead (terminal in the interceptor);
+          // network/5xx = backend unreachable. Either way, local cleanup below
+          // still proceeds — never enter a refresh-retry on logout.
+        }
+      }
       clearCache();
       this.reauthAttempted = false; // a next expiry event may auto-reauth again
       this.token = null;

@@ -20,6 +20,10 @@ const initial = computed(() => store.user?.sub?.[0]?.toUpperCase() ?? 'U');
 function goToProfile() {
   router.push('/profile');
 }
+
+async function logout() {
+  await store.logout();
+}
 </script>
 
 <template>
@@ -74,7 +78,7 @@ function goToProfile() {
           variant="ghost"
           size="sm"
           class="text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground"
-          @click="store.logout()"
+          @click="logout"
         >
           Keluar
         </Button>
