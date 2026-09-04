@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Max,
   Min,
   MinLength,
 } from 'class-validator';
@@ -152,6 +153,18 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   CORS_ORIGIN?: string;
+
+  // ---- Proxy / throttling (YD-RATE-001) ------------------------------------
+  /** Jumlah hop proxy tepercaya di depan backend (Express `trust proxy`, ANGKA
+   *  — jangan pernah `true`/blanket). DEFAULT 0 = FAIL-SAFE: tanpa nilai, TIDAK
+   *  ada header forwarded yang dipercaya (tracker = socket IP; X-Forwarded-For
+   *  diabaikan → spoof tidak mempan). Operator produksi WAJIB set eksplisit:
+   *  1 = Heroku router / Caddy (topologi prod sekarang), 2 = cadangan bila nanti
+   *  ada proxy kedua di depan Heroku/Caddy. */
+  @IsOptional()
+  @Min(0)
+  @Max(2)
+  TRUST_PROXY_HOPS: number = 0;
 
   // ---- Push notifications (FCM) -------------------------------------------
   // Scheduler hanya hidup bila enabled DAN kredensial Firebase ada;
