@@ -79,4 +79,61 @@ describe('InMemoryNotificationStore', () => {
     tick(901_000);
     expect(await s.tryLockCycle()).toBe(true);
   });
+
+  it('web subscriptions honor the per-user cap', async () => {
+    const s = make();
+    for (let i = 0; i < 8; i++) {
+      expect(
+        await s.addWebSubscription('u1', {
+          endpoint: `https://pusher/${i}`,
+          p256dh: 'p',
+          auth: 'a',
+        }),
+      ).toBe('added');
+    }
+    expect(
+      await s.addWebSubscription('u1', {
+        endpoint: 'https://pusher/9',
+        p256dh: 'p',
+        auth: 'a',
+      }),
+    ).toBe('cap-reached');
+    expect(await s.getWebSubscriptions('u1')).toHaveLength(8);
+  });
+
+  it('re-adding the same endpoint reports duplicate, not cap-reached', async () => {
+    const s = make();
+    await s.addWebSubscription('u1', {
+      endpoint: 'https://pusher/1',
+      p256dh: 'p',
+      auth: 'a',
+    });
+    expect(
+      await s.addWebSubscription('u1', {
+        endpoint: 'https://pusher/1',
+        p256dh: 'p',
+        auth: 'a',
+      }),
+    ).toBe('duplicate');
+    // duplicate does not consume a slot — still only 1 stored
+    expect(await s.getWebSubscriptions('u1')).toHaveLength(1);
+  });
+
+  it('a caller-supplied cap overrides the default', async () => {
+    const s = make();
+    expect(
+      await s.addWebSubscription(
+        'u1',
+        { endpoint: 'https://pusher/1', p256dh: 'p', auth: 'a' },
+        1,
+      ),
+    ).toBe('added');
+    expect(
+      await s.addWebSubscription(
+        'u1',
+        { endpoint: 'https://pusher/2', p256dh: 'p', auth: 'a' },
+        1,
+      ),
+    ).toBe('cap-reached');
+  });
 });

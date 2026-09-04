@@ -1,6 +1,7 @@
 import type Redis from 'ioredis';
 import {
   LOCK_TTL_S,
+  MAX_WEB_SUBSCRIPTIONS,
   NotificationStore,
   RELOGIN_TTL_MS,
   SENT_TTL_MS,
@@ -14,6 +15,29 @@ const SUBS_KEY = 'notif:subs';
 const SUBS_WEB_KEY = 'notif:subs:web';
 const LOCK_KEY = 'notif:cycle-lock';
 const seconds = (ms: number) => Math.floor(ms / 1000);
+
+/** Status hasil addWebSubscription (mirror tipe di NotificationStore). */
+export type AddWebSubscriptionResult = 'added' | 'duplicate' | 'cap-reached';
+
+/**
+ * Skrip Lua atomik: baca list -> cek duplikat endpoint -> cek cap -> append.
+ * Satu round-trip server; TANPA lock key / TTL lock / spurious 409. Argumen:
+ * KEYS[1] = `notif:web:<sub>`, ARGV[1] = JSON payload, ARGV[2] = cap (number).
+ * Kembalian: 'added' | 'duplicate' | 'cap-reached' (string).
+ */
+const ADD_WEB_SUBSCRIPTION_LUA = `
+local raw = redis.call('GET', KEYS[1])
+local list = {}
+if raw then list = cjson.decode(raw) end
+local incoming = cjson.decode(ARGV[1])
+for i = 1, #list do
+  if list[i]['endpoint'] == incoming['endpoint'] then return 'duplicate' end
+end
+if #list >= tonumber(ARGV[2]) then return 'cap-reached' end
+list[#list + 1] = incoming
+redis.call('SET', KEYS[1], cjson.encode(list))
+return 'added'
+`;
 
 export class RedisNotificationStore extends NotificationStore {
   constructor(
@@ -54,13 +78,23 @@ export class RedisNotificationStore extends NotificationStore {
     return this.client.smembers(SUBS_KEY);
   }
 
-  async addWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void> {
+  async addWebSubscription(
+    sub: string,
+    s: WebSubscriptionRecord,
+    cap: number = MAX_WEB_SUBSCRIPTIONS,
+  ): Promise<AddWebSubscriptionResult> {
     const key = `notif:web:${sub}`;
-    const raw = await this.client.get(key);
-    const list: WebSubscriptionRecord[] = raw ? JSON.parse(raw) : [];
-    if (!list.some((e) => e.endpoint === s.endpoint)) list.push(s);
-    await this.client.set(key, JSON.stringify(list));
-    await this.client.sadd(SUBS_WEB_KEY, sub);
+    const status = (await this.client.eval(
+      ADD_WEB_SUBSCRIPTION_LUA,
+      1,
+      key,
+      JSON.stringify(s),
+      String(cap),
+    )) as AddWebSubscriptionResult;
+    if (status === 'added') {
+      await this.client.sadd(SUBS_WEB_KEY, sub);
+    }
+    return status;
   }
 
   async removeWebSubscription(sub: string, s: WebSubscriptionRecord): Promise<void> {

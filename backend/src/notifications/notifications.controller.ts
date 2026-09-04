@@ -13,7 +13,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { NotificationStore } from './notification-store';
+import { MAX_WEB_SUBSCRIPTIONS, NotificationStore } from './notification-store';
 import { NotificationsPoller } from './poller.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import { WebDeviceDto } from './dto/web-device.dto';
@@ -71,11 +71,28 @@ export class NotificationsController {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    await this.store.addWebSubscription(sub, {
-      endpoint: dto.endpoint,
-      p256dh: dto.p256dh,
-      auth: dto.auth,
-    });
+    const cap =
+      this.config.get<number>('WEB_PUSH_MAX_SUBSCRIPTIONS') ?? MAX_WEB_SUBSCRIPTIONS;
+    const status = await this.store.addWebSubscription(
+      sub,
+      {
+        endpoint: dto.endpoint,
+        p256dh: dto.p256dh,
+        auth: dto.auth,
+      },
+      cap,
+    );
+    if (status === 'cap-reached') {
+      throw new HttpException(
+        {
+          message: 'Terlalu banyak subscription push untuk akun ini',
+          code: 'WEB_PUSH_CAP_REACHED',
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+    // 'added' and 'duplicate' are both success: the SPA/PWA re-registers the
+    // same subscription on every login, so duplicate must stay idempotent.
     return { ok: true };
   }
 

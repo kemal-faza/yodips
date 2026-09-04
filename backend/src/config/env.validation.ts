@@ -186,6 +186,16 @@ export class EnvConfig {
   @IsOptional()
   @IsString()
   WEB_PUSH_SUBJECT?: string;
+
+  /** Maks subscription web push per user (default 8). */
+  @IsOptional()
+  @Min(1)
+  WEB_PUSH_MAX_SUBSCRIPTIONS: number = 8;
+
+  /** Maks pengiriman web push GLOBAL per siklus poller (default 50; semua user/event). */
+  @IsOptional()
+  @Min(1)
+  WEB_PUSH_CYCLE_BUDGET: number = 50;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvConfig {
