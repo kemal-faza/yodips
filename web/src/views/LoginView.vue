@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import AuroraBackground from '@/components/ui/aurora-background/AuroraBackground.vue';
 import MultiStepLoader from '@/components/ui/multi-step-loader/MultiStepLoader.vue';
 import { SSO_CAPTURE_ENABLED, isMobileUserAgent } from '../config/extension';
+import { parseFragmentAccessToken } from '../lib/handoff-token';
 
 const store = useAuthStore();
 const inst = getCurrentInstance()!;
@@ -80,29 +81,27 @@ async function checkExtension() {
   }
 }
 
-/**
- * YD-AUTH-002: the deprecated capture tool delivers the JWT via a URL
- * FRAGMENT (`#access_token=…`), which browsers never send to the server, so
- * request/proxy logs cannot capture it. Parse + validate it here (returns null
- * for absent/malformed); the caller SCRUBS the URL first, then consumes the
- * token exactly once.
- */
-const FRAGMENT_TOKEN_MAX_LEN = 4096;
-function parseFragmentAccessToken(hash: string | undefined): string | null {
-  if (!hash || hash.length === 0) return null;
-  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
-  const match = /^access_token=([^&]+)/.exec(raw);
-  if (!match) return null;
-  const token = match[1];
-  if (!token || token.length === 0 || token.length > FRAGMENT_TOKEN_MAX_LEN) return null;
-  // Loose JWT-shape guard: exactly three NONEMPTY segments separated by '.',
-  // each segment URL-safe base64url (header.payload.signature). Enough to drop
-  // garbage before it reaches localStorage; the backend fully verifies on use.
-  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return null;
-  return token;
-}
-
 onMounted(async () => {
+  // YD-AUTH-002: consume a handoff #access_token fragment FIRST — synchronously
+  // (no await) and before ANY extension detection/messaging, store write, or
+  // navigation — so no async work can run while the secret is still in the URL.
+  let fragmentConsumed = false;
+  if (store.isHandoffMode) {
+    const token = parseFragmentAccessToken(proxy().$route?.hash as string | undefined);
+    if (token) {
+      fragmentConsumed = true;
+      // History hygiene FIRST — synchronously, before any store write or await.
+      // Preserve the existing history state object (never null), which keeps
+      // history.back() behavior intact; a null state would corrupt it. Scrub is
+      // exactly pathname+search: no query residue, no fragment.
+      const cleanUrl = `${window.location.pathname}${window.location.search}`;
+      window.history.replaceState(window.history.state, '', cleanUrl);
+      store.finishHandoff(token);
+      // router.replace re-writes the SAME history entry via vue-router's own
+      // replaceState — no extra replaceState call is needed or wanted.
+      await proxy().$router?.replace('/');
+    }
+  }
   await checkExtension();
   // Listen for the extension's final result (posted to the window by the
   // content-script bridge). Handles both success (JWT) and failure/timeout.
@@ -110,6 +109,10 @@ onMounted(async () => {
     extWaiting.value = false;
     extBusy.value = false;
     stopPoll();
+    // YD-AUTH-002: when a handoff #access_token fragment was already consumed
+    // above, the extension bridge must not OVERWRITE that newer token with a
+    // stale extension 'ok' payload (no competing write).
+    if (fragmentConsumed) return;
     if (payload?.status === 'ok' && payload.accessToken) {
       store.finishHandoff(payload.accessToken);
       proxy().$router?.push('/');
@@ -128,21 +131,6 @@ onMounted(async () => {
     window.removeEventListener('focus', onFocus);
     document.removeEventListener('visibilitychange', onFocus);
   };
-  if (store.isHandoffMode) {
-    const token = parseFragmentAccessToken(proxy().$route?.hash as string | undefined);
-    if (token) {
-      // History hygiene FIRST — synchronously, before any store write or await —
-      // so no async storage/navigation work can run while the secret is still in
-      // the URL. Preserve the existing history state object (never null), which
-      // keeps history.back() behavior intact; a null state would corrupt it.
-      const cleanUrl = `${window.location.pathname}${window.location.search}`;
-      window.history.replaceState(window.history.state, '', cleanUrl);
-      store.finishHandoff(token);
-      // router.replace re-writes the SAME history entry via vue-router's own
-      // replaceState — no extra replaceState call is needed or wanted.
-      await proxy().$router?.replace('/');
-    }
-  }
 });
 
 onUnmounted(() => {
@@ -210,7 +198,7 @@ async function handleExtensionDone() {
           <ol class="mt-2 list-decimal space-y-1 pl-5">
             <li>Buka Chrome dengan flag remote-debugging (lihat README capture-client).</li>
             <li>Login ke Kulon di window itu.</li>
-            <li>jalankan tool capture: <code>node capture-handoff.mjs --api &lt;serverUrl&gt;</code></li>
+            <li>jalankan tool capture: <code>node capture-handoff.mjs --api &lt;serverUrl&gt; --app-url &lt;spaUrl&gt;</code></li>
           </ol>
           <p class="mt-2">Menunggu session dari tool capture…</p>
         </div>

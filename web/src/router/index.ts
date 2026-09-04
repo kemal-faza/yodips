@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouterHistory, type Router } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { isMobileDevice } from '../config/extension';
+import { isHandoffAccessTokenHash } from '../lib/handoff-token';
 
 export function buildRouter(history: RouterHistory): Router {
   const router = createRouter({
@@ -36,6 +37,14 @@ export function buildRouter(history: RouterHistory): Router {
       return { name: 'login' };
     }
     if (to.name === 'login' && store.isAuthenticated) {
+      // YD-AUTH-002: a valid #access_token=<strict JWT> handoff fragment on
+      // /login carries a NEWER token that LoginView must consume — do not bounce
+      // it to the dashboard just because an older local JWT exists. A malformed
+      // hash (or no hash) does NOT bypass the redirect. The hash is not
+      // sent in HTTP requests, so letting it reach the SPA is safe.
+      if (isHandoffAccessTokenHash(to.hash)) {
+        return true;
+      }
       return { name: 'dashboard' };
     }
     return true;
