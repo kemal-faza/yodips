@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAssignments, getCourses, capture } from './client';
-import { emitReauthRequested } from '../lib/reauth';
+import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
 
 const { getCachedMock } = vi.hoisted(() => ({ getCachedMock: vi.fn() }));
 vi.mock('./cache', () => ({
@@ -331,6 +331,129 @@ describe('api client', () => {
     });
   });
 
+  describe('logout race', () => {
+    beforeEach(() => {
+      // The reauth/refresh emit mocks accumulate call counts across the parent
+      // describe (only the 'silent refresh' describe clears them); our
+      // not.toHaveBeenCalled assertions need a clean slate.
+      (emitReauthRequested as any).mockClear();
+      (emitTokenRefreshed as any).mockClear();
+    });
+
+    it('sibling 401 during logout rejects immediately: no refresh POST, token untouched, no reauth/refresh emission', async () => {
+      localStorage.setItem('sso_token', 'keep-me');
+      await vi.resetModules();
+      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+        import('./client'),
+        import('../lib/logout'),
+      ]);
+      const onRejected = responseHandlers.onRejected!;
+      beginLogout(); // logout in progress
+      try {
+        const error = {
+          response: { status: 401, data: { code: 'SESSION_DEAD' } },
+          config: { method: 'get', url: '/api/kulon/assignments' },
+        };
+        await expect(onRejected(error)).rejects.toMatchObject(error);
+        expect(mockRequest).not.toHaveBeenCalled(); // no refresh POST, no retry
+        expect(localStorage.getItem('sso_token')).toBe('keep-me');
+        expect(emitReauthRequested).not.toHaveBeenCalled();
+        expect(emitTokenRefreshed).not.toHaveBeenCalled();
+      } finally {
+        endLogout();
+      }
+    });
+
+    it('refresh success that resolves after logout started is DISCARDED: token not written, no emission', async () => {
+      localStorage.setItem('sso_token', 'old-jwt');
+      let resolveRefresh!: (v: { data: { accessToken: string } }) => void;
+      mockRequest.mockImplementationOnce(
+        () => new Promise((res) => { resolveRefresh = res; }),
+      );
+      await vi.resetModules();
+      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+        import('./client'),
+        import('../lib/logout'),
+      ]);
+      const onRejected = responseHandlers.onRejected!;
+      const error = {
+        response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+        config: { method: 'get', url: '/api/auth/me' },
+      };
+      const pending = onRejected(error); // starts the refresh flight
+      beginLogout(); // logout starts while refresh is in flight
+      resolveRefresh({ data: { accessToken: 'minted-during-logout' } });
+      await expect(pending).rejects.toBeTruthy(); // interceptor rejects, never retries
+      expect(localStorage.getItem('sso_token')).toBe('old-jwt'); // discard, no write
+      expect(emitTokenRefreshed).not.toHaveBeenCalled();
+      expect(emitReauthRequested).not.toHaveBeenCalled();
+      endLogout();
+    });
+
+    it('refresh-failure 401 during logout does NOT wipe the token nor emit reauth', async () => {
+      localStorage.setItem('sso_token', 'old-jwt');
+      mockRequest.mockRejectedValueOnce({
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+      }); // the refresh POST itself 401s
+      await vi.resetModules();
+      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+        import('./client'),
+        import('../lib/logout'),
+      ]);
+      const onRejected = responseHandlers.onRejected!;
+      const error = {
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+        config: { method: 'get', url: '/api/auth/me' },
+      };
+      beginLogout();
+      try {
+        await expect(onRejected(error)).rejects.toBeTruthy();
+        expect(localStorage.getItem('sso_token')).toBe('old-jwt'); // logout wipes locally, not this gate
+        expect(emitReauthRequested).not.toHaveBeenCalled();
+      } finally {
+        endLogout();
+      }
+    });
+
+    it('sibling 401 whose response handler runs AFTER logout began (deferred ordering) rejects immediately — deterministic interceptor/store boundary proof', async () => {
+      // This is the F2 seam's exact shape, made deterministic: the user clicks
+      // logout while a sibling request is ALREADY in flight; the sibling's 401
+      // response handler runs after logout() has begun. `beginLogout()` here
+      // models "logout began" and is called BEFORE `onRejected` executes — the
+      // interceptor must see the flag up and reject with zero refresh/retry/
+      // reauth side effects. The interceptor reads the flag synchronously at the
+      // top of the 401 branch, so there is no race in the unit: the flag state
+      // at the moment the handler runs is fully determined by the test. (The
+      // store-side ordering — logout raises the flag before any await, so a
+      // response handler that runs after the click always sees it up — is the
+      // caller's contract, pinned by the store test in Step 9; this test pins
+      // the callee's contract: flag up ⇒ bare reject.)
+      localStorage.setItem('sso_token', 'keep-me');
+      await vi.resetModules();
+      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+        import('./client'),
+        import('../lib/logout'),
+      ]);
+      const onRejected = responseHandlers.onRejected!;
+      const error = {
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+        config: { method: 'get', url: '/api/kulon/assignments' },
+      };
+      // Logout click: the request was sent earlier; its 401 response handler now
+      // runs with the flag up — exactly the deferred-ordering seam.
+      beginLogout();
+      try {
+        await expect(onRejected(error)).rejects.toMatchObject(error);
+        expect(mockRequest).not.toHaveBeenCalled(); // no refresh POST, no retry
+        expect(localStorage.getItem('sso_token')).toBe('keep-me');
+        expect(emitReauthRequested).not.toHaveBeenCalled();
+        expect(emitTokenRefreshed).not.toHaveBeenCalled();
+      } finally {
+        endLogout();
+      }
+    });
+  });
+
   it('getSiapLecturers GET /api/siap/lecturers', async () => {
     mockRequest.mockResolvedValue({ data: [{ kode: 'MIK16245xx', dosen: 'Dosen A' }] });
     const { getSiapLecturers } = await import('./client');
@@ -421,5 +544,183 @@ describe('api client', () => {
         { freshTtl: 60_000, staleTtl: 60_000 },
       );
     });
+  });
+});
+
+describe('epoch ownership after logout fully resolves (RED: flag-down resurrection)', () => {
+  beforeEach(() => {
+    (emitReauthRequested as any).mockClear();
+    (emitTokenRefreshed as any).mockClear();
+    // This describe lives OUTSIDE the outer 'api client' describe, so its
+    // beforeEach (mockReset + resetModules) does not run here — reset the
+    // shared axios mock so per-test call-count assertions are isolated.
+    mockRequest.mockReset();
+  });
+
+  it('refresh success resolving AFTER logout fully is DISCARDED: no write, no emit, no retry', async () => {
+    localStorage.setItem('sso_token', 'old-jwt');
+    let resolveRefresh!: (v: { data: { accessToken: string } }) => void;
+    mockRequest.mockImplementationOnce(
+      () => new Promise((res) => { resolveRefresh = res; }),
+    );
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const onRejected = responseHandlers.onRejected!;
+    const epochBefore = logoutMod.getReauthEpoch();
+    const error = {
+      response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+      config: { method: 'get', url: '/api/auth/me', __reauthEpoch: epochBefore },
+    };
+    const pending = onRejected(error); // starts the refresh flight at epochBefore
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // logout FULLY resolves: flag down, epoch bumped
+    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    expect(logoutMod.getReauthEpoch()).toBe(epochBefore + 1);
+    resolveRefresh({ data: { accessToken: 'minted-after-logout' } });
+    await expect(pending).rejects.toBeTruthy();
+    expect(localStorage.getItem('sso_token')).toBe('old-jwt');
+    expect(emitTokenRefreshed).not.toHaveBeenCalled();
+    expect(emitReauthRequested).not.toHaveBeenCalled();
+    expect(mockRequest).toHaveBeenCalledTimes(1); // refresh only, no retry
+  });
+
+  it('refresh 401 resolving AFTER logout fully does NOT wipe the token nor emit reauth', async () => {
+    localStorage.setItem('sso_token', 'old-jwt');
+    let rejectRefresh!: (e: unknown) => void;
+    mockRequest.mockImplementationOnce(
+      () => new Promise((_, rej) => { rejectRefresh = rej; }),
+    );
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const onRejected = responseHandlers.onRejected!;
+    const epochBefore = logoutMod.getReauthEpoch();
+    const error = {
+      response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+      config: { method: 'get', url: '/api/auth/me', __reauthEpoch: epochBefore },
+    };
+    const pending = onRejected(error);
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // fully resolves while refresh is in flight
+    rejectRefresh({ response: { status: 401, data: { code: 'SESSION_DEAD' } } });
+    await expect(pending).rejects.toBeTruthy();
+    expect(localStorage.getItem('sso_token')).toBe('old-jwt');
+    expect(emitReauthRequested).not.toHaveBeenCalled();
+  });
+
+  it('sibling 401 whose handler runs AFTER logout fully (origin pre-logout) never refreshes/retries/emits', async () => {
+    localStorage.setItem('sso_token', 'keep-me');
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const onRejected = responseHandlers.onRejected!;
+    const epochBefore = logoutMod.getReauthEpoch();
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // logout fully BEFORE the sibling 401 handler runs
+    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    const error = {
+      response: { status: 401, data: { code: 'SESSION_DEAD' } },
+      config: { method: 'get', url: '/api/kulon/assignments', __reauthEpoch: epochBefore },
+    };
+    await expect(onRejected(error)).rejects.toMatchObject(error);
+    expect(mockRequest).not.toHaveBeenCalled();
+    expect(localStorage.getItem('sso_token')).toBe('keep-me');
+    expect(emitReauthRequested).not.toHaveBeenCalled();
+    expect(emitTokenRefreshed).not.toHaveBeenCalled();
+  });
+});
+
+describe('shared refresh epoch ownership via production request stamp (E0 logout E1)', () => {
+  beforeEach(() => {
+    (emitReauthRequested as any).mockClear();
+    (emitTokenRefreshed as any).mockClear();
+    mockRequest.mockReset();
+  });
+
+  it('request interceptor stamps the reauth epoch via the production seam', async () => {
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const stamp = mockInstance.requestHandler!;
+    expect(typeof stamp).toBe('function');
+    const cfg: any = { method: 'get', url: '/api/auth/me', headers: {} };
+    stamp(cfg);
+    expect(cfg.__reauthEpoch).toBe(logoutMod.getReauthEpoch());
+    logoutMod.beginLogout();
+    const cfg2: any = { method: 'get', url: '/api/auth/me', headers: {} };
+    stamp(cfg2);
+    expect(cfg2.__reauthEpoch).toBe(logoutMod.getReauthEpoch());
+    expect(cfg2.__reauthEpoch).not.toBe(cfg.__reauthEpoch);
+    logoutMod.endLogout();
+  });
+
+  it('deferred E0 401 -> logout fully -> E1 401: E1 never joins/accepts the E0 flight (production stamp)', async () => {
+    // Exact deferred regression: E0's refresh is still pending when logout
+    // fully resolves, then a NEW E1 request (stamped AFTER logout via the real
+    // request interceptor) 401s. E1 must start its OWN refresh — never join or
+    // accept the orphaned E0 flight — and the old finally must not clear it.
+    localStorage.setItem('sso_token', 'old-jwt');
+    let resolveR0!: (v: { data: { accessToken: string } }) => void;
+    let resolveR1!: (v: { data: { accessToken: string } }) => void;
+    mockRequest.mockImplementationOnce(
+      () => new Promise((res) => { resolveR0 = res; }),
+    );
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const onRejected = responseHandlers.onRejected!;
+    const stamp = mockInstance.requestHandler!;
+    // E0 request sent BEFORE logout (production stamp, not fabricated).
+    const cfgE0: any = { method: 'get', url: '/api/auth/me', headers: {} };
+    stamp(cfgE0);
+    const epochE0 = cfgE0.__reauthEpoch;
+    const errE0 = {
+      response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+      config: cfgE0,
+    };
+    const pendingE0 = onRejected(errE0); // starts refresh flight R0 at E0
+    expect(mockRequest).toHaveBeenCalledTimes(1);
+    // Logout FULLY resolves while R0 is pending.
+    logoutMod.beginLogout();
+    logoutMod.endLogout();
+    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    const epochE1 = logoutMod.getReauthEpoch();
+    expect(epochE1).not.toBe(epochE0);
+    // E1 request sent AFTER logout (fresh production stamp).
+    const cfgE1: any = { method: 'get', url: '/api/auth/me', headers: {} };
+    stamp(cfgE1);
+    expect(cfgE1.__reauthEpoch).toBe(epochE1);
+    // Queue E1's own refresh + its retry GET before triggering the handler.
+    mockRequest.mockImplementationOnce(
+      () => new Promise((res) => { resolveR1 = res; }),
+    );
+    mockRequest.mockResolvedValueOnce({ data: { id: 1 } }); // E1 retry GET
+    const errE1 = {
+      response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+      config: cfgE1,
+    };
+    const pendingE1 = onRejected(errE1);
+    // E1 must NOT have joined R0: a second refresh POST started.
+    expect(mockRequest).toHaveBeenCalledTimes(2);
+    // Resolve the orphaned E0 flight first — it must be discarded.
+    resolveR0({ data: { accessToken: 'token-E0-orphaned' } });
+    await expect(pendingE0).rejects.toBeTruthy();
+    // Resolve E1's own flight — it retries and succeeds with its own token.
+    resolveR1({ data: { accessToken: 'token-E1' } });
+    const retried: any = await pendingE1;
+    expect(retried.data).toEqual({ id: 1 });
+    expect(localStorage.getItem('sso_token')).toBe('token-E1'); // never E0
+    expect(mockRequest).toHaveBeenCalledTimes(3); // R0 + R1 + E1 retry, no E0 retry
   });
 });

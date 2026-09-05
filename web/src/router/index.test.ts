@@ -100,7 +100,7 @@ describe('router guard', () => {
 describe('router guard + handoff fragment (YD-AUTH-002)', () => {
   // Strict three-segment base64url JWT fixture (same shape the capture tool's
   // #access_token fragment delivers). See helper unit tests below.
-  const GOOD_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3';
+  const GOOD_TOKEN = 'AAA.BBB.CCC';
 
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -140,7 +140,7 @@ describe('router guard + handoff fragment (YD-AUTH-002)', () => {
   it('the guard predicate reuses the shared strict-shape handoff hash helper', () => {
     // The guard gates on this exact helper — a valid strict-shape hash must
     // classify true (reaching LoginView), malformed ones false (still bounced).
-    const GOOD_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3';
+    const GOOD_TOKEN = 'AAA.BBB.CCC';
     expect(isHandoffAccessTokenHash(`#access_token=${GOOD_TOKEN}`)).toBe(true);
     expect(isHandoffAccessTokenHash('#access_token=not-a-jwt')).toBe(false);
     expect(isHandoffAccessTokenHash('#access_token=')).toBe(false);

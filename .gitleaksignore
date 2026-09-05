@@ -1,0 +1,15 @@
+# F4 fixture hygiene (2026-09-04): exact historical suppressions for the FIVE
+# synthetic-JWT findings (generic-api-key) introduced inside the bebcd7e..HEAD
+# delta. Gitleaks attributes each finding to its INTRODUCING commit — removal
+# commits cannot clear them (verified), and history rewrite is forbidden, so
+# these five exact fingerprints are the only CI-safe suppression. The tree-side
+# fixture is swapped to AAA.BBB.CCC in this same commit. No broad regex or path
+# suppression is added — the file names exactly <commit>:<path>:<rule>:<line> per
+# known finding — and .gitleaks.toml stays byte-identical (no allowlist change).
+# One fingerprint per line, sorted; never add a 6th entry unless a NEW finding
+# is triaged.
+4d493131dc7db7945528c6e28772c2d0a32a8093:web/src/views/LoginView.test.ts:generic-api-key:134
+903feba1b44197efc0ac794700d5307cfd3c0496:web/src/router/index.test.ts:generic-api-key:102
+96c3fac50f6b7a2ae97434c8a3f4626655f8e966:web/src/views/LoginView.test.ts:generic-api-key:369
+f0d151b8bf0c4c10b80570ccc6826c8baae6ee4d:web/src/lib/handoff-token.test.ts:generic-api-key:11
+f0d151b8bf0c4c10b80570ccc6826c8baae6ee4d:web/src/router/index.test.ts:generic-api-key:143

@@ -32,6 +32,26 @@ describe('useExtension', () => {
     expect(await useExtension().sendHandoff()).toBe('not-installed');
   });
 
+  it.each([
+    null,
+    undefined,
+    'malformed',
+    42,
+    [],
+    {},
+    { status: 'unknown' },
+    { status: 'ok' },
+    { status: 'started' },
+    { status: 'error' },
+  ])('sendHandoff turns malformed runtime response %# into a controlled error', async (response) => {
+    mockChrome(true, () => response);
+
+    await expect(useExtension().sendHandoff()).resolves.toEqual({
+      status: 'error',
+      message: expect.any(String),
+    });
+  });
+
   it('readStatus returns poll payload', async () => {
     mockChrome(true, (msg) => (msg.action === 'status' ? { status: 'ok', active: true, phase: 'sso' } : { status: 'ok' }));
     const s = await useExtension().readStatus();
@@ -41,6 +61,25 @@ describe('useExtension', () => {
   it('readStatus returns null when not installed', async () => {
     mockChrome(false);
     expect(await useExtension().readStatus()).toBeNull();
+  });
+
+  it.each([
+    null,
+    undefined,
+    'malformed',
+    42,
+    [],
+    {},
+    { status: 'unknown' },
+    { status: 'ok' },
+    { status: 'ok', active: 'yes' },
+  ])('readStatus turns malformed runtime response %# into a controlled error', async (response) => {
+    mockChrome(true, () => response);
+
+    await expect(useExtension().readStatus()).resolves.toEqual({
+      status: 'error',
+      message: expect.any(String),
+    });
   });
 
   it('onResult listens to the undip-sso-extension window message', async () => {
@@ -68,4 +107,17 @@ describe('useExtension', () => {
     window.dispatchEvent(new MessageEvent('message', { origin: 'https://evil.example', data: { source: 'undip-sso-extension', payload: { status: 'ok', accessToken: 'forged' } } }));
     expect(cb).not.toHaveBeenCalled();
   });
+
+  it.each([null, undefined, 'malformed', 42, {}, { status: 'unknown' }, { status: 'ok' }])(
+    'onResult ignores malformed bridge payload %#',
+    (payload) => {
+      const cb = vi.fn();
+      useExtension().onResult(cb);
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { source: 'undip-sso-extension', payload },
+      }));
+      expect(cb).not.toHaveBeenCalled();
+    },
+  );
 });
