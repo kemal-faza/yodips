@@ -53,6 +53,57 @@ export class InMemorySessionStore extends SessionStore {
     this.records.delete(identity);
   }
 
+  /**
+   * Generation-qualified snapshot. Synchronous check+return with NO await
+   * between them, so no interleaving is possible on the single-threaded
+   * event loop. Expiry/absolute-dead are evaluated BEFORE the generation
+   * compare (dead → deleted, null either way); mismatch never slides or
+   * deletes; match slides exactly like `get()`.
+   */
+  async getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null> {
+    const record = this.records.get(identity);
+    if (!record) return null;
+    if (Date.now() > record.expiresAt) {
+      this.records.delete(identity);
+      return null;
+    }
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - record.session.capturedAt >= this.absoluteMs
+    ) {
+      this.records.delete(identity);
+      return null;
+    }
+    if (record.session.sessionGeneration !== generation) return null;
+    // Match: slide like get().
+    record.expiresAt = Date.now() + this.ttlMs;
+    return record.session;
+  }
+
+  /**
+   * Atomic compare-and-clear. Synchronous check+delete with NO await between
+   * them, so no interleaving is possible on the single-threaded event loop.
+   * Expired/absolute-dead records are treated as absent (deleted, true).
+   */
+  async clearIfGeneration(identity: string, generation: string): Promise<boolean> {
+    const record = this.records.get(identity);
+    if (!record) return true;
+    if (Date.now() > record.expiresAt) {
+      this.records.delete(identity);
+      return true;
+    }
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - record.session.capturedAt >= this.absoluteMs
+    ) {
+      this.records.delete(identity);
+      return true;
+    }
+    if (record.session.sessionGeneration !== generation) return false;
+    this.records.delete(identity);
+    return true;
+  }
+
   async all(): Promise<CapturedSession[]> {
     const now = Date.now();
     const result: CapturedSession[] = [];

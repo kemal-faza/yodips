@@ -1,8 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomBytes } from 'crypto';
 import { chromium } from 'playwright-core';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
+
+/** 128-bit collision-proof session generation: 32 lowercase hex chars. */
+export const SESSION_GENERATION_RE = /^[0-9a-f]{32}$/;
+
+/** Generate a fresh session generation with Node stdlib crypto (128-bit). */
+export function generateSessionGeneration(): string {
+  return randomBytes(16).toString('hex');
+}
+
+/** True iff `v` is a well-formed session generation (32 lowercase hex). */
+export function isSessionGeneration(v: unknown): v is string {
+  return typeof v === 'string' && SESSION_GENERATION_RE.test(v);
+}
 
 export interface CapturedSession {
   identity: string;
@@ -12,7 +26,15 @@ export interface CapturedSession {
   siapCookie: string;
   /** Email SSO mahasiswa (dari profil SIAP). Wajib utk mint token API resmi. */
   emailSso?: string;
+  /** Wall-clock capture time — LIFETIME ONLY (absolute TTL bound). Never used as a JWT binding. */
   capturedAt: number;
+  /**
+   * Collision-proof session binding (128-bit crypto randomness, 32 lowercase
+   * hex). Fresh on every newly captured/stored session; the signed JWT claim
+   * `sessionGeneration` must exactly equal the live store record. Legacy
+   * records/tokens lacking it are intentionally rejected (one-time relogin).
+   */
+  sessionGeneration: string;
 }
 
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000; // 5 minutes
@@ -239,6 +261,7 @@ export class PlaywrightAuthService {
       kulonCookie,
       siapCookie,
       capturedAt: Date.now(),
+      sessionGeneration: generateSessionGeneration(),
     };
   }
 

@@ -66,12 +66,22 @@ export class AuthController {
     return this.authService.me(req.user);
   }
 
-  // Server-side logout: JWT-guarded (a valid bearer identifies the session
-  // owner). Clears the server session so the token can no longer be refreshed.
-  // `req.user` is set by JwtAuthGuard before this runs (same contract as me()).
-  @UseGuards(JwtAuthGuard)
+  // Server-side logout. NOT JWT-guarded: an expired-but-valid bearer must still
+  // be able to clear its session (the guard's exp check would reject it), so
+  // the service verifies the signature itself (ignoreExpiration) and applies
+  // the generation semantics (old-generation tokens never clear a newer
+  // session; no-record logout is idempotent). Throttled hard like refresh.
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('logout')
-  logout(@Req() req: any) {
-    return this.authService.logout(req.user.sub);
+  async logout(@Req() req: any) {
+    const auth = req.headers?.authorization ?? '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!token) {
+      throw new HttpException(
+        { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return this.authService.logout(token);
   }
 }

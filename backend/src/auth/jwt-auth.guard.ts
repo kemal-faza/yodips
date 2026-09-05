@@ -1,12 +1,15 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { SessionStore } from '../session/session-store';
+import { isSessionGeneration } from '../playwright/playwright-auth.service';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly sessionStore: SessionStore,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -17,8 +20,9 @@ export class JwtAuthGuard implements CanActivate {
     // to 403 Forbidden): clients key their silent-refresh / re-login flows off
     // the 401 status, and 401 is the semantically correct auth-failure code.
     if (!token) throw new UnauthorizedException();
+    let payload: { sub?: unknown; sessionGeneration?: unknown; via?: unknown };
     try {
-      req.user = await this.jwt.verifyAsync(token, {
+      payload = await this.jwt.verifyAsync(token, {
         secret: this.config.get<string>('JWT_SECRET'),
         // Pin the algorithm and require issuer/audience so a forged/mismatched
         // token (e.g. one signed with a different alg or for another audience)
@@ -27,9 +31,29 @@ export class JwtAuthGuard implements CanActivate {
         issuer: 'yodips',
         audience: 'yodips-web',
       });
-      return true;
     } catch {
-      throw new UnauthorizedException();
+      throw new UnauthorizedException(); // bare 401 (existing behavior)
     }
+    // Claim shape: non-empty string sub + 32-hex sessionGeneration.
+    // A legacy/no-claim token fails here → bare 401.
+    const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
+    const generation = payload?.sessionGeneration;
+    if (!sub || !isSessionGeneration(generation)) throw new UnauthorizedException();
+    // Presence read lives OUTSIDE the verify try so SESSION_DEAD is not
+    // swallowed into a bare 401. Generation-qualified snapshot: the exact
+    // token generation must still be live — a B-replacement after mint is a
+    // miss (SESSION_DEAD), closing the guard→service TOCTOU at its source
+    // (services re-validate with the same generation before touching cookies).
+    const record = await this.sessionStore.getIfGeneration(sub, generation);
+    if (!record || !isSessionGeneration(record.sessionGeneration)) {
+      throw new UnauthorizedException({ code: 'SESSION_DEAD', message: 'Sesi berakhir. Silakan login ulang' });
+    }
+    if (record.sessionGeneration !== generation) {
+      // An old-generation token (minted before the user's last re-login) must
+      // not pass against the newer live session.
+      throw new UnauthorizedException({ code: 'SESSION_DEAD', message: 'Sesi berakhir. Silakan login ulang' });
+    }
+    req.user = { sub, sessionGeneration: generation, ...payload };
+    return true;
   }
 }

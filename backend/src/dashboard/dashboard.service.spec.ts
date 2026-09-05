@@ -9,6 +9,9 @@ const PROFILE: SiapProfile = { nama: 'A', nim: '2406', fakultas: 'F', prodi: 'P'
 const COURSE: KulonCourse = { id: 1, fullname: 'C1', shortname: 'M1', idnumber: 'MIK1', semester: '2026/2027 Ganjil', timelineStatus: 'inprogress', progress: 50 } as KulonCourse;
 const ASSIGN: KulonAssignment = { id: 1, name: 'T1', module: 'assign', duedate: 0, overdue: false, course: 'C1', courseId: 1, assignmentId: 1, courseModuleId: 1 } as KulonAssignment;
 
+const GEN = 'a'.repeat(32);
+const ref = (sub: string) => ({ sub, sessionGeneration: GEN });
+
 function makeService(overrides: Record<string, jest.Mock>): DashboardService {
   const deps = {
     siap: {
@@ -34,7 +37,7 @@ function makeService(overrides: Record<string, jest.Mock>): DashboardService {
 describe('DashboardService', () => {
   it('returns all slices + empty errors when every domain method succeeds', async () => {
     const svc = makeService({});
-    const out: DashboardPayload = await svc.getDashboard('u1');
+    const out: DashboardPayload = await svc.getDashboard(ref('u1'));
     expect(out.profile).toEqual(PROFILE);
     expect(out.courses).toEqual([COURSE]);
     expect(out.assignments).toEqual([ASSIGN]);
@@ -44,23 +47,30 @@ describe('DashboardService', () => {
     expect(out.jadwal).toEqual([]);
   });
 
-  it('maps a 401 StaleUpstreamError to a per-slice errors entry, keeping other slices', async () => {
+  it('rethrows a 401 StaleUpstreamError instead of degrading an authenticated slice', async () => {
     const stale = new StaleUpstreamError('SIAP', 'login-redirect');
     const svc = makeService({
       getProfile: jest.fn().mockRejectedValue(stale),
     });
-    const out = await svc.getDashboard('u1');
-    expect(out.profile).toBeNull();
-    expect(out.errors.profile).toEqual({ status: 401, message: 'Session SIAP expired. Silakan login ulang via SSO' });
-    expect(out.courses).toEqual([COURSE]);
-    expect(out.assignments).toEqual([ASSIGN]);
+    await expect(svc.getDashboard(ref('u1'))).rejects.toBe(stale);
+  });
+
+  it('rethrows SESSION_DEAD from a settled slice', async () => {
+    const dead = new HttpException(
+      { message: 'Sesi berakhir', code: 'SESSION_DEAD' },
+      HttpStatus.UNAUTHORIZED,
+    );
+    const svc = makeService({
+      getCourses: jest.fn().mockRejectedValue(dead),
+    });
+    await expect(svc.getDashboard(ref('u1'))).rejects.toBe(dead);
   });
 
   it('maps a 502 transient StaleUpstreamError to errors with 502', async () => {
     const svc = makeService({
       getJadwal: jest.fn().mockRejectedValue(new StaleUpstreamError('SIAP', 'fetch-threw')),
     });
-    const out = await svc.getDashboard('u1');
+    const out = await svc.getDashboard(ref('u1'));
     expect(out.errors.jadwal).toEqual({ status: 502, message: expect.stringContaining('SIAP') });
   });
 
@@ -68,7 +78,7 @@ describe('DashboardService', () => {
     const svc = makeService({
       getCourses: jest.fn().mockRejectedValue(new Error('internal secret') as never),
     });
-    const out = await svc.getDashboard('u1');
+    const out = await svc.getDashboard(ref('u1'));
     expect(out.courses).toEqual([]);
     expect(out.errors.courses).toEqual({ status: 500, message: 'Terjadi kesalahan internal' });
     expect(JSON.stringify(out.errors)).not.toContain('internal secret');
@@ -78,16 +88,16 @@ describe('DashboardService', () => {
     const svc = makeService({
       getIrs: jest.fn().mockRejectedValue(new HttpException({ message: ['a', 'b'] }, HttpStatus.BAD_REQUEST) as never),
     });
-    const out = await svc.getDashboard('u1');
+    const out = await svc.getDashboard(ref('u1'));
     expect(out.errors.irs).toEqual({ status: 400, message: 'a, b' });
   });
 
-  it('passes sub to every domain method', async () => {
+  it('passes the exact SessionRef to every domain method (none drops generation)', async () => {
     const getCourses = jest.fn().mockResolvedValue([COURSE]);
     const getAllAssignments = jest.fn().mockResolvedValue([ASSIGN]);
     const svc = makeService({ getCourses, getAllAssignments });
-    await svc.getDashboard('u1');
-    expect(getCourses).toHaveBeenCalledWith('u1');
-    expect(getAllAssignments).toHaveBeenCalledWith('u1');
+    await svc.getDashboard(ref('u1'));
+    expect(getCourses).toHaveBeenCalledWith(ref('u1'));
+    expect(getAllAssignments).toHaveBeenCalledWith(ref('u1'));
   });
 });
