@@ -95,4 +95,25 @@ describe('useDashboard (single request)', () => {
     await d.load();
     expect(dashboardFetch).toHaveBeenCalledTimes(1);
   });
+
+  it('stale load crossed by clearCache writes nothing and raises no banners', async () => {
+    // Logout wipes the cache while the dashboard fetch is in flight: the
+    // typed stale rejection must stay silent — no logged-out-user payload in
+    // the refs, no user-facing error banners.
+    let resolveFetch!: (v: unknown) => void;
+    dashboardFetch.mockImplementation(() => new Promise((res) => { resolveFetch = res; }));
+    const d = useDashboard();
+    const p = d.load();
+    clearCache(); // logout crosses the in-flight dashboard fetch
+    resolveFetch(ok({ profile: { nama: 'Stale' }, courses: [{ id: 1 }] }));
+    await p;
+    expect(d.siap.value.profile).toBeNull();
+    expect(d.kulon.value.courses).toEqual([]);
+    expect(d.siapError.value).toBeNull();
+    expect(d.kulonError.value).toBeNull();
+    // B-era load after the wipe fetches fresh.
+    dashboardFetch.mockResolvedValue(ok({ profile: { nama: 'Fresh' } }));
+    await d.load();
+    expect(d.siap.value.profile?.nama).toBe('Fresh');
+  });
 });

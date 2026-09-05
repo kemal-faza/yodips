@@ -8,14 +8,17 @@ function flushPromises(): Promise<void> {
 }
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from './auth';
+import { beginLogout, endLogout, isLogoutInProgress, getReauthEpoch } from '../lib/logout';
 import * as api from '../api/client';
 import { EXTENSION_ID } from '../config/extension';
 import * as cache from '../api/cache';
+import { useKulonStore } from './kulon';
 
 vi.mock('../api/client', () => ({
   capture: vi.fn(),
   me: vi.fn(),
   getSiapProfile: vi.fn().mockResolvedValue(null),
+  getAllAssignments: vi.fn(),
   logoutSession: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -47,6 +50,8 @@ vi.mock('../composables/useExtension', async (importOriginal) => {
       const api = actual.useExtension();
       return { ...api, logout: extLogout };
     },
+    isExtOutboundStatus: actual.isExtOutboundStatus,
+    isExtPollStatus: actual.isExtPollStatus,
   };
 });
 import { useExtension } from '../composables/useExtension';
@@ -85,6 +90,49 @@ describe('auth store', () => {
     expect(store.token).toBeNull();
     expect(store.error).not.toContain('Request failed with status code 429');
     expect(store.error).toContain('Terlalu banyak percobaan');
+  });
+
+  it('a stale legacy login success cannot overwrite a newer login attempt', async () => {
+    let resolveA!: (value: any) => void;
+    let resolveB!: (value: any) => void;
+    (api.capture as any)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    const store = useAuthStore();
+    const loginA = store.login();
+    const loginB = store.login();
+
+    resolveA({ accessToken: 'jwt-a', hasKulon: true, hasSiap: true });
+    await flushPromises();
+    expect(store.token).toBeNull();
+    expect(store.checking).toBe(true);
+    expect(store.error).toBeNull();
+
+    resolveB({ accessToken: 'jwt-b', hasKulon: true, hasSiap: true });
+    await Promise.all([loginA, loginB]);
+    expect(store.token).toBe('jwt-b');
+  });
+
+  it('a stale legacy login catch and finally cannot mutate the newer attempt', async () => {
+    let rejectA!: (reason?: unknown) => void;
+    let resolveB!: (value: any) => void;
+    (api.capture as any)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectA = reject; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    const store = useAuthStore();
+    const loginA = store.login();
+    const loginB = store.login();
+
+    rejectA(new Error('stale A failure'));
+    await flushPromises();
+    expect(store.error).toBeNull();
+    expect(store.checking).toBe(true);
+
+    resolveB({ accessToken: 'jwt-b', hasKulon: true, hasSiap: true });
+    await Promise.all([loginA, loginB]);
+    expect(store.token).toBe('jwt-b');
+    expect(store.error).toBeNull();
+    expect(store.checking).toBe(false);
   });
 
   it('logout clears token', async () => {
@@ -163,6 +211,36 @@ describe('auth store', () => {
     expect(localStorage.getItem('sso_token')).toBeNull();
   });
 
+  it('A incomplete session clears Kulon data before relogin as B while keeping device preferences', async () => {
+    const auth = useAuthStore();
+    const kulon = useKulonStore();
+    auth.token = 'jwt-a';
+    auth.user = { sub: 'a', nama: 'A' } as any;
+    kulon.assignments = [{ id: 1 } as any];
+    kulon.courses = [{ id: 2 } as any];
+    kulon.hidden = [9];
+    (api.me as any).mockResolvedValue({
+      sub: 'a', authenticated: true, hasSso: true, hasMicrosoft: false,
+      hasKulon: false, hasSiap: false, complete: false,
+    });
+
+    expect(await auth.fetchMe()).toBe('incomplete');
+    expect(kulon.assignments).toEqual([]);
+    expect(kulon.courses).toEqual([]);
+    expect(kulon.hidden).toEqual([9]);
+
+    (api.capture as any).mockResolvedValue({
+      accessToken: 'jwt-b', capturedAt: 0, hasSso: true, hasMicrosoft: false,
+      hasKulon: true, hasSiap: true,
+    });
+    await auth.login();
+    expect(auth.token).toBe('jwt-b');
+    (api.getAllAssignments as any).mockResolvedValue([{ id: 3 }]);
+    await kulon.ensureAssignments();
+    expect(kulon.assignments).toEqual([{ id: 3 }]);
+    expect(kulon.assignments).not.toContainEqual({ id: 1 });
+  });
+
   it('fetchMe returns error and keeps the token on network failure', async () => {
     localStorage.setItem('sso_token', 'jwt-x');
     (api.me as any).mockRejectedValue(new Error('Network Error')); // no response.status
@@ -179,6 +257,48 @@ describe('auth store', () => {
     const store = useAuthStore();
     const status = await store.fetchMe();
     expect(status).toBe('invalid');
+  });
+
+  it('a stale fetchMe success cannot overwrite a newer fetchMe attempt', async () => {
+    let resolveA!: (value: any) => void;
+    let resolveB!: (value: any) => void;
+    (api.me as any)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    const store = useAuthStore();
+    const fetchA = store.fetchMe();
+    const fetchB = store.fetchMe();
+
+    resolveA({ sub: 'a', hasKulon: true, hasSiap: true, complete: true });
+    await flushPromises();
+    expect(store.user).toBeNull();
+    expect(store.hasKulon).toBe(false);
+    expect(store.hasSiap).toBe(false);
+
+    resolveB({ sub: 'b', hasKulon: false, hasSiap: false, complete: true });
+    await Promise.all([fetchA, fetchB]);
+    expect(store.user?.sub).toBe('b');
+  });
+
+  it('a stale SIAP photo completion cannot overwrite the newer session state', async () => {
+    let resolvePhoto!: (value: any) => void;
+    (api.me as any)
+      .mockResolvedValueOnce({ sub: 'a', hasKulon: true, hasSiap: true, complete: true })
+      .mockResolvedValueOnce({ sub: 'b', hasKulon: false, hasSiap: false, complete: true });
+    (api.getSiapProfile as any).mockReturnValueOnce(
+      new Promise((resolve) => { resolvePhoto = resolve; }),
+    );
+    const store = useAuthStore();
+    const fetchA = store.fetchMe();
+    await flushPromises();
+    const fetchB = store.fetchMe();
+    await fetchB;
+    expect(store.user?.sub).toBe('b');
+    expect(store.fotoUrl).toBeNull();
+
+    resolvePhoto({ fotoUrl: 'https://example.com/stale-a.jpg' });
+    await Promise.all([fetchA, new Promise((resolve) => setTimeout(resolve, 0))]);
+    expect(store.fotoUrl).toBeNull();
   });
 
   it('fetchMe loads the SIAP photo when hasSiap is true', async () => {
@@ -213,6 +333,51 @@ describe('auth store', () => {
     store.fotoUrl = 'https://example.com/x.jpg';
     await store.logout();
     expect(store.fotoUrl).toBeNull();
+  });
+
+  it('logout resets the Kulon identity store but keeps its local hidden preference', async () => {
+    const auth = useAuthStore();
+    const kulon = useKulonStore();
+    kulon.assignments = [{ id: 1 } as any];
+    kulon.courses = [{ id: 2 } as any];
+    kulon.hidden = [9];
+
+    await auth.logout();
+
+    expect(kulon.assignments).toEqual([]);
+    expect(kulon.courses).toEqual([]);
+    expect(kulon.hidden).toEqual([9]);
+  });
+
+  it('logout clears all identity-derived Pinia state but keeps no user data', async () => {
+    const store = useAuthStore();
+    store.token = 'jwt-user';
+    store.user = { sub: 'nim-a', nama: 'A' } as any;
+    store.hasSiap = true;
+    store.hasKulon = true;
+    store.fotoUrl = 'https://example.com/a.jpg';
+    store.error = 'old error';
+    store.extensionError = 'old extension error';
+    store.extensionMode = 'semi';
+    store.checking = true;
+    store.reauthing = true;
+    store.reauthPhase = 'kulon';
+    store.reauthAttempted = true;
+
+    await store.logout();
+
+    expect(store.token).toBeNull();
+    expect(store.user).toBeNull();
+    expect(store.hasSiap).toBe(false);
+    expect(store.hasKulon).toBe(false);
+    expect(store.fotoUrl).toBeNull();
+    expect(store.error).toBeNull();
+    expect(store.extensionError).toBeNull();
+    expect(store.extensionMode).toBe('auto');
+    expect(store.checking).toBe(false);
+    expect(store.reauthing).toBe(false);
+    expect(store.reauthPhase).toBeNull();
+    expect(store.reauthAttempted).toBe(false);
   });
 
   it('logout calls the server logout endpoint best-effort before local cleanup', async () => {
@@ -296,6 +461,124 @@ describe('auth store', () => {
     expect(store.isHandoffMode).toBe(true);
     vi.unstubAllEnvs();
   });
+
+  // File-scoped drain: the logout module's flag is module state (not Pinia),
+  // so vi.clearAllMocks()/localStorage.clear() do not reset it. Every test
+  // above pairs its beginLogout() with endLogout(), but a failed assertion
+  // mid-test would leak the flag into the next test — this idempotent drain
+  // makes the whole file robust to that.
+  afterEach(() => {
+    while (isLogoutInProgress()) endLogout();
+  });
+
+  it('logout raises the flag synchronously (before its first await) and releases it only after the extension wipe settles', async () => {
+    // Boundary contract the interceptor relies on: a sibling 401 that reaches
+    // the interceptor AFTER logout() was called (even synchronously) must see
+    // the flag up. logout() must therefore raise the flag before ANY await.
+    // Shape mirrors the proven pattern of the pre-existing fire-and-forget
+    // race test (gated extension wipe).
+    let flagStateAtRevoke = false;
+    (api.logoutSession as any).mockImplementation(async () => {
+      // While the server revoke is in flight (first await inside logout),
+      // a sibling 401 arriving NOW must be suppressed:
+      flagStateAtRevoke = isLogoutInProgress();
+    });
+    let extResolve: () => void = () => {};
+    const extGate = new Promise<void>((resolve) => { extResolve = resolve; });
+    extMockState.logoutImpl = () => extGate;
+    localStorage.setItem('sso_token', 'x');
+    const store = useAuthStore();
+    store.token = 'x';
+    const logoutPromise = store.logout();
+    let logoutSettled = false;
+    void logoutPromise.then(() => { logoutSettled = true; });
+    // Drain pending microtasks so logout() reaches the extension await.
+    await flushPromises();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(flagStateAtRevoke).toBe(true); // flag was up during the server revoke
+    expect(logoutSettled).toBe(false); // not resolved while the wipe is pending
+    expect(isLogoutInProgress()).toBe(true); // flag STILL held during the wipe
+    extResolve(); // settle the extension wipe → logout resolves after it
+    await logoutPromise;
+    expect(logoutSettled).toBe(true);
+    expect(isLogoutInProgress()).toBe(false); // released only after the wipe
+    extMockState.logoutImpl = undefined;
+    (api.logoutSession as any).mockResolvedValue(undefined); // restore default
+  });
+
+  it('logout is shared under concurrency: the second caller waits for full cleanup', async () => {
+    let serverCalls = 0;
+    (api.logoutSession as any).mockImplementation(async () => { serverCalls += 1; });
+    let releaseWipe!: () => void;
+    const wipeGate = new Promise<void>((resolve) => { releaseWipe = resolve; });
+    extMockState.logoutImpl = () => wipeGate;
+    localStorage.setItem('sso_token', 'x');
+    const store = useAuthStore();
+    store.token = 'x';
+    const p1 = store.logout();
+    const p2 = store.logout(); // second call while first is in flight
+    let secondSettled = false;
+    void p2.then(() => { secondSettled = true; });
+    await flushPromises();
+    expect(secondSettled).toBe(false);
+    releaseWipe();
+    await Promise.all([p1, p2]);
+    // The shared in-flight operation performs a single cleanup (one server
+    // call, one wipe), and both callers resolve only after it completes.
+    expect(serverCalls).toBe(1);
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(isLogoutInProgress()).toBe(false);
+    extMockState.logoutImpl = undefined;
+    (api.logoutSession as any).mockResolvedValue(undefined); // restore default
+  });
+
+  it('logout does not resolve until the bounded server revoke and extension wipe have settled, then releases the flag', async () => {
+    // Ordering + flag-release regression: the revoke is attempted BEFORE local
+    // cleanup, the extension wipe is awaited BEFORE endLogout() releases the
+    // flag (the design forbids endLogout() preceding the wipe response).
+    const order: string[] = [];
+    (api.logoutSession as any).mockImplementation(async () => { order.push('server'); });
+    const extGate = new Promise<void>((res) => { setTimeout(res, 0); });
+    extMockState.logoutImpl = async () => { await extGate; order.push('ext-wipe'); };
+    localStorage.setItem('sso_token', 'x');
+    const store = useAuthStore();
+    store.token = 'x';
+    const p = store.logout();
+    await flushPromises();
+    // The flag must STILL be held while the extension wipe is pending.
+    expect(isLogoutInProgress()).toBe(true);
+    await extGate;
+    await p;
+    order.push('done');
+    expect(order).toEqual(['server', 'ext-wipe', 'done']);
+    expect(isLogoutInProgress()).toBe(false); // endLogout() in finally, after the wipe
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(extMockState.logoutMock).toHaveBeenCalledTimes(1);
+    extMockState.logoutImpl = undefined;
+    (api.logoutSession as any).mockResolvedValue(undefined); // restore default
+  });
+
+  it('the bounded server revoke does not extend past cleanup: a hung revoke times out and cleanup still runs', async () => {
+    // Server revoke is raced against a short settle window; a hang must not
+    // block the local wipe or the flag release.
+    vi.useFakeTimers();
+    (api.logoutSession as any).mockImplementation(
+      () => new Promise(() => {}), // never settles
+    );
+    const store = useAuthStore();
+    store.token = 'x';
+    const p = store.logout();
+    await vi.advanceTimersByTimeAsync(6000); // past the ~5s bound
+    await flushPromises();
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    await p;
+    expect(isLogoutInProgress()).toBe(false);
+    vi.useRealTimers();
+    extMockState.logoutImpl = undefined;
+    (api.logoutSession as any).mockResolvedValue(undefined); // restore default
+  }, 10000);
 });
 
 describe('extension login', () => {
@@ -310,7 +593,13 @@ describe('extension login', () => {
             cb(undefined);
             return;
           }
-          cb(status === 'ok' ? { status: 'ok', accessToken } : { status });
+          cb(
+            status === 'ok'
+              ? { status: 'ok', accessToken }
+              : status === 'started'
+                ? { status: 'started', mode: 'auto' }
+                : { status: 'error', message: 'handoff failed' },
+          );
         },
       },
     };
@@ -365,6 +654,78 @@ describe('extension login', () => {
     const store = useAuthStore();
     expect(await store.loginViaExtension()).toBe('error');
     expect(store.token).toBeNull();
+  });
+
+  it.each([
+    null,
+    undefined,
+    'malformed',
+    42,
+    {},
+    { status: 'unknown' },
+    { status: 'ok' },
+    { status: 'started' },
+    { status: 'error' },
+  ])('controls malformed extension handoff response %#', async (response) => {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) => cb(response),
+      },
+    };
+    const store = useAuthStore();
+
+    await expect(store.loginViaExtension()).resolves.toBe('error');
+    expect(store.error).toContain('Extension');
+    expect(store.token).toBeNull();
+  });
+
+  it('same-epoch extension attempts own response mutations independently', async () => {
+    const handoffCallbacks: Array<(response: any) => void> = [];
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (response: any) => void) => {
+          if (msg?.action === 'handoff') handoffCallbacks.push(cb);
+        },
+      },
+    };
+    const store = useAuthStore();
+    const attemptA = store.loginViaExtension();
+    const attemptB = store.loginViaExtension();
+    expect(handoffCallbacks).toHaveLength(2);
+
+    handoffCallbacks[0]({ status: 'error', message: 'stale A failure' });
+    await flushPromises();
+    expect(store.error).toBeNull();
+
+    handoffCallbacks[1]({ status: 'ok', accessToken: 'jwt-b' });
+    await expect(attemptA).resolves.toBe('error');
+    await expect(attemptB).resolves.toBe('ok');
+    expect(store.token).toBe('jwt-b');
+    expect(store.error).toBeNull();
+  });
+
+  it('loginViaExtension captures its epoch internally and rejects a post-logout response', async () => {
+    let resolveHandoff!: (response: any) => void;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (response: any) => void) => {
+          if (msg?.action === 'handoff') resolveHandoff = cb;
+        },
+      },
+    };
+    const store = useAuthStore();
+    const attempt = store.loginViaExtension();
+    await flushPromises();
+    beginLogout();
+    endLogout();
+    resolveHandoff({ status: 'ok', accessToken: 'jwt-stale' });
+
+    await expect(attempt).resolves.toBe('error');
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
   });
 
   it('onExtensionResult forwards the extension window message payload to the handler', async () => {
@@ -485,6 +846,51 @@ describe('reauth (auto-recover expired session)', () => {
     expect(await store.attemptReauth()).toBe('failed');
   });
 
+  it.each([
+    null,
+    undefined,
+    'malformed',
+    42,
+    {},
+    { status: 'unknown' },
+    { status: 'ok' },
+    { status: 'started' },
+    { status: 'error' },
+  ])('silent reauth controls malformed handoff response %# and releases overlay', async (response) => {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) => cb(response),
+      },
+    };
+    const store = useAuthStore();
+
+    await expect(store.attemptReauth()).resolves.toBe('failed');
+    expect(store.reauthing).toBe(false);
+    expect(store.reauthPhase).toBeNull();
+  });
+
+  it('silent reauth turns a malformed poll response into a failed attempt', async () => {
+    vi.useFakeTimers();
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          cb(null);
+        },
+      },
+    };
+    const store = useAuthStore();
+    const recovery = store.attemptReauth();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushPromises();
+
+    await expect(recovery).resolves.toBe('failed');
+    expect(store.reauthing).toBe(false);
+    vi.useRealTimers();
+  });
+
   it('attemptReauth returns failed when called twice (loop guard), then resets on logout', async () => {
     stubChrome('ok', 'jwt-a');
     const store = useAuthStore();
@@ -533,4 +939,442 @@ describe('reauth (auto-recover expired session)', () => {
     store.setToken('new-jwt');
     expect(store.token).toBe('new-jwt');
   });
+
+  it('attemptReauth returns failed during logout (never mints)', async () => {
+    stubChrome('ok', 'jwt-during-logout'); // extension would answer ok
+    const store = useAuthStore();
+    store.token = 'x';
+    beginLogout();
+    try {
+      expect(await store.attemptReauth()).toBe('failed');
+      expect(store.token).toBe('x'); // no mint, no store write
+    } finally {
+      endLogout();
+    }
+  });
+
+  it('attemptReauth that started BEFORE logout but whose handoff resolves ok AFTER logout began returns failed and does not mint', async () => {
+    // Mid-flight edge: attemptReauth passed the entry guard, then a logout
+    // BEGAN while loginViaExtension() was awaiting; the extension answers ok
+    // with a fresh token. The post-await epoch check must return 'failed' and
+    // the finishHandoff write gate must block the mint. Drive logout's begin
+    // via the real store.logout() so the wipe is real (token → null).
+    let releaseHandoff!: () => void;
+    const handoffGate = new Promise<any>((resolve) => {
+      releaseHandoff = () => resolve({ status: 'ok', accessToken: 'jwt-raced' });
+    });
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') {
+            handoffGate.then(cb); // extension answers ok only when released
+          } else {
+            cb({ status: 'ok' }); // logout wipe + anything else resolve
+          }
+        },
+      },
+    };
+    const store = useAuthStore();
+    store.token = 'x';
+    const reauthPromise = store.attemptReauth(); // passes entry guard, awaits handoff
+    await flushPromises();
+    const logoutPromise = store.logout(); // begins while the handoff is in flight
+    releaseHandoff(); // extension now answers ok — must NOT mint
+    expect(await reauthPromise).toBe('failed'); // post-await epoch re-check
+    await logoutPromise; // let the wipe finish before asserting final state
+    expect(store.token).toBeNull(); // logout wiped; the raced mint was blocked
+    expect(localStorage.getItem('sso_token')).toBeNull();
+  });
+
+  it('logout cancels an ALREADY-RUNNING waitForReauthResult poll: late extension ok never resurrects the token, reauth state resets', async () => {
+    // The resurrection hole (reviewer finding): attemptReauth('started') is
+    // running a 3s waitForReauthResult poll when logout() begins. The poll's
+    // next tick must see the bumped epoch and settle 'failed' WITHOUT calling
+    // finishHandoff — even though the extension would answer ok with a fresh
+    // accessToken — and logout must clear reauthing/reauthPhase so the overlay
+    // does not linger. The extension wipe is GATED so the poll tick fires while
+    // logout is genuinely in flight (mirrors the race test in 'auth store').
+    const store = useAuthStore();
+    store.token = 'x';
+    store.reauthing = true; // overlay up (attemptReauth set it)
+    store.reauthPhase = 'sso';
+    const epochBefore = getReauthEpoch();
+    vi.useFakeTimers(); // drive the poll interval deterministically
+    // statusSteps: the FIRST readStatus (inside waitForReauthResult's immediate
+    // attempt()) returns an in-progress phase so the poll keeps waiting; the
+    // SECOND readStatus (after logout bumps the epoch) would return ok+token —
+    // the poll must NOT act on it (reads stays 1).
+    let reads = 0;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' }); // ext wipe — NOT a status read
+          reads += 1;
+          if (reads === 1) return cb({ status: 'ok', active: true, phase: 'sso' });
+          return cb({ status: 'ok', accessToken: 'jwt-resurrected' }); // late ok
+        },
+      },
+    };
+    // Gate the extension wipe so logout stays in flight until we release it:
+    let releaseWipe!: () => void;
+    const wipeGate = new Promise<void>((resolve) => { releaseWipe = resolve; });
+    extMockState.logoutImpl = () => wipeGate;
+    const pollPromise = store.waitForReauthResult(); // already running (no logout yet)
+    await vi.advanceTimersByTimeAsync(0); // immediate attempt() -> phase sso, still waiting
+    await flushPromises();
+    expect(store.reauthing).toBe(true);
+    expect(reads).toBe(1);
+    // Logout starts WHILE the poll is running; it reaches the gated extension
+    // wipe and stops — flag up, epoch bumped, wipe pending:
+    const logoutPromise = store.logout();
+    // Drain the logout chain: logoutSession (Promise.race) → local wipe →
+    // useExtension().logout() → wipeGate. Under fake timers the async chain
+    // still runs on microtasks; flush them, then let macrotask-queued steps
+    // (the race timeout) advance.
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushPromises();
+    expect(isLogoutInProgress()).toBe(true); // still in flight (wipe gated)
+    expect(store.token).toBeNull(); // local wipe ran before the gated wipe
+    expect(store.reauthing).toBe(false); // logout reset the overlay state
+    // The poll's next tick fires NOW, mid-logout:
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(reads).toBe(1); // the invalidated tick never called readExtensionResult
+    expect(await pollPromise).toBe('failed'); // self-cancelled, never 'recovered'
+    // The local wipe ran before the (gated) extension wipe, so the token is
+    // already null — the late-ok tick must NOT have resurrected it:
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(store.reauthing).toBe(false); // overlay torn down by the settle
+    expect(store.reauthPhase).toBeNull();
+    // Release the wipe → logout completes endLogout():
+    releaseWipe();
+    await logoutPromise;
+    expect(isLogoutInProgress()).toBe(false);
+    expect(getReauthEpoch()).toBeGreaterThan(epochBefore); // logout bumped it
+    extMockState.logoutImpl = undefined;
+    vi.useRealTimers();
+  }, 10000);
+
+  it('a waitForReauthResult poll that was never racing logout still recovers normally (epoch unchanged ⇒ no regression)', async () => {
+    const store = useAuthStore();
+    store.token = 'x';
+    vi.useFakeTimers(); // drive the poll interval deterministically
+    let reads = 0;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' });
+          reads += 1;
+          if (reads === 1) return cb({ status: 'ok', active: true, phase: 'sso' });
+          return cb({ status: 'ok', accessToken: 'jwt-fine' });
+        },
+      },
+    };
+    const promise = store.waitForReauthResult();
+    await vi.advanceTimersByTimeAsync(0); // phase sso
+    await vi.advanceTimersByTimeAsync(3000); // ok+token -> recovered
+    expect(await promise).toBe('recovered');
+    expect(store.token).toBe('jwt-fine'); // normal recovery still mints
+    vi.useRealTimers();
+  }, 10000);
+});
+
+describe('epoch ownership: late handoff/login after logout fully (RED)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    delete (globalThis as any).chrome;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    while (isLogoutInProgress()) endLogout();
+    extMockState.logoutImpl = undefined;
+    delete (globalThis as any).chrome;
+    vi.useRealTimers();
+  });
+
+  it('late extension ok resolving AFTER logout fully never mints (flag down, epoch bumped)', async () => {
+    let releaseHandoff!: () => void;
+    const handoffGate = new Promise<any>((resolve) => {
+      releaseHandoff = () => resolve({ status: 'ok', accessToken: 'jwt-raced-after-logout' });
+    });
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') {
+            handoffGate.then(cb); // extension answers ok only when released
+          } else {
+            cb({ status: 'ok' }); // logout wipe + anything else resolve
+          }
+        },
+      },
+    };
+    const store = useAuthStore();
+    store.token = 'x';
+    localStorage.setItem('sso_token', 'x');
+    const reauthPromise = store.attemptReauth(); // captures epoch, awaits handoff
+    await flushPromises();
+    await store.logout(); // FULLY completes while the handoff is still pending
+    expect(store.token).toBeNull();
+    expect(isLogoutInProgress()).toBe(false); // flag DOWN — boolean gate alone would mint
+    releaseHandoff(); // late extension ok arrives after logout fully resolved
+    expect(await reauthPromise).toBe('failed');
+    expect(store.token).toBeNull(); // never resurrected
+    expect(localStorage.getItem('sso_token')).toBeNull();
+  });
+
+  it('legacy login capture resolving AFTER logout fully never mints', async () => {
+    let releaseCapture!: (v: unknown) => void;
+    const captureGate = new Promise((resolve) => {
+      releaseCapture = resolve;
+    });
+    (api.capture as any).mockImplementation(() => captureGate);
+    const store = useAuthStore();
+    store.token = 'x';
+    localStorage.setItem('sso_token', 'x');
+    const loginPromise = store.login();
+    await flushPromises();
+    await store.logout(); // fully completes while capture is in flight
+    expect(store.token).toBeNull();
+    expect(isLogoutInProgress()).toBe(false);
+    releaseCapture({
+      accessToken: 'jwt-legacy-raced', capturedAt: 0, hasSso: true, hasMicrosoft: false, hasKulon: true,
+    });
+    await loginPromise;
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    (api.capture as any).mockReset();
+  });
+
+  it('finishHandoff/setToken with a stale epoch never write (generation-aware guarded commit)', async () => {
+    const store = useAuthStore();
+    store.token = 'x';
+    localStorage.setItem('sso_token', 'x');
+    const staleEpoch = getReauthEpoch();
+    beginLogout();
+    endLogout(); // bump epoch, flag down
+    expect(isLogoutInProgress()).toBe(false);
+    expect(getReauthEpoch()).toBe(staleEpoch + 1);
+    (store as any).finishHandoff('jwt-stale', staleEpoch);
+    expect(store.token).toBe('x');
+    expect(localStorage.getItem('sso_token')).toBe('x');
+    (store as any).setToken('jwt-stale-2', staleEpoch);
+    expect(store.token).toBe('x');
+    expect(localStorage.getItem('sso_token')).toBe('x');
+  });
+});
+
+describe('old poll ownership: stale settle preserves newer attempt state (RED)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    delete (globalThis as any).chrome;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    while (isLogoutInProgress()) endLogout();
+    delete (globalThis as any).chrome;
+    vi.useRealTimers();
+  });
+
+  it('stale poll settle resolves failed but never clears a newer attempt reauthing/phase', async () => {
+    vi.useFakeTimers();
+    const store = useAuthStore();
+    store.token = 'x';
+    let reads = 0;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' });
+          reads += 1;
+          if (reads === 1) return cb({ status: 'ok', active: true, phase: 'sso' });
+          return cb({ status: 'ok', accessToken: 'jwt-stale-poll' });
+        },
+      },
+    };
+    const epochBefore = getReauthEpoch();
+    const oldPoll = store.waitForReauthResult(); // epoch E0
+    await vi.advanceTimersByTimeAsync(0); // first read: in-progress sso
+    await flushPromises();
+    expect(reads).toBe(1);
+    // Logout fully, then a NEWER attempt takes ownership of the overlay state:
+    beginLogout();
+    endLogout();
+    expect(getReauthEpoch()).toBe(epochBefore + 1);
+    store.reauthing = true; // new flow owns the overlay now
+    store.reauthPhase = 'kulon';
+    // Old poll's next tick fires stale:
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(await oldPoll).toBe('failed');
+    expect(store.token).toBe('x'); // never minted the stale token
+    expect(localStorage.getItem('sso_token')).toBeNull(); // waitForReauthResult never writes localStorage directly; token untouched
+    expect(store.reauthing).toBe(true); // newer owner preserved
+    expect(store.reauthPhase).toBe('kulon');
+  }, 10000);
+});
+
+describe('bounded extension wipe: logout always releases (RED)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    while (isLogoutInProgress()) endLogout();
+    extMockState.logoutImpl = undefined;
+    vi.useRealTimers();
+  });
+
+  it('logout resolves when the extension wipe hangs (bounded, flag released, token cleared)', async () => {
+    vi.useFakeTimers();
+    (api.logoutSession as any).mockResolvedValue(undefined);
+    extMockState.logoutImpl = () => new Promise<void>(() => {}); // never settles
+    const store = useAuthStore();
+    store.token = 'x';
+    localStorage.setItem('sso_token', 'x');
+    const p = store.logout();
+    let settled = false;
+    void p.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(6000); // past the wipe bound
+    await flushPromises();
+    expect(settled).toBe(true); // RED with unbounded wipe: still pending
+    await p;
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(isLogoutInProgress()).toBe(false);
+  }, 10000);
+
+  it('fast server revoke + fast wipe clear their timeout timers (no leaked 5s bound)', async () => {
+    vi.useFakeTimers();
+    // Direct proof of "clear the losing timer": both bounds (server revoke +
+    // extension wipe) win the race here, so both timeout timers must be
+    // cancelled. (An absolute getTimerCount()===0 assertion is brittle: Vue
+    // reactivity schedules its own 0ms macrotasks during logout that outlive
+    // the operation and are unrelated to our bounds.)
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    (api.logoutSession as any).mockResolvedValue(undefined);
+    extMockState.logoutImpl = async () => {}; // fast wipe
+    const store = useAuthStore();
+    store.token = 'x';
+    localStorage.setItem('sso_token', 'x');
+    await store.logout();
+    expect(isLogoutInProgress()).toBe(false);
+    expect(clearSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // RED with raw Promise.race: 0 clears
+    clearSpy.mockRestore();
+  }, 10000);
+});
+
+describe('poll serialization: no overlapping reads or out-of-order application (RED)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    delete (globalThis as any).chrome;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    while (isLogoutInProgress()) endLogout();
+    delete (globalThis as any).chrome;
+    vi.useRealTimers();
+  });
+
+  it('never starts a second read while one is still pending (in-flight gate)', async () => {
+    vi.useFakeTimers();
+    const store = useAuthStore();
+    store.token = 'x';
+    let reads = 0;
+    let releaseFirst!: (v: any) => void;
+    const firstGate = new Promise<any>((resolve) => { releaseFirst = resolve; });
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' });
+          reads += 1;
+          if (reads === 1) {
+            // First read hangs: the poll must NOT start a second read on the
+            // next tick while this one is pending.
+            firstGate.then(cb);
+            return;
+          }
+          return cb({ status: 'ok', active: true, phase: 'sso' });
+        },
+      },
+    };
+    const pollPromise = store.waitForReauthResult();
+    await vi.advanceTimersByTimeAsync(0); // immediate attempt starts read #1 (pending)
+    await flushPromises();
+    expect(reads).toBe(1);
+    // Next interval tick fires while read #1 is still pending:
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(reads).toBe(1); // serialized: no overlapping second read
+    // Release the first read (in-progress) then let the poll continue normally:
+    releaseFirst({ status: 'ok', active: true, phase: 'sso' });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(reads).toBe(2); // next read starts only AFTER the first settled
+    // Settle the poll so the test does not leak a pending timer: logout bumps
+    // the epoch and the NEXT tick self-cancels (advance to fire it).
+    beginLogout();
+    endLogout();
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(await pollPromise).toBe('failed');
+    vi.useRealTimers();
+  }, 10000);
+
+  it('late out-of-order read after settle never mutates phase/token/overlay', async () => {
+    vi.useFakeTimers();
+    const store = useAuthStore();
+    store.token = 'x';
+    let reads = 0;
+    let releaseSlow!: (v: any) => void;
+    const slowGate = new Promise<any>((resolve) => { releaseSlow = resolve; });
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' });
+          reads += 1;
+          if (reads === 1) {
+            slowGate.then(cb); // slow first read
+            return;
+          }
+          return cb({ status: 'error', message: 'boom' }); // fast second settles failed
+        },
+      },
+    };
+    const pollPromise = store.waitForReauthResult();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushPromises();
+    expect(reads).toBe(1);
+    // With serialization the second tick must wait; force-settle via logout so
+    // the slow read becomes stale, then release it late:
+    beginLogout();
+    endLogout();
+    releaseSlow({ status: 'ok', accessToken: 'jwt-late-slow', phase: 'siap' });
+    await flushPromises();
+    expect(await pollPromise).toBe('failed');
+    expect(store.token).toBe('x'); // late slow ok never minted
+    expect(store.reauthPhase).toBeNull(); // settle cleared (owner), late read did not re-set to siap
+    vi.useRealTimers();
+  }, 10000);
 });

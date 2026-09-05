@@ -1,5 +1,6 @@
 import { onMounted, ref } from 'vue';
 import { getDashboard } from '../api/client';
+import { isCacheStaleError } from '../api/cache';
 import type { SiapProfile, SiapKhs, SiapIrs, SiapJadwal } from '../types';
 import type { Course, Assignment } from '../types';
 
@@ -31,6 +32,10 @@ export function useDashboard() {
       if (errs.courses || errs.assignments)
         kulonError.value = errs.courses?.message ?? errs.assignments?.message ?? null;
     } catch (e: any) {
+      // Generation-stale (logout wiped the cache mid-fetch): stay silent —
+      // no logged-out-user payload was written, and no banners may reference
+      // it. Any other failure keeps the existing banner behavior.
+      if (isCacheStaleError(e)) return;
       siapError.value = e?.response?.data?.message ?? 'Gagal memuat data akademik (SIAP)';
       kulonError.value = e?.response?.data?.message ?? 'Gagal memuat data Kulon';
     } finally {

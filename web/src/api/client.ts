@@ -20,6 +20,7 @@ import type {
   User,
 } from '../types';
 import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
+import { getReauthEpoch, isLogoutInProgress } from '../lib/logout';
 import { createTokenRefresher } from './token-refresher';
 import { API, isServiceStale, parseErrorEnvelope } from './contract';
 import { getCached, invalidate } from './cache';
@@ -75,6 +76,11 @@ apiClient.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  // Stamp the monotonic reauth epoch at send time. A 401 handler whose origin
+  // epoch differs from the current one belongs to a request sent before a
+  // logout that has since fully resolved (flag already down) — it must never
+  // refresh, write, emit, retry, or resurrect auth.
+  (config as unknown as { __reauthEpoch?: number }).__reauthEpoch = getReauthEpoch();
   return config;
 });
 
@@ -90,6 +96,21 @@ apiClient.interceptors.response.use(
       // gone or the token invalid, and a silent refresh would re-mint the very
       // JWT the logout is destroying (refresh recursion on logout).
       if (url === API.auth.refresh || url === API.auth.logout) {
+        return Promise.reject(error);
+      }
+      // Epoch ownership: the request's send-time stamp vs now. A mismatch means
+      // a logout began (and possibly FULLY resolved — flag already down) after
+      // the request was sent. Such a stale outcome must never refresh, write,
+      // emit, retry, or resurrect auth. Missing stamp (unit-constructed errors,
+      // refresh internals) falls back to the entry-epoch window below.
+      const originEpoch = (error?.config as { __reauthEpoch?: number } | undefined)?.__reauthEpoch;
+      const epochAtEntry = getReauthEpoch();
+      const originStale =
+        originEpoch !== undefined && originEpoch !== epochAtEntry;
+      // Logout in progress: a sibling 401 must never silent-refresh, reauth,
+      // or retry — the logout owns the session teardown. Reject untouched.
+      // Origin-stale covers the flag-down hole: handler runs after endLogout().
+      if (isLogoutInProgress() || originStale) {
         return Promise.reject(error);
       }
       const alreadyRetried = (error.config as { _retried?: boolean } | undefined)?._retried;
@@ -109,11 +130,30 @@ apiClient.interceptors.response.use(
             // Genuinely dead session (SESSION_DEAD / INVALID_TOKEN): wipe the
             // token and re-auth — INCLUDING for service paths, whose bare 401
             // would otherwise be misread as "upstream stale" and strand the
-            // user with no re-login path.
-            localStorage.removeItem(TOKEN_KEY);
-            emitReauthRequested();
+            // user with no re-login path. Never during logout (flag up) and
+            // never when the refresh flight crossed a logout boundary that has
+            // since fully resolved (epoch moved under us): the logout owns
+            // the wipe and must not raise the reauth overlay.
+            const epochAfterFailure = getReauthEpoch();
+            const crossedLogout =
+              epochAfterFailure !== epochAtEntry ||
+              (originEpoch !== undefined && originEpoch !== epochAfterFailure);
+            if (!isLogoutInProgress() && !crossedLogout) {
+              localStorage.removeItem(TOKEN_KEY);
+              emitReauthRequested();
+            }
           }
           // Network/5xx: keep the token; server down != dead session.
+          return Promise.reject(error);
+        }
+        // Logout may have started (and possibly FULLY ended) while the refresh
+        // was in flight: discard the minted token — never rewrite sso_token,
+        // emit token-refreshed, or retry after logout cleared it.
+        const epochAfterRefresh = getReauthEpoch();
+        const refreshCrossedLogout =
+          epochAfterRefresh !== epochAtEntry ||
+          (originEpoch !== undefined && originEpoch !== epochAfterRefresh);
+        if (isLogoutInProgress() || refreshCrossedLogout) {
           return Promise.reject(error);
         }
         localStorage.setItem(TOKEN_KEY, newToken);
@@ -139,6 +179,14 @@ apiClient.interceptors.response.use(
       // handles) or a genuine auth failure on a non-service path.
       const { code } = parseErrorEnvelope(error?.response?.data);
       if (isServiceStale(url, code)) {
+        return Promise.reject(error);
+      }
+      // Same ownership gate as above: a stale second-401 (request predates a
+      // fully-resolved logout) must never wipe or raise reauth — the logout
+      // already owns the teardown.
+      const secondStale =
+        originEpoch !== undefined && originEpoch !== getReauthEpoch();
+      if (isLogoutInProgress() || secondStale) {
         return Promise.reject(error);
       }
       localStorage.removeItem(TOKEN_KEY);
