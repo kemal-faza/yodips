@@ -137,7 +137,7 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
       { mintToken: mint, fetch: apiFetch } as any,
       async () => ({ nim: 'U1', emailSso: 'u1@students.undip.ac.id' }),
     );
-    const svc = new SiapService(cache, upstream, store, { mintToken: mint, fetch: apiFetch } as any);
+    const svc = new SiapService(cache, upstream, { mintToken: mint, fetch: apiFetch } as any);
 
     await expect(
       svc.getProfile({ sub: 'U1', sessionGeneration: GEN_A }),

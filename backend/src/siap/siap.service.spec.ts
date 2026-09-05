@@ -6,6 +6,7 @@ import { SiapUpstreamSession } from './siap-upstream.session';
 import { InMemoryDataCache } from '../cache/in-memory-data.cache';
 import { CachePolicy, swrWindow } from '../cache/cache-policy';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
+import { cacheKeyForCurrent, cacheKeyForSession } from '../session/session-scope';
 import type { SiapApiUpstream } from './siap-api';
 import type { TelemetryRuntime } from '../observability/telemetry';
 
@@ -30,7 +31,6 @@ function makeAuthedSiapSvc(cache?: any): SiapService {
   return new SiapService(
     cache,
     new SiapUpstreamSession(store as any, cache),
-    store as any,
   );
 }
 
@@ -92,7 +92,6 @@ function makeRealSeamService(
   return new SiapService(
     cache,
     new SiapUpstreamSession(store, cache, api as any),
-    store,
     api as any,
   );
 }
@@ -168,7 +167,6 @@ describe('SiapService', () => {
       return new SiapService(
         undefined,
         new SiapUpstreamSession(store as any, undefined, apiMock as any),
-        store as any,
         apiMock as any,
       );
     }
@@ -263,11 +261,70 @@ describe('SiapService', () => {
       });
       const out = await svc.getProfile(ref('u1'));
       expect(cache.getStale).toHaveBeenCalledWith(
-        'u1:siap:profile',
+        cacheKeyForSession(ref('u1'), 'siap', 'profile'),
         expect.any(Function),
         swrWindow('SIAP_PROFILE'),
       );
       expect(out).toEqual(PROFILE_2024_5_SEM);
+    });
+
+    it('does not join authenticated flights or payload caches across generations', async () => {
+      const cache = {
+        get: jest.fn(),
+        getStale: jest.fn(),
+        set: jest.fn(),
+        del: jest.fn(),
+      };
+      const waiters: Array<(value: unknown) => void> = [];
+      cache.getStale.mockImplementation(
+        () => new Promise((resolve) => waiters.push(resolve)),
+      );
+      const upstream = makeSeamMock();
+      const service = new SiapService(cache as any, upstream);
+      const first = service.getProfile(ref('u1', 'a'.repeat(32)));
+      await Promise.resolve();
+      const second = service.getProfile(ref('u1', 'b'.repeat(32)));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(cache.getStale).toHaveBeenCalledWith(
+        cacheKeyForSession(ref('u1', 'a'.repeat(32)), 'siap', 'profile'),
+        expect.any(Function),
+        swrWindow('SIAP_PROFILE'),
+      );
+      expect(cache.getStale).toHaveBeenCalledWith(
+        cacheKeyForSession(ref('u1', 'b'.repeat(32)), 'siap', 'profile'),
+        expect.any(Function),
+        swrWindow('SIAP_PROFILE'),
+      );
+      waiters.forEach((resolve) => resolve({ value: PROFILE_2024_5_SEM, stale: false }));
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        PROFILE_2024_5_SEM,
+        PROFILE_2024_5_SEM,
+      ]);
+    });
+
+    it('keeps authenticated and current/background jadwal caches in separate namespaces', async () => {
+      const cache = {
+        get: jest.fn(),
+        getStale: jest.fn().mockResolvedValue({ value: [], stale: false }),
+        set: jest.fn(),
+        del: jest.fn(),
+      };
+      const service = new SiapService(cache as any, makeSeamMock());
+      await service.getJadwal(ref('u1', TEST_GEN));
+      await service.getJadwalForCurrentSession('u1');
+      expect(cache.getStale).toHaveBeenNthCalledWith(
+        1,
+        cacheKeyForSession(ref('u1', TEST_GEN), 'siap', 'jadwal'),
+        expect.any(Function),
+        swrWindow('SIAP_JADWAL'),
+      );
+      expect(cache.getStale).toHaveBeenNthCalledWith(
+        2,
+        cacheKeyForCurrent('u1', 'siap', 'jadwal'),
+        expect.any(Function),
+        swrWindow('SIAP_JADWAL'),
+      );
     });
   });
 
@@ -316,7 +373,7 @@ describe('SiapService', () => {
       const result = await irsSvc().getIrs(ref('u1'));
       expect(result).toEqual(cached);
       expect(cache.getStale).toHaveBeenCalledWith(
-        'u1:siap:irs',
+        cacheKeyForSession(ref('u1'), 'siap', 'irs'),
         expect.any(Function),
         swrWindow('SIAP_IRS'),
       );
@@ -434,7 +491,7 @@ describe('SiapService', () => {
       const result = await lecturersSvc().getLecturers(ref('u1'));
       expect(result).toEqual(cached);
       expect(cache.getStale).toHaveBeenCalledWith(
-        'u1:siap:lecturers',
+        cacheKeyForSession(ref('u1'), 'siap', 'lecturers'),
         expect.any(Function),
         swrWindow('SIAP_LECTURERS'),
       );
@@ -507,7 +564,7 @@ describe('SiapService', () => {
       const result = await lecturersSvc().getLecturers(ref('u1'));
       expect(result).toEqual(cached);
       expect(cache.getStale).toHaveBeenCalledWith(
-        'u1:siap:lecturers',
+        cacheKeyForSession(ref('u1'), 'siap', 'lecturers'),
         expect.any(Function),
         swrWindow('SIAP_LECTURERS'),
       );
@@ -542,7 +599,7 @@ describe('SiapService', () => {
       });
       const svc = makeRealSeamService(api, cache2);
       await svc.getLecturers(ref('u1'));
-      expect(setSpy.mock.calls.filter(([key]) => key === 'u1:siap:lecturers')).toHaveLength(1);
+      expect(setSpy.mock.calls.filter(([key]) => key === cacheKeyForSession(ref('u1'), 'siap', 'lecturers'))).toHaveLength(1);
     });
 
     it('writes the cache after an api-credential retry succeeds', async () => {
@@ -577,7 +634,7 @@ describe('SiapService', () => {
       const svc = makeRealSeamService({ mintToken: mint, fetch }, cache2);
       const result = await svc.getLecturers(ref('u1'));
       expect(result).toEqual([]);
-      expect(setSpy.mock.calls.filter(([key]) => key === 'u1:siap:lecturers')).toHaveLength(1);
+       expect(setSpy.mock.calls.filter(([key]) => key === cacheKeyForSession(ref('u1'), 'siap', 'lecturers'))).toHaveLength(1);
       expect(mint).toHaveBeenCalledTimes(2); // initial + re-mint
     });
 
@@ -606,7 +663,6 @@ describe('SiapService', () => {
       return new SiapService(
         undefined,
         makeSeamMock(),
-        STORE as any,
         apiMock as any,
       );
     }
@@ -677,7 +733,6 @@ describe('SiapService', () => {
       return new SiapService(
         undefined,
         makeSeamMock(),
-        STORE as any,
         apiMock as any,
       );
     }
@@ -705,7 +760,7 @@ describe('SiapService', () => {
       const result = await makeService({ api: apiMock, cache }).getJadwal(ref('u1'));
       expect(result).toEqual(cached);
       expect(cache.getStale).toHaveBeenCalledWith(
-        'u1:siap:jadwal',
+        cacheKeyForSession(ref('u1'), 'siap', 'jadwal'),
         expect.any(Function),
         swrWindow('SIAP_JADWAL'),
       );
@@ -760,7 +815,6 @@ describe('SiapService', () => {
       return new SiapService(
         undefined,
         makeSeamMock(),
-        STORE as any,
         apiMock as any,
       );
     }
@@ -790,7 +844,7 @@ describe('SiapService', () => {
       const result = await makeService({ api: apiMock, cache }).getAbsen(ref('u1'));
       expect(result).toEqual(cached);
       expect(cache.getStale).toHaveBeenCalledWith(
-        'u1:siap:absen',
+        cacheKeyForSession(ref('u1'), 'siap', 'absen'),
         expect.any(Function),
         swrWindow('SIAP_ABSEN'),
       );
@@ -1050,7 +1104,7 @@ describe('SiapService', () => {
       const result = await makeService({ api: apiMock, cache }).getKhs(ref('u1'));
       expect(result).toEqual(cached);
       expect(cache.getStale).toHaveBeenCalledWith(
-        'u1:siap:khs',
+        cacheKeyForSession(ref('u1'), 'siap', 'khs'),
         expect.any(Function),
         swrWindow('SIAP_KHS'),
       );
@@ -1197,7 +1251,6 @@ function makeApiSvc(
   return new SiapService(
     cache,
     new SiapUpstreamSession(store as any, cache, apiMock as any),
-    store as any,
     apiMock as SiapApiUpstream,
   );
 }
@@ -1214,7 +1267,6 @@ function makeService(opts: {
   return new SiapService(
     opts.cache,
     makeSeamMock(opts.seam ?? {}),
-    STORE as any,
     opts.api as any,
   );
 }
@@ -1301,7 +1353,7 @@ describe('API-backed methods', () => {
     const n = await svc.getNotifications(ref('u1'));
     expect(n.count).toBe(1);
     expect(cache.getStale).toHaveBeenCalledWith(
-      'u1:siap:notifications',
+      cacheKeyForSession(ref('u1'), 'siap', 'notifications'),
       expect.any(Function),
       swrWindow('SIAP_NOTIFICATIONS'),
     );
@@ -1358,9 +1410,6 @@ describe('API-backed methods', () => {
         undefined,
         apiMock as any,
       ),
-      {
-        get: async () => ({ siapCookie: 's', identity: '24060124120013' }),
-      } as any,
       apiMock as unknown as SiapApiUpstream,
     );
     // The constructor wires the seam's scrape fallback to THIS service's
@@ -1395,7 +1444,6 @@ describe('API-backed methods', () => {
     const svc = new SiapService(
       undefined,
       upstreamMock as any,
-      { get: async () => ({ siapCookie: 's' }) } as any,
       apiMock2 as unknown as SiapApiUpstream,
     );
     await svc.getKehadiran(ref('u1'), '3747942');
@@ -1489,13 +1537,13 @@ describe('API-backed methods', () => {
     api.mintToken.mockResolvedValue({ token: 'T', data: {} });
 
     const methods = [
-      ['profile', 'u1:siap:profile', (svc: SiapService) => svc.getProfile(ref('u1'))],
-      ['irs', 'u1:siap:irs', (svc: SiapService) => svc.getIrs(ref('u1'))],
-      ['khs', 'u1:siap:khs', (svc: SiapService) => svc.getKhs(ref('u1'))],
-      ['lecturers', 'u1:siap:lecturers', (svc: SiapService) => svc.getLecturers(ref('u1'))],
-      ['notifications', 'u1:siap:notifications', (svc: SiapService) => svc.getNotifications(ref('u1'))],
-      ['jadwal', 'u1:siap:jadwal', (svc: SiapService) => svc.getJadwal(ref('u1'))],
-      ['absen', 'u1:siap:absen', (svc: SiapService) => svc.getAbsen(ref('u1'))],
+       ['profile', cacheKeyForSession(ref('u1'), 'siap', 'profile'), (svc: SiapService) => svc.getProfile(ref('u1'))],
+       ['irs', cacheKeyForSession(ref('u1'), 'siap', 'irs'), (svc: SiapService) => svc.getIrs(ref('u1'))],
+       ['khs', cacheKeyForSession(ref('u1'), 'siap', 'khs'), (svc: SiapService) => svc.getKhs(ref('u1'))],
+       ['lecturers', cacheKeyForSession(ref('u1'), 'siap', 'lecturers'), (svc: SiapService) => svc.getLecturers(ref('u1'))],
+       ['notifications', cacheKeyForSession(ref('u1'), 'siap', 'notifications'), (svc: SiapService) => svc.getNotifications(ref('u1'))],
+       ['jadwal', cacheKeyForSession(ref('u1'), 'siap', 'jadwal'), (svc: SiapService) => svc.getJadwal(ref('u1'))],
+       ['absen', cacheKeyForSession(ref('u1'), 'siap', 'absen'), (svc: SiapService) => svc.getAbsen(ref('u1'))],
     ] as const;
 
     for (const [name, key, invoke] of methods) {
@@ -1507,8 +1555,8 @@ describe('API-backed methods', () => {
   });
 
   it.each([
-    ['IRS', 'u1:siap:irs', (svc: SiapService) => svc.getIrs(ref('u1'))],
-    ['KHS', 'u1:siap:khs', (svc: SiapService) => svc.getKhs(ref('u1'))],
+    ['IRS', cacheKeyForSession(ref('u1'), 'siap', 'irs'), (svc: SiapService) => svc.getIrs(ref('u1'))],
+    ['KHS', cacheKeyForSession(ref('u1'), 'siap', 'khs'), (svc: SiapService) => svc.getKhs(ref('u1'))],
   ] as const)('writes the %s payload once when the credential retry succeeds', async (_name, key, invoke) => {
     const set = jest.fn();
     const cache = {
@@ -1542,7 +1590,7 @@ describe('API-backed methods', () => {
       wallNowMs: () => 1_000,
       monotonicNowNs: () => 1_000_000n,
     };
-    const service = new SiapService(undefined, undefined, undefined, undefined, undefined, runtime);
+     const service = new SiapService(undefined, undefined, undefined, undefined, runtime);
     const fetchMock = jest.spyOn(global, 'fetch');
     fetchMock.mockClear();
     fetchMock
