@@ -20,6 +20,7 @@ import type {
   User,
 } from '../types';
 import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
+import { isLogoutInProgress } from '../lib/logout';
 import { createTokenRefresher } from './token-refresher';
 import { API, isServiceStale, parseErrorEnvelope } from './contract';
 import { getCached, invalidate } from './cache';
@@ -92,6 +93,11 @@ apiClient.interceptors.response.use(
       if (url === API.auth.refresh || url === API.auth.logout) {
         return Promise.reject(error);
       }
+      // Logout in progress: a sibling 401 must never silent-refresh, reauth,
+      // or retry — the logout owns the session teardown. Reject untouched.
+      if (isLogoutInProgress()) {
+        return Promise.reject(error);
+      }
       const alreadyRetried = (error.config as { _retried?: boolean } | undefined)?._retried;
       if (!alreadyRetried) {
         // Silent refresh FIRST — this is also the probe that distinguishes
@@ -109,11 +115,19 @@ apiClient.interceptors.response.use(
             // Genuinely dead session (SESSION_DEAD / INVALID_TOKEN): wipe the
             // token and re-auth — INCLUDING for service paths, whose bare 401
             // would otherwise be misread as "upstream stale" and strand the
-            // user with no re-login path.
-            localStorage.removeItem(TOKEN_KEY);
-            emitReauthRequested();
+            // user with no re-login path. Never during logout: the logout owns
+            // the wipe and must not raise the reauth overlay.
+            if (!isLogoutInProgress()) {
+              localStorage.removeItem(TOKEN_KEY);
+              emitReauthRequested();
+            }
           }
           // Network/5xx: keep the token; server down != dead session.
+          return Promise.reject(error);
+        }
+        // Logout may have started while the refresh was in flight: discard the
+        // minted token — never rewrite sso_token after logout cleared it.
+        if (isLogoutInProgress()) {
           return Promise.reject(error);
         }
         localStorage.setItem(TOKEN_KEY, newToken);
@@ -139,6 +153,9 @@ apiClient.interceptors.response.use(
       // handles) or a genuine auth failure on a non-service path.
       const { code } = parseErrorEnvelope(error?.response?.data);
       if (isServiceStale(url, code)) {
+        return Promise.reject(error);
+      }
+      if (isLogoutInProgress()) {
         return Promise.reject(error);
       }
       localStorage.removeItem(TOKEN_KEY);

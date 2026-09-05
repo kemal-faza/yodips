@@ -4,8 +4,12 @@ import type { User } from '../types';
 import { clearCache } from '../api/cache';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 import { onTokenRefreshed } from '../lib/reauth';
+import { beginLogout, endLogout, isLogoutInProgress, getReauthEpoch } from '../lib/logout';
 
 const TOKEN_KEY = 'sso_token';
+// Module scope, next to `const TOKEN_KEY = 'sso_token';`:
+/** Bound for the best-effort server-side revoke during logout (ms). */
+const SERVER_REVOKE_TIMEOUT_MS = 5000;
 // SECURITY ASSUMPTION (documented — see security review MEDIUM #8): the JWT is
 // stored in localStorage, so any script running in the page context can read it.
 // This is accepted because (a) the stored-XSS vector that would exfiltrate it is
@@ -130,6 +134,7 @@ export const useAuthStore = defineStore('auth', {
       return useExtension().readStatus();
     },
     finishHandoff(token: string) {
+      if (isLogoutInProgress()) return; // never rewrite a token during logout
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
@@ -137,6 +142,7 @@ export const useAuthStore = defineStore('auth', {
      *  interceptor (via emitTokenRefreshed) and by individual actions that
      *  obtain a token from other paths. */
     setToken(token: string) {
+      if (isLogoutInProgress()) return; // never rewrite a token during logout
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
@@ -156,18 +162,36 @@ export const useAuthStore = defineStore('auth', {
     async waitForReauthResult(
       onPhase?: (phase: 'sso' | 'kulon' | 'siap') => void,
     ): Promise<'recovered' | 'failed'> {
+      // Capture the reauth epoch at start: if a logout begins while this poll
+      // is running, beginLogout() bumps the epoch and every later tick (and
+      // the settle path) sees the mismatch and self-cancels — a late extension
+      // 'ok'/accessToken result can never resurrect the token after logout.
+      const epochAtStart = getReauthEpoch();
       return new Promise<'recovered' | 'failed'>((resolve) => {
         let settled = false;
         let timer: ReturnType<typeof setInterval> | undefined;
+        const isInvalidated = () => getReauthEpoch() !== epochAtStart;
         const settle = (r: 'recovered' | 'failed') => {
           if (settled) return;
           settled = true;
           if (timer) clearInterval(timer);
           this.reauthing = false;
+          this.reauthPhase = null;
           resolve(r);
         };
         const attempt = async () => {
+          if (isInvalidated()) {
+            // Logout began while we were polling: never read the extension,
+            // never finishHandoff, never raise the overlay. settle('failed').
+            settle('failed');
+            return;
+          }
           const payload: any = await this.readExtensionResult();
+          if (isInvalidated()) {
+            // The read crossed a logout boundary: discard whatever came back.
+            settle('failed');
+            return;
+          }
           if (!payload) return; // extension unavailable — keep waiting
           const phase = payload.phase as 'sso' | 'kulon' | 'siap' | undefined;
           if (phase) {
@@ -191,11 +215,26 @@ export const useAuthStore = defineStore('auth', {
     async attemptReauth(
       onPhase?: (phase: 'sso' | 'kulon' | 'siap') => void,
     ): Promise<'recovered' | 'failed'> {
+      // Never re-auth while a logout is in progress: the logout owns the
+      // session teardown and must not race an extension re-capture.
+      if (isLogoutInProgress()) return 'failed';
       if (this.reauthAttempted) return 'failed'; // loop guard: once per event
+      // Capture the epoch AFTER the entry guards: if a logout begins while the
+      // handoff below is in flight, beginLogout() bumps it — the check after
+      // the await then fails EVEN IF logout has already fully ended (the flag
+      // drops on endLogout, but the epoch stays bumped).
+      const epochAtStart = getReauthEpoch();
+      const invalidated = () => getReauthEpoch() !== epochAtStart;
       this.reauthAttempted = true;
       this.reauthing = true;
       this.reauthPhase = null;
       const resp = await this.loginViaExtension();
+      if (invalidated()) {
+        // Logout began while the handoff was in flight (or finished): never
+        // mint, never claim recovery, never start a poll.
+        this.reauthing = false;
+        return 'failed';
+      }
       if (resp === 'ok') {
         this.reauthing = false;
         return 'recovered';
@@ -209,35 +248,61 @@ export const useAuthStore = defineStore('auth', {
       return 'failed';
     },
     async logout() {
-      // Server-side revocation FIRST, while this JWT still exists and can
-      // authenticate the request: drop the server session so a leaked JWT
-      // cannot be silently refreshed after logout (YD-AUTH-001). Best-effort —
-      // a network/5xx/401 failure must NEVER block or throw the UI: local
-      // cleanup below always runs regardless. A failure here (backend down or
-      // the bearer already expired) leaves the SERVER session revocable only
-      // by its absolute cap — never refresh-on-logout and never accept an
-      // expired JWT to force the clear: local cleanup proceeds either way.
-      if (this.token) {
+      // Concurrent logout: the first call owns the teardown; every later call
+      // while one is in flight early-returns (the shared operation performs
+      // the single cleanup and releases the flag in its finally).
+      if (isLogoutInProgress()) return;
+      // (0) Flag FIRST: every sibling 401 / in-flight refresh success /
+      // reauth attempt from this point on is suppressed by the shared
+      // logout-in-progress state (client.ts interceptor + this store).
+      beginLogout();
+      try {
+        // (1) Server-side revocation while this JWT still exists and can
+        // authenticate the request, BOUNDED: race logoutSession() against a
+        // ~5s settle window so a hung backend cannot extend logout. The
+        // backend contract (final-corrections Track A §4.3) accepts an
+        // expired bearer, so this stays functional for expired local tokens.
+        // Network/5xx/401/timeout are best-effort — never block the UI.
+        if (this.token) {
+          try {
+            await Promise.race([
+              logoutSession(),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('logout server revoke timed out')), SERVER_REVOKE_TIMEOUT_MS),
+              ),
+            ]);
+          } catch {
+            // Logout 401 = session already dead (terminal in the interceptor);
+            // network/5xx/timeout = backend unreachable or slow. Either way,
+            // local cleanup below still proceeds — never enter a refresh-retry
+            // on logout.
+          }
+        }
+        // (2) Local wipe + reauth-state reset. The overlay is driven by
+        // `reauthing`; if a reauth was in progress (or the interceptor's
+        // refresh-failure emitted during the race), logout must tear it down:
+        // a logged-out user must never be left under the "Memulihkan sesi…"
+        // overlay, and the loop guard is cleared for a future login.
+        clearCache();
+        this.reauthing = false;
+        this.reauthPhase = null;
+        this.reauthAttempted = false; // a next expiry event may auto-reauth again
+        this.token = null;
+        this.user = null;
+        this.fotoUrl = null;
+        localStorage.removeItem(TOKEN_KEY);
+      } finally {
+        // (3) Best-effort extension cookie wipe — AWAITED so logout() does not
+        // resolve while the wipe is still in flight (useExtension().logout()
+        // already swallows messaging errors). endLogout() runs only AFTER the
+        // wipe response, in the finally, so the flag can never be released
+        // before cleanup settles.
         try {
-          await logoutSession();
-        } catch {
-          // Logout 401 = session already dead (terminal in the interceptor);
-          // network/5xx = backend unreachable. Either way, local cleanup below
-          // still proceeds — never enter a refresh-retry on logout.
+          await useExtension().logout();
+        } finally {
+          endLogout();
         }
       }
-      clearCache();
-      this.reauthAttempted = false; // a next expiry event may auto-reauth again
-      this.token = null;
-      this.user = null;
-      this.fotoUrl = null;
-      localStorage.removeItem(TOKEN_KEY);
-      // Best-effort: ask the extension to clear the SSO/Kulon/SIAP session
-      // cookies so the next login cannot fast-path-reuse a stale session and is
-      // forced to open a fresh tab. Awaited so logout() does not resolve while
-      // the cookie wipe is still in flight (useExtension().logout() already
-      // swallows extension-messaging errors). Never blocks or throws the UI.
-      await useExtension().logout();
     },
   },
 });
@@ -251,6 +316,9 @@ if (_unsubTokenSync) {
   _unsubTokenSync();
 }
 _unsubTokenSync = onTokenRefreshed((token) => {
+  // Discard rotations that resolve during logout — never rewrite the store
+  // token after logout cleared it.
+  if (isLogoutInProgress()) return;
   const store = useAuthStore();
   store.token = token;
 });

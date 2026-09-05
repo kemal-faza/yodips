@@ -8,6 +8,7 @@ function flushPromises(): Promise<void> {
 }
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from './auth';
+import { beginLogout, endLogout, isLogoutInProgress, getReauthEpoch } from '../lib/logout';
 import * as api from '../api/client';
 import { EXTENSION_ID } from '../config/extension';
 import * as cache from '../api/cache';
@@ -296,6 +297,115 @@ describe('auth store', () => {
     expect(store.isHandoffMode).toBe(true);
     vi.unstubAllEnvs();
   });
+
+  // File-scoped drain: the logout module's flag is module state (not Pinia),
+  // so vi.clearAllMocks()/localStorage.clear() do not reset it. Every test
+  // above pairs its beginLogout() with endLogout(), but a failed assertion
+  // mid-test would leak the flag into the next test — this idempotent drain
+  // makes the whole file robust to that.
+  afterEach(() => {
+    while (isLogoutInProgress()) endLogout();
+  });
+
+  it('logout raises the flag synchronously (before its first await) and releases it only after the extension wipe settles', async () => {
+    // Boundary contract the interceptor relies on: a sibling 401 that reaches
+    // the interceptor AFTER logout() was called (even synchronously) must see
+    // the flag up. logout() must therefore raise the flag before ANY await.
+    // Shape mirrors the proven pattern of the pre-existing fire-and-forget
+    // race test (gated extension wipe).
+    let flagStateAtRevoke = false;
+    (api.logoutSession as any).mockImplementation(async () => {
+      // While the server revoke is in flight (first await inside logout),
+      // a sibling 401 arriving NOW must be suppressed:
+      flagStateAtRevoke = isLogoutInProgress();
+    });
+    let extResolve: () => void = () => {};
+    const extGate = new Promise<void>((resolve) => { extResolve = resolve; });
+    extMockState.logoutImpl = () => extGate;
+    localStorage.setItem('sso_token', 'x');
+    const store = useAuthStore();
+    store.token = 'x';
+    const logoutPromise = store.logout();
+    let logoutSettled = false;
+    void logoutPromise.then(() => { logoutSettled = true; });
+    // Drain pending microtasks so logout() reaches the extension await.
+    await flushPromises();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(flagStateAtRevoke).toBe(true); // flag was up during the server revoke
+    expect(logoutSettled).toBe(false); // not resolved while the wipe is pending
+    expect(isLogoutInProgress()).toBe(true); // flag STILL held during the wipe
+    extResolve(); // settle the extension wipe → logout resolves after it
+    await logoutPromise;
+    expect(logoutSettled).toBe(true);
+    expect(isLogoutInProgress()).toBe(false); // released only after the wipe
+    extMockState.logoutImpl = undefined;
+    (api.logoutSession as any).mockResolvedValue(undefined); // restore default
+  });
+
+  it('logout is idempotent under concurrency: a second logout() early-returns and cleanup runs once', async () => {
+    let serverCalls = 0;
+    (api.logoutSession as any).mockImplementation(async () => { serverCalls += 1; });
+    localStorage.setItem('sso_token', 'x');
+    const store = useAuthStore();
+    store.token = 'x';
+    const p1 = store.logout();
+    const p2 = store.logout(); // second call while first is in flight
+    await Promise.all([p1, p2]);
+    // The shared in-flight operation performs a single cleanup (one server
+    // call, one wipe); the second call early-returns.
+    expect(serverCalls).toBe(1);
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(isLogoutInProgress()).toBe(false);
+    (api.logoutSession as any).mockResolvedValue(undefined); // restore default
+  });
+
+  it('logout does not resolve until the bounded server revoke and extension wipe have settled, then releases the flag', async () => {
+    // Ordering + flag-release regression: the revoke is attempted BEFORE local
+    // cleanup, the extension wipe is awaited BEFORE endLogout() releases the
+    // flag (the design forbids endLogout() preceding the wipe response).
+    const order: string[] = [];
+    (api.logoutSession as any).mockImplementation(async () => { order.push('server'); });
+    const extGate = new Promise<void>((res) => { setTimeout(res, 0); });
+    extMockState.logoutImpl = async () => { await extGate; order.push('ext-wipe'); };
+    localStorage.setItem('sso_token', 'x');
+    const store = useAuthStore();
+    store.token = 'x';
+    const p = store.logout();
+    await flushPromises();
+    // The flag must STILL be held while the extension wipe is pending.
+    expect(isLogoutInProgress()).toBe(true);
+    await extGate;
+    await p;
+    order.push('done');
+    expect(order).toEqual(['server', 'ext-wipe', 'done']);
+    expect(isLogoutInProgress()).toBe(false); // endLogout() in finally, after the wipe
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(extMockState.logoutMock).toHaveBeenCalledTimes(1);
+    extMockState.logoutImpl = undefined;
+    (api.logoutSession as any).mockResolvedValue(undefined); // restore default
+  });
+
+  it('the bounded server revoke does not extend past cleanup: a hung revoke times out and cleanup still runs', async () => {
+    // Server revoke is raced against a short settle window; a hang must not
+    // block the local wipe or the flag release.
+    vi.useFakeTimers();
+    (api.logoutSession as any).mockImplementation(
+      () => new Promise(() => {}), // never settles
+    );
+    const store = useAuthStore();
+    store.token = 'x';
+    const p = store.logout();
+    await vi.advanceTimersByTimeAsync(6000); // past the ~5s bound
+    await flushPromises();
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    await p;
+    expect(isLogoutInProgress()).toBe(false);
+    vi.useRealTimers();
+    extMockState.logoutImpl = undefined;
+    (api.logoutSession as any).mockResolvedValue(undefined); // restore default
+  }, 10000);
 });
 
 describe('extension login', () => {
@@ -533,4 +643,149 @@ describe('reauth (auto-recover expired session)', () => {
     store.setToken('new-jwt');
     expect(store.token).toBe('new-jwt');
   });
+
+  it('attemptReauth returns failed during logout (never mints)', async () => {
+    stubChrome('ok', 'jwt-during-logout'); // extension would answer ok
+    const store = useAuthStore();
+    store.token = 'x';
+    beginLogout();
+    try {
+      expect(await store.attemptReauth()).toBe('failed');
+      expect(store.token).toBe('x'); // no mint, no store write
+    } finally {
+      endLogout();
+    }
+  });
+
+  it('attemptReauth that started BEFORE logout but whose handoff resolves ok AFTER logout began returns failed and does not mint', async () => {
+    // Mid-flight edge: attemptReauth passed the entry guard, then a logout
+    // BEGAN while loginViaExtension() was awaiting; the extension answers ok
+    // with a fresh token. The post-await epoch check must return 'failed' and
+    // the finishHandoff write gate must block the mint. Drive logout's begin
+    // via the real store.logout() so the wipe is real (token → null).
+    let releaseHandoff!: () => void;
+    const handoffGate = new Promise<any>((resolve) => {
+      releaseHandoff = () => resolve({ status: 'ok', accessToken: 'jwt-raced' });
+    });
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') {
+            handoffGate.then(cb); // extension answers ok only when released
+          } else {
+            cb({ status: 'ok' }); // logout wipe + anything else resolve
+          }
+        },
+      },
+    };
+    const store = useAuthStore();
+    store.token = 'x';
+    const reauthPromise = store.attemptReauth(); // passes entry guard, awaits handoff
+    await flushPromises();
+    const logoutPromise = store.logout(); // begins while the handoff is in flight
+    releaseHandoff(); // extension now answers ok — must NOT mint
+    expect(await reauthPromise).toBe('failed'); // post-await epoch re-check
+    await logoutPromise; // let the wipe finish before asserting final state
+    expect(store.token).toBeNull(); // logout wiped; the raced mint was blocked
+    expect(localStorage.getItem('sso_token')).toBeNull();
+  });
+
+  it('logout cancels an ALREADY-RUNNING waitForReauthResult poll: late extension ok never resurrects the token, reauth state resets', async () => {
+    // The resurrection hole (reviewer finding): attemptReauth('started') is
+    // running a 3s waitForReauthResult poll when logout() begins. The poll's
+    // next tick must see the bumped epoch and settle 'failed' WITHOUT calling
+    // finishHandoff — even though the extension would answer ok with a fresh
+    // accessToken — and logout must clear reauthing/reauthPhase so the overlay
+    // does not linger. The extension wipe is GATED so the poll tick fires while
+    // logout is genuinely in flight (mirrors the race test in 'auth store').
+    const store = useAuthStore();
+    store.token = 'x';
+    store.reauthing = true; // overlay up (attemptReauth set it)
+    store.reauthPhase = 'sso';
+    const epochBefore = getReauthEpoch();
+    vi.useFakeTimers(); // drive the poll interval deterministically
+    // statusSteps: the FIRST readStatus (inside waitForReauthResult's immediate
+    // attempt()) returns an in-progress phase so the poll keeps waiting; the
+    // SECOND readStatus (after logout bumps the epoch) would return ok+token —
+    // the poll must NOT act on it (reads stays 1).
+    let reads = 0;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' }); // ext wipe — NOT a status read
+          reads += 1;
+          if (reads === 1) return cb({ status: 'ok', active: true, phase: 'sso' });
+          return cb({ status: 'ok', accessToken: 'jwt-resurrected' }); // late ok
+        },
+      },
+    };
+    // Gate the extension wipe so logout stays in flight until we release it:
+    let releaseWipe!: () => void;
+    const wipeGate = new Promise<void>((resolve) => { releaseWipe = resolve; });
+    extMockState.logoutImpl = () => wipeGate;
+    const pollPromise = store.waitForReauthResult(); // already running (no logout yet)
+    await vi.advanceTimersByTimeAsync(0); // immediate attempt() -> phase sso, still waiting
+    await flushPromises();
+    expect(store.reauthing).toBe(true);
+    expect(reads).toBe(1);
+    // Logout starts WHILE the poll is running; it reaches the gated extension
+    // wipe and stops — flag up, epoch bumped, wipe pending:
+    const logoutPromise = store.logout();
+    // Drain the logout chain: logoutSession (Promise.race) → local wipe →
+    // useExtension().logout() → wipeGate. Under fake timers the async chain
+    // still runs on microtasks; flush them, then let macrotask-queued steps
+    // (the race timeout) advance.
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushPromises();
+    expect(isLogoutInProgress()).toBe(true); // still in flight (wipe gated)
+    expect(store.token).toBeNull(); // local wipe ran before the gated wipe
+    expect(store.reauthing).toBe(false); // logout reset the overlay state
+    // The poll's next tick fires NOW, mid-logout:
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(reads).toBe(1); // the invalidated tick never called readExtensionResult
+    expect(await pollPromise).toBe('failed'); // self-cancelled, never 'recovered'
+    // The local wipe ran before the (gated) extension wipe, so the token is
+    // already null — the late-ok tick must NOT have resurrected it:
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(store.reauthing).toBe(false); // overlay torn down by the settle
+    expect(store.reauthPhase).toBeNull();
+    // Release the wipe → logout completes endLogout():
+    releaseWipe();
+    await logoutPromise;
+    expect(isLogoutInProgress()).toBe(false);
+    expect(getReauthEpoch()).toBeGreaterThan(epochBefore); // logout bumped it
+    extMockState.logoutImpl = undefined;
+    vi.useRealTimers();
+  }, 10000);
+
+  it('a waitForReauthResult poll that was never racing logout still recovers normally (epoch unchanged ⇒ no regression)', async () => {
+    const store = useAuthStore();
+    store.token = 'x';
+    vi.useFakeTimers(); // drive the poll interval deterministically
+    let reads = 0;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' });
+          reads += 1;
+          if (reads === 1) return cb({ status: 'ok', active: true, phase: 'sso' });
+          return cb({ status: 'ok', accessToken: 'jwt-fine' });
+        },
+      },
+    };
+    const promise = store.waitForReauthResult();
+    await vi.advanceTimersByTimeAsync(0); // phase sso
+    await vi.advanceTimersByTimeAsync(3000); // ok+token -> recovered
+    expect(await promise).toBe('recovered');
+    expect(store.token).toBe('jwt-fine'); // normal recovery still mints
+    vi.useRealTimers();
+  }, 10000);
 });
