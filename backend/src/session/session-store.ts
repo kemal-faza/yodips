@@ -1,6 +1,34 @@
 import { CapturedSession, isSessionGeneration } from '../playwright/playwright-auth.service';
 
 /**
+ * Module-level singleton holder for the active SessionStore.
+ *
+ * NestJS module resolution has a blind spot: providers that are first needed
+ * from a module whose own graph does not (yet) expose SessionStore get
+ * constructed in that foreign context, where DI silently yields `undefined`
+ * for an @Optional() SessionStore — even though the store exists and the
+ * JWT guard (auth context) resolves it fine. The result was catastrophic and
+ * hard to diagnose: `/api/auth/me` returned 200 (guard passed) while every
+ * data endpoint returned 401 SESSION_DEAD (services saw no store).
+ *
+ * `createSessionStore` (SessionModule factory) registers the live instance
+ * here; consumers (`KulonUpstreamSession`, `SiapUpstreamSession`,
+ * `KulonService`, `SiapService`, poller) fall back to this holder when their
+ * constructor injection came up empty. One process = one store; the holder is
+ * written exactly once at bootstrap and never cleared.
+ */
+let activeSessionStore: SessionStore | null = null;
+
+export function registerSessionStore(store: SessionStore): void {
+  activeSessionStore = store;
+}
+
+/** The bootstrap-registered store, or null before SessionModule initializes. */
+export function getRegisteredSessionStore(): SessionStore | null {
+  return activeSessionStore;
+}
+
+/**
  * Generation-qualified reference to one login session: the JWT `sub` plus the
  * exact `sessionGeneration` the token was minted against. Every
  * token-facing (JwtAuthGuard-authenticated) read of the session store MUST

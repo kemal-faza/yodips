@@ -13,7 +13,7 @@ import {
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
-import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import { SessionStore, SessionRef, isSessionRef, getRegisteredSessionStore } from '../session/session-store';
 import {
   cacheKeyForSession,
   currentRefForSession,
@@ -113,7 +113,7 @@ export class SiapUpstreamSession {
     @Optional() scrapeIdentity?: SiapIdentityScraper,
     @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
-    this.sessionStore = sessionStore;
+    this.sessionStore = sessionStore ?? getRegisteredSessionStore() ?? undefined;
     this.cache = cache;
     this.apiUpstream = apiUpstream;
     this.scrapeIdentity = scrapeIdentity;
