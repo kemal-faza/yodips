@@ -199,6 +199,10 @@ data class WebPushDeviceRequest(
 @Serializable
 data class VapidPublicKeyResponse(val publicKey: String = "")
 
+/** Response POST /api/auth/logout (backend `{ ok: true }`; idempotent on repeat). */
+@Serializable
+data class LogoutResponse(val ok: Boolean = true)
+
 /** Konten satu course (GET /api/kulon/courses/:id/content) — sections pertemuan
  *  berisi item materi/kuis/tugas/link/forum. Mirror backend `KulonCourseContent`
  *  (kulon-parse.ts). */
