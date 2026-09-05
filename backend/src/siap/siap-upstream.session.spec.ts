@@ -14,6 +14,11 @@ class FakeStore extends SessionStore {
   constructor(private map: Map<string, any>) { super(); }
   async set(k: string, v: any) { this.map.set(k, v); }
   async get(k: string) { return this.map.get(k) ?? null; }
+  async getIfGeneration(k: string, generation: string) {
+    const rec = this.map.get(k) ?? null;
+    if (!rec || rec.sessionGeneration !== generation) return null;
+    return rec;
+  }
   async clear(k: string) { this.map.delete(k); }
   async clearIfGeneration(k: string, generation: string) {
     const rec = this.map.get(k);

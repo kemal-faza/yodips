@@ -54,6 +54,33 @@ export class InMemorySessionStore extends SessionStore {
   }
 
   /**
+   * Generation-qualified snapshot. Synchronous check+return with NO await
+   * between them, so no interleaving is possible on the single-threaded
+   * event loop. Expiry/absolute-dead are evaluated BEFORE the generation
+   * compare (dead → deleted, null either way); mismatch never slides or
+   * deletes; match slides exactly like `get()`.
+   */
+  async getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null> {
+    const record = this.records.get(identity);
+    if (!record) return null;
+    if (Date.now() > record.expiresAt) {
+      this.records.delete(identity);
+      return null;
+    }
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - record.session.capturedAt >= this.absoluteMs
+    ) {
+      this.records.delete(identity);
+      return null;
+    }
+    if (record.session.sessionGeneration !== generation) return null;
+    // Match: slide like get().
+    record.expiresAt = Date.now() + this.ttlMs;
+    return record.session;
+  }
+
+  /**
    * Atomic compare-and-clear. Synchronous check+delete with NO await between
    * them, so no interleaving is possible on the single-threaded event loop.
    * Expired/absolute-dead records are treated as absent (deleted, true).

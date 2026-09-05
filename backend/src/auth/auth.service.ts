@@ -184,6 +184,7 @@ export class AuthService {
     const all = await this.sessionStore.all();
     if (all.length !== 1) return null;
     const [s] = all;
+    if (!isSessionGeneration(s.sessionGeneration)) return null;
     if (this.isFresh(s) && (await this.kulonProbeOk(s.kulonCookie))) {
       return s;
     }

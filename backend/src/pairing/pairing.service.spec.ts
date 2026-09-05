@@ -20,6 +20,7 @@ describe('PairingService', () => {
     sessionGeneration: GEN,
     ...over,
   });
+  const refFor = (sub: string, generation: string = GEN) => ({ sub, sessionGeneration: generation });
   const config = {
     get: jest.fn((key: string) =>
       key === 'FRONTEND_BASE_URL' ? 'https://app.example' : undefined,
@@ -34,7 +35,18 @@ describe('PairingService', () => {
       providers: [
         PairingService,
         { provide: PairingStore, useValue: pairingStore },
-        { provide: SessionStore, useValue: { get: (sub: string) => Promise.resolve(sessionStore.get(sub) ?? null) } },
+        {
+          provide: SessionStore,
+          useValue: {
+            get: (sub: string) => Promise.resolve(sessionStore.get(sub) ?? null),
+            getIfGeneration: (sub: string, generation: string) => {
+              const rec = sessionStore.get(sub) ?? null;
+              if (!rec) return Promise.resolve(null);
+              if (rec.sessionGeneration !== generation) return Promise.resolve(null);
+              return Promise.resolve(rec);
+            },
+          },
+        },
         { provide: JwtService, useValue: jwt },
         { provide: ConfigService, useValue: config },
       ],
@@ -45,18 +57,26 @@ describe('PairingService', () => {
   it('requestPairing menyimpan HASH (bukan kode), mengembalikan qrUrl + kode valid', async () => {
     sessionStore.set('NIM1', liveSession());
     const spySet = jest.spyOn(pairingStore, 'set');
-    const res = await service.requestPairing('NIM1');
+    const res = await service.requestPairing(refFor('NIM1'));
     expect(res.code).toMatch(/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{8}$/);
     expect(res.qrUrl).toBe(`https://app.example/login?pair=${res.code}`);
     expect(res.expiresAt).toBeGreaterThan(Date.now());
     const storedKey = spySet.mock.calls[0][0];
     expect(storedKey).not.toBe(res.code);
     expect(storedKey).toMatch(/^[0-9a-f]{64}$/);
-    expect(spySet.mock.calls[0][1]).toEqual({ sub: 'NIM1', expiresAt: res.expiresAt });
+    expect(spySet.mock.calls[0][1]).toEqual({ sub: 'NIM1', sessionGeneration: GEN, expiresAt: res.expiresAt });
   });
 
   it('requestPairing menolak 401 SESSION_DEAD bila sesi mati', async () => {
-    await expect(service.requestPairing('GHOST')).rejects.toMatchObject({
+    await expect(service.requestPairing(refFor('GHOST'))).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+  });
+
+  it('requestPairing menolak 401 SESSION_DEAD bila generation tidak cocok dengan live record', async () => {
+    sessionStore.set('NIM1', liveSession({ sessionGeneration: 'b'.repeat(32) }));
+    await expect(service.requestPairing(refFor('NIM1', 'a'.repeat(32)))).rejects.toMatchObject({
       status: 401,
       response: { code: 'SESSION_DEAD' },
     });
@@ -66,7 +86,7 @@ describe('PairingService', () => {
     const gen = 'd'.repeat(32);
     sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '', capturedAt: Date.now(), sessionGeneration: gen });
     // simpan via jalur service agar hash konsisten:
-    const req = await service.requestPairing('NIM1');
+    const req = await service.requestPairing(refFor('NIM1', gen));
     const messy = req.code.toLowerCase().slice(0, 4) + '-' + req.code.slice(4);
     const res = await service.consume(messy);
     expect(jwt.signAsync).toHaveBeenCalledWith({
@@ -77,24 +97,26 @@ describe('PairingService', () => {
     expect(res).toEqual({ accessToken: 'jwt-pair', hasKulon: true, hasSiap: false });
   });
 
-  it('consume binds the CURRENT stored generation (re-login rotates the bound value)', async () => {
+  it('consume after a replacement generation rejects 409 SESSION_DEAD and never mints (A)', async () => {
     const genOld = 'e'.repeat(32);
     const genNew = 'f'.repeat(32);
     sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '', capturedAt: Date.now(), sessionGeneration: genOld });
-    const { code } = await service.requestPairing('NIM1');
-    // Re-login rotates the stored generation before consume.
-    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '', capturedAt: Date.now(), sessionGeneration: genNew });
-    await service.consume(code);
-    expect(jwt.signAsync).toHaveBeenCalledWith({
-      sub: 'NIM1',
-      via: 'pair',
-      sessionGeneration: genNew,
+    const { code } = await service.requestPairing(refFor('NIM1', genOld));
+    // Re-login replaces the live session before consume.
+    sessionStore.set('NIM1', { kulonCookie: 'k-NEW', siapCookie: '', capturedAt: Date.now(), sessionGeneration: genNew });
+    (jwt.signAsync as jest.Mock).mockClear();
+    await expect(service.consume(code)).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'SESSION_DEAD' },
     });
+    expect(jwt.signAsync).not.toHaveBeenCalled();
+    // Replacement survives (never cleared by the stale consume).
+    expect(sessionStore.get('NIM1')?.sessionGeneration).toBe(genNew);
   });
 
   it('consume single-use: panggilan kedua 400 INVALID_CODE', async () => {
     sessionStore.set('NIM1', liveSession());
-    const { code } = await service.requestPairing('NIM1');
+    const { code } = await service.requestPairing(refFor('NIM1'));
     await service.consume(code);
     await expect(service.consume(code)).rejects.toMatchObject({
       status: 400,
@@ -110,7 +132,7 @@ describe('PairingService', () => {
     );
     try {
       sessionStore.set('NIM1', liveSession());
-      const { code } = await service.requestPairing('NIM1');
+      const { code } = await service.requestPairing(refFor('NIM1'));
       await expect(service.consume(code)).rejects.toMatchObject({
         status: 400,
         response: { code: 'EXPIRED_CODE', message: 'Kode sudah kedaluwarsa. Minta kode baru.' },
@@ -127,7 +149,7 @@ describe('PairingService', () => {
 
   it('consume kode sah tapi sesi sumber sudah mati 409 SESSION_DEAD', async () => {
     sessionStore.set('NIM2', liveSession());
-    const { code } = await service.requestPairing('NIM2');
+    const { code } = await service.requestPairing(refFor('NIM2'));
     sessionStore.delete('NIM2'); // sesi mati setelah kode dibuat
     await expect(service.consume(code)).rejects.toMatchObject({
       status: 409,
@@ -137,7 +159,7 @@ describe('PairingService', () => {
 
   it('requestPairing menolak legacy tanpa generation dengan 401 SESSION_DEAD', async () => {
     sessionStore.set('NIM-LEGACY', { kulonCookie: 'k', siapCookie: 's', capturedAt: Date.now() });
-    await expect(service.requestPairing('NIM-LEGACY')).rejects.toMatchObject({
+    await expect(service.requestPairing(refFor('NIM-LEGACY'))).rejects.toMatchObject({
       status: 401,
       response: { code: 'SESSION_DEAD' },
     });
@@ -145,7 +167,7 @@ describe('PairingService', () => {
 
   it('consume menolak legacy tanpa generation dengan 409 SESSION_DEAD', async () => {
     sessionStore.set('NIM-LEGACY2', liveSession());
-    const { code } = await service.requestPairing('NIM-LEGACY2');
+    const { code } = await service.requestPairing(refFor('NIM-LEGACY2'));
     // Session rotates to legacy (generation stripped) before consume.
     sessionStore.set('NIM-LEGACY2', { kulonCookie: 'k', siapCookie: 's', capturedAt: Date.now() });
     await expect(service.consume(code)).rejects.toMatchObject({
@@ -157,7 +179,7 @@ describe('PairingService', () => {
   describe('statusFor (polling web: pending/consumed/invalid)', () => {
     it('pending + expiresAt utk pemilik kode yang masih hidup', async () => {
       sessionStore.set('NIM1', liveSession());
-      const { code, expiresAt } = await service.requestPairing('NIM1');
+      const { code, expiresAt } = await service.requestPairing(refFor('NIM1'));
       await expect(service.statusFor('NIM1', code)).resolves.toEqual({
         status: 'pending',
         expiresAt,
@@ -166,7 +188,7 @@ describe('PairingService', () => {
 
     it('consumed setelah dipakai (pemilik), tanpa expiresAt', async () => {
       sessionStore.set('NIM1', liveSession());
-      const { code } = await service.requestPairing('NIM1');
+      const { code } = await service.requestPairing(refFor('NIM1'));
       await service.consume(code);
       await expect(service.statusFor('NIM1', code)).resolves.toEqual({
         status: 'consumed',
@@ -175,7 +197,7 @@ describe('PairingService', () => {
 
     it('kode milik sub lain → invalid (tanpa bocor keberadaan)', async () => {
       sessionStore.set('NIM1', liveSession());
-      const { code } = await service.requestPairing('NIM1');
+      const { code } = await service.requestPairing(refFor('NIM1'));
       await expect(service.statusFor('NIM2', code)).resolves.toEqual({
         status: 'invalid',
       });
@@ -202,7 +224,7 @@ describe('PairingService', () => {
       );
       try {
         sessionStore.set('NIM1', liveSession());
-        const { code } = await service.requestPairing('NIM1');
+        const { code } = await service.requestPairing(refFor('NIM1'));
         await expect(service.statusFor('NIM1', code)).resolves.toEqual({
           status: 'invalid',
         });
@@ -213,7 +235,7 @@ describe('PairingService', () => {
 
     it('normalisasi input (lowercase/dash) diterima', async () => {
       sessionStore.set('NIM1', liveSession());
-      const { code } = await service.requestPairing('NIM1');
+      const { code } = await service.requestPairing(refFor('NIM1'));
       const messy = code.toLowerCase().slice(0, 4) + '-' + code.slice(4);
       await expect(service.statusFor('NIM1', messy)).resolves.toMatchObject({
         status: 'pending',
