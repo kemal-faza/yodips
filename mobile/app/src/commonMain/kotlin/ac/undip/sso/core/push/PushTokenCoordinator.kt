@@ -16,9 +16,10 @@ import kotlinx.coroutines.sync.withLock
  * LIFECYCLE:
  *  - [onLogin] registers the current FCM token (pending stash first) and
  *    tracks the registered token as active.
- *  - [onNewToken] tracks a rotated token only while logged in; while logged
- *    out the token is stashed for the next login (device-owned, retried
- *    later — never dropped).
+ *  - [onNewToken] tracks a rotated token only while the coordinator's active
+ *    session is live; while inactive the token is stashed for the next login
+ *    (device-owned, retried later — never dropped). The active state and
+ *    generation are coordinator-owned under the same mutex as registration.
  *  - [onLogout] unregisters the active token (no-op without one) and ALWAYS
  *    clears it in a `finally`: success, ordinary backend `false`, an
  *    unexpected throw (propagates), or structured cancellation
@@ -40,30 +41,52 @@ import kotlinx.coroutines.sync.withLock
  */
 class PushTokenCoordinator(val registration: PushRegistration) {
     private val transition = Mutex()
+    private var activeSession = false
+    private var sessionGeneration = 0L
+
     var activeToken: String? = null
         private set
 
     /** Dipanggil saat sesi hidup (login / app start dengan token). */
     suspend fun onLogin(): String? =
         transition.withLock {
+            if (!activeSession) {
+                activeSession = true
+                sessionGeneration += 1
+            }
+            val generation = sessionGeneration
             val t = registration.onLogin()
-            if (t != null) activeToken = t
+            if (t != null && activeSession && sessionGeneration == generation) {
+                activeToken = t
+            }
             t
         }
 
     /** Dipanggil saat FCM merotasi token (thread background di produksi). */
-    suspend fun onNewToken(newToken: String, loggedIn: Boolean): String? =
+    suspend fun onNewToken(newToken: String): String? =
         transition.withLock {
-            val registered = registration.onNewToken(newToken, loggedIn)
-            if (registered != null && loggedIn) activeToken = registered
+            val generation = sessionGeneration
+            if (!activeSession) {
+                registration.stashPending(newToken)
+                return@withLock null
+            }
+            val registered = registration.onNewToken(newToken)
+            if (registered != null && activeSession && sessionGeneration == generation) {
+                activeToken = registered
+            }
             registered
         }
 
     /** Dipanggil sebelum sesi lokal dihapus (bearer masih hidup). */
     suspend fun onLogout() {
         transition.withLock {
+            val token = activeToken
+            // End the generation before the backend call. Any callback queued
+            // behind this transition can only stash for the next account.
+            activeSession = false
+            sessionGeneration += 1
             try {
-                registration.onLogout(activeToken)
+                registration.onLogout(token)
             } finally {
                 // Cancellation (or any throw) from the unregister must neither
                 // retain the token nor strand the logout — the orchestrator's

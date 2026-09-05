@@ -39,6 +39,20 @@ internal suspend fun backendUnregisterCatching(call: suspend () -> Boolean): Boo
 }
 
 /**
+ * Backend-register wrapper: ordinary failures become a retryable `false`,
+ * but structured cancellation must propagate to the lifecycle caller.
+ */
+internal suspend fun backendRegisterCatching(call: suspend () -> Boolean): Boolean {
+    try {
+        return call()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        return false
+    }
+}
+
+/**
  * Idempotent once-gate behind [PushGraph.install]: collapses concurrent
  * first installs into a single build and publishes only a fully-built
  * value. Pure + JVM-testable (see PushInstallOnceTest): no Context,
@@ -111,13 +125,10 @@ object PushGraph {
                         object : PushRegistration.Ops {
                     override suspend fun currentFcmToken(): String? = firebaseToken()
 
-                    // runCatching: offline/5xx TIDAK boleh melempar keluar
-                    // (coroutine tak tertangani = crash). false = gagal daftar
-                    // → jalur stash-pending yang menangani retry.
                     override suspend fun registerOnBackend(token: String): Boolean =
-                        runCatching {
+                        backendRegisterCatching {
                             Backend.api.registerPushDevice(PushDeviceRequest(token)).ok
-                        }.getOrDefault(false)
+                        }
 
                     override suspend fun unregisterOnBackend(token: String): Boolean =
                         backendUnregisterCatching {
@@ -144,8 +155,8 @@ object PushGraph {
     suspend fun onLogin(): String? = coordinator?.onLogin()
 
     /** Dipanggil PushMessagingService.onNewToken (thread background). */
-    suspend fun onNewToken(newToken: String, loggedIn: Boolean) {
-        coordinator?.onNewToken(newToken, loggedIn)
+    suspend fun onNewToken(newToken: String) {
+        coordinator?.onNewToken(newToken)
     }
 
     /** Simpan notifikasi yang baru diterima ke riwayat lokal (fire-and-forget). */
