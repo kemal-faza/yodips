@@ -40,10 +40,14 @@ const mockJwt = {
     return 'jwt-token';
   }),
   verifyAsync: jest.fn(async (token: string, opts: any) => {
-    if (token === 'expired-but-valid') return { sub: '24060121130000', via: 'handoff' };
+    if (token === 'expired-but-valid')
+      return { sub: '24060121130000', via: 'handoff', sessionCapturedAt: mockSessionStore.get('24060121130000')?.capturedAt ?? 0 };
     if (token === 'logout-gen-1') return { sub: '24060121130000', via: 'handoff', sessionCapturedAt: 111 };
     if (token === 'logout-gen-2') return { sub: '24060121130000', via: 'handoff', sessionCapturedAt: 222 };
     if (token === 'logout-no-claim') return { sub: '24060121130000', via: 'handoff' };
+    if (token === 'refresh-gen-1') return { sub: '24060121130000', via: 'handoff', sessionCapturedAt: 111 };
+    if (token === 'refresh-gen-2') return { sub: '24060121130000', via: 'handoff', sessionCapturedAt: 222 };
+    if (token === 'refresh-no-claim') return { sub: '24060121130000', via: 'handoff' };
     if (token === 'forged') throw new Error('invalid signature');
     throw new Error('unknown token');
   }),
@@ -453,15 +457,32 @@ describe('AuthService.refresh', () => {
     const svc = makeService();
     const out = await svc.refresh('expired-but-valid');
     expect(out.accessToken).toBe('jwt-token');
-    expect(mockJwt.signAsync).toHaveBeenCalledWith({ sub: '24060121130000', via: 'handoff' });
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'handoff',
+      sessionCapturedAt: mockSessionStore.get('24060121130000').capturedAt,
+    });
   });
 
   it('preserves the via claim', async () => {
-    mockJwt.verifyAsync.mockResolvedValueOnce({ sub: '24060121130000', via: 'oidc' });
-    mockSessionStore._map.set('24060121130000', { identity: '24060121130000', kulonCookie: 'K', siapCookie: '', capturedAt: Date.now() });
+    mockJwt.verifyAsync.mockResolvedValueOnce({
+      sub: '24060121130000',
+      via: 'oidc',
+      sessionCapturedAt: 222,
+    });
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      kulonCookie: 'K',
+      siapCookie: '',
+      capturedAt: 222,
+    });
     const svc = makeService();
     await svc.refresh('expired-but-valid');
-    expect(mockJwt.signAsync).toHaveBeenCalledWith({ sub: '24060121130000', via: 'oidc' });
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'oidc',
+      sessionCapturedAt: 222,
+    });
   });
 
   it('rejects a forged token with INVALID_TOKEN', async () => {
@@ -478,6 +499,59 @@ describe('AuthService.refresh', () => {
     await expect(svc.refresh('expired-but-valid')).rejects.toMatchObject({
       status: 401,
       response: { code: 'SESSION_DEAD' },
+    });
+  });
+
+  it('rejects a valid-signature token with NO sessionCapturedAt claim (legacy) with INVALID_TOKEN', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: 111,
+    });
+    const svc = makeService();
+    await expect(svc.refresh('refresh-no-claim')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+  });
+
+  it('returns SESSION_DEAD when the live record is a NEWER generation than the token claim', async () => {
+    // Old token minted at generation 111; the user re-logged-in → live record 222.
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: 222,
+    });
+    const svc = makeService();
+    await expect(svc.refresh('refresh-gen-1')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(mockJwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('mints with the CURRENT record generation when the claim matches', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: 222,
+    });
+    const svc = makeService();
+    const out = await svc.refresh('refresh-gen-2');
+    expect(out.accessToken).toBe('jwt-token');
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'handoff',
+      sessionCapturedAt: 222,
     });
   });
 });
