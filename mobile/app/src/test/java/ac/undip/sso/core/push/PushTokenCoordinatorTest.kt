@@ -3,11 +3,14 @@ package ac.undip.sso.core.push
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -40,6 +43,7 @@ class PushTokenCoordinatorTest {
         val registered = mutableListOf<String>()
         val stashed = mutableListOf<String>()
         var pending: String? = null
+        var stashPendingAction: suspend (String) -> Unit = { token -> pending = token }
         var clearPendingAction: suspend (String) -> Unit = { expectedToken ->
             if (pending == expectedToken) pending = null
         }
@@ -51,13 +55,16 @@ class PushTokenCoordinatorTest {
         }
         override suspend fun stashPending(token: String) {
             stashed += token
-            pending = token
+            stashPendingAction(token)
         }
         override suspend fun readPending(): String? = pending
         override suspend fun clearPending(expectedToken: String) = clearPendingAction(expectedToken)
     }
 
-    private fun coordinator(ops: FakeOps = FakeOps()) = PushTokenCoordinator(PushRegistration(ops))
+    private fun coordinator(
+        ops: FakeOps = FakeOps(),
+        operationTimeoutMillis: Long = 30_000L,
+    ) = PushTokenCoordinator(PushRegistration(ops), operationTimeoutMillis)
 
     @Test
     fun `onLogin registers fresh token and tracks it active`() = runTest {
@@ -173,6 +180,92 @@ class PushTokenCoordinatorTest {
         assertEquals("fcm-new", coordinator.activeToken)
         coordinator.onLogout()
         assertEquals(listOf("fcm-new"), ops.unregistered)
+    }
+
+    @Test
+    fun `stalled pre-registration stash times out before backend and releases transition lock`() = runTest {
+        val ops = FakeOps(current = "fcm-stalled")
+        ops.stashPendingAction = { awaitCancellation() }
+        val coordinator = coordinator(ops, operationTimeoutMillis = 1L)
+
+        var failure: Throwable? = null
+        try {
+            coordinator.onLogin()
+            fail("expected stash timeout")
+        } catch (error: TimeoutCancellationException) {
+            failure = error
+        }
+
+        assertNotNull(failure)
+        assertTrue("stash timeout must not reach backend", ops.registered.isEmpty())
+        assertNull("failed login must not publish an active token", coordinator.activeToken)
+
+        // A second transition proves the timed-out owner released the Mutex.
+        ops.stashPendingAction = { token -> ops.pending = token }
+        assertEquals("fcm-retry", coordinator.onNewToken("fcm-retry"))
+    }
+
+    @Test
+    fun `stalled backend registration times out with pending evidence and no false active token`() = runTest {
+        val ops = FakeOps(current = "fcm-backend-stalled")
+        ops.register = { awaitCancellation() }
+        val coordinator = coordinator(ops, operationTimeoutMillis = 1L)
+
+        try {
+            coordinator.onLogin()
+            fail("expected backend timeout")
+        } catch (expected: TimeoutCancellationException) {
+            // Unknown server outcome is represented by durable pending evidence.
+        }
+
+        assertEquals("fcm-backend-stalled", ops.pending)
+        assertNull("unknown backend outcome must not become active", coordinator.activeToken)
+
+        // The lock is released and the retained evidence can be retried.
+        ops.register = { token -> ops.registered += token; true }
+        assertEquals("fcm-backend-stalled", coordinator.onLogin())
+        assertEquals("fcm-backend-stalled", coordinator.activeToken)
+    }
+
+    @Test
+    fun `stalled matching cleanup keeps active and pending evidence for later logout`() = runTest {
+        val ops = FakeOps().apply { pending = "fcm-registered" }
+        ops.clearPendingAction = { awaitCancellation() }
+        val coordinator = coordinator(ops, operationTimeoutMillis = 1L)
+
+        try {
+            coordinator.onLogin()
+            fail("expected cleanup timeout")
+        } catch (expected: TimeoutCancellationException) {
+            // Server registration is known successful before cleanup times out.
+        }
+
+        assertEquals("fcm-registered", coordinator.activeToken)
+        assertEquals("fcm-registered", ops.pending)
+
+        // A later logout still has the active token needed to unregister it.
+        coordinator.onLogout()
+        assertEquals(listOf("fcm-registered"), ops.unregistered)
+        assertNull(coordinator.activeToken)
+    }
+
+    @Test
+    fun `stalled logout unregister times out clears active token and releases transition lock`() = runTest {
+        val ops = FakeOps()
+        val coordinator = coordinator(ops, operationTimeoutMillis = 1L)
+        coordinator.onLogin()
+        ops.unregister = { awaitCancellation() }
+
+        try {
+            coordinator.onLogout()
+            fail("expected unregister timeout")
+        } catch (expected: TimeoutCancellationException) {
+            // The owner must release the lock even when unregister is stalled.
+        }
+
+        assertNull(coordinator.activeToken)
+        assertNull(coordinator.onNewToken("fcm-after-logout"))
+        assertEquals("fcm-after-logout", ops.pending)
     }
 
     @Test
