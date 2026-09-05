@@ -546,3 +546,89 @@ describe('api client', () => {
     });
   });
 });
+
+describe('epoch ownership after logout fully resolves (RED: flag-down resurrection)', () => {
+  beforeEach(() => {
+    (emitReauthRequested as any).mockClear();
+    (emitTokenRefreshed as any).mockClear();
+  });
+
+  it('refresh success resolving AFTER logout fully is DISCARDED: no write, no emit, no retry', async () => {
+    localStorage.setItem('sso_token', 'old-jwt');
+    let resolveRefresh!: (v: { data: { accessToken: string } }) => void;
+    mockRequest.mockImplementationOnce(
+      () => new Promise((res) => { resolveRefresh = res; }),
+    );
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const onRejected = responseHandlers.onRejected!;
+    const epochBefore = logoutMod.getReauthEpoch();
+    const error = {
+      response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+      config: { method: 'get', url: '/api/auth/me', __reauthEpoch: epochBefore },
+    };
+    const pending = onRejected(error); // starts the refresh flight at epochBefore
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // logout FULLY resolves: flag down, epoch bumped
+    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    expect(logoutMod.getReauthEpoch()).toBe(epochBefore + 1);
+    resolveRefresh({ data: { accessToken: 'minted-after-logout' } });
+    await expect(pending).rejects.toBeTruthy();
+    expect(localStorage.getItem('sso_token')).toBe('old-jwt');
+    expect(emitTokenRefreshed).not.toHaveBeenCalled();
+    expect(emitReauthRequested).not.toHaveBeenCalled();
+    expect(mockRequest).toHaveBeenCalledTimes(1); // refresh only, no retry
+  });
+
+  it('refresh 401 resolving AFTER logout fully does NOT wipe the token nor emit reauth', async () => {
+    localStorage.setItem('sso_token', 'old-jwt');
+    let rejectRefresh!: (e: unknown) => void;
+    mockRequest.mockImplementationOnce(
+      () => new Promise((_, rej) => { rejectRefresh = rej; }),
+    );
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const onRejected = responseHandlers.onRejected!;
+    const epochBefore = logoutMod.getReauthEpoch();
+    const error = {
+      response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+      config: { method: 'get', url: '/api/auth/me', __reauthEpoch: epochBefore },
+    };
+    const pending = onRejected(error);
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // fully resolves while refresh is in flight
+    rejectRefresh({ response: { status: 401, data: { code: 'SESSION_DEAD' } } });
+    await expect(pending).rejects.toBeTruthy();
+    expect(localStorage.getItem('sso_token')).toBe('old-jwt');
+    expect(emitReauthRequested).not.toHaveBeenCalled();
+  });
+
+  it('sibling 401 whose handler runs AFTER logout fully (origin pre-logout) never refreshes/retries/emits', async () => {
+    localStorage.setItem('sso_token', 'keep-me');
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const onRejected = responseHandlers.onRejected!;
+    const epochBefore = logoutMod.getReauthEpoch();
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // logout fully BEFORE the sibling 401 handler runs
+    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    const error = {
+      response: { status: 401, data: { code: 'SESSION_DEAD' } },
+      config: { method: 'get', url: '/api/kulon/assignments', __reauthEpoch: epochBefore },
+    };
+    await expect(onRejected(error)).rejects.toMatchObject(error);
+    expect(mockRequest).not.toHaveBeenCalled();
+    expect(localStorage.getItem('sso_token')).toBe('keep-me');
+    expect(emitReauthRequested).not.toHaveBeenCalled();
+    expect(emitTokenRefreshed).not.toHaveBeenCalled();
+  });
+});
