@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { SessionStore } from '../session/session-store';
+import { SessionRef, SessionStore, isSessionRef } from '../session/session-store';
 import { isSessionGeneration } from '../playwright/playwright-auth.service';
 import { generatePairingCode, hashPairingCode, normalizePairingCode } from './pairing-code';
 import { PairingStore } from './pairing-store';
@@ -20,9 +20,17 @@ export class PairingService {
   ) {}
 
   async requestPairing(
-    sub: string,
+    ref: SessionRef,
   ): Promise<{ code: string; qrUrl: string; expiresAt: number }> {
-    const session = await this.sessionStore.get(sub);
+    // Generation-qualified: the issuing JWT's exact generation is re-validated
+    // against the LIVE record (TOCTOU-safe) and bound into the pairing record.
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const session = await this.sessionStore.getIfGeneration(ref.sub, ref.sessionGeneration);
     if (!session || !isSessionGeneration(session.sessionGeneration)) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
@@ -34,7 +42,11 @@ export class PairingService {
     );
     const code = generatePairingCode();
     const expiresAt = Date.now() + ttlMs;
-    await this.pairingStore.set(hashPairingCode(code), { sub, expiresAt }, ttlMs);
+    await this.pairingStore.set(
+      hashPairingCode(code),
+      { sub: ref.sub, sessionGeneration: ref.sessionGeneration, expiresAt },
+      ttlMs,
+    );
     const base = this.config.get<string>('FRONTEND_BASE_URL') ?? '';
     return { code, qrUrl: `${base}/login?pair=${code}`, expiresAt };
   }
@@ -62,9 +74,28 @@ export class PairingService {
         HttpStatus.BAD_REQUEST,
       );
     }
-    const session = await this.sessionStore.get(outcome.record.sub);
+    const session = await this.sessionStore.getIfGeneration(
+      outcome.record.sub,
+      // Legacy records (pre-generation) carry no issuance binding → dead.
+      isSessionGeneration(outcome.record.sessionGeneration)
+        ? outcome.record.sessionGeneration
+        : '__legacy__',
+    );
     if (!session || !isSessionGeneration(session.sessionGeneration)) {
       this.logger.warn(`Pairing consumed for dead/legacy session ${outcome.record.sub}`);
+      throw new HttpException(
+        {
+          message:
+            'Sesi di perangkat lama sudah berakhir. Login ulang di sana, lalu minta kode baru',
+          code: 'SESSION_DEAD',
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (session.sessionGeneration !== outcome.record.sessionGeneration) {
+      // Replacement (re-login) between request and consume: the issuing
+      // generation is no longer live. Never re-bind to the replacement.
+      this.logger.warn(`Pairing consumed for replaced generation ${outcome.record.sub}`);
       throw new HttpException(
         {
           message:

@@ -1,6 +1,13 @@
 export interface PairingRecord {
   /** Identitas pemilik sesi sumber (NIM, dari JWT guard — bukan dari client). */
   sub: string;
+  /**
+   * Issuing `sessionGeneration`: the exact generation the requesting JWT was
+   * minted against. `consume` requires the LIVE store record to still carry
+   * this same generation — a replacement (re-login) between request and
+   * consume is SESSION_DEAD, never a silent re-bind to the new session.
+   */
+  sessionGeneration: string;
   /** Epoch ms kedaluwarsa (informasional; TTL efektif di tiap implementasi). */
   expiresAt: number;
 }

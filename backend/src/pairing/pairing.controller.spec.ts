@@ -30,11 +30,20 @@ describe('PairingController', () => {
     controller = module.get(PairingController);
   });
 
-  it('pair/request meneruskan sub dari JWT guard', async () => {
+  it('pair/request meneruskan sub+generation dari JWT guard', async () => {
     pairing.requestPairing.mockResolvedValue({ code: 'ABCD1234', qrUrl: 'u', expiresAt: 1 });
-    const res = await controller.request({ user: { sub: 'NIM1' } } as any);
-    expect(pairing.requestPairing).toHaveBeenCalledWith('NIM1');
+    const gen = 'a'.repeat(32);
+    const res = await controller.request({ user: { sub: 'NIM1', sessionGeneration: gen } } as any);
+    expect(pairing.requestPairing).toHaveBeenCalledWith({ sub: 'NIM1', sessionGeneration: gen });
     expect(res.code).toBe('ABCD1234');
+  });
+
+  it('pair/request tanpa generation → 401 SESSION_DEAD (tidak diteruskan)', async () => {
+    await expect(controller.request({ user: { sub: 'NIM1' } } as any)).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(pairing.requestPairing).not.toHaveBeenCalled();
   });
 
   it('pair/consume meneruskan dto.code ke service', async () => {
@@ -82,6 +91,12 @@ describe('PairingController', () => {
     ]);
     const fakeStore = {
       get: async (sub: string) => records.get(sub) ?? null,
+      getIfGeneration: async (sub: string, generation: string) => {
+        const rec = records.get(sub) ?? null;
+        if (!rec || rec.sessionGeneration !== generation) return null;
+        return rec;
+      },
+      clearIfGeneration: async () => true,
     };
     const module = await Test.createTestingModule({
       controllers: [PairingController],

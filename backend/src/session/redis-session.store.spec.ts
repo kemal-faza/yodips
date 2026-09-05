@@ -282,4 +282,157 @@ describe('RedisSessionStore', () => {
       expect(mockClient.expire).not.toHaveBeenCalled();
     });
   });
+
+  describe('getIfGeneration (generation-qualified atomic snapshot)', () => {
+    it('returns the live record only on exact match and slides EXPIRE; mismatch returns null without slide/delete', async () => {
+      mockClient.set.mockResolvedValue('OK');
+      await store.set('a', makeSession('a', 'MoodleSession=A', GEN_A));
+      const envelope = mockClient.set.mock.calls[0][1];
+      mockClient.get.mockResolvedValue(envelope);
+      mockClient.expire.mockResolvedValue(1);
+      const hit = await (store as any).getIfGeneration('a', GEN_A);
+      expect(hit?.kulonCookie).toContain('MoodleSession=A');
+      expect(mockClient.expire).toHaveBeenCalledWith('sso:session:a', 1);
+      mockClient.expire.mockClear();
+      mockClient.get.mockResolvedValue(envelope);
+      await expect((store as any).getIfGeneration('a', GEN_B)).resolves.toBeNull();
+      expect(mockClient.expire).not.toHaveBeenCalled();
+      expect(mockClient.eval).not.toHaveBeenCalled();
+      expect(mockClient.del).not.toHaveBeenCalled();
+    });
+
+    it('returns null for unknown identity without writes', async () => {
+      mockClient.get.mockResolvedValue(null);
+      await expect((store as any).getIfGeneration('ghost', GEN_A)).resolves.toBeNull();
+      expect(mockClient.expire).not.toHaveBeenCalled();
+      expect(mockClient.eval).not.toHaveBeenCalled();
+    });
+
+    it('evaluates absolute-dead BEFORE mismatch: dead record CAS-cleans the exact envelope and returns null even for the matching generation', async () => {
+      const now = Date.now();
+      const storeAbs = new RedisSessionStore(mockClient as unknown as Redis, 1000, 'test-enc-key', 200);
+      mockClient.set.mockResolvedValue('OK');
+      await storeAbs.set('a', { ...makeSession('a', 'MoodleSession=OLD', GEN_A), capturedAt: now - 250 });
+      const oldEnvelope = mockClient.set.mock.calls[0][1];
+      mockClient.get.mockResolvedValue(oldEnvelope);
+      mockClient.eval.mockResolvedValue(1);
+      await expect((storeAbs as any).getIfGeneration('a', GEN_A)).resolves.toBeNull();
+      expect(mockClient.eval).toHaveBeenCalledWith(
+        expect.stringContaining('redis.call("GET"'),
+        1,
+        'sso:session:a',
+        oldEnvelope,
+      );
+      expect(mockClient.expire).not.toHaveBeenCalled();
+      expect(mockClient.del).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('clearIfGeneration absolute-dead parity', () => {
+    it('dead record is CAS-cleaned and reports true when the cleanup wins (no replacement)', async () => {
+      const now = Date.now();
+      const storeAbs = new RedisSessionStore(mockClient as unknown as Redis, 1000, 'test-enc-key', 200);
+      mockClient.set.mockResolvedValue('OK');
+      await storeAbs.set('a', { ...makeSession('a', 'MoodleSession=OLD', GEN_A), capturedAt: now - 250 });
+      const oldEnvelope = mockClient.set.mock.calls[0][1];
+      mockClient.get.mockResolvedValue(oldEnvelope);
+      mockClient.eval.mockResolvedValue(1);
+      // Even a mismatched generation must evaluate expiry first → cleanup wins → true.
+      await expect(storeAbs.clearIfGeneration('a', GEN_B)).resolves.toBe(true);
+      expect(mockClient.eval).toHaveBeenCalledWith(
+        expect.stringContaining('redis.call("GET"'),
+        1,
+        'sso:session:a',
+        oldEnvelope,
+      );
+      expect(mockClient.del).not.toHaveBeenCalled();
+    });
+
+    it('dead record with a B-replacement between GET and CAS loses the CAS and reports false (B preserved)', async () => {
+      const now = Date.now();
+      const storeAbs = new RedisSessionStore(mockClient as unknown as Redis, 1000, 'test-enc-key', 200);
+      mockClient.set.mockResolvedValue('OK');
+      await storeAbs.set('a', { ...makeSession('a', 'MoodleSession=OLD', GEN_A), capturedAt: now - 250 });
+      const oldEnvelope = mockClient.set.mock.calls[0][1];
+      mockClient.get.mockResolvedValue(oldEnvelope);
+      mockClient.eval.mockResolvedValue(0); // B landed → current != old
+      await expect(storeAbs.clearIfGeneration('a', GEN_A)).resolves.toBe(false);
+      expect(mockClient.del).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('stateful Redis fake: deferred GET -> replacement -> EVAL really compares envelopes (D)', () => {
+    /**
+     * Minimal in-test Redis that ACTUALLY stores raw envelopes and evaluates
+     * the compare-and-delete Lua by string comparison — no mocked desired
+     * return. Deferred hooks let the test interleave a B-replacement between
+     * the store's GET and its EVAL, proving the Lua loses and B survives.
+     */
+    function makeStatefulClient() {
+      const kv = new Map<string, string>();
+      let onGet: ((key: string, value: string | null) => void) | null = null;
+      let onEval: ((key: string, expected: string, current: string | null) => void) | null = null;
+      return {
+        kv,
+        set onGetHook(fn: typeof onGet) { onGet = fn; },
+        set onEvalHook(fn: typeof onEval) { onEval = fn; },
+        async set(key: string, value: string) { kv.set(key, value); return 'OK'; },
+        async get(key: string) {
+          const v = kv.get(key) ?? null;
+          // Defer the replacement until AFTER the value was read but BEFORE
+          // the caller issues its EVAL: run the hook on next microtask so the
+          // interleaving is deterministic without timers.
+          if (onGet) { const hook = onGet; onGet = null; await Promise.resolve(); hook(key, v); }
+          return v;
+        },
+        async expire() { return 1; },
+        async del(key: string) { return kv.delete(key) ? 1 : 0; },
+        async eval(_script: string, _n: number, key: string, expected: string) {
+          const current = kv.get(key) ?? null;
+          if (onEval) { const hook = onEval; onEval = null; hook(key, expected, current); }
+          if (current === expected) { kv.delete(key); return 1; }
+          return 0;
+        },
+        async quit() { return 'OK'; },
+      };
+    }
+
+    it('guard-A vs replacement-B: clearIfGeneration(A) loses the real CAS and B remains readable', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      await s.set('u', makeSession('u', 'MoodleSession=OLD', GEN_A));
+      const rawBefore = fake.kv.get('sso:session:u')!;
+      expect(rawBefore).toMatch(/^v1:/);
+      // Interleave: after the logout-path GET reads the A-envelope, a re-login
+      // overwrites the SAME key with a B-envelope before the EVAL runs.
+      fake.onGetHook = () => {
+        // Synchronous overwrite inside the hook would still precede EVAL
+        // because GET awaits a microtask after invoking the hook.
+        void s.set('u', makeSession('u', 'MoodleSession=NEW', GEN_B));
+      };
+      // The GET inside clearIfGeneration triggers the hook above; the EVAL
+      // then compares the stale A-envelope against the live B-envelope.
+      await expect(s.clearIfGeneration('u', GEN_A)).resolves.toBe(false);
+      const rawAfter = fake.kv.get('sso:session:u')!;
+      expect(rawAfter).not.toBe(rawBefore);
+      // B is provably intact: a qualified read with B hits, with A misses.
+      await expect((s as any).getIfGeneration('u', GEN_B)).resolves.toMatchObject({
+        kulonCookie: expect.stringContaining('MoodleSession=NEW'),
+      });
+      await expect((s as any).getIfGeneration('u', GEN_A)).resolves.toBeNull();
+      expect(fake.kv.has('sso:session:u')).toBe(true);
+    });
+
+    it('getIfGeneration(A) after a B-replacement misses without sliding or deleting B', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      await s.set('u', makeSession('u', 'MoodleSession=OLD', GEN_A));
+      await s.set('u', makeSession('u', 'MoodleSession=NEW', GEN_B));
+      await expect((s as any).getIfGeneration('u', GEN_A)).resolves.toBeNull();
+      // B still live and hittable.
+      await expect((s as any).getIfGeneration('u', GEN_B)).resolves.toMatchObject({
+        kulonCookie: expect.stringContaining('MoodleSession=NEW'),
+      });
+    });
+  });
 });
