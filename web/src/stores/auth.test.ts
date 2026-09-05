@@ -962,8 +962,14 @@ describe('bounded extension wipe: logout always releases (RED)', () => {
     expect(isLogoutInProgress()).toBe(false);
   }, 10000);
 
-  it('fast server revoke + fast wipe leave no leaked timeout timers', async () => {
+  it('fast server revoke + fast wipe clear their timeout timers (no leaked 5s bound)', async () => {
     vi.useFakeTimers();
+    // Direct proof of "clear the losing timer": both bounds (server revoke +
+    // extension wipe) win the race here, so both timeout timers must be
+    // cancelled. (An absolute getTimerCount()===0 assertion is brittle: Vue
+    // reactivity schedules its own 0ms macrotasks during logout that outlive
+    // the operation and are unrelated to our bounds.)
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
     (api.logoutSession as any).mockResolvedValue(undefined);
     extMockState.logoutImpl = async () => {}; // fast wipe
     const store = useAuthStore();
@@ -971,6 +977,7 @@ describe('bounded extension wipe: logout always releases (RED)', () => {
     localStorage.setItem('sso_token', 'x');
     await store.logout();
     expect(isLogoutInProgress()).toBe(false);
-    expect(vi.getTimerCount()).toBe(0); // RED with raw Promise.race: 5s timer leaks
+    expect(clearSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // RED with raw Promise.race: 0 clears
+    clearSpy.mockRestore();
   }, 10000);
 });

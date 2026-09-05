@@ -10,6 +10,29 @@ const TOKEN_KEY = 'sso_token';
 // Module scope, next to `const TOKEN_KEY = 'sso_token';`:
 /** Bound for the best-effort server-side revoke during logout (ms). */
 const SERVER_REVOKE_TIMEOUT_MS = 5000;
+/** Bound for the best-effort extension cookie wipe during logout (ms). The
+ *  wipe is local messaging and should settle fast; a hung extension must never
+ *  hold logout (and its flag) open. */
+const EXT_WIPE_TIMEOUT_MS = 5000;
+
+/** Race a promise against a timeout, clearing the losing timer. When `promise`
+ *  wins the timeout is cancelled (no leaked timer); when the timeout wins the
+ *  timer already fired and the late `promise` settlement is ignored by the
+ *  race (observed, so no unhandled rejection). Callers treat timeout as
+ *  best-effort failure. */
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 // SECURITY ASSUMPTION (documented — see security review MEDIUM #8): the JWT is
 // stored in localStorage, so any script running in the page context can read it.
 // This is accepted because (a) the stored-XSS vector that would exfiltrate it is
@@ -46,8 +69,15 @@ export const useAuthStore = defineStore('auth', {
     async login() {
       this.checking = true;
       this.error = null;
+      // Epoch ownership for the legacy async commit below: if a logout begins
+      // (and possibly FULLY resolves) while capture() is in flight, the epoch
+      // moves under us and the minted token must be discarded, never written.
+      const epochAtStart = getReauthEpoch();
       try {
         const result = await capture();
+        // Logout crossed (flag up now, or bumped-and-released while awaiting):
+        // never mint into a logged-out session.
+        if (isLogoutInProgress() || getReauthEpoch() !== epochAtStart) return;
         this.token = result.accessToken;
         localStorage.setItem(TOKEN_KEY, result.accessToken);
         this.hasSiap = result.hasSiap ?? false;
@@ -106,7 +136,7 @@ export const useAuthStore = defineStore('auth', {
       this.extensionError = 'Extension tidak terdeteksi atau tidak merespons.';
       return false;
     },
-    async loginViaExtension(): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
+    async loginViaExtension(expectedEpoch?: number): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
       this.error = null;
       const resp = await useExtension().sendHandoff();
       if (resp === 'not-installed') {
@@ -114,7 +144,16 @@ export const useAuthStore = defineStore('auth', {
         return 'not-installed';
       }
       if (resp.status === 'ok' && resp.accessToken) {
-        this.finishHandoff(resp.accessToken);
+        // Generation-aware guarded commit: a late extension ok that arrives
+        // after a logout began (flag up) or fully resolved (epoch bumped, flag
+        // down) must never write first — attemptReauth validates the same
+        // epoch AFTER this returns, but the write happens HERE, so the gate
+        // must live at this boundary. 'ok' always means committed.
+        if (isLogoutInProgress()) return 'error';
+        if (expectedEpoch !== undefined && expectedEpoch !== getReauthEpoch()) {
+          return 'error';
+        }
+        this.finishHandoff(resp.accessToken, expectedEpoch);
         return 'ok';
       }
       if (resp.status === 'error') {
@@ -133,16 +172,22 @@ export const useAuthStore = defineStore('auth', {
     async readExtensionResult(): Promise<any | null> {
       return useExtension().readStatus();
     },
-    finishHandoff(token: string) {
+    finishHandoff(token: string, expectedEpoch?: number) {
       if (isLogoutInProgress()) return; // never rewrite a token during logout
+      // Generation guard: when the caller stamps an origin epoch (reauth
+      // handoff, status poll), a mismatch means a logout fully resolved after
+      // the handoff was sent — the flag is already down, but the token must
+      // still never be written.
+      if (expectedEpoch !== undefined && expectedEpoch !== getReauthEpoch()) return;
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
     /** Update the store's JWT after a silent refresh. Called by the axios
      *  interceptor (via emitTokenRefreshed) and by individual actions that
      *  obtain a token from other paths. */
-    setToken(token: string) {
+    setToken(token: string, expectedEpoch?: number) {
       if (isLogoutInProgress()) return; // never rewrite a token during logout
+      if (expectedEpoch !== undefined && expectedEpoch !== getReauthEpoch()) return;
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
@@ -175,8 +220,14 @@ export const useAuthStore = defineStore('auth', {
           if (settled) return;
           settled = true;
           if (timer) clearInterval(timer);
-          this.reauthing = false;
-          this.reauthPhase = null;
+          // Ownership-stamped settle: only the epoch owner clears the overlay
+          // state. A stale poll (logout bumped the epoch, possibly fully
+          // resolved, and a NEWER attempt now owns reauthing/phase) resolves
+          // without touching the newer owner's state.
+          if (getReauthEpoch() === epochAtStart) {
+            this.reauthing = false;
+            this.reauthPhase = null;
+          }
           resolve(r);
         };
         const attempt = async () => {
@@ -199,7 +250,7 @@ export const useAuthStore = defineStore('auth', {
             onPhase?.(phase);
           }
           if (payload.accessToken && payload.status !== 'error') {
-            this.finishHandoff(payload.accessToken);
+            this.finishHandoff(payload.accessToken, epochAtStart);
             settle('recovered');
           } else if (payload.status === 'error') {
             settle('failed');
@@ -228,11 +279,13 @@ export const useAuthStore = defineStore('auth', {
       this.reauthAttempted = true;
       this.reauthing = true;
       this.reauthPhase = null;
-      const resp = await this.loginViaExtension();
+      const resp = await this.loginViaExtension(epochAtStart);
       if (invalidated()) {
-        // Logout began while the handoff was in flight (or finished): never
-        // mint, never claim recovery, never start a poll.
-        this.reauthing = false;
+        // Logout began while the handoff was in flight (or FULLY finished —
+        // flag already down, epoch bumped): never mint (the handoff boundary
+        // above already refused the write), never claim recovery, never start
+        // a poll — and never touch reauthing/phase, which the logout cleared
+        // or a NEWER attempt now owns.
         return 'failed';
       }
       if (resp === 'ok') {
@@ -263,14 +316,10 @@ export const useAuthStore = defineStore('auth', {
         // backend contract (final-corrections Track A §4.3) accepts an
         // expired bearer, so this stays functional for expired local tokens.
         // Network/5xx/401/timeout are best-effort — never block the UI.
+        // withTimeout clears the losing timer on settle (no leaked timeout).
         if (this.token) {
           try {
-            await Promise.race([
-              logoutSession(),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('logout server revoke timed out')), SERVER_REVOKE_TIMEOUT_MS),
-              ),
-            ]);
+            await withTimeout(logoutSession(), SERVER_REVOKE_TIMEOUT_MS, 'logout server revoke timed out');
           } catch {
             // Logout 401 = session already dead (terminal in the interceptor);
             // network/5xx/timeout = backend unreachable or slow. Either way,
@@ -292,13 +341,16 @@ export const useAuthStore = defineStore('auth', {
         this.fotoUrl = null;
         localStorage.removeItem(TOKEN_KEY);
       } finally {
-        // (3) Best-effort extension cookie wipe — AWAITED so logout() does not
-        // resolve while the wipe is still in flight (useExtension().logout()
-        // already swallows messaging errors). endLogout() runs only AFTER the
-        // wipe response, in the finally, so the flag can never be released
-        // before cleanup settles.
+        // (3) Best-effort extension cookie wipe — AWAITED but BOUNDED so
+        // logout() always releases: race the wipe against EXT_WIPE_TIMEOUT_MS
+        // (withTimeout clears the losing timer). A hung extension (callback
+        // never fires) resolves via timeout; messaging errors and the timeout
+        // itself are swallowed — the wipe stays best-effort. endLogout() runs
+        // only AFTER the wipe settles or times out, in the finally, so the
+        // flag can never be released before cleanup settles nor held open by
+        // a hung wipe.
         try {
-          await useExtension().logout();
+          await withTimeout(useExtension().logout(), EXT_WIPE_TIMEOUT_MS, 'logout extension wipe timed out').catch(() => {});
         } finally {
           endLogout();
         }
