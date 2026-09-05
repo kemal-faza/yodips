@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,6 +19,24 @@ import kotlin.coroutines.resume
 
 private val Context.pushDataStore by preferencesDataStore(name = "sso_push")
 private val PENDING_KEY = stringPreferencesKey("pending_fcm_token")
+
+/**
+ * Backend-unregister wrapper for the logout path: ordinary network/HTTP
+ * failures (offline, 5xx, 401) map to `false` (best-effort prune — the
+ * [SessionLogout] orchestrator continues to revoke + cleanup), while
+ * structured [CancellationException] is explicitly rethrown so a cancelled
+ * logout propagates instead of being misreported as "offline". (`runCatching`
+ * would swallow cancellation — hence the explicit catches.)
+ */
+internal suspend fun backendUnregisterCatching(call: suspend () -> Boolean): Boolean {
+    try {
+        return call()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        return false
+    }
+}
 
 /**
  * Singleton glue app-scope: menyambungkan [PushRegistration] (pure) ke
@@ -55,9 +74,9 @@ object PushGraph {
                         }.getOrDefault(false)
 
                     override suspend fun unregisterOnBackend(token: String): Boolean =
-                        runCatching {
+                        backendUnregisterCatching {
                             Backend.api.unregisterPushDevice(PushDeviceRequest(token)).ok
-                        }.getOrDefault(false)
+                        }
 
                     override suspend fun stashPending(token: String) {
                         appContext.pushDataStore.edit { it[PENDING_KEY] = token }
@@ -109,8 +128,14 @@ object PushGraph {
 
     /** Dipanggil AppRoot.onLogout sebelum sesi lokal dihapus. */
     suspend fun onLogout() {
-        registration.onLogout(activeToken)
-        activeToken = null
+        try {
+            registration.onLogout(activeToken)
+        } finally {
+            // Cancellation (or any throw) from the unregister must neither
+            // retain the token nor strand the logout — the orchestrator's
+            // localCleanup runs next and the CE still propagates to it.
+            activeToken = null
+        }
     }
 
     private suspend fun firebaseToken(): String? =
