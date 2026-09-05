@@ -4,6 +4,17 @@ import { KulonService } from './kulon.service';
 import type { KulonUpstreamSession } from './kulon-upstream.session';
 import type { KulonCourse, KulonCourseContent } from './kulon-parse';
 import { cacheKeyForCurrent, cacheKeyForSession } from '../session/session-scope';
+import { SessionStore } from '../session/session-store';
+
+/** Minimal store stub: only the getContext seam path reads the store here. */
+const NO_STORE: SessionStore = {
+  get: async () => null,
+  getIfGeneration: async () => null,
+  clear: async () => undefined,
+  clearIfGeneration: async () => true,
+  set: async () => undefined,
+  all: async () => [],
+};
 
 type CacheMock = {
   get: jest.Mock;
@@ -119,6 +130,7 @@ describe('KulonService SWR course refresh', () => {
     );
     const upstream = makeUpstream();
     const service = new KulonService(
+      NO_STORE,
       cache as unknown as DataCache,
       undefined,
       upstream as unknown as KulonUpstreamSession,
@@ -152,6 +164,7 @@ describe('KulonService SWR course refresh', () => {
     cache.get.mockResolvedValue(cachedCourses);
     const upstream = makeUpstream();
     const service = new KulonService(
+      NO_STORE,
       cache as unknown as DataCache,
       undefined,
       upstream as unknown as KulonUpstreamSession,
@@ -200,6 +213,7 @@ describe('KulonService SWR course refresh', () => {
       const cache = makeCache();
       const upstream = makeUpstream();
       const service = new KulonService(
+        NO_STORE,
         cache as unknown as DataCache,
         undefined,
         upstream as unknown as KulonUpstreamSession,

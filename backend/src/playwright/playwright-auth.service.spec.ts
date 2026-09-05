@@ -236,7 +236,7 @@ describe('launchAndCaptureSession', () => {
     const cookiesFn = jest.fn().mockResolvedValue(fullCookies);
     const mockContext = makeContext(page, cookiesFn);
     (chromium.launchPersistentContext as jest.Mock).mockResolvedValue(mockContext);
-    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' });
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: false, reason: 'stale' as const });
 
     await expect(
       svc.launchAndCaptureSession(
@@ -261,8 +261,8 @@ describe('launchAndCaptureSession', () => {
     // First probe: user still on a Microsoft/Moodle login page (stale).
     // Second probe: valid — the user completed login in the window.
     mockKulon.checkSessionValid
-      .mockResolvedValueOnce({ valid: false, reason: 'stale' })
-      .mockResolvedValueOnce({ valid: true, reason: 'ok' });
+      .mockResolvedValueOnce({ valid: false, reason: 'stale' as const })
+      .mockResolvedValueOnce({ valid: true, reason: 'ok' as const });
 
     const session = await svc.launchAndCaptureSession(
       '/tmp/test-profile',

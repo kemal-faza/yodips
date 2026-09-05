@@ -36,6 +36,7 @@ const STATE_KEY = "ssoLoginState";
 const ALARM_KEY = "handoff-timeout";
 const POLL_KEY = "handoff-poll";
 const LAST_RESULT_KEY = "lastHandoffResult";
+const EPOCH_KEY = "ssoOperationEpoch";
 const POLL_PERIOD_MIN = 0.5;
 const MAX_RELOGIN = 2;
 const PHASE_TIMEOUT_MS = 3 * 60_000;
@@ -191,14 +192,53 @@ async function clearSessionCookies(): Promise<boolean> {
   return complete;
 }
 
-async function removeLastResult(): Promise<boolean> {
+/**
+ * Tagged removal: delete the cached handoff result ONLY when it belongs to
+ * `epoch`. The epoch is persisted in storage.session alongside the result so
+ * an MV3 service-worker restart cannot resurrect a stale result: after a
+ * restart the SW restores the persisted epoch, a cached result tagged with an
+ * OLDER epoch is rejected by every poll, and logout (which bumps the epoch
+ * before removing) can never wipe a result a NEWER login just cached.
+ */
+async function removeResultForEpoch(epoch: number): Promise<boolean> {
   try {
-    await chrome.storage.session.remove(LAST_RESULT_KEY);
+    const res = await chrome.storage.session.get([LAST_RESULT_KEY, EPOCH_KEY]);
+    const cachedEpoch = res[EPOCH_KEY] as number | undefined;
+    if (cachedEpoch === undefined || cachedEpoch === epoch) {
+      // Untagged (pre-persistence) or current-epoch: remove outright.
+      await chrome.storage.session.remove([LAST_RESULT_KEY, EPOCH_KEY]);
+      return true;
+    }
+    // Tagged with ANOTHER epoch: a NEWER login cached a result while this
+    // operation was tearing down (or an SW restart restored an older epoch).
+    // Remove the result anyway — a logout must never leave a token behind —
+    // and reset the epoch to the caller's so the next persist is consistent.
+    await chrome.storage.session.remove([LAST_RESULT_KEY, EPOCH_KEY]);
     return true;
   } catch (err) {
-    console.warn("[Undip SSO] cached handoff result removal failed", err);
+    console.warn("[Undip SSO] tagged handoff result removal failed", err);
     return false;
   }
+}
+
+/** Read the persisted operation epoch (0 when absent). */
+async function getPersistedEpoch(): Promise<number> {
+  try {
+    const res = await chrome.storage.session.get(EPOCH_KEY);
+    const value = res[EPOCH_KEY] as number | undefined;
+    return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Persist the current operation epoch (best-effort; storage.session only). */
+async function persistEpoch(epoch: number): Promise<void> {
+  await chrome.storage.session
+    .set({ [EPOCH_KEY]: epoch })
+    .catch((err) =>
+      console.warn("[Undip SSO] epoch persistence failed", { epoch, err }),
+    );
 }
 
 async function sendToApp(
@@ -207,9 +247,15 @@ async function sendToApp(
 ): Promise<void> {
   // Cache the final payload so the SPA's self-healing poll ({action:'status'})
   // can recover the JWT even if every push channel is missed. storage.session
-  // is in-memory and cleared on browser restart.
+  // is in-memory and cleared on browser restart. The payload is tagged with
+  // the CURRENT operation epoch so a status poll after an epoch change (logout
+  // or an SW restart that restored a persisted epoch) rejects it instead of
+  // replaying a stale token.
   await chrome.storage.session
-    .set({ [LAST_RESULT_KEY]: payload })
+    .set({
+      [LAST_RESULT_KEY]: payload,
+      [EPOCH_KEY]: lifecycle.currentEpoch(),
+    })
     .catch(() => {});
   if (appTabId != null) {
     await chrome.tabs
@@ -334,6 +380,14 @@ async function applyEffect(
 
 const lifecycle = createLifecycleCoordinator();
 
+/** Adopt the persisted operation epoch once, on SW start (idle only: at this
+ *  point no flow is running — the SW was just (re)started). A pre-restart
+ *  handoff result in storage.session then stays fenced behind its own epoch
+ *  instead of becoming reachable under the fresh in-memory epoch 0. */
+void getPersistedEpoch().then((persisted) => {
+  if (persisted > 0) lifecycle.restoreEpoch(persisted);
+});
+
 /**
  * Single serialized entry point. Reads state + cookies, feeds the event into
  * the pure state machine, applies generated effects, and — when an effect
@@ -375,11 +429,17 @@ const runFlow = createSerializedFlowRunner(async (ev) => {
 chrome.runtime.onMessageExternal.addListener(
   (message, sender, sendResponse) => {
     const action = (message as { action?: string })?.action;
-    if (action === "logout") lifecycle.invalidate();
-    const messageEpoch =
-      action === "handoff"
-        ? lifecycle.beginHandoff()
-        : lifecycle.currentEpoch();
+    let messageEpoch: number;
+    if (action === "logout") {
+      lifecycle.invalidate();
+      messageEpoch = lifecycle.currentEpoch();
+    } else {
+      messageEpoch =
+        action === "handoff"
+          ? lifecycle.beginHandoff()
+          : lifecycle.currentEpoch();
+    }
+    void persistEpoch(lifecycle.currentEpoch());
     void (async () => {
       const appTabId = sender?.tab?.id ?? null;
       console.info(
@@ -399,7 +459,10 @@ chrome.runtime.onMessageExternal.addListener(
             performLogout({
               runLogout: () => runFlow({ type: "LOGOUT" }),
               clearSessionCookies,
-              removeLastResult,
+              // Bound at CALL time (epoch already invalidated above): a fresh
+              // login started while teardown runs gets a NEWER epoch and its
+              // result is never wiped by this logout.
+              removeResult: (epoch) => removeResultForEpoch(epoch),
               onFlowError: (err) =>
                 console.warn(
                   "[Undip SSO] flow teardown failed; continuing cleanup",
@@ -422,7 +485,7 @@ chrome.runtime.onMessageExternal.addListener(
                 deps: {
                   getState,
                   setState,
-                  removeLastResult,
+                  removeResult: removeResultForEpoch,
                   tabAlive,
                   getFlowCookies,
                   runFlow,

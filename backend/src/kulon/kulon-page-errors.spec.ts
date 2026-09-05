@@ -7,6 +7,17 @@ import type {
   KulonCourse,
   KulonCourseContent,
 } from './kulon-parse';
+import { SessionStore } from '../session/session-store';
+
+/** Minimal store stub: page-transport specs never touch the store. */
+const NO_STORE: SessionStore = {
+  get: async () => null,
+  getIfGeneration: async () => null,
+  clear: async () => undefined,
+  clearIfGeneration: async () => true,
+  set: async () => undefined,
+  all: async () => [],
+};
 
 type KulonServiceInternals = {
   fetchAssignmentDetail: (
@@ -53,7 +64,7 @@ describe('Kulon page transport error classification', () => {
 
   it('keeps dead-session assignment detail failures typed', async () => {
     global.fetch = jest.fn().mockResolvedValue(loginRedirectResponse());
-    const service = new KulonService();
+    const service = new KulonService(NO_STORE);
 
     await expect(
       internals(service).fetchAssignmentDetail('cookie', 777, 42),
@@ -69,7 +80,7 @@ describe('Kulon page transport error classification', () => {
       url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
       text: () => Promise.resolve(loginPageHtml()),
     });
-    const service = new KulonService();
+    const service = new KulonService(NO_STORE);
 
     await expect(
       internals(service).fetchAssignmentDetail('cookie', 777, 42),
@@ -78,7 +89,7 @@ describe('Kulon page transport error classification', () => {
 
   it('keeps dead-session failures visible through assignment aggregation', async () => {
     global.fetch = jest.fn().mockResolvedValue(loginRedirectResponse());
-    const service = new KulonService();
+    const service = new KulonService(NO_STORE);
     jest.spyOn(internals(service), 'fetchCourses').mockResolvedValue([
       {
         id: 9371,
@@ -100,7 +111,7 @@ describe('Kulon page transport error classification', () => {
       status: 500,
       url: 'https://kulon2.undip.ac.id/course/view.php?id=9371',
     });
-    const service = new KulonService();
+    const service = new KulonService(NO_STORE);
 
     await expect(
       internals(service).contentFromHTML('cookie', 9371),
@@ -113,7 +124,7 @@ describe('Kulon page transport error classification', () => {
       status: 500,
       url: 'https://kulon2.undip.ac.id/mod/assign/index.php?id=9371',
     });
-    const service = new KulonService();
+    const service = new KulonService(NO_STORE);
     jest.spyOn(internals(service), 'fetchCourses').mockResolvedValue([
       {
         id: 9371,
@@ -138,7 +149,7 @@ describe('Kulon page transport error classification', () => {
       status,
       url: 'https://kulon2.undip.ac.id/course/view.php?id=9371',
     });
-    const service = new KulonService();
+    const service = new KulonService(NO_STORE);
 
     const error = await internals(service)
       .contentFromHTML('cookie', 9371)
@@ -166,7 +177,7 @@ describe('Kulon page transport error classification', () => {
       url: 'https://kulon2.undip.ac.id/mod/assign/view.php?id=777',
       text: () => Promise.resolve(loginPageHtml()),
     });
-    const service = new KulonService(undefined, undefined, undefined, undefined, runtime as any);
+    const service = new KulonService(NO_STORE, undefined, undefined, undefined, runtime as any);
 
     await expect(
       internals(service).fetchAssignmentDetail('cookie', 777, 42),

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { CapturedSession } from '../playwright/playwright-auth.service';
+import { CapturedSession } from './session-contract';
 import { SessionStore } from './session-store';
 
 interface StoredRecord {

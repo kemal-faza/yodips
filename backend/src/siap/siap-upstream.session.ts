@@ -13,13 +13,13 @@ import {
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
-import { SessionStore, SessionRef, isSessionRef, getRegisteredSessionStore } from '../session/session-store';
+import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
 import {
   cacheKeyForSession,
   currentRefForSession,
   flightKeyForSession,
 } from '../session/session-scope';
-import { isSessionGeneration } from '../playwright/playwright-auth.service';
+import { isSessionGeneration } from '../session/session-contract';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { SiapApiUpstream } from './siap-api';
 import {
@@ -97,7 +97,6 @@ export type SiapIdentityScraper = (siapCookie: string) => Promise<{
  */
 @Injectable()
 export class SiapUpstreamSession {
-  private readonly sessionStore?: SessionStore;
   private readonly cache?: DataCache;
   private readonly apiUpstream?: SiapApiUpstream;
   private scrapeIdentity?: SiapIdentityScraper;
@@ -107,18 +106,21 @@ export class SiapUpstreamSession {
   private readonly tokenFlight = createKeyedSingleFlight<string>();
 
   constructor(
-    @Optional() sessionStore?: SessionStore,
+    @Inject(SessionStore) sessionStore: SessionStore,
     @Optional() cache?: DataCache,
     @Optional() apiUpstream?: SiapApiUpstream,
     @Optional() scrapeIdentity?: SiapIdentityScraper,
     @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
-    this.sessionStore = sessionStore ?? getRegisteredSessionStore() ?? undefined;
     this.cache = cache;
     this.apiUpstream = apiUpstream;
     this.scrapeIdentity = scrapeIdentity;
     this.runtime = runtime ?? createNoopTelemetryRuntime();
+    this.store = sessionStore;
   }
+
+  /** Session store (mandatory DI; see session-store.ts DI rule). */
+  readonly store: SessionStore;
 
   /** Single source of truth for SIAP session validity (no-throw probe). */
   async checkSessionValid(cookie: string): Promise<UpstreamSessionCheck> {
@@ -186,7 +188,7 @@ export class SiapUpstreamSession {
 
   /** Resolve the live generation for a background caller before token work. */
   async getCurrentSessionRef(sub?: string): Promise<SessionRef> {
-    const session = sub ? await this.sessionStore?.get(sub) : null;
+    const session = sub ? await this.store.get(sub) : null;
     const ref = sub && session?.siapCookie ? currentRefForSession(sub, session) : null;
     if (!ref) {
       throw new StaleUpstreamError(
@@ -212,7 +214,7 @@ export class SiapUpstreamSession {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const session = await this.sessionStore?.getIfGeneration(ref.sub, ref.sessionGeneration) ?? null;
+    const session = await this.store.getIfGeneration(ref.sub, ref.sessionGeneration);
     if (!session?.siapCookie || !isSessionGeneration((session as { sessionGeneration?: unknown }).sessionGeneration)) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
@@ -241,7 +243,7 @@ export class SiapUpstreamSession {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const session = await this.sessionStore?.getIfGeneration(ref.sub, ref.sessionGeneration) ?? null;
+    const session = await this.store.getIfGeneration(ref.sub, ref.sessionGeneration);
     const cookie = (session as { siapCookie?: unknown } | null)?.siapCookie;
     const generation = (session as { sessionGeneration?: unknown } | null)?.sessionGeneration;
     if (typeof cookie !== 'string' || !cookie || !isSessionGeneration(generation)) {

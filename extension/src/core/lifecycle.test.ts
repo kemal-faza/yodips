@@ -16,7 +16,7 @@ describe("lifecycle adapter operations", () => {
       appTabId: 42,
       deps: {
         getState: async () => initialState("auto"),
-        removeLastResult: async () => true,
+        removeResult: async () => true,
         tabAlive: async () => {
           epoch = 2;
           return false;
@@ -44,7 +44,7 @@ describe("lifecycle adapter operations", () => {
       appTabId: null,
       deps: {
         getState: async () => initialState("auto"),
-        removeLastResult: async () => false,
+        removeResult: async () => false,
         tabAlive: async () => {
           preflightCalls++;
           return false;
@@ -94,7 +94,7 @@ describe("lifecycle adapter operations", () => {
         calls.push("cookies");
         return false;
       },
-      removeLastResult: async () => {
+      removeResult: async () => {
         calls.push("result");
         return false;
       },

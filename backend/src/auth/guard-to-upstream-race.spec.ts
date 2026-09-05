@@ -88,7 +88,7 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
     const fetchSpy = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('must not fetch on dead session'));
     const cache = new InMemoryDataCache(60_000);
     const upstream = new KulonUpstreamSession(store, cache);
-    const svc = new KulonService(cache, undefined, upstream, store);
+    const svc = new KulonService(store, cache, undefined, upstream);
 
     await expect(
       svc.getCourses({ sub: 'U1', sessionGeneration: GEN_A }),
@@ -137,7 +137,7 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
       { mintToken: mint, fetch: apiFetch } as any,
       async () => ({ nim: 'U1', emailSso: 'u1@students.undip.ac.id' }),
     );
-    const svc = new SiapService(cache, upstream, { mintToken: mint, fetch: apiFetch } as any);
+    const svc = new SiapService(store, cache, upstream, { mintToken: mint, fetch: apiFetch } as any);
 
     await expect(
       svc.getProfile({ sub: 'U1', sessionGeneration: GEN_A }),
