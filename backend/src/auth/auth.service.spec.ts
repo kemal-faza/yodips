@@ -998,7 +998,7 @@ describe('AuthService.me', () => {
       sessionGeneration: GEN_1,
     });
     const svc = makeService();
-    const res = await svc.me({ sub: '24060121130000' });
+    const res = await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
     expect(res.sub).toBe('24060121130000');
     expect(res.authenticated).toBe(true);
     expect(res.hasSso).toBe(true);
@@ -1016,7 +1016,7 @@ describe('AuthService.me', () => {
       sessionGeneration: GEN_1,
     });
     const svc = makeService();
-    const res = await svc.me({ sub: '24060121130000' });
+    const res = await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
     expect(res.hasSiap).toBe(true);
     expect(res.hasKulon).toBe(false);
     expect(res.complete).toBe(false);
@@ -1024,7 +1024,7 @@ describe('AuthService.me', () => {
 
   it('reports unauthenticated + incomplete when no session exists', async () => {
     const svc = makeService();
-    const res = await svc.me({ sub: 'unknown-user' });
+    const res = await svc.me({ sub: 'unknown-user', sessionGeneration: GEN_1 });
     expect(res.authenticated).toBe(false);
     expect(res.hasSso).toBe(false);
     expect(res.hasKulon).toBe(false);
@@ -1050,7 +1050,7 @@ describe('AuthService.me', () => {
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
 
     const svc = makeService();
-    const res = await svc.me({ sub: '24060121130000' });
+    const res = await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
     expect(mockKulon.checkSessionValid).toHaveBeenCalledWith('kulon=y');
     expect(mockSiap.checkSessionValid).toHaveBeenCalledWith('ci_session_x=K');
     expect(res.hasKulon).toBe(false);
@@ -1075,9 +1075,9 @@ describe('AuthService.me', () => {
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
 
     const svc = makeService();
-    await svc.me({ sub: '24060121130000' });
-    await svc.me({ sub: '24060121130000' });
-    await svc.me({ sub: '24060121130000' });
+    await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
+    await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
+    await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
     // Probe should run once per service, cached for the subsequent calls.
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(1);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(1);
@@ -1095,8 +1095,8 @@ describe('AuthService.me', () => {
     });
     const svc = makeService();
 
-    await svc.me({ sub: '24060121130000', via: 'handoff' });
-    await svc.me({ sub: '24060121130000', via: 'handoff' });
+    await svc.me({ sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_1 });
+    await svc.me({ sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_1 });
 
     expect(events.filter((event: any) => event.event === 'cache.read')).toEqual([
       expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'miss' }),
@@ -1109,7 +1109,7 @@ describe('AuthService.me', () => {
     expect(JSON.stringify(events)).not.toContain('ci_session_x=K');
 
     clock.wall += CachePolicy.AUTH_PROBE;
-    await svc.me({ sub: '24060121130000', via: 'handoff' });
+    await svc.me({ sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_1 });
 
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(2);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(2);
@@ -1143,7 +1143,7 @@ describe('AuthService.me', () => {
     mockKulon.checkSessionValid.mockResolvedValue({ valid: true });
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true });
     const svc = makeService();
-    const res = await svc.me({ sub: 'NIMPAIR', via: 'pair' });
+    const res = await svc.me({ sub: 'NIMPAIR', via: 'pair', sessionGeneration: GEN_1 });
     expect(res.complete).toBe(true);
   });
 
@@ -1152,7 +1152,7 @@ describe('AuthService.me', () => {
     mockKulon.checkSessionValid.mockResolvedValue({ valid: true });
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true });
     const svc = makeService();
-    const res = await svc.me({ sub: 'NIMPAIR2', via: 'handoff' });
+    const res = await svc.me({ sub: 'NIMPAIR2', via: 'handoff', sessionGeneration: GEN_1 });
     expect(res.complete).toBe(false);
   });
 });

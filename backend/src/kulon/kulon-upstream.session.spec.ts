@@ -205,6 +205,54 @@ describe('KulonUpstreamSession.ajax', () => {
   );
 });
 
+describe('KulonUpstreamSession.getContextForSession (B: generation-qualified TOCTOU seam)', () => {
+  const GEN_A = 'a'.repeat(32);
+  const GEN_B = 'b'.repeat(32);
+  const COOKIE_A = 'MoodleSession=AAA';
+  const COOKIE_B = 'MoodleSession=BBB';
+  let store: FakeStore;
+  let cache: DataCache;
+
+  beforeEach(() => {
+    store = new FakeStore(
+      new Map([['U1', { kulonCookie: COOKIE_A, sessionGeneration: GEN_A, capturedAt: Date.now() }]]),
+    );
+    cache = new InMemoryDataCache(60_000);
+    jest.restoreAllMocks();
+  });
+
+  it('resolves the cookie for the exact live generation', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: () => Promise.resolve(htmlWithSesskey('skA')),
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(store, cache);
+    const ctx = await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    expect(ctx.cookie).toBe(COOKIE_A);
+    expect(ctx.sesskey).toBe('skA');
+  });
+
+  it('replacement between guard and service read rejects SESSION_DEAD and never returns B cookie to an A-token', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: () => Promise.resolve(htmlWithSesskey('skB')),
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(store, cache);
+    // Guard validated A (live at that moment). Re-login replaces with B before
+    // the service/upstream read.
+    store.map.set('U1', { kulonCookie: COOKIE_B, sessionGeneration: GEN_B, capturedAt: Date.now() });
+    await expect(
+      (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A }),
+    ).rejects.toMatchObject({ status: 401 });
+    // Never touched upstream with either cookie (no B leak, no A use).
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('KulonUpstreamSession.getContext', () => {
   let store: FakeStore;
   let cache: DataCache;

@@ -17,7 +17,8 @@ import {
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
-import { SessionStore } from '../session/session-store';
+import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import { isSessionGeneration } from '../playwright/playwright-auth.service';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import {
   createNoopTelemetryRuntime,
@@ -148,8 +149,21 @@ export class KulonUpstreamSession {
 
   /** Cookie + cached sesskey for a user. Cookie is ALWAYS read from the session
    *  store (never cached); sesskey is cached (fingerprint key, 5 min TTL) with
-   *  single-flight. Missing session -> typed stale 401. */
+   *  single-flight. Missing session -> typed stale 401.
+   *  CURRENT-session API (background/poller only): resolves the CURRENT live
+   *  record for `sub` with NO generation check. Authenticated (token-facing)
+   *  callers MUST use `getContextForSession` instead — a `sub`-only read on a
+   *  token path is a TOCTOU (guard validates A, replacement B is then used). */
   async getContext(sub?: string): Promise<{ cookie: string; sesskey: string }> {
+    return this.getContextForCurrent(sub);
+  }
+
+  /**
+   * CURRENT-session read for background flows (poller) that own no JWT:
+   * the current live record, whatever its generation. Never call from an
+   * authenticated controller/service path.
+   */
+  async getContextForCurrent(sub?: string): Promise<{ cookie: string; sesskey: string }> {
     const session = sub ? await this.sessionStore?.get(sub) : null;
     if (!session?.kulonCookie) {
       throw new StaleUpstreamError(
@@ -158,22 +172,53 @@ export class KulonUpstreamSession {
         'Kulon session belum ada. Silakan login ulang via SSO',
       );
     }
-    const cookie = session.kulonCookie;
+    return { cookie: session.kulonCookie, sesskey: await this.resolveSesskey(sub, session.kulonCookie) };
+  }
+
+  /**
+   * Token-facing read: resolves the session ONLY if the live record still
+   * carries the token's exact `sessionGeneration` (atomic snapshot via
+   * `getIfGeneration`). A replacement between JwtAuthGuard and this read is
+   * 401 SESSION_DEAD — B's cookies are never returned to an A-token, and no
+   * upstream fetch is attempted (no B leak, no stale-A use).
+   */
+  async getContextForSession(ref: SessionRef): Promise<{ cookie: string; sesskey: string }> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const session = await this.sessionStore?.getIfGeneration(ref.sub, ref.sessionGeneration) ?? null;
+    if (!session?.kulonCookie || !isSessionGeneration(session.sessionGeneration)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    if (session.sessionGeneration !== ref.sessionGeneration) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return { cookie: session.kulonCookie, sesskey: await this.resolveSesskey(ref.sub, session.kulonCookie) };
+  }
+
+  /** Sesskey resolve shared by both reads: fingerprint cache + single-flight. */
+  private async resolveSesskey(sub: string | undefined, cookie: string): Promise<string> {
     if (!sub || !this.cache) {
-      const sesskey = await this.fetchSesskeyOrThrow(cookie);
-      return { cookie, sesskey };
+      return this.fetchSesskeyOrThrow(cookie);
     }
     const key = sesskeyCacheKey(sub, cookie);
     const cached = await this.cache.get<string>(key);
-    if (cached) {
-      return { cookie, sesskey: cached };
-    }
+    if (cached) return cached;
     const sesskey = await this.sesskeyFlight.run(key, () =>
       this.fetchSesskeyOrThrow(cookie),
     );
     if (this.cache)
       await this.cache.set(key, sesskey, CachePolicy.KULON_SESSKEY);
-    return { cookie, sesskey };
+    return sesskey;
   }
 
   /**
