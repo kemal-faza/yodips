@@ -1,6 +1,7 @@
 package ac.undip.sso.ui
 
 import ac.undip.sso.core.data.PersistentCache
+import ac.undip.sso.core.data.SessionLogout
 import ac.undip.sso.core.data.TokenStoreLike
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.SessionExpiredEvents
@@ -86,15 +87,34 @@ fun AppRoot(
     // is still set — DELETE /api/notifications/device needs the bearer.
     // Nulling the token first would send the request without auth → 401 → the
     // device token is never pruned in the backend registry.
+
+    // Hoisted ONCE for the composable's lifetime: single-flight (requirement 2)
+    // only spans invocations that share ONE SessionLogout instance — building
+    // a fresh one per tap would create new single-flight state each time and
+    // defeat it.
+    val sessionLogout = remember {
+        SessionLogout(
+            pushUnregister = { PushGraph.onLogout() },
+            revokeServerSession = { Backend.api.logout() },
+            localCleanup = {
+                // NON-SUSPENDING, unconditional, runs LAST — both server
+                // calls above already attempted with the (still-live)
+                // bearer. Token nulled, persisted session + WebView cookies
+                // wiped, expired-event counter reset, UI flips to login.
+                // The lambda type is `() -> Unit` (R2-1): nothing here may
+                // suspend. tokenStore.clear() is a suspending DataStore edit
+                // → launched fire-and-forget on the surviving hoisted scope,
+                // exactly as today, NEVER awaited inline.
+                Backend.authToken = null
+                scope.launch { tokenStore.clear() }
+                runCatching { CookieManager.getInstance().removeAllCookies(null) }
+                SessionExpiredEvents.consume()
+                hasToken = false
+            },
+        )
+    }
     val onLogout: () -> Unit = {
-        scope.launch {
-            runCatching { PushGraph.onLogout() } // DELETE pakai JWT yang masih ada
-            Backend.authToken = null
-            scope.launch { tokenStore.clear() }
-            runCatching { CookieManager.getInstance().removeAllCookies(null) }
-            SessionExpiredEvents.consume()
-            hasToken = false
-        }
+        scope.launch { sessionLogout.logout() }
     }
 
     if (hasToken) {
