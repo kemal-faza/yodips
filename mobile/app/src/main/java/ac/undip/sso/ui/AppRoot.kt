@@ -1,6 +1,7 @@
 package ac.undip.sso.ui
 
 import ac.undip.sso.core.data.PersistentCache
+import ac.undip.sso.core.data.SessionLogout
 import ac.undip.sso.core.data.TokenStoreLike
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.SessionExpiredEvents
@@ -86,15 +87,34 @@ fun AppRoot(
     // is still set — DELETE /api/notifications/device needs the bearer.
     // Nulling the token first would send the request without auth → 401 → the
     // device token is never pruned in the backend registry.
+
+    // Hoisted ONCE for the composable's lifetime: single-flight (requirement 2)
+    // only spans invocations that share ONE SessionLogout instance — building
+    // a fresh one per tap would create new single-flight state each time and
+    // defeat it.
+    val sessionLogout = remember {
+        SessionLogout(
+            pushUnregister = { PushGraph.onLogout() },
+            revokeServerSession = { Backend.api.logout() },
+            localCleanup = {
+                // SUSPENDING, unconditional, runs LAST under NonCancellable
+                // inside SessionLogout.logout() — both server calls above
+                // already attempted with the (still-live) bearer. The
+                // DataStore edit is AWAITED inline (never fire-and-forget):
+                // a logout scope cancelled by Activity destruction mid-write
+                // still completes the removal, so the persisted JWT cannot
+                // survive to resurrect the session after restart. Durable
+                // removal completes BEFORE the UI flips to login (last).
+                tokenStore.clear() // durable: awaited DataStore edit, first
+                Backend.authToken = null
+                runCatching { CookieManager.getInstance().removeAllCookies(null) }
+                SessionExpiredEvents.consume()
+                hasToken = false
+            },
+        )
+    }
     val onLogout: () -> Unit = {
-        scope.launch {
-            runCatching { PushGraph.onLogout() } // DELETE pakai JWT yang masih ada
-            Backend.authToken = null
-            scope.launch { tokenStore.clear() }
-            runCatching { CookieManager.getInstance().removeAllCookies(null) }
-            SessionExpiredEvents.consume()
-            hasToken = false
-        }
+        scope.launch { sessionLogout.logout() }
     }
 
     if (hasToken) {

@@ -1,6 +1,8 @@
 package ac.undip.sso.ui
 
 import ac.undip.sso.core.data.NoOpPersistentCache
+import ac.undip.sso.core.data.SessionLogout
+import ac.undip.sso.core.data.WasmLogoutCoordinator
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.push.IdbNotificationHistoryStore
 import ac.undip.sso.core.push.PushSubscriptionManager
@@ -76,28 +78,70 @@ fun AppRoot(themeController: ThemeController) {
 
     if (!checked) return
 
+    // Hoisted ONCE for the app's lifetime: single-flight (requirement 2) only
+    // spans invocations that share ONE SessionLogout instance — a fresh
+    // instance per tap would create new single-flight state each time and
+    // defeat it. The wasm side effects live in the production
+    // [WasmLogoutCoordinator] (same ordering/cancellation contract as the
+    // unit-tested seam); this block only injects the browser/TokenStore
+    // primitives, which never enter common code.
+    val wasmLogoutGlue = remember {
+        WasmLogoutCoordinator(
+            object : WasmLogoutCoordinator.Ops {
+                override fun isPushSupported(): Boolean = PushSubscriptionManager.isSupported()
+
+                override suspend fun unregisterWebPushOnServer() {
+                    // Guard matches the login-time registration gate above:
+                    // unreachable when unsupported (pushUnregister already
+                    // checked), kept as defense in depth.
+                    val sub = PushSubscriptionManager.currentSubscription()
+                    if (sub != null) Backend.api.unregisterWebPushDevice(sub)
+                }
+
+                override suspend fun unsubscribeWebPushInBrowser() {
+                    PushSubscriptionManager.unsubscribe()
+                }
+
+                override fun scheduleHistoryClear() {
+                    // SUSPENDING (IndexedDB) so it is SCHEDULED on the
+                    // existing surviving GlobalScope (best-effort).
+                    GlobalScope.launch { runCatching { history.clear() } }
+                }
+
+                override fun clearAuthToken() {
+                    Backend.authToken = null
+                }
+
+                override fun clearPersistedCredentialsImmediately() {
+                    // SYNCHRONOUS localStorage + StateFlow reset, BEFORE the
+                    // UI flips: a scheduled clear would let `hasToken = false`
+                    // outrun the removal (a kill/restart in between resurrects
+                    // the session). tokenStore.clear() delegates to the same
+                    // primitive, so both paths remove identical state.
+                    tokenStore.clearImmediately()
+                }
+
+                override fun showLoggedOutUi() {
+                    hasToken = false
+                }
+            },
+        )
+    }
+    val sessionLogout = remember {
+        SessionLogout(
+            pushUnregister = { wasmLogoutGlue.pushUnregister() },
+            revokeServerSession = { Backend.api.logout() },
+            localCleanup = { wasmLogoutGlue.localCleanup() },
+        )
+    }
+
     if (hasToken) {
         AppShell(
             tokenStore = tokenStore,
             persistentCache = NoOpPersistentCache,
             themeController = themeController,
             onLogout = {
-                GlobalScope.launch {
-                    // URUTAN: unregister harus jalan SELAMA Backend.authToken
-                    // masih terpasang (DELETE web-device butuh Bearer). Cabut
-                    // subscription dulu, baru token dibersihkan.
-                    runCatching {
-                        PushSubscriptionManager.currentSubscription()
-                            ?.let { Backend.api.unregisterWebPushDevice(it) }
-                        PushSubscriptionManager.unsubscribe()
-                    }
-                    // Privasi: riwayat notifikasi IDB global (bukan per-NIM) — user B
-                    // tidak boleh melihat notifikasi user A. Kosongkan di logout.
-                    runCatching { history.clear() }
-                    Backend.authToken = null
-                    tokenStore.clear()
-                    hasToken = false
-                }
+                GlobalScope.launch { sessionLogout.logout() }
             },
             initialNavTarget = pendingNav,
             onNavConsumed = {
