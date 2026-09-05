@@ -19,6 +19,10 @@ const mockPlaywright = {
   launchAndCaptureSession: jest.fn(),
   captureSession: jest.fn(),
 };
+const GEN_1 = 'a'.repeat(32);
+const GEN_2 = 'b'.repeat(32);
+const GEN_3 = 'c'.repeat(32);
+
 const mockSessionStore = {
   _map: new Map<string, any>(),
   set(identity: string, s: any) {
@@ -27,8 +31,20 @@ const mockSessionStore = {
   get(identity: string) {
     return this._map.get(identity) ?? null;
   },
+  getIfGeneration(identity: string, generation: string) {
+    const rec = this._map.get(identity) ?? null;
+    if (!rec || rec.sessionGeneration !== generation) return null;
+    return rec;
+  },
   clear(identity: string) {
     this._map.delete(identity);
+  },
+  clearIfGeneration(identity: string, generation: string) {
+    const rec = this._map.get(identity);
+    if (!rec) return true;
+    if (rec.sessionGeneration !== generation) return false;
+    this._map.delete(identity);
+    return true;
   },
   all() {
     return [...this._map.values()];
@@ -40,7 +56,16 @@ const mockJwt = {
     return 'jwt-token';
   }),
   verifyAsync: jest.fn(async (token: string, opts: any) => {
-    if (token === 'expired-but-valid') return { sub: '24060121130000', via: 'handoff' };
+    if (token === 'expired-but-valid')
+      return { sub: '24060121130000', via: 'handoff', sessionGeneration: mockSessionStore.get('24060121130000')?.sessionGeneration ?? GEN_1 };
+    if (token === 'logout-gen-1') return { sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_1 };
+    if (token === 'logout-gen-2') return { sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_2 };
+    if (token === 'logout-no-claim') return { sub: '24060121130000', via: 'handoff' };
+    if (token === 'logout-legacy-numeric') return { sub: '24060121130000', via: 'handoff', sessionGeneration: 111 };
+    if (token === 'refresh-gen-1') return { sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_1 };
+    if (token === 'refresh-gen-2') return { sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_2 };
+    if (token === 'refresh-no-claim') return { sub: '24060121130000', via: 'handoff' };
+    if (token === 'refresh-legacy-numeric') return { sub: '24060121130000', via: 'handoff', sessionGeneration: 222 };
     if (token === 'forged') throw new Error('invalid signature');
     throw new Error('unknown token');
   }),
@@ -124,7 +149,7 @@ async function okFetch() {
 }
 
 describe('AuthService.login clock', () => {
-  it('stores the injected wall-clock capturedAt', async () => {
+  it('stores the injected wall-clock capturedAt plus a fresh crypto generation', async () => {
     mockSsoAuth.login.mockResolvedValue({ cookie: 'ci_session_sso=sso', redirectUrl: '/dashboard' });
     const svc = makeService();
 
@@ -132,6 +157,32 @@ describe('AuthService.login clock', () => {
 
     expect(result).toMatchObject({ accessToken: 'jwt-token', redirectUrl: '/dashboard' });
     expect(mockSessionStore.get('identity').capturedAt).toBe(clock.wall);
+    expect(mockSessionStore.get('identity').sessionGeneration).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('mints a JWT whose sessionGeneration equals the freshly stored generation (not capturedAt)', async () => {
+    mockSsoAuth.login.mockResolvedValue({ cookie: 'ci_session_sso=sso', redirectUrl: '/dashboard' });
+    const svc = makeService();
+    await svc.login('identity', 'password');
+    const storedGen = mockSessionStore.get('identity').sessionGeneration;
+    expect(storedGen).toMatch(/^[0-9a-f]{32}$/);
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: 'identity',
+      via: 'sso',
+      sessionGeneration: storedGen,
+    });
+  });
+
+  it('mints distinct generations for successive logins (no timestamp collision)', async () => {
+    mockSsoAuth.login.mockResolvedValue({ cookie: 'ci_session_sso=sso', redirectUrl: '/dashboard' });
+    const svc = makeService();
+    await svc.login('u1', 'p');
+    await svc.login('u2', 'p');
+    const g1 = mockSessionStore.get('u1').sessionGeneration;
+    const g2 = mockSessionStore.get('u2').sessionGeneration;
+    expect(g1).toMatch(/^[0-9a-f]{32}$/);
+    expect(g2).toMatch(/^[0-9a-f]{32}$/);
+    expect(g1).not.toBe(g2);
   });
 
   it('uses the injected wall clock for freshness and expires at the TTL boundary', () => {
@@ -145,6 +196,31 @@ describe('AuthService.login clock', () => {
 });
 
 describe('AuthService.captureSsoSession', () => {
+  it('never reuses a legacy stored session without a valid generation (E)', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: 'ESTSAUTH=MS',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      // no sessionGeneration (legacy)
+    });
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockPlaywright.launchAndCaptureSession.mockResolvedValue({
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=FRESH',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
+    });
+    const svc = makeService();
+    const res = await svc.captureSsoSession();
+    expect(res.reused).toBe(false);
+    expect(mockPlaywright.launchAndCaptureSession).toHaveBeenCalled();
+  });
+
   it('reuses a fresh valid session WITHOUT opening a browser window', async () => {
     mockSessionStore._map.set('24060121130000', {
       identity: '24060121130000',
@@ -153,6 +229,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=K',
       siapCookie: '',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     await okFetch();
 
@@ -181,6 +258,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=K',
       siapCookie: '',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     const fullCookies = {
       ssoCookie: 'ci_session_sso=SSO',
@@ -188,6 +266,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=K',
       siapCookie: 'cookiesession1=SIAP',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     };
     mockPlaywright.launchAndCaptureSession.mockResolvedValue(fullCookies);
     await okFetch();
@@ -217,6 +296,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=K',
       siapCookie: 'cookiesession1=SIAP',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     };
     mockPlaywright.launchAndCaptureSession.mockResolvedValue(fullCookies);
 
@@ -244,6 +324,7 @@ describe('AuthService.captureSsoSession', () => {
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=STALE',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     // Kulon probe fails (delegated to KulonService.checkSessionValid)
     mockKulon.checkSessionValid.mockResolvedValue({
@@ -256,6 +337,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=FRESH',
       siapCookie: '',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
 
     const svc = makeService();
@@ -271,6 +353,7 @@ describe('AuthService.captureSsoSession', () => {
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=K',
       capturedAt: Date.now() - 60 * 60 * 1000, // 1h old
+      sessionGeneration: GEN_1,
     });
     mockPlaywright.launchAndCaptureSession.mockResolvedValue({
       ssoCookie: 'ci_session_sso=SSO',
@@ -278,6 +361,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=K',
       siapCookie: '',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
 
     const svc = makeService();
@@ -294,6 +378,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=STALE',
       siapCookie: '',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     mockKulon.checkSessionValid.mockResolvedValue({
       valid: false,
@@ -315,6 +400,7 @@ describe('AuthService.captureSsoSession', () => {
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=K',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     mockKulon.checkSessionValid.mockResolvedValue({
       valid: true,
@@ -335,12 +421,14 @@ describe('AuthService.captureSsoSession', () => {
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=K',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     mockSessionStore._map.set('09060121130011', {
       identity: '09060121130011',
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=K',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     mockKulon.checkSessionValid.mockResolvedValue({
       valid: true,
@@ -352,6 +440,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=FRESH',
       siapCookie: '',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
 
     const svc = makeService();
@@ -371,6 +460,7 @@ describe('AuthService.captureSsoSession', () => {
       kulonCookie: 'MoodleSession=K',
       siapCookie: '',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     mockKulon.checkSessionValid.mockResolvedValue({
       valid: true,
@@ -387,6 +477,48 @@ describe('AuthService.captureSsoSession', () => {
       'MoodleSession=K',
     );
   });
+
+  it('reuse branch mints sessionGeneration from the reused record', async () => {
+    const reusedAt = 1_700_000_000_123;
+    const reusedGen = GEN_1;
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: reusedAt,
+      sessionGeneration: reusedGen,
+    });
+    await okFetch();
+    const svc = makeService();
+    const res = await svc.captureSsoSession();
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'reuse',
+      sessionGeneration: reusedGen,
+    });
+    expect(res.sessionGeneration).toBe(reusedGen);
+  });
+
+  it('interactive branch mints sessionGeneration from the freshly captured session', async () => {
+    mockPlaywright.launchAndCaptureSession.mockResolvedValue({
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: 'ESTSAUTH=MS',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: 'cookiesession1=SIAP',
+      capturedAt: clock.wall,
+      sessionGeneration: GEN_3,
+    });
+    const svc = makeService();
+    const res = await svc.captureSsoSession();
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'playwright',
+      sessionGeneration: GEN_3,
+    });
+    expect(res.sessionGeneration).toBe(GEN_3);
+  });
 });
 
 describe('AuthService.refresh', () => {
@@ -398,19 +530,44 @@ describe('AuthService.refresh', () => {
       kulonCookie: 'MoodleSession=K',
       siapCookie: '',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
+    });
+    // expired-but-valid echoes the live record generation
+    mockJwt.verifyAsync.mockResolvedValueOnce({
+      sub: '24060121130000',
+      via: 'handoff',
+      sessionGeneration: GEN_1,
     });
     const svc = makeService();
     const out = await svc.refresh('expired-but-valid');
     expect(out.accessToken).toBe('jwt-token');
-    expect(mockJwt.signAsync).toHaveBeenCalledWith({ sub: '24060121130000', via: 'handoff' });
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'handoff',
+      sessionGeneration: GEN_1,
+    });
   });
 
   it('preserves the via claim', async () => {
-    mockJwt.verifyAsync.mockResolvedValueOnce({ sub: '24060121130000', via: 'oidc' });
-    mockSessionStore._map.set('24060121130000', { identity: '24060121130000', kulonCookie: 'K', siapCookie: '', capturedAt: Date.now() });
+    mockJwt.verifyAsync.mockResolvedValueOnce({
+      sub: '24060121130000',
+      via: 'oidc',
+      sessionGeneration: GEN_2,
+    });
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      kulonCookie: 'K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      sessionGeneration: GEN_2,
+    });
     const svc = makeService();
     await svc.refresh('expired-but-valid');
-    expect(mockJwt.signAsync).toHaveBeenCalledWith({ sub: '24060121130000', via: 'oidc' });
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'oidc',
+      sessionGeneration: GEN_2,
+    });
   });
 
   it('rejects a forged token with INVALID_TOKEN', async () => {
@@ -427,6 +584,98 @@ describe('AuthService.refresh', () => {
     await expect(svc.refresh('expired-but-valid')).rejects.toMatchObject({
       status: 401,
       response: { code: 'SESSION_DEAD' },
+    });
+  });
+
+  it('rejects a valid-signature token with NO sessionGeneration claim (legacy) with INVALID_TOKEN', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
+    });
+    const svc = makeService();
+    await expect(svc.refresh('refresh-no-claim')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+  });
+
+  it('rejects a numeric legacy generation with INVALID_TOKEN (shape, not SESSION_DEAD)', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      kulonCookie: 'K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      sessionGeneration: GEN_2,
+    });
+    const svc = makeService();
+    await expect(svc.refresh('refresh-legacy-numeric')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+    expect(mockJwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('returns SESSION_DEAD when the live record is legacy (no generation)', async () => {
+    mockJwt.verifyAsync.mockResolvedValueOnce({
+      sub: '24060121130000',
+      via: 'handoff',
+      sessionGeneration: GEN_1,
+    });
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      kulonCookie: 'K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      // legacy: no sessionGeneration
+    });
+    const svc = makeService();
+    await expect(svc.refresh('expired-but-valid')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+  });
+
+  it('returns SESSION_DEAD when the live record is a NEWER generation than the token claim', async () => {
+    // Old token minted at GEN_1; the user re-logged-in → live record GEN_2.
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      sessionGeneration: GEN_2,
+    });
+    const svc = makeService();
+    await expect(svc.refresh('refresh-gen-1')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(mockJwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('mints with the CURRENT record generation when the claim matches', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: '',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      sessionGeneration: GEN_2,
+    });
+    const svc = makeService();
+    const out = await svc.refresh('refresh-gen-2');
+    expect(out.accessToken).toBe('jwt-token');
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'handoff',
+      sessionGeneration: GEN_2,
     });
   });
 });
@@ -452,6 +701,25 @@ describe('AuthService.handleSessionHandoff', () => {
     expect(mockSessionStore.get('24060121130000').kulonCookie).toContain(
       'MoodleSession=K',
     );
+  });
+
+  it('mints sessionGeneration from the stored generation (binds stored record)', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
+    const svc = makeService();
+    const res = await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+    });
+    const storedGen = mockSessionStore.get('24060121130000').sessionGeneration;
+    expect(storedGen).toMatch(/^[0-9a-f]{32}$/);
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'handoff',
+      sessionGeneration: storedGen,
+    });
+    expect(res.capturedAt).toBe(clock.wall);
+    expect(res.sessionGeneration).toBe(storedGen);
   });
 
   it('throws 401 with code KULON_STALE when the kulon cookie is stale', async () => {
@@ -700,6 +968,22 @@ describe('AuthService.handleMicrosoftCallback', () => {
       mockSessionStore.get(resB.accessToken.replace('jwt-', '')),
     ).not.toBeNull();
   });
+
+  it('mints sessionGeneration from the per-login stored generation (binds stored record)', async () => {
+    mockMicrosoftAuth.handleCallback.mockResolvedValue({
+      accessToken: 'ms-at',
+      sessionCookies: 'ESTSAUTH=MS',
+    });
+    const svc = makeService();
+    await svc.handleMicrosoftCallback('codeX', 'stateX');
+    const storedGen = mockSessionStore.get('microsoft:stateX').sessionGeneration;
+    expect(storedGen).toMatch(/^[0-9a-f]{32}$/);
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: 'microsoft:stateX',
+      via: 'oidc',
+      sessionGeneration: storedGen,
+    });
+  });
 });
 
 describe('AuthService.me', () => {
@@ -711,9 +995,10 @@ describe('AuthService.me', () => {
       kulonCookie: 'kulon=y',
       siapCookie: 'ci_session_x=K',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     const svc = makeService();
-    const res = await svc.me({ sub: '24060121130000' });
+    const res = await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
     expect(res.sub).toBe('24060121130000');
     expect(res.authenticated).toBe(true);
     expect(res.hasSso).toBe(true);
@@ -728,9 +1013,10 @@ describe('AuthService.me', () => {
       identity: '24060121130000',
       siapCookie: 'ci_session_x=K', // no sso, no kulon
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     const svc = makeService();
-    const res = await svc.me({ sub: '24060121130000' });
+    const res = await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
     expect(res.hasSiap).toBe(true);
     expect(res.hasKulon).toBe(false);
     expect(res.complete).toBe(false);
@@ -738,7 +1024,7 @@ describe('AuthService.me', () => {
 
   it('reports unauthenticated + incomplete when no session exists', async () => {
     const svc = makeService();
-    const res = await svc.me({ sub: 'unknown-user' });
+    const res = await svc.me({ sub: 'unknown-user', sessionGeneration: GEN_1 });
     expect(res.authenticated).toBe(false);
     expect(res.hasSso).toBe(false);
     expect(res.hasKulon).toBe(false);
@@ -754,6 +1040,7 @@ describe('AuthService.me', () => {
       kulonCookie: 'kulon=y', // present but STALE upstream
       siapCookie: 'ci_session_x=K',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     // Kulon probe fails (expired upstream), SIAP probe succeeds.
     mockKulon.checkSessionValid.mockResolvedValue({
@@ -763,7 +1050,7 @@ describe('AuthService.me', () => {
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
 
     const svc = makeService();
-    const res = await svc.me({ sub: '24060121130000' });
+    const res = await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
     expect(mockKulon.checkSessionValid).toHaveBeenCalledWith('kulon=y');
     expect(mockSiap.checkSessionValid).toHaveBeenCalledWith('ci_session_x=K');
     expect(res.hasKulon).toBe(false);
@@ -779,6 +1066,7 @@ describe('AuthService.me', () => {
       kulonCookie: 'kulon=y',
       siapCookie: 'ci_session_x=K',
       capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
     });
     mockKulon.checkSessionValid.mockResolvedValue({
       valid: true,
@@ -787,9 +1075,9 @@ describe('AuthService.me', () => {
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
 
     const svc = makeService();
-    await svc.me({ sub: '24060121130000' });
-    await svc.me({ sub: '24060121130000' });
-    await svc.me({ sub: '24060121130000' });
+    await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
+    await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
+    await svc.me({ sub: '24060121130000', sessionGeneration: GEN_1 });
     // Probe should run once per service, cached for the subsequent calls.
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(1);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(1);
@@ -803,11 +1091,12 @@ describe('AuthService.me', () => {
       kulonCookie: 'kulon=y',
       siapCookie: 'ci_session_x=K',
       capturedAt: clock.wall,
+      sessionGeneration: GEN_1,
     });
     const svc = makeService();
 
-    await svc.me({ sub: '24060121130000', via: 'handoff' });
-    await svc.me({ sub: '24060121130000', via: 'handoff' });
+    await svc.me({ sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_1 });
+    await svc.me({ sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_1 });
 
     expect(events.filter((event: any) => event.event === 'cache.read')).toEqual([
       expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'miss' }),
@@ -820,7 +1109,7 @@ describe('AuthService.me', () => {
     expect(JSON.stringify(events)).not.toContain('ci_session_x=K');
 
     clock.wall += CachePolicy.AUTH_PROBE;
-    await svc.me({ sub: '24060121130000', via: 'handoff' });
+    await svc.me({ sub: '24060121130000', via: 'handoff', sessionGeneration: GEN_1 });
 
     expect(mockKulon.checkSessionValid).toHaveBeenCalledTimes(2);
     expect(mockSiap.checkSessionValid).toHaveBeenCalledTimes(2);
@@ -846,6 +1135,7 @@ describe('AuthService.me', () => {
     kulonCookie: 'MoodleSession=k',
     siapCookie: 'sia_app_session=s',
     capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
   };
 
   it('me(): via=pair menganggap complete walau ssoCookie kosong, bila Kulon+SIAP valid', async () => {
@@ -853,7 +1143,7 @@ describe('AuthService.me', () => {
     mockKulon.checkSessionValid.mockResolvedValue({ valid: true });
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true });
     const svc = makeService();
-    const res = await svc.me({ sub: 'NIMPAIR', via: 'pair' });
+    const res = await svc.me({ sub: 'NIMPAIR', via: 'pair', sessionGeneration: GEN_1 });
     expect(res.complete).toBe(true);
   });
 
@@ -862,28 +1152,97 @@ describe('AuthService.me', () => {
     mockKulon.checkSessionValid.mockResolvedValue({ valid: true });
     mockSiap.checkSessionValid.mockResolvedValue({ valid: true });
     const svc = makeService();
-    const res = await svc.me({ sub: 'NIMPAIR2', via: 'handoff' });
+    const res = await svc.me({ sub: 'NIMPAIR2', via: 'handoff', sessionGeneration: GEN_1 });
     expect(res.complete).toBe(false);
   });
 });
 
 describe('AuthService.logout', () => {
-  it('clears the server session for the subject', async () => {
-    mockSessionStore._map.set('24060121130000', {
-      identity: '24060121130000',
-      ssoCookie: 'ci_session_sso=SSO',
-      microsoftCookie: '',
-      kulonCookie: 'MoodleSession=K',
-      siapCookie: '',
-      capturedAt: Date.now(),
-    });
+  const SEEDED = {
+    identity: '24060121130000',
+    ssoCookie: 'ci_session_sso=SSO',
+    microsoftCookie: '',
+    kulonCookie: 'MoodleSession=K',
+    siapCookie: '',
+    capturedAt: Date.now(),
+    sessionGeneration: GEN_1,
+  };
+
+  it('clears the server session when the claim matches the live record generation', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED });
     const svc = makeService();
-    await expect(svc.logout('24060121130000')).resolves.toEqual({ ok: true });
+    await expect(svc.logout('logout-gen-1')).resolves.toEqual({ ok: true });
     expect(mockSessionStore.get('24060121130000')).toBeNull();
   });
 
-  it('is idempotent when the session is already gone', async () => {
+  it('is idempotent when the session is already gone (no record)', async () => {
     const svc = makeService();
-    await expect(svc.logout('nobody')).resolves.toEqual({ ok: true });
+    await expect(svc.logout('logout-gen-1')).resolves.toEqual({ ok: true });
+  });
+
+  it('does NOT clear a NEWER live record when the token claim is an OLDER generation (SESSION_DEAD)', async () => {
+    // Re-login happened: live record GEN_2, token minted at GEN_1.
+    mockSessionStore._map.set('24060121130000', { ...SEEDED, sessionGeneration: GEN_2 });
+    const svc = makeService();
+    await expect(svc.logout('logout-gen-1')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    // The newer session survives.
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+  });
+
+  it('clears the live record when the token claim matches GEN_2', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED, sessionGeneration: GEN_2 });
+    const svc = makeService();
+    await expect(svc.logout('logout-gen-2')).resolves.toEqual({ ok: true });
+    expect(mockSessionStore.get('24060121130000')).toBeNull();
+  });
+
+  it('rejects a forged token with INVALID_TOKEN and clears nothing', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED });
+    const svc = makeService();
+    await expect(svc.logout('forged')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+  });
+
+  it('rejects a validly-signed token with NO sessionGeneration claim (legacy) with INVALID_TOKEN and clears nothing', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED });
+    const svc = makeService();
+    await expect(svc.logout('logout-no-claim')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+  });
+
+  it('rejects a numeric legacy generation with INVALID_TOKEN and clears nothing', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED });
+    const svc = makeService();
+    await expect(svc.logout('logout-legacy-numeric')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+  });
+
+  it('CAS lost to a newer record between read and clear preserves the newer session (deterministic race)', async () => {
+    // Seed GEN_1, then simulate a re-login overwriting with GEN_2 before the
+    // atomic clear runs: logout(GEN_1) must fail without deleting GEN_2.
+    mockSessionStore._map.set('24060121130000', { ...SEEDED, sessionGeneration: GEN_1 });
+    const svc = makeService();
+    // Interleave: replacement lands first.
+    mockSessionStore._map.set('24060121130000', { ...SEEDED, sessionGeneration: GEN_2, kulonCookie: 'MoodleSession=NEW' });
+    await expect(svc.logout('logout-gen-1')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(mockSessionStore.get('24060121130000')?.kulonCookie).toContain('MoodleSession=NEW');
+    // Current generation still logs out cleanly.
+    await expect(svc.logout('logout-gen-2')).resolves.toEqual({ ok: true });
+    expect(mockSessionStore.get('24060121130000')).toBeNull();
   });
 });

@@ -6,13 +6,17 @@ import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 /**
- * After the upstream-session consolidation the controller is a thin router:
- * it resolves nothing but `sub`, validates path/query input, and maps the
- * service's domain errors (ASSIGNMENT_NOT_FOUND / COURSE_NOT_FOUND) to 404s.
- * Session/stale behaviour lives in kulon.service + kulon-upstream specs.
+ * After the generation-qualified consolidation the controller is a thin router:
+ * it builds the exact SessionRef (sub + sessionGeneration), validates
+ * path/query input, and maps the service's domain errors
+ * (ASSIGNMENT_NOT_FOUND / COURSE_NOT_FOUND) to 404s. A missing generation
+ * never drops to sub-only — it is 401 SESSION_DEAD. Session/stale behaviour
+ * lives in kulon.service + kulon-upstream specs.
  */
 describe('KulonController', () => {
   let controller: KulonController;
+  const GEN = 'a'.repeat(32);
+  const REF = { sub: '24060121130000', sessionGeneration: GEN };
   const service = {
     getCourses: jest.fn(),
     getAssignments: jest.fn(),
@@ -21,7 +25,7 @@ describe('KulonController', () => {
     getCourseContent: jest.fn(),
     parseSesskey: jest.fn(),
   };
-  const req = () => ({ user: { sub: '24060121130000' } });
+  const req = () => ({ user: { sub: '24060121130000', sessionGeneration: GEN } });
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -35,21 +39,28 @@ describe('KulonController', () => {
     controller = module.get(KulonController);
   });
 
-  it('routes courses by sub only (no cookies cross this layer)', async () => {
+  it('routes courses by SessionRef (never sub-only, no cookies cross this layer)', async () => {
     service.getCourses.mockResolvedValue([
       { id: 1, fullname: 'A', shortname: 'A', idnumber: '1' },
     ]);
     const res = await controller.getCourses(req() as any);
     expect(res[0].fullname).toBe('A');
-    expect(service.getCourses).toHaveBeenCalledWith('24060121130000');
+    expect(service.getCourses).toHaveBeenCalledWith(REF);
   });
 
-  it('routes assignments aggregation by sub', async () => {
+  it('routes assignments aggregation by SessionRef', async () => {
     service.getAllAssignments.mockResolvedValue([]);
     await expect(controller.getAllAssignments(req() as any)).resolves.toEqual(
       [],
     );
-    expect(service.getAllAssignments).toHaveBeenCalledWith('24060121130000');
+    expect(service.getAllAssignments).toHaveBeenCalledWith(REF);
+  });
+
+  it('rejects 401 SESSION_DEAD without a generation (never drops to sub-only)', async () => {
+    await expect(
+      controller.getCourses({ user: { sub: '24060121130000' } } as any),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+    expect(service.getCourses).not.toHaveBeenCalled();
   });
 
   it('throws 404 when assignment id is invalid', async () => {
@@ -76,7 +87,7 @@ describe('KulonController', () => {
       controller.getAssignmentDetail('10', '20', req() as any),
     ).rejects.toBeInstanceOf(HttpException);
     expect(service.getAssignmentDetail).toHaveBeenCalledWith(
-      '24060121130000',
+      REF,
       10,
       20,
     );
@@ -96,11 +107,11 @@ describe('KulonController', () => {
     expect(service.getCourseContent).not.toHaveBeenCalled();
   });
 
-  it('maps COURSE_NOT_FOUND to a 404 and routes content by sub', async () => {
+  it('maps COURSE_NOT_FOUND to a 404 and routes content by SessionRef', async () => {
     service.getCourseContent.mockRejectedValue(new Error('COURSE_NOT_FOUND'));
     await expect(
       controller.getCourseContent('77', req() as any),
     ).rejects.toMatchObject({ status: 404 });
-    expect(service.getCourseContent).toHaveBeenCalledWith('24060121130000', 77);
+    expect(service.getCourseContent).toHaveBeenCalledWith(REF, 77);
   });
 });

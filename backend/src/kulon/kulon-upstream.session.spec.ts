@@ -19,9 +19,21 @@ class FakeStore extends SessionStore {
       (this.map.get(k) as CapturedSession | undefined) ?? null,
     );
   }
+  getIfGeneration(k: string, generation: string): Promise<CapturedSession | null> {
+    const rec = (this.map.get(k) as CapturedSession | undefined) ?? null;
+    if (!rec || rec.sessionGeneration !== generation) return Promise.resolve(null);
+    return Promise.resolve(rec);
+  }
   clear(k: string): Promise<void> {
     this.map.delete(k);
     return Promise.resolve();
+  }
+  clearIfGeneration(k: string, generation: string): Promise<boolean> {
+    const rec = this.map.get(k) as CapturedSession | undefined;
+    if (!rec) return Promise.resolve(true);
+    if (rec.sessionGeneration !== generation) return Promise.resolve(false);
+    this.map.delete(k);
+    return Promise.resolve(true);
   }
   all(): Promise<CapturedSession[]> {
     return Promise.resolve(
@@ -193,6 +205,145 @@ describe('KulonUpstreamSession.ajax', () => {
   );
 });
 
+describe('KulonUpstreamSession.getContextForSession (B: generation-qualified TOCTOU seam)', () => {
+  const GEN_A = 'a'.repeat(32);
+  const GEN_B = 'b'.repeat(32);
+  const COOKIE_A = 'MoodleSession=AAA';
+  const COOKIE_B = 'MoodleSession=BBB';
+  let store: FakeStore;
+  let cache: DataCache;
+
+  beforeEach(() => {
+    store = new FakeStore(
+      new Map([['U1', { identity: 'U1', kulonCookie: COOKIE_A, sessionGeneration: GEN_A, capturedAt: Date.now() }]]),
+    );
+    cache = new InMemoryDataCache(60_000);
+    jest.restoreAllMocks();
+  });
+
+  it('resolves the cookie for the exact live generation', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: () => Promise.resolve(htmlWithSesskey('skA')),
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(store, cache);
+    const ctx = await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    expect(ctx.cookie).toBe(COOKIE_A);
+    expect(ctx.sesskey).toBe('skA');
+  });
+
+  it('replacement between guard and service read rejects SESSION_DEAD and never returns B cookie to an A-token', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: () => Promise.resolve(htmlWithSesskey('skB')),
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(store, cache);
+    // Guard validated A (live at that moment). Re-login replaces with B before
+    // the service/upstream read.
+    store.map.set('U1', { kulonCookie: COOKIE_B, sessionGeneration: GEN_B, capturedAt: Date.now() });
+    await expect(
+      (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A }),
+    ).rejects.toMatchObject({ status: 401 });
+    // Never touched upstream with either cookie (no B leak, no A use).
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('KulonUpstreamSession generation-scoped sesskey (findings 1+2)', () => {
+  const GEN_A = 'a'.repeat(32);
+  const GEN_B = 'b'.repeat(32);
+  const SAME_COOKIE = 'MoodleSession=SAME';
+
+  function scopedStore(cookie: string, generation: string) {
+    return new FakeStore(
+      new Map([['U1', { identity: 'U1', kulonCookie: cookie, sessionGeneration: generation, capturedAt: Date.now() }]]),
+    );
+  }
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('sesskey entries are generation-scoped: the same cookie under A->B refetches (no cross-generation reuse)', async () => {
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/my/',
+        text: () => Promise.resolve(htmlWithSesskey('skA')),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/my/',
+        text: () => Promise.resolve(htmlWithSesskey('skB')),
+      } as unknown as Response);
+    const store = scopedStore(SAME_COOKIE, GEN_A);
+    const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
+    const ctxA = await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    expect(ctxA.sesskey).toBe('skA');
+    // Same cookie, new generation: must NOT reuse A's cached sesskey entry.
+    store.map.set('U1', { identity: 'U1', kulonCookie: SAME_COOKIE, sessionGeneration: GEN_B, capturedAt: Date.now() });
+    const ctxB = await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_B });
+    expect(ctxB.sesskey).toBe('skB');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('concurrent A + B sesskey resolves never join one flight', async () => {
+    let releaseA!: (v: Response) => void;
+    const gateA = new Promise<Response>((resolve) => { releaseA = resolve; });
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockReturnValueOnce(gateA)
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        url: 'https://kulon2.undip.ac.id/my/',
+        text: () => Promise.resolve(htmlWithSesskey('skB')),
+      } as unknown as Response);
+    const store = scopedStore(SAME_COOKIE, GEN_A);
+    const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
+    const pendingA = (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    // B replacement lands while A's /my/ fetch is still in flight.
+    store.map.set('U1', { identity: 'U1', kulonCookie: SAME_COOKIE, sessionGeneration: GEN_B, capturedAt: Date.now() });
+    const pendingB = (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_B });
+    releaseA({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: () => Promise.resolve(htmlWithSesskey('skA')),
+    } as unknown as Response);
+    const [ctxA, ctxB] = await Promise.all([pendingA, pendingB]);
+    expect(ctxA.sesskey).toBe('skA');
+    expect(ctxB.sesskey).toBe('skB');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('getContextForCurrent shares the live generation scoped entry (0 extra fetches)', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: () => Promise.resolve(htmlWithSesskey('skA')),
+    } as unknown as Response);
+    const store = scopedStore(SAME_COOKIE, GEN_A);
+    const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
+    await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    const ctx = await seam.getContextForCurrent('U1');
+    expect(ctx.sesskey).toBe('skA');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a legacy record without a generation is stale on the current path (never unscoped)', async () => {
+    const store = new FakeStore(new Map([['U1', { identity: 'U1', kulonCookie: SAME_COOKIE }]]));
+    const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
+    await expect(seam.getContextForCurrent('U1')).rejects.toMatchObject({ reason: 'no-cookie' });
+  });
+});
+
 describe('KulonUpstreamSession.getContext', () => {
   let store: FakeStore;
   let cache: DataCache;
@@ -201,7 +352,7 @@ describe('KulonUpstreamSession.getContext', () => {
 
   beforeEach(() => {
     store = new FakeStore(
-      new Map([['2304012012345', { kulonCookie: cookie }]]),
+      new Map([['2304012012345', { identity: '2304012012345', kulonCookie: cookie, sessionGeneration: 'c'.repeat(32) }]]),
     );
     cache = new InMemoryDataCache(60_000);
   });
@@ -262,7 +413,7 @@ describe('KulonUpstreamSession.getContext', () => {
     const seam = new KulonUpstreamSession(store, cache);
 
     await seam.getContext('2304012012345');
-    store.map.set('2304012012345', { kulonCookie: cookie2 });
+    store.map.set('2304012012345', { identity: '2304012012345', kulonCookie: cookie2, sessionGeneration: 'd'.repeat(32) });
     const ctx = await seam.getContext('2304012012345');
     expect(ctx.sesskey).toBe('sk2');
     expect(spy).toHaveBeenCalledTimes(2);

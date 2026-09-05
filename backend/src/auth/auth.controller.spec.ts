@@ -82,10 +82,19 @@ describe('AuthController', () => {
     });
   });
 
-  it('logout delegates req.user.sub to the service', async () => {
+  it('logout extracts the Bearer token and delegates to the service', async () => {
     authService.logout.mockResolvedValue({ ok: true });
-    const res = await controller.logout({ user: { sub: 'n2m' } } as any);
+    const res = await controller.logout({
+      headers: { authorization: 'Bearer abc.def.ghi' },
+    } as any);
     expect(res).toEqual({ ok: true });
-    expect(authService.logout).toHaveBeenCalledWith('n2m');
+    expect(authService.logout).toHaveBeenCalledWith('abc.def.ghi');
+  });
+
+  it('logout rejects a missing Authorization header with INVALID_TOKEN', async () => {
+    await expect(controller.logout({ headers: {} } as any)).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
   });
 });

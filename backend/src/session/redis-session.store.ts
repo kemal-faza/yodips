@@ -7,6 +7,19 @@ import { SessionStore } from './session-store';
 const KEY_PREFIX = 'sso:session:';
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12;
+/**
+ * Atomic compare-and-delete: DEL only if the current value still equals the
+ * exact envelope read earlier. Returns 1 when deleted, 0 when replaced.
+ */
+const CAS_DELETE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`;
+
+/**
+ * Atomic compare-and-expire: EXPIRE only if the current value still equals
+ * the exact envelope read earlier. Returns 1 when slid, 0 when replaced.
+ * A stale qualified read (A) that loses this CAS to a B-replacement returns
+ * null and never slides B's TTL.
+ */
+const CAS_EXPIRE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("EXPIRE", KEYS[1], ARGV[2]) else return 0 end`;
 
 /**
  * Redis-backed SessionStore for production.
@@ -55,7 +68,11 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
       this.absoluteMs !== undefined &&
       Date.now() - session.capturedAt >= this.absoluteMs
     ) {
-      await this.client.del(key);
+      // Compare-and-delete the EXACT envelope read: never an unconditional DEL,
+      // so a replacement stored between GET and cleanup (newer live session)
+      // is never destroyed. A lost CAS still returns null for this stale read;
+      // the next get() observes the fresh record.
+      await this.casDeleteIfEqual(key, envelope);
       return null;
     }
     // Sliding TTL: refresh on access.
@@ -65,6 +82,87 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
 
   async clear(identity: string): Promise<void> {
     await this.client.del(`${KEY_PREFIX}${identity}`);
+  }
+
+  /**
+   * Atomic compare-and-clear on `sessionGeneration`. Reads the envelope,
+   * enforces the absolute cap BEFORE the generation compare (an absolute-dead
+   * record is CAS-cleaned and reports true when the cleanup wins / no live
+   * record remains, false when the CAS lost to a newer replacement),
+   * then Lua-CAS-DELs the exact raw envelope.
+   * No record → true; generation mismatch or CAS lost → false.
+   */
+  async clearIfGeneration(identity: string, generation: string): Promise<boolean> {
+    const key = `${KEY_PREFIX}${identity}`;
+    const envelope = await this.client.get(key);
+    if (!envelope) return true;
+    const session = this.decrypt(envelope);
+    if (!session) {
+      // Corrupt/tampered envelope: attempt to remove exactly that envelope so a
+      // newer valid replacement (if any) is never touched. Deleted → true
+      // (idempotent); changed → false (newer record wins → SESSION_DEAD).
+      const deleted = await this.casDeleteIfEqual(key, envelope);
+      return deleted === 1;
+    }
+    // Absolute lifetime BEFORE the generation compare (parity with InMemory):
+    // a capturedAt-dead record is cleaned via the exact-envelope CAS. A won
+    // CAS (or no live record) → true; a lost CAS (B-replacement landed) →
+    // false so the caller maps to SESSION_DEAD and never clears B.
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - session.capturedAt >= this.absoluteMs
+    ) {
+      const deleted = await this.casDeleteIfEqual(key, envelope);
+      return deleted === 1;
+    }
+    if (session.sessionGeneration !== generation) return false;
+    const deleted = await this.casDeleteIfEqual(key, envelope);
+    return deleted === 1 ? true : false;
+  }
+
+  /**
+   * Generation-qualified snapshot. GETs the envelope, enforces the absolute
+   * cap BEFORE the generation compare (dead → exact-envelope CAS-cleanup,
+   * null either way, never a slide), returns null on decrypt failure
+   * (exact-envelope CAS-cleanup, null either way) or generation mismatch
+   * (no slide, no delete), and EXPIRE-slides only on an exact live match —
+   * via the Lua compare-and-expire of the exact envelope read, so a
+   * B-replacement between GET and slide loses the CAS (null, B untouched).
+   */
+  async getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null> {
+    const key = `${KEY_PREFIX}${identity}`;
+    const envelope = await this.client.get(key);
+    if (!envelope) return null;
+    const session = this.decrypt(envelope);
+    if (!session) {
+      await this.casDeleteIfEqual(key, envelope);
+      return null;
+    }
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - session.capturedAt >= this.absoluteMs
+    ) {
+      await this.casDeleteIfEqual(key, envelope);
+      return null;
+    }
+    if (session.sessionGeneration !== generation) return null;
+    const slid = await this.casExpireIfEqual(key, envelope, this.ttlSeconds());
+    if (slid !== 1) return null;
+    return session;
+  }
+
+  private async casExpireIfEqual(key: string, expectedEnvelope: string, ttlSeconds: number): Promise<number> {
+    const res = await (this.client as unknown as {
+      eval: (script: string, numKeys: number, key: string, ...args: unknown[]) => Promise<unknown>;
+    }).eval(CAS_EXPIRE_LUA, 1, key, expectedEnvelope, ttlSeconds);
+    return res === 1 || res === '1' ? 1 : 0;
+  }
+
+  private async casDeleteIfEqual(key: string, expectedEnvelope: string): Promise<number> {
+    const res = await (this.client as unknown as {
+      eval: (script: string, numKeys: number, key: string, arg: string) => Promise<unknown>;
+    }).eval(CAS_DELETE_LUA, 1, key, expectedEnvelope);
+    return res === 1 || res === '1' ? 1 : 0;
   }
 
   async all(): Promise<CapturedSession[]> {
@@ -110,7 +208,10 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
       const tag = Buffer.from(tagB64, 'base64');
       if (iv.length !== IV_LEN) return null; // 12-byte IV enforced
       if (tag.length !== 16) return null; // 16-byte GCM tag enforced
-      const decipher = createDecipheriv(ALGO, this.key, iv);
+      // Explicit authTagLength (16) — Node's GCM default is already 16 bytes, so
+      // this is a no-op hardening that pins the contract in case the default ever
+      // changes. The 16-byte tag is enforced above (tag.length !== 16 → null).
+      const decipher = createDecipheriv(ALGO, this.key, iv, { authTagLength: 16 });
       decipher.setAuthTag(tag);
       const plaintext = Buffer.concat([
         decipher.update(Buffer.from(ctB64, 'base64')),

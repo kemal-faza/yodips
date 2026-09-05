@@ -1,6 +1,7 @@
-import { HttpException, Injectable, Logger, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
 import { SiapService } from '../siap/siap.service';
 import { KulonService } from '../kulon/kulon.service';
+import { SessionRef, isSessionRef } from '../session/session-store';
 import type {
   SiapIrs,
   SiapJadwal,
@@ -56,6 +57,17 @@ function sliceError(e: unknown): SliceError {
   return { status: 500, message: 'Terjadi kesalahan internal' };
 }
 
+function isAuthenticatedFailure(e: unknown): boolean {
+  if (!(e instanceof HttpException)) return false;
+  if (e.getStatus() === HttpStatus.UNAUTHORIZED) return true;
+  const response = e.getResponse();
+  return (
+    typeof response === 'object' &&
+    response !== null &&
+    (response as { code?: unknown }).code === 'SESSION_DEAD'
+  );
+}
+
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger('Dashboard');
@@ -65,14 +77,20 @@ export class DashboardService {
     @Optional() private readonly kulon?: KulonService,
   ) {}
 
-  async getDashboard(sub?: string): Promise<DashboardPayload> {
+  async getDashboard(ref: SessionRef): Promise<DashboardPayload> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
     const runs: Array<{ name: DashboardSliceName; p: Promise<unknown> }> = [
-      { name: 'profile', p: this.siap?.getProfile(sub) ?? Promise.resolve(null) },
-      { name: 'khs', p: this.siap?.getKhs(sub) ?? Promise.resolve(null) },
-      { name: 'irs', p: this.siap?.getIrs(sub) ?? Promise.resolve(null) },
-      { name: 'jadwal', p: this.siap?.getJadwal(sub) ?? Promise.resolve([]) },
-      { name: 'courses', p: this.kulon?.getCourses(sub) ?? Promise.resolve([]) },
-      { name: 'assignments', p: this.kulon?.getAllAssignments(sub) ?? Promise.resolve([]) },
+      { name: 'profile', p: this.siap?.getProfile(ref) ?? Promise.resolve(null) },
+      { name: 'khs', p: this.siap?.getKhs(ref) ?? Promise.resolve(null) },
+      { name: 'irs', p: this.siap?.getIrs(ref) ?? Promise.resolve(null) },
+      { name: 'jadwal', p: this.siap?.getJadwal(ref) ?? Promise.resolve([]) },
+      { name: 'courses', p: this.kulon?.getCourses(ref) ?? Promise.resolve([]) },
+      { name: 'assignments', p: this.kulon?.getAllAssignments(ref) ?? Promise.resolve([]) },
     ];
     const settled = await Promise.allSettled(runs.map((r) => r.p));
     const out: DashboardPayload = { ...(EMPTY as unknown as DashboardPayload) };
@@ -82,6 +100,7 @@ export class DashboardService {
       if (res.status === 'fulfilled') {
         (out as unknown as Record<string, unknown>)[name] = res.value;
       } else {
+        if (isAuthenticatedFailure(res.reason)) throw res.reason;
         const se = sliceError(res.reason);
         this.logger.debug(`[dashboard] slice ${name} failed status=${se.status}`);
         (out as unknown as Record<string, unknown>)[name] = Array.isArray(EMPTY[name])

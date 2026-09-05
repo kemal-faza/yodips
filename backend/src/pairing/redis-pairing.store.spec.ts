@@ -9,7 +9,7 @@ function makeClient() {
   };
 }
 
-const RECORD = { sub: 'NIM1', expiresAt: 123456 };
+const RECORD = { sub: 'NIM1', sessionGeneration: 'a'.repeat(32), expiresAt: 123456 };
 
 describe('RedisPairingStore', () => {
   it('set menyimpan JSON dengan prefix pair: + EX detik, plus tombstone pair-exp:', async () => {

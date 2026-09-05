@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { SSOAuthService } from '../sso/sso-auth.service';
 import { SSOTicketService } from '../sso/ticket.service';
 import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
-import { PlaywrightAuthService, CapturedSession } from '../playwright/playwright-auth.service';
+import { PlaywrightAuthService, CapturedSession, generateSessionGeneration, isSessionGeneration } from '../playwright/playwright-auth.service';
 import { SessionStore } from '../session/session-store';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
@@ -51,15 +51,18 @@ export class AuthService {
       password,
     );
     // Store session server-side keyed by identity; JWT carries only a reference (not raw cookie).
+    const capturedAt = this.runtime.wallNowMs();
+    const sessionGeneration = generateSessionGeneration();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: cookie,
       microsoftCookie: '',
       kulonCookie: '',
       siapCookie: '',
-      capturedAt: this.runtime.wallNowMs(),
+      capturedAt,
+      sessionGeneration,
     });
-    const payload = { sub: identity, via: 'sso' };
+    const payload = { sub: identity, via: 'sso', sessionGeneration };
     const accessToken = await this.jwt.signAsync(payload);
     return { accessToken, redirectUrl };
   }
@@ -87,11 +90,12 @@ export class AuthService {
       : await this.preventReuse();
     if (existing) {
       this.logger.log('Reusing stored SSO session — no browser window needed');
-      const payload = { sub: existing.identity, via: 'reuse' };
+      const payload = { sub: existing.identity, via: 'reuse', sessionGeneration: existing.sessionGeneration };
       const accessToken = await this.jwt.signAsync(payload);
       return {
         accessToken,
         capturedAt: existing.capturedAt,
+        sessionGeneration: existing.sessionGeneration,
         reused: true,
         hasSso: !!existing.ssoCookie,
         hasMicrosoft: !!existing.microsoftCookie,
@@ -131,7 +135,7 @@ export class AuthService {
       : 'sso';
     await this.sessionStore.set(identity, { ...stored, identity });
 
-    const payload = { sub: identity, via: 'playwright' };
+    const payload = { sub: identity, via: 'playwright', sessionGeneration: stored.sessionGeneration };
     const accessToken = await this.jwt.signAsync(payload);
     const siapCheck = session.siapCookie
       ? await this.siap.checkSessionValid(session.siapCookie)
@@ -139,6 +143,7 @@ export class AuthService {
     return {
       accessToken,
       capturedAt: session.capturedAt,
+      sessionGeneration: stored.sessionGeneration,
       reused: false,
       hasSso: !!session.ssoCookie,
       hasMicrosoft: !!session.microsoftCookie,
@@ -179,6 +184,7 @@ export class AuthService {
     const all = await this.sessionStore.all();
     if (all.length !== 1) return null;
     const [s] = all;
+    if (!isSessionGeneration(s.sessionGeneration)) return null;
     if (this.isFresh(s) && (await this.kulonProbeOk(s.kulonCookie))) {
       return s;
     }
@@ -197,15 +203,18 @@ export class AuthService {
     // overwrite each other's session (B10). The `state` is unique per login
     // attempt, so the JWT sub is a stable reference to that session.
     const identity = state ? `microsoft:${state}` : 'microsoft';
+    const capturedAt = this.runtime.wallNowMs();
+    const sessionGeneration = generateSessionGeneration();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: '',
       microsoftCookie: sessionCookies,
       kulonCookie: '',
       siapCookie: '',
-      capturedAt: this.runtime.wallNowMs(),
+      capturedAt,
+      sessionGeneration,
     });
-    const payload = { sub: identity, via: 'oidc' };
+    const payload = { sub: identity, via: 'oidc', sessionGeneration };
     const jwt = await this.jwt.signAsync(payload);
     return { accessToken: jwt };
   }
@@ -291,6 +300,7 @@ export class AuthService {
       }
     }
     const capturedAt = this.runtime.wallNowMs();
+    const sessionGeneration = generateSessionGeneration();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: dto.ssoCookie ?? '',
@@ -299,12 +309,14 @@ export class AuthService {
       siapCookie: siapCheck.valid ? dto.siapCookie ?? '' : '',
       ...(emailSso ? { emailSso } : {}),
       capturedAt,
+      sessionGeneration,
     });
-    const payload = { sub: identity, via: 'handoff' };
+    const payload = { sub: identity, via: 'handoff', sessionGeneration };
     const accessToken = await this.jwt.signAsync(payload);
     return {
       accessToken,
       capturedAt,
+      sessionGeneration,
       reused: false,
       hasSso: !!dto.ssoCookie,
       hasMicrosoft: !!dto.microsoftCookie,
@@ -316,11 +328,17 @@ export class AuthService {
   /**
    * Silent JWT rotation. The incoming token may be expired (JWT_EXPIRES_IN=12h
    * is far shorter than the 7d sliding session), so verify the SIGNATURE only
-   * (ignoreExpiration) and mint a fresh JWT iff the backend session record is
-   * still alive. A dead record means the user must re-login (SESSION_DEAD).
+   * (ignoreExpiration) and mint a fresh JWT iff BOTH the backend session record
+   * is still alive AND its collision-proof `sessionGeneration` exactly matches
+   * the token's `sessionGeneration` claim. A dead record, a legacy record
+   * without a generation, or a generation mismatch means the user must
+   * re-login (SESSION_DEAD); a missing/ill-typed claim (legacy token) is
+   * INVALID_TOKEN. Re-mints are signed with the CURRENT record generation, so
+   * a future-generation token can never be produced from an old one.
+   * `capturedAt` is lifetime only and never binds a JWT.
    */
   async refresh(token: string) {
-    let payload: { sub?: string; via?: string };
+    let payload: { sub?: unknown; sessionGeneration?: unknown; via?: unknown };
     try {
       payload = await this.jwt.verifyAsync(token, {
         secret: this.config.get<string>('JWT_SECRET'),
@@ -335,15 +353,22 @@ export class AuthService {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const sub = payload?.sub;
-    if (!sub) {
+    const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
+    const generation = payload?.sessionGeneration;
+    if (!sub || !isSessionGeneration(generation)) {
       throw new HttpException(
         { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const session = await this.sessionStore.get(sub);
-    if (!session) {
+    const session = await this.sessionStore.getIfGeneration(sub, generation);
+    if (!session || !isSessionGeneration(session.sessionGeneration)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    if (session.sessionGeneration !== generation) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
         HttpStatus.UNAUTHORIZED,
@@ -352,38 +377,87 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync({
       sub,
       via: typeof payload.via === 'string' ? payload.via : 'handoff',
+      sessionGeneration: session.sessionGeneration,
     });
     return { accessToken };
   }
 
   /**
-   * Server-side logout: drop the session record so no (possibly leaked) JWT for
-   * this subject can be silently refreshed again (YD-AUTH-001). Idempotent —
-   * clearing an already-dead record succeeds. The owner is `sub` set by
-   * JwtAuthGuard from the verified token; a body-supplied identity is never
-   * trusted (B4).
+   * Server-side logout. Verifies the SIGNATURE only (ignoreExpiration) so an
+   * expired-but-valid JWT can still clear its session, then applies the
+   * atomic session-generation semantics via `clearIfGeneration`:
+   *  - valid token + live record with a MATCHING generation → cleared, ok.
+   *  - valid token + no record (or expired/absolute-dead) → idempotent ok.
+   *  - valid token + live record with a DIFFERENT generation, or the CAS lost
+   *    to a newer record → SESSION_DEAD, newer session NEVER cleared.
+   *  - missing/ill-typed claim, bad signature/iss/aud, or garbage → INVALID_TOKEN,
+   *    nothing cleared.
+   * `sub` comes only from the signed token (B4); a body-supplied identity is
+   * never trusted.
    */
-  async logout(sub: string): Promise<{ ok: true }> {
-    await this.sessionStore.clear(sub);
+  async logout(bearerToken: string): Promise<{ ok: true }> {
+    let payload: { sub?: unknown; sessionGeneration?: unknown };
+    try {
+      payload = await this.jwt.verifyAsync(bearerToken, {
+        secret: this.config.get<string>('JWT_SECRET'),
+        ignoreExpiration: true,
+        algorithms: ['HS256'],
+        issuer: 'yodips',
+        audience: 'yodips-web',
+      });
+    } catch {
+      throw new HttpException(
+        { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
+    const generation = payload?.sessionGeneration;
+    if (!sub || !isSessionGeneration(generation)) {
+      throw new HttpException(
+        { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const cleared = await this.sessionStore.clearIfGeneration(sub, generation);
+    if (!cleared) {
+      // Mismatch or CAS lost to a newer live session — never cleared.
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
     this.logger.log(`SSO session cleared for ${sub}`);
     return { ok: true };
   }
 
-  async me(user: any) {
-    const session = await this.sessionStore.get(user?.sub);
-    const present = !!session;
+  async me(user: { sub?: unknown; sessionGeneration?: unknown; via?: unknown }) {
+    const sub = typeof user?.sub === 'string' && user.sub.length > 0 ? user.sub : null;
+    const generation = user?.sessionGeneration;
+    // Generation-qualified snapshot: guard validated A, but a B-replacement
+    // before this read must NOT surface B's cookies/validity to an A-token.
+    // A miss (no record, dead, legacy, mismatch) is unauthenticated — never a
+    // silent switch to the replacement.
+    const session =
+      sub && isSessionGeneration(generation)
+        ? await this.sessionStore.getIfGeneration(sub, generation)
+        : null;
+    const present =
+      !!session &&
+      isSessionGeneration(session.sessionGeneration) &&
+      session.sessionGeneration === generation;
     // B1: live-probe validity (Kulon/SIAP) instead of only checking cookie
     // presence. Results are cached ~60s so the boot gate & polls get accurate
     // answers without hammering upstream on every /me.
     const kulonValid =
-      present && session.kulonCookie
-        ? await this.probeValid(`${user.sub}:kulon`, session.kulonCookie, () =>
+      present && session?.kulonCookie
+        ? await this.probeValid(`${sub}:kulon`, session.kulonCookie, () =>
             this.kulon.checkSessionValid(session.kulonCookie),
           )
         : false;
     const siapValid =
-      present && session.siapCookie
-        ? await this.probeValid(`${user.sub}:siap`, session.siapCookie, () =>
+      present && session?.siapCookie
+        ? await this.probeValid(`${sub}:siap`, session.siapCookie, () =>
             this.siap.checkSessionValid(session.siapCookie),
           )
         : false;
@@ -393,15 +467,15 @@ export class AuthService {
     // perangkat paired bounce balik ke login selamanya.
     const requireSsoCookie = user?.via !== 'pair';
     return {
-      sub: user?.sub,
+      sub,
       authenticated: present,
-      hasSso: present ? !!session.ssoCookie : false,
-      hasMicrosoft: present ? !!session.microsoftCookie : false,
+      hasSso: present ? !!session?.ssoCookie : false,
+      hasMicrosoft: present ? !!session?.microsoftCookie : false,
       hasKulon: kulonValid,
       hasSiap: siapValid,
       complete:
         present &&
-        (!requireSsoCookie || !!session.ssoCookie) &&
+        (!requireSsoCookie || !!session?.ssoCookie) &&
         kulonValid &&
         siapValid,
     };

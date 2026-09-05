@@ -47,7 +47,27 @@ describe('PlaywrightAuthService', () => {
     expect(session.microsoftCookie).toContain('ESTSAUTH=MS');
     expect(session.kulonCookie).toContain('MoodleSession=KULON');
     expect(session.siapCookie).toContain('cookiesession1=SIAP');
+    expect(session.sessionGeneration).toMatch(/^[0-9a-f]{32}$/);
     expect(chromium.connectOverCDP).toHaveBeenCalledWith('http://127.0.0.1:9223');
+  });
+
+  it('mints distinct crypto generations per capture (no timestamp coupling)', async () => {
+    const mockContext = {
+      pages: () => [{ url: () => 'https://sso.undip.ac.id/dashboard', goto: jest.fn() }],
+      cookies: jest.fn().mockResolvedValue([
+        { name: 'ci_session_sso', value: 'SSO', domain: '.sso.undip.ac.id' },
+        { name: 'MoodleSession', value: 'KULON', domain: 'kulon2.undip.ac.id' },
+      ]),
+    };
+    (chromium.connectOverCDP as jest.Mock).mockResolvedValue({
+      contexts: () => [mockContext],
+      close: jest.fn(),
+    });
+    const a = await svc.captureSession('http://127.0.0.1:9223', 'https://sso.undip.ac.id/pages/dashboard');
+    const b = await svc.captureSession('http://127.0.0.1:9223', 'https://sso.undip.ac.id/pages/dashboard');
+    expect(a.sessionGeneration).toMatch(/^[0-9a-f]{32}$/);
+    expect(b.sessionGeneration).toMatch(/^[0-9a-f]{32}$/);
+    expect(a.sessionGeneration).not.toBe(b.sessionGeneration);
   });
 
   it('captures parent-domain (.undip.ac.id) SSO cookies (B6)', async () => {

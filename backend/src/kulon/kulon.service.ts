@@ -1,9 +1,15 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
 import { SiapService } from '../siap/siap.service';
-import { SessionStore } from '../session/session-store';
+import { SessionRef, SessionStore, isSessionRef } from '../session/session-store';
+import {
+  cacheKeyForCurrent,
+  cacheKeyForSession,
+  flightKeyForCurrent,
+  flightKeyForSession,
+} from '../session/session-scope';
 import {
   KulonUpstreamSession,
   KULON_ROUTE_CONTEXTS,
@@ -47,6 +53,21 @@ import {
 import type { UpstreamReason } from '../observability/telemetry-contract';
 
 const kulonPageCompatibilityErrors = new WeakSet<object>();
+
+type KulonScope =
+  | { kind: 'session'; ref: SessionRef }
+  | { kind: 'current'; sub: string };
+
+function normalizeKulonScope(scope?: KulonScope | string): KulonScope | undefined {
+  if (typeof scope === 'string') return { kind: 'current', sub: scope };
+  return scope;
+}
+
+function kulonCacheKey(scope: KulonScope, ...parts: string[]): string {
+  return scope.kind === 'session'
+    ? cacheKeyForSession(scope.ref, 'kulon', ...parts)
+    : cacheKeyForCurrent(scope.sub, 'kulon', ...parts);
+}
 
 /** Mark the exact legacy plain Error used for expected Moodle page incompatibilities. */
 export function markKulonPageCompatibilityError(error: unknown): void {
@@ -145,16 +166,32 @@ export class KulonService {
     createKeyedSingleFlight<KulonAssignment[]>();
 
   /**
-   * Cookie + sesskey pair every AJAX-backed entry point starts from.
-   * Delegates to the upstream-session seam: the seam resolves the stored
-   * session cookie (and a cached single-flight sesskey) for `sub`, and throws
-   * the same typed no-cookie stale 401 the old requireKulonCookie threw.
+   * Cookie + sesskey pair every token-facing entry point starts from.
+   * Generation-qualified via `getContextForSession`: a B-replacement between
+   * JwtAuthGuard and this read is 401 SESSION_DEAD, never B's cookies.
    */
-  private async requireKulonAjax(sub?: string): Promise<{
+  private async requireKulonAjaxForSession(ref: SessionRef): Promise<{
     cookie: string;
     sesskey: string;
   }> {
-    return this.upstream.getContext(sub);
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return this.upstream.getContextForSession(ref);
+  }
+
+  /**
+   * CURRENT-session pair for background flows (poller) that own no JWT.
+   * Never call from an authenticated controller/service path.
+   */
+  private async requireKulonAjaxForCurrent(sub: string): Promise<{
+    cookie: string;
+    sesskey: string;
+  }> {
+    return this.upstream.getContextForCurrent(sub);
   }
 
   /** Kept as the service's public parsing entry point (thin delegate). */
@@ -284,27 +321,34 @@ export class KulonService {
     }
   }
 
-  async getCourses(sub?: string): Promise<KulonCourse[]> {
-    return this.courseFlight.run(sub ?? '__anon__', async () => {
+  async getCourses(ref: SessionRef): Promise<KulonCourse[]> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const scope: KulonScope = { kind: 'session', ref };
+    return this.courseFlight.run(flightKeyForSession(ref, 'courses'), async () => {
       const { cookie: sessionCookie, sesskey } =
-        await this.requireKulonAjax(sub);
-      if (sub && this.cache) {
+        await this.requireKulonAjaxForSession(ref);
+      if (this.cache) {
         const { value } = await this.cache.getStale<KulonCourse[]>(
-          `${sub}:kulon:courses`,
+          kulonCacheKey(scope, 'courses'),
           () =>
-            this.fetchCourses(sessionCookie, sesskey, sub, {
+            this.fetchCourses(sessionCookie, sesskey, scope, {
               withLecturers: true,
               withProgress: true,
               skipCacheRead: true,
-            }),
+            }, ref),
           swrWindow('KULON_COURSES'),
         );
         return value;
       }
-      return this.fetchCourses(sessionCookie, sesskey, sub, {
+      return this.fetchCourses(sessionCookie, sesskey, scope, {
         withLecturers: true,
         withProgress: true,
-      });
+      }, ref);
     });
   }
 
@@ -312,15 +356,17 @@ export class KulonService {
   private async fetchCourses(
     sessionCookie: string,
     sesskey: string,
-    sub?: string,
+    scopeInput?: KulonScope | string,
     opts: {
       withLecturers?: boolean;
       withProgress?: boolean;
       skipCacheRead?: boolean;
     } = {},
+    lecturerRef?: SessionRef,
   ): Promise<KulonCourse[]> {
-    if (sub && this.cache && !opts.skipCacheRead) {
-      const hit = await this.cache.get<KulonCourse[]>(`${sub}:kulon:courses`);
+    const scope = normalizeKulonScope(scopeInput);
+    if (scope && this.cache && !opts.skipCacheRead) {
+      const hit = await this.cache.get<KulonCourse[]>(kulonCacheKey(scope, 'courses'));
       if (hit) return hit;
     }
     // Moodle's own timeline classification is the source of truth for
@@ -354,7 +400,7 @@ export class KulonService {
         merged.map(async (c) => ({
           id: c.id,
           progress: parseSectionProgress(
-            (await this.fetchCourseContent(sessionCookie, sesskey, c.id))
+            (await this.fetchCourseContent(sessionCookie, sesskey, c.id, scope))
               .sections,
             undefined,
             { isPast: c.timelineStatus === 'past' },
@@ -376,9 +422,15 @@ export class KulonService {
     // internal calls (assignments aggregation) to keep poll cycles lean.
     let result: KulonCourse[] = mergedWithProgress;
     if (this.siap && opts.withLecturers !== false) {
+      if (!lecturerRef || !isSessionRef(lecturerRef)) {
+        throw new HttpException(
+          { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
       try {
         const byCode = new Map<string, string>();
-        for (const l of await this.siap.getLecturers(sub)) {
+        for (const l of await this.siap.getLecturers(lecturerRef)) {
           byCode.set(l.kode, l.dosen);
         }
         result = mergedWithProgress.map((c) =>
@@ -430,11 +482,16 @@ export class KulonService {
     }));
   }
 
-  async getAssignments(sub?: string): Promise<KulonAssignment[]> {
-    const key = sub ?? '__anon__';
-    return this.assignmentsFlight.run(key, async () => {
+  async getAssignments(ref: SessionRef): Promise<KulonAssignment[]> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return this.assignmentsFlight.run(flightKeyForSession(ref, 'assignments'), async () => {
       const { cookie: sessionCookie, sesskey } =
-        await this.requireKulonAjax(sub);
+        await this.requireKulonAjaxForSession(ref);
       const data = (await this.upstream.ajax(
         sessionCookie,
         sesskey,
@@ -491,20 +548,48 @@ export class KulonService {
    * assignments with a student "Submission" column. Bounded concurrency keeps
    * the first load reasonable.
    */
-  async getAllAssignments(sub?: string): Promise<KulonAssignment[]> {
-    const key = sub ?? '__anon__';
-    return this.allAssignmentsFlight.run(key, async () => {
+  async getAllAssignments(ref: SessionRef): Promise<KulonAssignment[]> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const scope: KulonScope = { kind: 'session', ref };
+    return this.allAssignmentsFlight.run(flightKeyForSession(ref, 'assignments-all'), async () => {
       const { cookie: sessionCookie, sesskey } =
-        await this.requireKulonAjax(sub);
-      if (sub && this.cache) {
+        await this.requireKulonAjaxForSession(ref);
+      if (this.cache) {
         const { value } = await this.cache.getStale<KulonAssignment[]>(
-          `${sub}:kulon:assignments:all`,
-          () => this.fetchAllAssignments(sessionCookie, sesskey, sub),
+          kulonCacheKey(scope, 'assignments', 'all'),
+          () => this.fetchAllAssignments(sessionCookie, sesskey, scope),
           swrWindow('KULON_ASSIGNMENTS_ALL'),
         );
         return value;
       }
-      return this.fetchAllAssignments(sessionCookie, sesskey, sub);
+      return this.fetchAllAssignments(sessionCookie, sesskey, scope);
+    });
+  }
+
+  /**
+   * CURRENT-session variant for background flows (NotificationsPoller) that
+   * own no JWT: the current live record, whatever its generation. Never call
+   * from an authenticated controller/service path.
+   */
+  async getAllAssignmentsForCurrentSession(sub: string): Promise<KulonAssignment[]> {
+    const scope: KulonScope = { kind: 'current', sub };
+    return this.allAssignmentsFlight.run(flightKeyForCurrent(sub, 'assignments-all'), async () => {
+      const { cookie: sessionCookie, sesskey } =
+        await this.requireKulonAjaxForCurrent(sub);
+      if (this.cache) {
+        const { value } = await this.cache.getStale<KulonAssignment[]>(
+          kulonCacheKey(scope, 'assignments', 'all'),
+          () => this.fetchAllAssignments(sessionCookie, sesskey, scope),
+          swrWindow('KULON_ASSIGNMENTS_ALL'),
+        );
+        return value;
+      }
+      return this.fetchAllAssignments(sessionCookie, sesskey, scope);
     });
   }
 
@@ -516,11 +601,12 @@ export class KulonService {
   private async fetchAllAssignments(
     sessionCookie: string,
     sesskey: string,
-    sub?: string,
+    scopeInput?: KulonScope | string,
   ): Promise<KulonAssignment[]> {
+    const scope = normalizeKulonScope(scopeInput);
     // Lecturer merge AND per-course progress scrape skipped on internal calls
     // to keep poll cycles lean — the assignments output carries neither.
-    const courses = await this.fetchCourses(sessionCookie, sesskey, sub, {
+    const courses = await this.fetchCourses(sessionCookie, sesskey, scope, {
       withLecturers: false,
       withProgress: false,
     });
@@ -652,22 +738,28 @@ export class KulonService {
   }
 
   async getAssignmentDetail(
-    sub: string | undefined,
+    ref: SessionRef,
     assignmentId: number,
     cmid: number,
   ): Promise<KulonAssignmentDetail> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
     // Probe first: it is the stale-session gate for the raw page fetch below.
-    const { cookie: sessionCookie } = await this.requireKulonAjax(sub);
-    if (sub && this.cache) {
+    const { cookie: sessionCookie } = await this.requireKulonAjaxForSession(ref);
+    if (this.cache) {
       const { value } = await this.cache.getStale<KulonAssignmentDetail>(
-        `${sub}:kulon:assignment-detail:${cmid}`,
+        cacheKeyForSession(ref, 'kulon', 'assignment-detail', String(cmid)),
         () =>
-          this.fetchAssignmentDetail(sessionCookie, cmid, assignmentId, sub),
+          this.fetchAssignmentDetail(sessionCookie, cmid, assignmentId, ref.sub),
         swrWindow('KULON_ASSIGNMENT_DETAIL'),
       );
       return value;
     }
-    return this.fetchAssignmentDetail(sessionCookie, cmid, assignmentId, sub);
+    return this.fetchAssignmentDetail(sessionCookie, cmid, assignmentId, ref.sub);
   }
 
   /**
@@ -744,11 +836,17 @@ export class KulonService {
   }
 
   async getCourseContent(
-    sub: string | undefined,
+    ref: SessionRef,
     courseId: number,
   ): Promise<KulonCourseContent> {
-    const { cookie, sesskey } = await this.requireKulonAjax(sub);
-    return this.fetchCourseContent(cookie, sesskey, courseId, sub);
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const { cookie, sesskey } = await this.requireKulonAjaxForSession(ref);
+    return this.fetchCourseContent(cookie, sesskey, courseId, { kind: 'session', ref });
   }
 
   /** Content fetch without session resolution (caller owns the session). */
@@ -756,17 +854,18 @@ export class KulonService {
     cookie: string,
     sesskey: string,
     courseId: number,
-    sub?: string,
+    scopeInput?: KulonScope | string,
   ): Promise<KulonCourseContent> {
-    if (sub && this.cache) {
+    const scope = normalizeKulonScope(scopeInput);
+    if (scope && this.cache) {
       const { value } = await this.cache.getStale<KulonCourseContent>(
-        `${sub}:kulon:course-content:${courseId}`,
-        () => this.fetchCourseContentFresh(cookie, sesskey, courseId, sub),
+        kulonCacheKey(scope, 'course-content', String(courseId)),
+        () => this.fetchCourseContentFresh(cookie, sesskey, courseId),
         swrWindow('KULON_COURSE_CONTENT'),
       );
       return value;
     }
-    return this.fetchCourseContentFresh(cookie, sesskey, courseId, sub);
+    return this.fetchCourseContentFresh(cookie, sesskey, courseId);
   }
 
   /**
@@ -777,7 +876,6 @@ export class KulonService {
     cookie: string,
     sesskey: string,
     courseId: number,
-    sub?: string,
   ): Promise<KulonCourseContent> {
     // JSON-first via core_courseformat_get_state; fall back to the HTML scrape on
     // ANY error (method disabled, session quirks, even a missing res.json() on a

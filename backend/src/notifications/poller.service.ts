@@ -135,11 +135,10 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     const webSubs = await this.store.getWebSubscriptions(sub);
     if (tokens.length === 0 && webSubs.length === 0) return;
 
-    // Services resolve their own upstream sessions from `sub`; a missing or
-    // expired session surfaces as a typed stale 401 -> re-login push (catch
-    // di runCycle).
-    const assignments: KulonAssignment[] = await this.kulon.getAllAssignments(sub);
-    const jadwal: SiapJadwal[] = await this.siap.getJadwal(sub);
+    // Background (no JWT): the CURRENT live record, whatever its generation.
+    // Explicit current-session APIs — never the token-facing SessionRef paths.
+    const assignments: KulonAssignment[] = await this.kulon.getAllAssignmentsForCurrentSession(sub);
+    const jadwal: SiapJadwal[] = await this.siap.getJadwalForCurrentSession(sub);
 
     // Sesi valid -> episode expired usai; reset agar episode BERIKUTNYA boleh push lagi.
     if (await this.store.getReloginFlagged(sub)) {

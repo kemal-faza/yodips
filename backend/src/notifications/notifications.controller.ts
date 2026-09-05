@@ -20,7 +20,7 @@ import { WebDeviceDto } from './dto/web-device.dto';
 import { WebPushService } from './web-push.service';
 
 interface AuthedRequest {
-  user?: { sub?: string };
+  user?: { sub?: string; sessionGeneration?: unknown };
 }
 
 @UseGuards(JwtAuthGuard)

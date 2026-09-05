@@ -8,15 +8,26 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { DashboardPayload } from './dashboard.service';
 
 describe('DashboardController', () => {
-  it('returns the payload for req.user.sub', async () => {
+  const GEN = 'a'.repeat(32);
+  it('returns the payload for req.user SessionRef', async () => {
     const payload: DashboardPayload = {
       profile: null, khs: null, irs: null, jadwal: [], courses: [], assignments: [], errors: {},
     };
     const service = { getDashboard: jest.fn().mockResolvedValue(payload) };
     const controller = new DashboardController(service as any);
-    const req = { user: { sub: '24060124120013' } };
+    const req = { user: { sub: '24060124120013', sessionGeneration: GEN } };
     await expect(controller.getDashboard(req as any)).resolves.toEqual(payload);
-    expect(service.getDashboard).toHaveBeenCalledWith('24060124120013');
+    expect(service.getDashboard).toHaveBeenCalledWith({ sub: '24060124120013', sessionGeneration: GEN });
+  });
+
+  it('rejects 401 SESSION_DEAD without a generation (never drops to sub-only)', async () => {
+    const service = { getDashboard: jest.fn() };
+    const controller = new DashboardController(service as any);
+    await expect(controller.getDashboard({ user: { sub: 'u1' } } as any)).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(service.getDashboard).not.toHaveBeenCalled();
   });
 
   it('is guarded by JwtAuthGuard', async () => {
@@ -26,14 +37,18 @@ describe('DashboardController', () => {
       providers: [{ provide: DashboardService, useValue: { getDashboard } }],
     })
       .overrideGuard(JwtAuthGuard)
-      .useValue({ canActivate: jest.fn().mockResolvedValue(true) })
+      // Mock guard attaches a valid SessionRef like the real JwtAuthGuard does.
+      .useValue({
+        canActivate: jest.fn().mockImplementation((ctx: any) => {
+          ctx.switchToHttp().getRequest().user = { sub: 'u1', sessionGeneration: GEN };
+          return Promise.resolve(true);
+        }),
+      })
       .compile()
       .then((m) => m.createNestApplication());
     await app.init();
-    const guard = app.get<JwtAuthGuard>(JwtAuthGuard);
-    const guardSpy = jest.spyOn(guard, 'canActivate').mockResolvedValue(true);
     await request(app.getHttpServer()).get('/api/dashboard').expect(200);
     await app.close();
-    expect(guardSpy).toHaveBeenCalled();
+    expect(getDashboard).toHaveBeenCalledWith({ sub: 'u1', sessionGeneration: GEN });
   });
 });
