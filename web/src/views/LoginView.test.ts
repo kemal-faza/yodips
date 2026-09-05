@@ -148,6 +148,40 @@ describe("LoginView", () => {
     w.unmount();
   });
 
+  it("returns after fragment navigation and does not start extension detection", async () => {
+    const store = makeStore({
+      isHandoffMode: true,
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+    });
+    const router = { replace: vi.fn().mockResolvedValue(undefined), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: { hash: "#access_token=AAA.BBB.CCC", query: {} },
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(router.replace).toHaveBeenCalledWith("/");
+    expect(store.isExtensionInstalled).not.toHaveBeenCalled();
+    expect(store.onExtensionResult).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it("does not register listeners when extension detection resolves after unmount", async () => {
+    let resolveDetection!: (value: boolean) => void;
+    const detection = new Promise<boolean>((resolve) => { resolveDetection = resolve; });
+    const store = makeStore({ isExtensionInstalled: vi.fn().mockReturnValue(detection) });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
+    });
+    w.unmount();
+    resolveDetection(true);
+    await flushPromises();
+    expect(store.onExtensionResult).not.toHaveBeenCalled();
+  });
+
   it("handoff mode without token shows capture instructions", () => {
     makeStore({ isHandoffMode: true });
     const w = mount(LoginView, {
@@ -445,7 +479,7 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
     w.unmount();
   });
 
-  it("scrubs the fragment BEFORE extension detection/messaging when the extension is installed", async () => {
+  it("returns after fragment navigation without extension detection or messaging", async () => {
     const store = makeStore({
       isHandoffMode: true,
       isExtensionInstalled: vi.fn().mockResolvedValue(true),
@@ -461,15 +495,8 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
       },
     });
     await flushPromises();
-    // replaceState fires BEFORE any extension detection/messaging call and
-    // before any store write.
-    const rsOrder = replaceState.mock.invocationCallOrder[0];
-    const extCheckOrder = store.isExtensionInstalled.mock.invocationCallOrder[0];
-    const extListenOrder = store.onExtensionResult.mock.invocationCallOrder[0];
-    const fhOrder = store.finishHandoff.mock.invocationCallOrder[0];
-    expect(rsOrder).toBeLessThan(extCheckOrder);
-    expect(rsOrder).toBeLessThan(extListenOrder);
-    expect(rsOrder).toBeLessThan(fhOrder);
+    expect(store.isExtensionInstalled).not.toHaveBeenCalled();
+    expect(store.onExtensionResult).not.toHaveBeenCalled();
     expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
     expect(router.replace).toHaveBeenCalledWith("/");
     replaceState.mockRestore();
@@ -477,10 +504,8 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
   });
 
   it("a late extension 'ok' result cannot overwrite the fragment-consume token or re-scrub", async () => {
-    // Fragment-consume path finishes handoff synchronously (before the
-    // extension listener is even registered). A subsequent extension 'ok'
-    // (different token) would be a competing write — assert it does NOT
-    // overwrite the fragment token (no double-write, no second scrub).
+    // Fragment-consume path finishes handoff synchronously and returns before
+    // the extension listener is registered, so there is no competing callback.
     const store = makeStore({ isHandoffMode: true, token: null });
     const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
     const router = { replace: vi.fn(), push: vi.fn() };
@@ -496,12 +521,9 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
     expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
     const goodCalls = store.finishHandoff.mock.calls.length;
     const scrubCalls = replaceState.mock.calls.length;
-    // The extension posts an 'ok' with a DIFFERENT token after mount.
-    const handler = (store.onExtensionResult as any).mock.calls[0][0];
-    handler({ status: "ok", accessToken: "ext.jwt.other" });
-    await flushPromises();
     expect(store.finishHandoff).toHaveBeenCalledTimes(goodCalls);
     expect(store.finishHandoff).not.toHaveBeenCalledWith("ext.jwt.other");
+    expect(store.onExtensionResult).not.toHaveBeenCalled();
     expect(replaceState).toHaveBeenCalledTimes(scrubCalls);
     replaceState.mockRestore();
     w.unmount();
@@ -629,7 +651,7 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
     return w;
   }
 
-  it("normal handoff passes the pre-await epoch to loginViaExtension", async () => {
+  it("normal handoff lets the auth store own its epoch capture", async () => {
     const router = { push: vi.fn() };
     const store = makeStore({
       isExtensionInstalled: vi.fn().mockResolvedValue(true),
@@ -641,8 +663,9 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
       .find((b) => b.text().includes("Login via Extension"))!
       .trigger("click");
     await flushPromises();
-    // Mandatory epoch at the commit boundary: the view stamps the origin.
-    expect(store.loginViaExtension).toHaveBeenCalledWith(expect.any(Number));
+    // The store captures its epoch internally before its first await; the view
+    // must not provide an optional bypass value.
+    expect(store.loginViaExtension).toHaveBeenCalledWith();
     expect(router.push).toHaveBeenCalledWith("/");
     w.unmount();
   });
@@ -880,6 +903,45 @@ describe("LoginView poll serialization (RED)", () => {
     await flushPromises();
     expect(store.readExtensionResult).not.toHaveBeenCalled();
     expect(store.finishHandoff).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("a newer flow can poll while the older flow read is still pending", async () => {
+    vi.useFakeTimers();
+    const router = { push: vi.fn() };
+    let resolveOldRead!: (value: any) => void;
+    let reads = 0;
+    const oldRead = new Promise<any>((resolve) => { resolveOldRead = resolve; });
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue("started"),
+      readExtensionResult: vi.fn().mockImplementation(() => {
+        reads += 1;
+        return reads === 1 ? oldRead : Promise.resolve({ status: "active" });
+      }),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    await w
+      .findAll("button")
+      .find((b) => b.text().includes("Login via Extension"))!
+      .trigger("click");
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(reads).toBe(1);
+
+    const secondFlow = (w.vm as any).handleExtensionLogin();
+    await secondFlow;
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(reads).toBe(2);
+
+    resolveOldRead({ status: "active" });
+    await flushPromises();
+    w.unmount();
     vi.useRealTimers();
   });
 });
