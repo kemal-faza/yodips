@@ -43,26 +43,34 @@ internal suspend fun backendUnregisterCatching(call: suspend () -> Boolean): Boo
  * Firebase/Retrofit/DataStore nyata. FCM token BUKAN secret (device-scoped,
  * dapat dirotasi server) → plaintext DataStore cukup; berbeda dari JWT yang
  * wajib terenkripsi di TokenStore.
+ *
+ * Thin wiring over [PushTokenCoordinator] (the constructible, unit-tested
+ * lifecycle owner): this object only builds the real [PushRegistration.Ops]
+ * once and delegates. All lifecycle behavior (active-token tracking,
+ * finally-clear on logout, cancellation propagation) lives in the
+ * coordinator — never mutated by tests.
  */
 object PushGraph {
-    @Volatile
-    var activeToken: String? = null
-        private set
+    private var coordinator: PushTokenCoordinator? = null
 
-    lateinit var registration: PushRegistration
-        private set
+    val activeToken: String?
+        get() = coordinator?.activeToken
+
+    val registration: PushRegistration
+        get() = checkNotNull(coordinator?.registration) { "PushGraph not installed" }
 
     /** Riwayat push yang pernah diterima (disimpan lokal, non-PII). */
     var history: NotificationHistoryStore? = null
         private set
 
     fun install(context: Context) {
-        if (::registration.isInitialized) return
+        if (coordinator != null) return
         val appContext = context.applicationContext
         history = DataStoreNotificationHistoryStore(appContext)
-        registration =
-            PushRegistration(
-                object : PushRegistration.Ops {
+        coordinator =
+            PushTokenCoordinator(
+                PushRegistration(
+                    object : PushRegistration.Ops {
                     override suspend fun currentFcmToken(): String? = firebaseToken()
 
                     // runCatching: offline/5xx TIDAK boleh melempar keluar
@@ -88,21 +96,17 @@ object PushGraph {
                     override suspend fun clearPending() {
                         appContext.pushDataStore.edit { it.remove(PENDING_KEY) }
                     }
-                },
+                    },
+                ),
             )
     }
 
     /** Dipanggil AppRoot saat hasToken menjadi true. */
-    suspend fun onLogin(): String? {
-        val t = registration.onLogin()
-        if (t != null) activeToken = t
-        return t
-    }
+    suspend fun onLogin(): String? = coordinator?.onLogin()
 
     /** Dipanggil PushMessagingService.onNewToken (thread background). */
     suspend fun onNewToken(newToken: String, loggedIn: Boolean) {
-        val registered = registration.onNewToken(newToken, loggedIn)
-        if (registered != null && loggedIn) activeToken = registered
+        coordinator?.onNewToken(newToken, loggedIn)
     }
 
     /** Simpan notifikasi yang baru diterima ke riwayat lokal (fire-and-forget). */
@@ -128,14 +132,7 @@ object PushGraph {
 
     /** Dipanggil AppRoot.onLogout sebelum sesi lokal dihapus. */
     suspend fun onLogout() {
-        try {
-            registration.onLogout(activeToken)
-        } finally {
-            // Cancellation (or any throw) from the unregister must neither
-            // retain the token nor strand the logout — the orchestrator's
-            // localCleanup runs next and the CE still propagates to it.
-            activeToken = null
-        }
+        coordinator?.onLogout()
     }
 
     private suspend fun firebaseToken(): String? =
