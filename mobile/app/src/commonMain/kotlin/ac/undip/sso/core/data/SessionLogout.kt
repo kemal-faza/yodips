@@ -1,7 +1,6 @@
 package ac.undip.sso.core.data
 
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 
 /**
  * Server-session logout orchestrator with guaranteed local cleanup.
@@ -35,12 +34,13 @@ import kotlinx.coroutines.CompletableDeferred
  * This mirrors the single-flight refresh pattern already used by
  * [SessionRefresher] (same codebase precedent).
  *
- * The shared field needs no lock: it is only read/written inside
- * non-suspending atomic sections — the claim-or-join happens in one
- * `platformSynchronized` block (real JVM monitor on Android/unit tests; a
- * no-op on wasmJs, which is single-threaded), and the release happens inside
- * the creator's non-suspending nested `finally` via [releaseIfCurrent].
- * `CompletableDeferred.complete` is thread-safe and idempotent.
+ * The shared gate needs no lock beyond its own [platformSynchronized]
+ * sections (real JVM monitor on Android/unit tests; a no-op on wasmJs,
+ * which is single-threaded): the claim-or-join happens in one
+ * non-suspending atomic section, and the release happens inside the
+ * creator's non-suspending nested `finally` via
+ * [SingleFlightGate.releaseIfCurrent]. `CompletableDeferred.complete` is
+ * thread-safe and idempotent.
  *
  * RELEASE IDENTITY: the creator completes its deferred FIRST (releasing
  * waiters) and then clears the field ONLY if it still holds the creator's
@@ -68,19 +68,16 @@ class SessionLogout(
     private val pushUnregister: suspend () -> Unit,
     private val localCleanup: () -> Unit,
 ) {
-    private var inflight: CompletableDeferred<Unit>? = null
+    private val gate = SingleFlightGate()
 
     suspend fun logout() {
-        // Claim-or-join the single in-flight run (one non-suspending critical
-        // section — the server steps below run OUTSIDE it). A deferred that is
-        // already COMPLETED does not count as in-flight (the creator finished
-        // and its non-suspending release may not have cleared the field yet):
-        // the next caller becomes a fresh creator and runs a new sequence.
-        val (deferred, isCreator) = platformSynchronized(logoutLock) {
-            val existing = inflight
-            if (existing != null && !existing.isCompleted) existing to false
-            else CompletableDeferred<Unit>().also { inflight = it } to true
-        }
+        // Claim-or-join the single in-flight run at the SingleFlightGate
+        // boundary (one non-suspending critical section — the server steps
+        // below run OUTSIDE it). A deferred that is already COMPLETED does
+        // not count as in-flight (the creator finished and its
+        // non-suspending release may not have cleared the field yet): the
+        // next caller becomes a fresh creator and runs a new sequence.
+        val (deferred, isCreator) = gate.claimOrJoin()
         if (!isCreator) {
             deferred.await() // collapse: wait for the running logout, do not re-run
             return
@@ -111,25 +108,8 @@ class SessionLogout(
             try {
                 localCleanup() // non-suspending: token nulled, stores/cookies cleared
             } finally {
-                releaseIfCurrent(deferred) // complete waiters, clear field iff ours
+                gate.releaseIfCurrent(deferred) // complete waiters, clear field iff ours
             }
         }
-    }
-
-    /**
-     * Creator release: complete the shared deferred FIRST (waiters observe the
-     * cleanup-done state and return normally), then clear [inflight] ONLY if
-     * it still references this creator's deferred. A stale release — e.g. a
-     * creator whose `complete` already let a successor claim a fresh deferred
-     * — must never erase the newer run. Non-suspending throughout, so it is
-     * safe inside the nested `finally` even while the creator is cancelling.
-     */
-    internal fun releaseIfCurrent(deferred: CompletableDeferred<Unit>) {
-        deferred.complete(Unit) // release waiters AFTER cleanup; idempotent
-        platformSynchronized(logoutLock) { if (inflight === deferred) inflight = null }
-    }
-
-    private companion object {
-        val logoutLock = Any()
     }
 }
