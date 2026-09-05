@@ -51,15 +51,16 @@ export class AuthService {
       password,
     );
     // Store session server-side keyed by identity; JWT carries only a reference (not raw cookie).
+    const capturedAt = this.runtime.wallNowMs();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: cookie,
       microsoftCookie: '',
       kulonCookie: '',
       siapCookie: '',
-      capturedAt: this.runtime.wallNowMs(),
+      capturedAt,
     });
-    const payload = { sub: identity, via: 'sso' };
+    const payload = { sub: identity, via: 'sso', sessionCapturedAt: capturedAt };
     const accessToken = await this.jwt.signAsync(payload);
     return { accessToken, redirectUrl };
   }
@@ -87,7 +88,7 @@ export class AuthService {
       : await this.preventReuse();
     if (existing) {
       this.logger.log('Reusing stored SSO session — no browser window needed');
-      const payload = { sub: existing.identity, via: 'reuse' };
+      const payload = { sub: existing.identity, via: 'reuse', sessionCapturedAt: existing.capturedAt };
       const accessToken = await this.jwt.signAsync(payload);
       return {
         accessToken,
@@ -131,7 +132,7 @@ export class AuthService {
       : 'sso';
     await this.sessionStore.set(identity, { ...stored, identity });
 
-    const payload = { sub: identity, via: 'playwright' };
+    const payload = { sub: identity, via: 'playwright', sessionCapturedAt: session.capturedAt };
     const accessToken = await this.jwt.signAsync(payload);
     const siapCheck = session.siapCookie
       ? await this.siap.checkSessionValid(session.siapCookie)
@@ -197,15 +198,16 @@ export class AuthService {
     // overwrite each other's session (B10). The `state` is unique per login
     // attempt, so the JWT sub is a stable reference to that session.
     const identity = state ? `microsoft:${state}` : 'microsoft';
+    const capturedAt = this.runtime.wallNowMs();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: '',
       microsoftCookie: sessionCookies,
       kulonCookie: '',
       siapCookie: '',
-      capturedAt: this.runtime.wallNowMs(),
+      capturedAt,
     });
-    const payload = { sub: identity, via: 'oidc' };
+    const payload = { sub: identity, via: 'oidc', sessionCapturedAt: capturedAt };
     const jwt = await this.jwt.signAsync(payload);
     return { accessToken: jwt };
   }
@@ -300,7 +302,7 @@ export class AuthService {
       ...(emailSso ? { emailSso } : {}),
       capturedAt,
     });
-    const payload = { sub: identity, via: 'handoff' };
+    const payload = { sub: identity, via: 'handoff', sessionCapturedAt: capturedAt };
     const accessToken = await this.jwt.signAsync(payload);
     return {
       accessToken,

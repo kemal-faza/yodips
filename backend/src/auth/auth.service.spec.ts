@@ -134,6 +134,17 @@ describe('AuthService.login clock', () => {
     expect(mockSessionStore.get('identity').capturedAt).toBe(clock.wall);
   });
 
+  it('mints a JWT whose sessionCapturedAt equals the freshly stored capturedAt', async () => {
+    mockSsoAuth.login.mockResolvedValue({ cookie: 'ci_session_sso=sso', redirectUrl: '/dashboard' });
+    const svc = makeService();
+    await svc.login('identity', 'password');
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: 'identity',
+      via: 'sso',
+      sessionCapturedAt: clock.wall,
+    });
+  });
+
   it('uses the injected wall clock for freshness and expires at the TTL boundary', () => {
     const svc = makeService();
     const session = { capturedAt: clock.wall - CachePolicy.AUTH_PROBE };
@@ -387,6 +398,43 @@ describe('AuthService.captureSsoSession', () => {
       'MoodleSession=K',
     );
   });
+
+  it('reuse branch mints sessionCapturedAt from the reused record', async () => {
+    const reusedAt = 1_700_000_000_123;
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: reusedAt,
+    });
+    await okFetch();
+    const svc = makeService();
+    await svc.captureSsoSession();
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'reuse',
+      sessionCapturedAt: reusedAt,
+    });
+  });
+
+  it('interactive branch mints sessionCapturedAt from the freshly captured session', async () => {
+    mockPlaywright.launchAndCaptureSession.mockResolvedValue({
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: 'ESTSAUTH=MS',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: 'cookiesession1=SIAP',
+      capturedAt: clock.wall,
+    });
+    const svc = makeService();
+    await svc.captureSsoSession();
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'playwright',
+      sessionCapturedAt: clock.wall,
+    });
+  });
 });
 
 describe('AuthService.refresh', () => {
@@ -452,6 +500,22 @@ describe('AuthService.handleSessionHandoff', () => {
     expect(mockSessionStore.get('24060121130000').kulonCookie).toContain(
       'MoodleSession=K',
     );
+  });
+
+  it('mints sessionCapturedAt from the stored capturedAt local', async () => {
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
+    const svc = makeService();
+    const res = await svc.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+    });
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: '24060121130000',
+      via: 'handoff',
+      sessionCapturedAt: res.capturedAt,
+    });
+    expect(res.capturedAt).toBe(clock.wall);
   });
 
   it('throws 401 with code KULON_STALE when the kulon cookie is stale', async () => {
@@ -699,6 +763,20 @@ describe('AuthService.handleMicrosoftCallback', () => {
     expect(
       mockSessionStore.get(resB.accessToken.replace('jwt-', '')),
     ).not.toBeNull();
+  });
+
+  it('mints sessionCapturedAt from the per-login stored capturedAt', async () => {
+    mockMicrosoftAuth.handleCallback.mockResolvedValue({
+      accessToken: 'ms-at',
+      sessionCookies: 'ESTSAUTH=MS',
+    });
+    const svc = makeService();
+    await svc.handleMicrosoftCallback('codeX', 'stateX');
+    expect(mockJwt.signAsync).toHaveBeenCalledWith({
+      sub: 'microsoft:stateX',
+      via: 'oidc',
+      sessionCapturedAt: clock.wall,
+    });
   });
 });
 
