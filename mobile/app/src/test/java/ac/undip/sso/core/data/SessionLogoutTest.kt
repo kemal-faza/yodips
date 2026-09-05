@@ -8,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -18,7 +19,9 @@ import org.junit.Test
  * [SessionLogout] BEFORE the class exists (Task 2b implements to this batch):
  *  - pushUnregister runs FIRST (bearer still live) -> revokeServerSession
  *    SECOND (bearer still live) -> localCleanup ALWAYS, LAST.
- *  - localCleanup is NON-SUSPENDING (`() -> Unit`) and unconditional.
+ *  - localCleanup is SUSPENDING (`suspend () -> Unit`), unconditional, and
+ *    executed under NonCancellable — a cancellation / Activity destruction
+ *    mid-logout cannot leave the persisted JWT behind.
  *  - ordinary network/HTTP failures in the two server steps are best-effort
  *    (never throw; cleanup still runs) — INCLUDING a no-bearer attempt and an
  *    expired-token 401 from the unregister step.
@@ -52,11 +55,11 @@ class SessionLogoutTest {
             calls += "revokeServerSession:${bearer != null}"
             revokeError?.let { throw it }
         }
-        // NON-SUSPENDING on purpose: the orchestrator contract requires a
-        // `() -> Unit` cleanup (R2-1). A `suspend` lambda here is a compile
-        // error, which is exactly the structural guarantee the production
-        // signature provides.
-        val localCleanup: () -> Unit = {
+        // DURABLE-CLEANUP (suspending) on purpose: the orchestrator contract
+        // requires a `suspend () -> Unit` cleanup that is AWAITED inline under
+        // NonCancellable — a fire-and-forget DataStore clear cancelled
+        // mid-write would leave the persisted JWT behind.
+        val localCleanup: suspend () -> Unit = {
             calls += "localCleanup"
             bearer = null // the ONLY nulling site — glue parity
         }
@@ -154,6 +157,40 @@ class SessionLogoutTest {
         }
         assertEquals(listOf("pushUnregister:true", "localCleanup"), s.calls)
         assertEquals(null, s.bearer)
+    }
+
+    @Test
+    fun `cancellation mid-cleanup still completes durable clear and releases waiter`() = runTest {
+        // HIGH durability: Activity destruction cancels the logout scope while
+        // the SUSPENDING credential cleanup (a DataStore edit in production)
+        // is in flight. The orchestrator runs cleanup under NonCancellable,
+        // so the persisted JWT cannot survive; the waiter is still released
+        // and observes the cleanup-done state. Deterministic: deferred gates,
+        // no sleeps — through the REAL production SessionLogout seam.
+        val cleanupEntered = CompletableDeferred<Unit>()
+        val releaseCleanup = CompletableDeferred<Unit>()
+        var durableCleared = false
+        val logout =
+            SessionLogout(
+                revokeServerSession = {},
+                pushUnregister = {},
+                localCleanup = {
+                    cleanupEntered.complete(Unit)
+                    releaseCleanup.await() // suspending durable write in flight
+                    durableCleared = true
+                },
+            )
+        val first = async { runCatching { logout.logout() } }
+        cleanupEntered.await() // creator is inside the suspending cleanup
+        val waiter = async { logout.logout() } // joins the running deferred
+        yield() // let the waiter reach the shared deferred and suspend
+        first.cancel() // simulate Activity destruction cancelling the scope
+        yield() // deliver the cancellation while cleanup is suspended
+        assertFalse("cancelled cleanup must not be skipped", durableCleared)
+        releaseCleanup.complete(Unit) // durable write finishes despite cancel
+        runCatching { first.await() } // cancelled job: await rethrows CE — not asserted
+        waiter.await() // waiter was released, never stranded
+        assertTrue("cancelled logout must still complete durable credential cleanup", durableCleared)
     }
 
     @Test
