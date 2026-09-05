@@ -1,8 +1,13 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpException, HttpStatus, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { isSessionRef } from '../session/session-store';
 import { ConsumeDto } from './dto/pair.dto';
 import { PairingService } from './pairing.service';
+
+interface AuthedRequest {
+  user?: { sub?: string; sessionGeneration?: unknown; [k: string]: unknown };
+}
 
 @Controller('api/auth')
 export class PairingController {
@@ -12,8 +17,14 @@ export class PairingController {
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('pair/request')
-  request(@Req() req: any) {
-    return this.pairing.requestPairing(req.user?.sub);
+  async request(@Req() req: { user?: AuthedRequest['user'] }) {
+    if (!isSessionRef(req.user)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return this.pairing.requestPairing({ sub: req.user.sub, sessionGeneration: req.user.sessionGeneration });
   }
 
   // Konsumsi kode ADALAH mekanisme login (menerbitkan JWT) → publik, throttle ketat.

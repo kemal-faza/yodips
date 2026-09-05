@@ -10,9 +10,20 @@ import {
 } from '@nestjs/common';
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { SessionRef, isSessionRef } from '../session/session-store';
 
 interface AuthedRequest {
-  user?: { sub?: string; [k: string]: unknown };
+  user?: { sub?: string; sessionGeneration?: unknown; [k: string]: unknown };
+}
+
+function requireSessionRef(req: AuthedRequest): SessionRef {
+  if (!isSessionRef(req.user)) {
+    throw new HttpException(
+      { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+      HttpStatus.UNAUTHORIZED,
+    );
+  }
+  return { sub: req.user.sub, sessionGeneration: req.user.sessionGeneration };
 }
 
 @UseGuards(JwtAuthGuard)
@@ -21,18 +32,18 @@ export class KulonController {
   constructor(private readonly kulonService: KulonService) {}
 
   @Get('courses')
-  getCourses(@Req() req: AuthedRequest) {
-    return this.kulonService.getCourses(req.user?.sub);
+  async getCourses(@Req() req: AuthedRequest) {
+    return this.kulonService.getCourses(requireSessionRef(req));
   }
 
   @Get('assignments/all')
-  getAllAssignments(@Req() req: AuthedRequest) {
-    return this.kulonService.getAllAssignments(req.user?.sub);
+  async getAllAssignments(@Req() req: AuthedRequest) {
+    return this.kulonService.getAllAssignments(requireSessionRef(req));
   }
 
   @Get('assignments')
-  getAssignments(@Req() req: AuthedRequest) {
-    return this.kulonService.getAssignments(req.user?.sub);
+  async getAssignments(@Req() req: AuthedRequest) {
+    return this.kulonService.getAssignments(requireSessionRef(req));
   }
 
   @Get('assignments/:id/detail')
@@ -56,7 +67,7 @@ export class KulonController {
     }
     try {
       return await this.kulonService.getAssignmentDetail(
-        req.user?.sub,
+        requireSessionRef(req),
         assignmentId,
         courseModuleId,
       );
@@ -81,7 +92,7 @@ export class KulonController {
       );
     }
     try {
-      return await this.kulonService.getCourseContent(req.user?.sub, courseId);
+      return await this.kulonService.getCourseContent(requireSessionRef(req), courseId);
     } catch (e) {
       if ((e as Error).message === 'COURSE_NOT_FOUND') {
         throw new HttpException(

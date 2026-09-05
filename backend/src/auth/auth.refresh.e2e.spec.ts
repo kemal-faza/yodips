@@ -66,9 +66,18 @@ describe('AuthModule refresh E2E (temporary)', () => {
   });
 
   it('an EXPIRED but validly-signed JWT is rejected by the guard, then silently rotated by /refresh; the new token passes the guard', async () => {
-    // Sign with a PAST expiry using the app's own config/secret/iss/aud.
+    // Seed a live session so the expired token below can carry a real generation
+    // (the guard requires the claim from Task 2 on).
+    const session = await request(app.getHttpServer())
+      .post('/api/auth/session/handoff')
+      .send({ kulonCookie: 'MoodleSession=E2E-ROT', siapCookie: 'sia_app_session=E2E-ROT' })
+      .expect(201);
+    const generation = session.body.sessionGeneration as string;
+    expect(generation).toMatch(/^[0-9a-f]{32}$/);
+    // Sign with a PAST expiry using the app's own config/secret/iss/aud and the
+    // live session generation.
     const expired = await jwt.signAsync(
-      { sub: NIM, via: 'handoff' },
+      { sub: NIM, via: 'handoff', sessionGeneration: generation },
       { expiresIn: '-1h' },
     );
 
@@ -111,7 +120,7 @@ describe('AuthModule refresh E2E (temporary)', () => {
 
   it('refresh returns SESSION_DEAD when no backend session exists for sub', async () => {
     const orphan = await jwt.signAsync(
-      { sub: 'nobody-e2e', via: 'handoff' },
+      { sub: 'nobody-e2e', via: 'handoff', sessionGeneration: 'f'.repeat(32) },
       { expiresIn: '-1h' },
     );
     const res = await request(app.getHttpServer())
@@ -144,25 +153,32 @@ describe('AuthModule refresh E2E (temporary)', () => {
     expect(res.body.code ?? res.body.message?.code).toBe('INVALID_TOKEN');
   });
 
-  it('after POST /api/auth/logout the same (still valid) JWT can no longer refresh', async () => {
+  it('after POST /api/auth/logout the same (still valid) JWT can no longer refresh (SESSION_DEAD)', async () => {
     // Seed a fresh session via handoff.
     const handoff = await request(app.getHttpServer())
       .post('/api/auth/session/handoff')
       .send({ kulonCookie: 'MoodleSession=E2E-LOGOUT', siapCookie: 'sia_app_session=E2E-LOGOUT' })
       .expect(201);
     const token = handoff.body.accessToken;
+    const generation = handoff.body.sessionGeneration as string;
+    expect(token).toBeTruthy();
+    expect(generation).toMatch(/^[0-9a-f]{32}$/);
 
-    // Guard passes (token valid) before logout.
+    // Guard passes (token valid, live record) before logout.
     await request(app.getHttpServer())
       .get('/api/auth/me')
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
-    // Logout clears the server session.
+    // Logout clears the server session (route no longer JWT-guarded; bearer verified in service).
     await request(app.getHttpServer())
       .post('/api/auth/logout')
       .set('Authorization', `Bearer ${token}`)
-      .expect(201);
+      .expect((r) => {
+        if (r.status !== 200 && r.status !== 201) {
+          throw new Error(`logout failed: ${r.status} ${JSON.stringify(r.body)}`);
+        }
+      });
 
     // The SAME unexpired JWT now hits a dead session on refresh → SESSION_DEAD.
     const res = await request(app.getHttpServer())
@@ -170,21 +186,147 @@ describe('AuthModule refresh E2E (temporary)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(401);
     expect(res.body.code ?? res.body.message?.code).toBe('SESSION_DEAD');
+
+    // And on /me → 401 SESSION_DEAD (fail-closed, was 200 {authenticated:false}).
+    const me = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(401);
+    expect(me.body.code ?? me.body.message?.code).toBe('SESSION_DEAD');
   });
 
-  it('POST /api/auth/logout without a bearer token is 401 (guarded)', async () => {
-    await request(app.getHttpServer()).post('/api/auth/logout').expect(401);
+  it('logout is idempotent: a repeated logout with a no-longer-live record returns ok', async () => {
+    const handoff = await request(app.getHttpServer())
+      .post('/api/auth/session/handoff')
+      .send({ kulonCookie: 'MoodleSession=E2E-IDEM', siapCookie: 'sia_app_session=E2E-IDEM' })
+      .expect(201);
+    const token = handoff.body.accessToken;
+
+    await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${token}`)
+      .expect((r) => {
+        if (r.status !== 200 && r.status !== 201) throw new Error(`logout failed: ${r.status}`);
+      });
+
+    // Record is gone; a second logout is idempotent { ok: true }.
+    const again = await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${token}`)
+      .expect((r) => {
+        if (r.status !== 200 && r.status !== 201) throw new Error(`second logout failed: ${r.status}`);
+      });
+    expect(again.body.ok).toBe(true);
   });
 
-  it('an EXPIRED validly-signed JWT cannot log out (guard rejects), and the absolute cap means refresh is dead anyway', async () => {
+  it('an EXPIRED but validly-signed JWT with a matching generation CAN log out (record cleared)', async () => {
+    const handoff = await request(app.getHttpServer())
+      .post('/api/auth/session/handoff')
+      .send({ kulonCookie: 'MoodleSession=E2E-EXP', siapCookie: 'sia_app_session=E2E-EXP' })
+      .expect(201);
+    const generation = handoff.body.sessionGeneration as string;
     const expired = await jwt.signAsync(
-      { sub: 'logout-expired-e2e', via: 'handoff' },
+      { sub: NIM, via: 'handoff', sessionGeneration: generation },
       { expiresIn: '-1h' },
     );
-    // The guard verifies exp, so the expired token cannot reach logout.
+
+    // The unguarded logout route verifies signature-only (ignoreExpiration) and
+    // clears the matching record.
     await request(app.getHttpServer())
       .post('/api/auth/logout')
       .set('Authorization', `Bearer ${expired}`)
+      .expect((r) => {
+        if (r.status !== 200 && r.status !== 201) throw new Error(`logout failed: ${r.status} ${JSON.stringify(r.body)}`);
+      });
+
+    // The session is gone: refresh of the same expired token → SESSION_DEAD.
+    const res = await request(app.getHttpServer())
+      .post('/api/auth/refresh')
+      .set('Authorization', `Bearer ${expired}`)
       .expect(401);
+    expect(res.body.code ?? res.body.message?.code).toBe('SESSION_DEAD');
+  });
+
+  it('an OLD-GENERATION valid token cannot clear a NEWER live session (SESSION_DEAD, record survives)', async () => {
+    // First handoff mints generation G1 (crypto random — never collides).
+    const first = await request(app.getHttpServer())
+      .post('/api/auth/session/handoff')
+      .send({ kulonCookie: 'MoodleSession=E2E-GEN1', siapCookie: 'sia_app_session=E2E-GEN1' })
+      .expect(201);
+    const g1Token = first.body.accessToken;
+    const g1 = first.body.sessionGeneration as string;
+
+    // Same NIM re-logs-in → new generation G2 (handoff overwrites the record).
+    // Crypto generations never collide, so no same-ms sleep is needed.
+    const second = await request(app.getHttpServer())
+      .post('/api/auth/session/handoff')
+      .send({ kulonCookie: 'MoodleSession=E2E-GEN2', siapCookie: 'sia_app_session=E2E-GEN2' })
+      .expect(201);
+    const g2Token = second.body.accessToken;
+    const g2 = second.body.sessionGeneration as string;
+    expect(g2).not.toBe(g1);
+
+    // The NEW token works.
+    await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${g2Token}`)
+      .expect(200);
+
+    // The OLD token is dead on /me (guard generation check).
+    const me = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${g1Token}`)
+      .expect(401);
+    expect(me.body.code ?? me.body.message?.code).toBe('SESSION_DEAD');
+
+    // And on /refresh (refresh generation check).
+    const rf = await request(app.getHttpServer())
+      .post('/api/auth/refresh')
+      .set('Authorization', `Bearer ${g1Token}`)
+      .expect(401);
+    expect(rf.body.code ?? rf.body.message?.code).toBe('SESSION_DEAD');
+
+    // Logout with the OLD token → SESSION_DEAD (service generation check), and
+    // the NEW session SURVIVES (guard presence+generation passes for g2Token).
+    const lo = await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${g1Token}`)
+      .expect(401);
+    expect(lo.body.code ?? lo.body.message?.code).toBe('SESSION_DEAD');
+    await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${g2Token}`)
+      .expect(200);
+  });
+
+  it('logout with a garbage/no-claim token is INVALID_TOKEN and clears nothing; missing bearer is 401', async () => {
+    const handoff = await request(app.getHttpServer())
+      .post('/api/auth/session/handoff')
+      .send({ kulonCookie: 'MoodleSession=E2E-BAD', siapCookie: 'sia_app_session=E2E-BAD' })
+      .expect(201);
+    const token = handoff.body.accessToken;
+
+    // Garbage token.
+    await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', 'Bearer abc.def.ghi')
+      .expect(401);
+
+    // No bearer at all → 401 (INVALID_TOKEN at the controller).
+    await request(app.getHttpServer()).post('/api/auth/logout').expect(401);
+
+    // A well-formed token with NO sessionGeneration claim (legacy) → 401 INVALID_TOKEN.
+    const legacy = await jwt.signAsync({ sub: NIM, via: 'handoff' });
+    const legacyRes = await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${legacy}`)
+      .expect(401);
+    expect(legacyRes.body.code ?? legacyRes.body.message?.code).toBe('INVALID_TOKEN');
+
+    // Nothing was cleared — the fresh token still works.
+    await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
   });
 });

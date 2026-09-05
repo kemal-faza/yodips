@@ -3,6 +3,7 @@ import type { DataCache } from '../cache/data-cache';
 import { KulonService } from './kulon.service';
 import type { KulonUpstreamSession } from './kulon-upstream.session';
 import type { KulonCourse, KulonCourseContent } from './kulon-parse';
+import { cacheKeyForCurrent, cacheKeyForSession } from '../session/session-scope';
 
 type CacheMock = {
   get: jest.Mock;
@@ -13,6 +14,8 @@ type CacheMock = {
 
 type UpstreamMock = {
   getContext: jest.Mock;
+  getContextForSession: jest.Mock;
+  getContextForCurrent: jest.Mock;
   ajax: jest.Mock;
 };
 
@@ -48,11 +51,17 @@ function makeCache(): CacheMock {
   };
 }
 
+const TEST_GEN = 'a'.repeat(32);
+const ref = (sub: string) => ({ sub, sessionGeneration: TEST_GEN });
+
 function makeUpstream(): UpstreamMock {
+  const canned = { cookie: 'cookie', sesskey: 'sesskey' };
   return {
     getContext: jest
       .fn()
-      .mockResolvedValue({ cookie: 'cookie', sesskey: 'sesskey' }),
+      .mockResolvedValue(canned),
+    getContextForSession: jest.fn().mockResolvedValue(canned),
+    getContextForCurrent: jest.fn().mockResolvedValue(canned),
     ajax: jest
       .fn()
       .mockImplementation(
@@ -117,7 +126,7 @@ describe('KulonService SWR course refresh', () => {
     internals(service).fetchCourseContent = () =>
       Promise.resolve({ courseId: 1, sections: [] });
 
-    const result = await service.getCourses('u1');
+    const result = await service.getCourses(ref('u1'));
 
     expect(result[0]?.id).toBe(1);
     const staleCalls = cache.getStale.mock.calls as unknown as Array<
@@ -127,9 +136,9 @@ describe('KulonService SWR course refresh', () => {
         { freshTtlMs: number; staleTtlMs: number },
       ]
     >;
-    expect(staleCalls[0]?.[0]).toBe('u1:kulon:courses');
+    expect(staleCalls[0]?.[0]).toBe(cacheKeyForSession(ref('u1'), 'kulon', 'courses'));
     expect(staleCalls[0]?.[2].freshTtlMs).toBeGreaterThan(0);
-    expect(cache.get).not.toHaveBeenCalledWith('u1:kulon:courses');
+    expect(cache.get).not.toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'));
     expect(upstream.ajax).toHaveBeenCalledWith(
       'cookie',
       'sesskey',
@@ -152,11 +161,11 @@ describe('KulonService SWR course refresh', () => {
       'cookie',
       'sesskey',
       'u1',
-      { withProgress: false },
+      { withProgress: false, withLecturers: false },
     );
 
     expect(result).toEqual(cachedCourses);
-    expect(cache.get).toHaveBeenCalledWith('u1:kulon:courses');
+    expect(cache.get).toHaveBeenCalledWith(cacheKeyForCurrent('u1', 'kulon', 'courses'));
     expect(upstream.ajax).not.toHaveBeenCalled();
   });
 
@@ -167,23 +176,23 @@ describe('KulonService SWR course refresh', () => {
       prepare?: (service: KulonService, upstream: UpstreamMock) => void;
     }> = [
       {
-        key: 'u1:kulon:courses',
-        run: (service) => service.getCourses('u1'),
+        key: cacheKeyForSession(ref('u1'), 'kulon', 'courses'),
+        run: (service) => service.getCourses(ref('u1')),
       },
       {
-        key: 'u1:kulon:assignments:all',
-        run: (service) => service.getAllAssignments('u1'),
+        key: cacheKeyForSession(ref('u1'), 'kulon', 'assignments', 'all'),
+        run: (service) => service.getAllAssignments(ref('u1')),
         prepare: (_service, upstream) => {
           upstream.ajax.mockResolvedValue({ courses: [] });
         },
       },
       {
-        key: 'u1:kulon:assignment-detail:7',
-        run: (service) => service.getAssignmentDetail('u1', 9, 7),
+        key: cacheKeyForSession(ref('u1'), 'kulon', 'assignment-detail', '7'),
+        run: (service) => service.getAssignmentDetail(ref('u1'), 9, 7),
       },
       {
-        key: 'u1:kulon:course-content:7',
-        run: (service) => service.getCourseContent('u1', 7),
+        key: cacheKeyForSession(ref('u1'), 'kulon', 'course-content', '7'),
+        run: (service) => service.getCourseContent(ref('u1'), 7),
       },
     ];
 

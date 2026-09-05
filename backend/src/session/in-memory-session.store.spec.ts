@@ -1,7 +1,11 @@
 import 'reflect-metadata';
 import { InMemorySessionStore } from './in-memory-session.store';
+import { generateSessionGeneration } from '../playwright/playwright-auth.service';
 
-function makeSession(identity: string, kulon: string) {
+const GEN_A = 'a'.repeat(32);
+const GEN_B = 'b'.repeat(32);
+
+function makeSession(identity: string, kulon: string, sessionGeneration: string = GEN_A) {
   return {
     identity,
     ssoCookie: 'ci_session_sso=SSO',
@@ -9,6 +13,7 @@ function makeSession(identity: string, kulon: string) {
     kulonCookie: kulon,
     siapCookie: '',
     capturedAt: Date.now(),
+    sessionGeneration,
   };
 }
 
@@ -113,7 +118,96 @@ describe('InMemorySessionStore (per-user, TTL)', () => {
     expect(await store.get('a')).toBeNull();
     // The user re-logins: a new handoff stores a fresh session under the SAME
     // identity with a current capturedAt → must be readable again.
-    await store.set('a', { ...makeSession('a', 'MoodleSession=NEW'), capturedAt: Date.now() });
+    await store.set('a', { ...makeSession('a', 'MoodleSession=NEW', GEN_B), capturedAt: Date.now() });
     expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=NEW');
+  });
+
+  describe('clearIfGeneration (atomic compare-and-clear)', () => {
+    it('clears when the generation matches and returns true', async () => {
+      await store.set('a', makeSession('a', 'A', GEN_A));
+      await expect(store.clearIfGeneration('a', GEN_A)).resolves.toBe(true);
+      expect(await store.get('a')).toBeNull();
+    });
+
+    it('is idempotent when no record exists (true, nothing cleared)', async () => {
+      await expect(store.clearIfGeneration('ghost', GEN_A)).resolves.toBe(true);
+    });
+
+    it('never clears a NEWER live record on generation mismatch (false, record survives)', async () => {
+      await store.set('a', makeSession('a', 'MoodleSession=NEW', GEN_B));
+      await expect(store.clearIfGeneration('a', GEN_A)).resolves.toBe(false);
+      expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=NEW');
+    });
+
+    it('deterministic race: replacement between read and logout never clears the newer session', async () => {
+      // Seed gen-A, read it (simulating logout's pre-read), then a re-login
+      // overwrites with gen-B BEFORE the compare-and-clear runs.
+      await store.set('a', makeSession('a', 'MoodleSession=OLD', GEN_A));
+      const staleRead = await store.get('a');
+      expect(staleRead?.sessionGeneration).toBe(GEN_A);
+      await store.set('a', makeSession('a', 'MoodleSession=NEW', GEN_B));
+      // Logout with the STALE generation must lose the CAS and preserve NEW.
+      await expect(store.clearIfGeneration('a', GEN_A)).resolves.toBe(false);
+      expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=NEW');
+      // Logout with the CURRENT generation succeeds.
+      await expect(store.clearIfGeneration('a', GEN_B)).resolves.toBe(true);
+      expect(await store.get('a')).toBeNull();
+    });
+
+    it('treats an expired record as absent (true, no generation check)', async () => {
+      store = new InMemorySessionStore(20);
+      await store.set('a', makeSession('a', 'A', GEN_A));
+      await new Promise((r) => setTimeout(r, 30));
+      await expect(store.clearIfGeneration('a', 'f'.repeat(32))).resolves.toBe(true);
+    });
+
+    it('generateSessionGeneration produces 128-bit lowercase hex without timestamp coupling', () => {
+      const g1 = generateSessionGeneration();
+      const g2 = generateSessionGeneration();
+      expect(g1).toMatch(/^[0-9a-f]{32}$/);
+      expect(g2).toMatch(/^[0-9a-f]{32}$/);
+      expect(g1).not.toBe(g2);
+    });
+  });
+
+  describe('getIfGeneration (generation-qualified atomic snapshot)', () => {
+    it('returns the live record only on exact generation match (and slides TTL)', async () => {
+      await store.set('a', makeSession('a', 'MoodleSession=A', GEN_A));
+      const hit = await (store as any).getIfGeneration('a', GEN_A);
+      expect(hit?.kulonCookie).toContain('MoodleSession=A');
+      const miss = await (store as any).getIfGeneration('a', GEN_B);
+      expect(miss).toBeNull();
+      // Mismatch must NOT destroy the live record.
+      expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=A');
+    });
+
+    it('returns null for unknown identity', async () => {
+      await expect((store as any).getIfGeneration('ghost', GEN_A)).resolves.toBeNull();
+    });
+
+    it('returns null for a legacy record without generation (never matches)', async () => {
+      await store.set('a', { ...makeSession('a', 'A', GEN_A), sessionGeneration: undefined as any });
+      await expect((store as any).getIfGeneration('a', GEN_A)).resolves.toBeNull();
+    });
+
+    it('treats expired/absolute-dead records as absent before the mismatch check', async () => {
+      store = new InMemorySessionStore(20);
+      await store.set('a', makeSession('a', 'A', GEN_A));
+      await new Promise((r) => setTimeout(r, 30));
+      await expect((store as any).getIfGeneration('a', 'f'.repeat(32))).resolves.toBeNull();
+      const abs = new InMemorySessionStore(1000, 200);
+      await abs.set('a', { ...makeSession('a', 'OLD', GEN_A), capturedAt: Date.now() - 250 });
+      await expect((abs as any).getIfGeneration('a', GEN_A)).resolves.toBeNull();
+    });
+
+    it('deterministic race: replacement between guard read and service read never returns the new cookie to the old generation', async () => {
+      await store.set('a', makeSession('a', 'MoodleSession=OLD', GEN_A));
+      await store.set('a', makeSession('a', 'MoodleSession=NEW', GEN_B));
+      // Old-generation read must miss even though a live record exists.
+      await expect((store as any).getIfGeneration('a', GEN_A)).resolves.toBeNull();
+      // New-generation read hits the replacement.
+      const hit = await (store as any).getIfGeneration('a', GEN_B);
+      expect(hit?.kulonCookie).toContain('MoodleSession=NEW');
+    });
   });
 });

@@ -26,6 +26,8 @@ function config(overrides: Record<string, string>): ConfigService {
   } as unknown as ConfigService;
 }
 
+const GEN_FIX = 'c'.repeat(32);
+
 describe('createSessionStore', () => {
   beforeEach(() => jest.clearAllMocks());
 
@@ -92,6 +94,7 @@ describe('createSessionStore', () => {
       kulonCookie: 'K',
       siapCookie: '',
       capturedAt: now - 250,
+      sessionGeneration: GEN_FIX,
     });
     // 250ms elapsed > 200ms cap → dead even though the 7-day sliding TTL is fresh.
     expect(await store.get('a')).toBeNull();
@@ -109,6 +112,7 @@ describe('createSessionStore', () => {
       kulonCookie: 'K',
       siapCookie: '',
       capturedAt: now - 61_000, // older than the 60s default cap
+      sessionGeneration: GEN_FIX,
     });
     expect(await store.get('a')).toBeNull();
   });
