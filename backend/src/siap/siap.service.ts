@@ -1,8 +1,8 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
-import { SessionStore } from '../session/session-store';
+import { SessionRef, SessionStore, isSessionRef } from '../session/session-store';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { mapWithConcurrency } from '../common/map-with-concurrency';
@@ -104,14 +104,36 @@ export class SiapService {
   /** Get context once; fetch; on api-credential invalidate the cached token,
    *  re-mint via a fresh getContext and retry ONCE. Propagates the ORIGINAL
    *  error on second failure. Guard: reason must be 'api-credential' — a 502
-   *  api-endpoint (upstream trouble) must NOT re-mint. */
-  private async fetchWithContext<T>(
-    sub: string | undefined,
+   *  api-endpoint (upstream trouble) must NOT re-mint.
+   *  Token-facing: resolves via the exact-generation snapshot; a B-replacement
+   *  is SESSION_DEAD, never B's token. */
+  private async fetchWithSessionContext<T>(
+    ref: SessionRef,
+    endpoint: string,
+    form: Record<string, string> = {},
+  ): Promise<T> {
+    this.requireRef(ref);
+    return this.fetchWithResolver<T>(ref.sub, () => this.upstream.getContextForSession(ref), endpoint, form);
+  }
+
+  /** CURRENT-session variant for background flows (poller) that own no JWT. */
+  private async fetchWithCurrentContext<T>(
+    sub: string,
+    endpoint: string,
+    form: Record<string, string> = {},
+  ): Promise<T> {
+    return this.fetchWithResolver<T>(sub, () => this.upstream.getContextForCurrent(sub), endpoint, form);
+  }
+
+  /** Shared fetch+once-retry core: the resolver owns the generation policy. */
+  private async fetchWithResolver<T>(
+    sub: string,
+    resolve: () => Promise<{ token: string; nim: string }>,
     endpoint: string,
     form: Record<string, string> = {},
   ): Promise<T> {
     try {
-      const ctx = await this.upstream.getContext(sub);
+      const ctx = await resolve();
       return await this.apiUpstream.fetch<T>(
         endpoint,
         ctx.token,
@@ -120,10 +142,10 @@ export class SiapService {
       );
     } catch (e) {
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
-        if (sub && this.cache) {
+        if (this.cache) {
           await this.cache.del(`${sub}:siap:token`);
         }
-        const fresh = await this.upstream.getContext(sub);
+        const fresh = await resolve();
         return await this.apiUpstream.fetch<T>(
           endpoint,
           fresh.token,
@@ -135,6 +157,15 @@ export class SiapService {
     }
   }
 
+  private requireRef(ref: SessionRef): void {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+  }
+
   /** "YYYY/YYYY Ganjil|Genap" from {ta, smt-within-year} label. */
   private semesterLabelFromTa(ta: string, smt: string): string {
     const t = Number(ta);
@@ -143,15 +174,16 @@ export class SiapService {
   }
 
   /** Best-effort merge of web-visible profile fields the API may omit (ipk /
-   *  emailPribadi / alamatSekarang) from the scrape fallback. Swallow errors. */
-  private async mergeProfileFallback(
+   *  emailPribadi / alamatSekarang) from the scrape fallback. Swallow errors.
+   *  Token-facing: the fallback scrape uses the exact-generation cookie. */
+  private async mergeProfileFallbackForSession(
     profile: SiapProfile,
-    sub?: string,
+    ref: SessionRef,
   ): Promise<SiapProfile> {
     if (profile.ipk != null && profile.emailPribadi && profile.alamatSekarang)
       return profile;
     try {
-      const cookie = await this.requireSiapCookie(sub);
+      const cookie = await this.upstream.getCookieForSession(ref);
       const scraped = await this.fetchProfile(cookie);
       return {
         ...profile,
@@ -165,28 +197,23 @@ export class SiapService {
   }
 
   /**
-   * Resolve the stored SIAP cookie for a user. The endpoint-facing API takes
-   * only `sub` — cookies never cross module boundaries; a missing session
-   * maps to the uniform typed stale 401 (same shape as an expired one).
+   * Single seam for the stored SIAP page cookie on token-facing paths.
+   * Delegates to the upstream adapter's exact-generation read — no duplicate
+   * `sessionStore.get` lives here, so cookies are retrieved in exactly one
+   * place and a B-replacement is SESSION_DEAD, never B's cookie.
    */
-  private async requireSiapCookie(sub?: string): Promise<string> {
-    const session = sub ? await this.sessionStore?.get(sub) : null;
-    if (!session?.siapCookie) {
-      throw new StaleUpstreamError(
-        'Siap',
-        'no-cookie',
-        'SIAP session belum ada. Silakan login ulang via SSO',
-      );
-    }
-    return session.siapCookie;
+  private async requireSiapCookieForSession(ref: SessionRef): Promise<string> {
+    this.requireRef(ref);
+    return this.upstream.getCookieForSession(ref);
   }
 
   async checkSessionValid(siapCookie: string): Promise<SiapSessionCheck> {
     return this.upstream.checkSessionValid(siapCookie);
   }
 
-  private async fetchProfileData(sub?: string): Promise<SiapProfile> {
-    const ctx = await this.upstream.getContext(sub);
+  private async fetchProfileData(ref: SessionRef): Promise<SiapProfile> {
+    this.requireRef(ref);
+    const ctx = await this.upstream.getContextForSession(ref);
     const data = await this.apiUpstream.fetch<Record<string, unknown>>(
       'data_mahasiswa',
       ctx.token,
@@ -201,27 +228,28 @@ export class SiapService {
     );
     const base = parseApiProfile(data ?? {}, sem);
     // Merge web-visible fields the API may omit, from a scrape fallback.
-    const profile = await this.mergeProfileFallback(base, sub);
+    const profile = await this.mergeProfileFallbackForSession(base, ref);
     return profile;
   }
 
-  /** Cached profile entry point (endpoint API takes only `sub`). ONE getContext
-   *  token is reused for data_mahasiswa + semester_aktif (folds the old
-   *  double-mint). Whole body runs inside the per-user single-flight so 5
-   *  concurrent callers share one mint + one pair of fetches. */
-  async getProfile(sub?: string): Promise<SiapProfile> {
+  /** Cached profile entry point (endpoint API takes the exact SessionRef).
+   *  ONE getContext token is reused for data_mahasiswa + semester_aktif (folds
+   *  the old double-mint). Whole body runs inside the per-user single-flight
+   *  so 5 concurrent callers share one mint + one pair of fetches. */
+  async getProfile(ref: SessionRef): Promise<SiapProfile> {
+    this.requireRef(ref);
     return (await this.methodFlight.run(
-      `profile:${sub ?? '__anon__'}`,
+      `profile:${ref.sub}`,
       async () => {
-        if (sub && this.cache) {
+        if (this.cache) {
           const { value } = await this.cache.getStale<SiapProfile>(
-            `${sub}:siap:profile`,
-            () => this.fetchProfileData(sub),
+            `${ref.sub}:siap:profile`,
+            () => this.fetchProfileData(ref),
             swrWindow('SIAP_PROFILE'),
           );
           return value;
         }
-        return this.fetchProfileData(sub);
+        return this.fetchProfileData(ref);
       },
     )) as SiapProfile;
   }
@@ -295,8 +323,9 @@ export class SiapService {
    * Batch-shaped: ONE token reused across sub-fetches, NOT fetchWithContext per
    * endpoint (M1 — that would mint per endpoint and INCREASE upstream calls).
    */
-  private async fetchIrs(sub?: string): Promise<SiapIrs> {
-    let ctx = await this.upstream.getContext(sub);
+  private async fetchIrs(ref: SessionRef): Promise<SiapIrs> {
+    this.requireRef(ref);
+    let ctx = await this.upstream.getContextForSession(ref);
     const fetchBatch = async <T>(
       endpoint: string,
       form?: Record<string, string>,
@@ -329,8 +358,8 @@ export class SiapService {
       return irs;
     } catch (e) {
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
-        if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
-        ctx = await this.upstream.getContext(sub); // re-mint
+        if (this.cache) await this.cache.del(`${ref.sub}:siap:token`);
+        ctx = await this.upstream.getContextForSession(ref); // re-mint
         const irs = await build();
         return irs;
       }
@@ -338,19 +367,20 @@ export class SiapService {
     }
   }
 
-  async getIrs(sub?: string): Promise<SiapIrs> {
+  async getIrs(ref: SessionRef): Promise<SiapIrs> {
+    this.requireRef(ref);
     return (await this.methodFlight.run(
-      `irs:${sub ?? '__anon__'}`,
+      `irs:${ref.sub}`,
       async () => {
-        if (sub && this.cache) {
+        if (this.cache) {
           const { value } = await this.cache.getStale<SiapIrs>(
-            `${sub}:siap:irs`,
-            () => this.fetchIrs(sub),
+            `${ref.sub}:siap:irs`,
+            () => this.fetchIrs(ref),
             swrWindow('SIAP_IRS'),
           );
           return value;
         }
-        return this.fetchIrs(sub);
+        return this.fetchIrs(ref);
       },
     )) as SiapIrs;
   }
@@ -361,8 +391,9 @@ export class SiapService {
    * within-year index the API keys on. Retry the whole batch once on
    * api-credential (cache token invalidated + fresh getContext re-mint).
    */
-  private async fetchKhs(sub?: string): Promise<SiapKhs> {
-    let ctx = await this.upstream.getContext(sub);
+  private async fetchKhs(ref: SessionRef): Promise<SiapKhs> {
+    this.requireRef(ref);
+    let ctx = await this.upstream.getContextForSession(ref);
     // Batch: ONE token for the whole method (spec §2.2). Retry the whole
     // batch once on an api-credential (fresh token invalidates the old).
     const fetchBatch = async <T>(
@@ -408,8 +439,8 @@ export class SiapService {
     } catch (e) {
       // Retry once on api-credential: invalidate the cached token + re-mint.
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
-        if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
-        ctx = await this.upstream.getContext(sub);
+        if (this.cache) await this.cache.del(`${ref.sub}:siap:token`);
+        ctx = await this.upstream.getContextForSession(ref);
         const khs = await build();
         return khs;
       }
@@ -417,19 +448,20 @@ export class SiapService {
     }
   }
 
-  async getKhs(sub?: string): Promise<SiapKhs> {
+  async getKhs(ref: SessionRef): Promise<SiapKhs> {
+    this.requireRef(ref);
     return (await this.methodFlight.run(
-      `khs:${sub ?? '__anon__'}`,
+      `khs:${ref.sub}`,
       async () => {
-        if (sub && this.cache) {
+        if (this.cache) {
           const { value } = await this.cache.getStale<SiapKhs>(
-            `${sub}:siap:khs`,
-            () => this.fetchKhs(sub),
+            `${ref.sub}:siap:khs`,
+            () => this.fetchKhs(ref),
             swrWindow('SIAP_KHS'),
           );
           return value;
         }
-        return this.fetchKhs(sub);
+        return this.fetchKhs(ref);
       },
     )) as SiapKhs;
   }
@@ -449,9 +481,10 @@ export class SiapService {
    * semesters; the first approved occurrence wins).
    */
   private async fetchLecturers(
-    sub?: string,
+    ref: SessionRef,
   ): Promise<{ kode: string; dosen: string }[]> {
-    let ctx = await this.upstream.getContext(sub);
+    this.requireRef(ref);
+    let ctx = await this.upstream.getContextForSession(ref);
     const fetchBatch = async <T>(
       endpoint: string,
       form?: Record<string, string>,
@@ -495,32 +528,33 @@ export class SiapService {
       return await build();
     } catch (e) {
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
-        if (sub && this.cache) await this.cache.del(`${sub}:siap:token`);
-        ctx = await this.upstream.getContext(sub);
+        if (this.cache) await this.cache.del(`${ref.sub}:siap:token`);
+        ctx = await this.upstream.getContextForSession(ref);
         return await build();
       }
       throw e; // original error on second failure
     }
   }
 
-  async getLecturers(sub?: string): Promise<{ kode: string; dosen: string }[]> {
+  async getLecturers(ref: SessionRef): Promise<{ kode: string; dosen: string }[]> {
+    this.requireRef(ref);
     return (await this.methodFlight.run(
-      `lecturers:${sub ?? '__anon__'}`,
+      `lecturers:${ref.sub}`,
       async () => {
-        if (sub && this.cache) {
+        if (this.cache) {
           const { value } = await this.cache.getStale<
             {
               kode: string;
               dosen: string;
             }[]
           >(
-            `${sub}:siap:lecturers`,
-            () => this.fetchLecturers(sub),
+            `${ref.sub}:siap:lecturers`,
+            () => this.fetchLecturers(ref),
             swrWindow('SIAP_LECTURERS'),
           );
           return value;
         }
-        return this.fetchLecturers(sub);
+        return this.fetchLecturers(ref);
       },
     )) as { kode: string; dosen: string }[];
   }
@@ -535,28 +569,30 @@ export class SiapService {
    * maps to a stale 401. The header (set below) is the fix. The upstream payload is
    * `{"status":"ok","data":{"_timestamp":"...","count":"0"}}` (count as a STRING).
    */
-  private async fetchNotifications(sub?: string): Promise<SiapNotifications> {
-    const raw = await this.fetchWithContext<Array<Record<string, unknown>>>(
-      sub,
+  private async fetchNotifications(ref: SessionRef): Promise<SiapNotifications> {
+    this.requireRef(ref);
+    const raw = await this.fetchWithSessionContext<Array<Record<string, unknown>>>(
+      ref,
       'pengumuman',
     );
     const items = parseApiNotifications(Array.isArray(raw) ? raw : []);
     return items;
   }
 
-  async getNotifications(sub?: string): Promise<SiapNotifications> {
+  async getNotifications(ref: SessionRef): Promise<SiapNotifications> {
+    this.requireRef(ref);
     return (await this.methodFlight.run(
-      `notifications:${sub ?? '__anon__'}`,
+      `notifications:${ref.sub}`,
       async () => {
-        if (sub && this.cache) {
+        if (this.cache) {
           const { value } = await this.cache.getStale<SiapNotifications>(
-            `${sub}:siap:notifications`,
-            () => this.fetchNotifications(sub),
+            `${ref.sub}:siap:notifications`,
+            () => this.fetchNotifications(ref),
             swrWindow('SIAP_NOTIFICATIONS'),
           );
           return value;
         }
-        return this.fetchNotifications(sub);
+        return this.fetchNotifications(ref);
       },
     )) as SiapNotifications;
   }
@@ -567,10 +603,11 @@ export class SiapService {
    * the route name/action must match that semantics (see spec §1).
    */
   async markNotification(
-    sub: string | undefined,
+    ref: SessionRef,
     id: string,
   ): Promise<{ message: string }> {
-    const siapCookie = await this.requireSiapCookie(sub);
+    this.requireRef(ref);
+    const siapCookie = await this.requireSiapCookieForSession(ref);
     const data = await this.upstream.fetchJson<{
       status?: string;
       message?: string;
@@ -594,28 +631,62 @@ export class SiapService {
    * by `uuid_pertemuan`, each entry with date/time/room/code. Normalize into a
    * flat `SiapJadwal[]`.
    */
-  private async fetchJadwal(sub?: string): Promise<SiapJadwal[]> {
-    const rows = await this.fetchWithContext<Array<Record<string, unknown>>>(
-      sub,
+  private async fetchJadwal(ref: SessionRef): Promise<SiapJadwal[]> {
+    this.requireRef(ref);
+    const rows = await this.fetchWithSessionContext<Array<Record<string, unknown>>>(
+      ref,
       'jadwal',
     );
     const out = parseApiJadwal(Array.isArray(rows) ? rows : []);
     return out;
   }
 
-  async getJadwal(sub?: string): Promise<SiapJadwal[]> {
+  async getJadwal(ref: SessionRef): Promise<SiapJadwal[]> {
+    this.requireRef(ref);
     return (await this.methodFlight.run(
-      `jadwal:${sub ?? '__anon__'}`,
+      `jadwal:${ref.sub}`,
       async () => {
-        if (sub && this.cache) {
+        if (this.cache) {
           const { value } = await this.cache.getStale<SiapJadwal[]>(
-            `${sub}:siap:jadwal`,
-            () => this.fetchJadwal(sub),
+            `${ref.sub}:siap:jadwal`,
+            () => this.fetchJadwal(ref),
             swrWindow('SIAP_JADWAL'),
           );
           return value;
         }
-        return this.fetchJadwal(sub);
+        return this.fetchJadwal(ref);
+      },
+    )) as SiapJadwal[];
+  }
+
+  /**
+   * CURRENT-session variant for background flows (NotificationsPoller) that
+   * own no JWT: the current live record, whatever its generation. Never call
+   * from an authenticated controller/service path.
+   */
+  async getJadwalForCurrentSession(sub: string): Promise<SiapJadwal[]> {
+    return (await this.methodFlight.run(
+      `jadwal:current:${sub}`,
+      async () => {
+        if (this.cache) {
+          const { value } = await this.cache.getStale<SiapJadwal[]>(
+            `${sub}:siap:jadwal`,
+            async () => {
+              const rows = await this.fetchWithCurrentContext<Array<Record<string, unknown>>>(
+                sub,
+                'jadwal',
+              );
+              return parseApiJadwal(Array.isArray(rows) ? rows : []);
+            },
+            swrWindow('SIAP_JADWAL'),
+          );
+          return value;
+        }
+        const rows = await this.fetchWithCurrentContext<Array<Record<string, unknown>>>(
+          sub,
+          'jadwal',
+        );
+        return parseApiJadwal(Array.isArray(rows) ? rows : []);
       },
     )) as SiapJadwal[];
   }
@@ -629,9 +700,10 @@ export class SiapService {
    * under-report the total (e.g. 2 recorded vs 14 scheduled). Joins both by
    * kode MIK; a course missing from jadwal keeps its absen-derived total.
    */
-  private async fetchAbsen(sub?: string): Promise<SiapAbsenItem[]> {
-    const absenRows = await this.fetchWithContext<Array<Record<string, unknown>>>(
-      sub,
+  private async fetchAbsen(ref: SessionRef): Promise<SiapAbsenItem[]> {
+    this.requireRef(ref);
+    const absenRows = await this.fetchWithSessionContext<Array<Record<string, unknown>>>(
+      ref,
       'absen',
     );
     const items = parseApiAbsen(Array.isArray(absenRows) ? absenRows : []);
@@ -641,7 +713,7 @@ export class SiapService {
     // absen-derived total (best-effort, mirrors mergeProfileFallback).
     try {
       const meetingsByKode = new Map<string, number>();
-      for (const j of await this.getJadwal(sub)) {
+      for (const j of await this.getJadwal(ref)) {
         const kode = j.kode ?? '';
         if (!kode) continue;
         meetingsByKode.set(kode, (meetingsByKode.get(kode) ?? 0) + 1);
@@ -659,19 +731,20 @@ export class SiapService {
     return items;
   }
 
-  async getAbsen(sub?: string): Promise<SiapAbsenItem[]> {
+  async getAbsen(ref: SessionRef): Promise<SiapAbsenItem[]> {
+    this.requireRef(ref);
     return (await this.methodFlight.run(
-      `absen:${sub ?? '__anon__'}`,
+      `absen:${ref.sub}`,
       async () => {
-        if (sub && this.cache) {
+        if (this.cache) {
           const { value } = await this.cache.getStale<SiapAbsenItem[]>(
-            `${sub}:siap:absen`,
-            () => this.fetchAbsen(sub),
+            `${ref.sub}:siap:absen`,
+            () => this.fetchAbsen(ref),
             swrWindow('SIAP_ABSEN'),
           );
           return value;
         }
-        return this.fetchAbsen(sub);
+        return this.fetchAbsen(ref);
       },
     )) as SiapAbsenItem[];
   }
@@ -687,10 +760,11 @@ export class SiapService {
    * "Specified schedule cannot be found".
    */
   async getKehadiran(
-    sub: string | undefined,
+    ref: SessionRef,
     pertemuanId: string,
   ): Promise<SiapKehadiran> {
-    const siapCookie = await this.requireSiapCookie(sub);
+    this.requireRef(ref);
+    const siapCookie = await this.requireSiapCookieForSession(ref);
     return this.fetchKehadiran(siapCookie, pertemuanId);
   }
 
@@ -725,10 +799,11 @@ export class SiapService {
    * Only a login-redirect / non-JSON response is treated as stale 401.
    */
   async markKehadiran(
-    sub: string | undefined,
+    ref: SessionRef,
     token: string,
   ): Promise<{ status: string; message?: string }> {
-    const siapCookie = await this.requireSiapCookie(sub);
+    this.requireRef(ref);
+    const siapCookie = await this.requireSiapCookieForSession(ref);
     const url = `${this.baseUrl}/master_perkuliahan/mhs/absensi/process/`;
     const { httpOk, body } = await this.upstream.fetchJsonAllowingHttpErrors<{
       status?: string;

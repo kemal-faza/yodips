@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
 import {
   getTimedFetchTransportReason,
   isLoginRedirect,
@@ -13,7 +13,8 @@ import {
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
-import { SessionStore } from '../session/session-store';
+import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import { isSessionGeneration } from '../playwright/playwright-auth.service';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { SiapApiUpstream } from './siap-api';
 import {
@@ -164,8 +165,16 @@ export class SiapUpstreamSession {
 
   /** Identity + token for a user. Identity: session store → cache (24 h) →
    *  scrape fallback (cached, NOT written back to the session store). Token:
-   *  cache (10 min) → mint (single-flight). Missing siapCookie -> stale 401. */
+   *  cache (10 min) → mint (single-flight). Missing siapCookie -> stale 401.
+   *  CURRENT-session API (background/poller only): resolves the CURRENT live
+   *  record for `sub` with NO generation check. Authenticated (token-facing)
+   *  callers MUST use `getContextForSession` instead. */
   async getContext(sub?: string): Promise<SiapSessionContext> {
+    return this.getContextForCurrent(sub);
+  }
+
+  /** CURRENT-session read for background flows (poller) that own no JWT. */
+  async getContextForCurrent(sub?: string): Promise<SiapSessionContext> {
     const session = sub ? await this.sessionStore?.get(sub) : null;
     if (!session?.siapCookie) {
       throw new StaleUpstreamError(
@@ -174,6 +183,75 @@ export class SiapUpstreamSession {
         'SIAP session belum ada. Silakan login ulang via SSO',
       );
     }
+    return this.resolveWithCache(sub, session);
+  }
+
+  /**
+   * Token-facing read: identity + token ONLY if the live record still carries
+   * the token's exact `sessionGeneration` (atomic snapshot via
+   * `getIfGeneration`). A B-replacement between JwtAuthGuard and this read is
+   * 401 SESSION_DEAD — B's token/identity are never returned to an A-token,
+   * and no mint/fetch is attempted with B material.
+   */
+  async getContextForSession(ref: SessionRef): Promise<SiapSessionContext> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const session = await this.sessionStore?.getIfGeneration(ref.sub, ref.sessionGeneration) ?? null;
+    if (!session?.siapCookie || !isSessionGeneration((session as { sessionGeneration?: unknown }).sessionGeneration)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    if ((session as { sessionGeneration: string }).sessionGeneration !== ref.sessionGeneration) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return this.resolveWithCache(ref.sub, session);
+  }
+
+  /**
+   * Token-facing SIAP page cookie: the exact-generation record's siapCookie.
+   * Single seam for ALL cookie-path service methods (kehadiran, unread) so no
+   * duplicate `sessionStore.get` lives in SiapService. Mismatch/dead →
+   * 401 SESSION_DEAD, never B's cookie.
+   */
+  async getCookieForSession(ref: SessionRef): Promise<string> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const session = await this.sessionStore?.getIfGeneration(ref.sub, ref.sessionGeneration) ?? null;
+    const cookie = (session as { siapCookie?: unknown } | null)?.siapCookie;
+    const generation = (session as { sessionGeneration?: unknown } | null)?.sessionGeneration;
+    if (typeof cookie !== 'string' || !cookie || !isSessionGeneration(generation)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    if (generation !== ref.sessionGeneration) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return cookie;
+  }
+
+  /** Shared identity+token resolve (cache + single-flight + scrape fallback). */
+  private async resolveWithCache(
+    sub: string | undefined,
+    session: { identity?: string; emailSso?: string; siapCookie?: string } | null,
+  ): Promise<SiapSessionContext> {
     if (!sub || !this.cache) {
       // No cache path: resolve directly (identity from store, scrape fallback).
       const identity = await this.resolveIdentity(sub, session);

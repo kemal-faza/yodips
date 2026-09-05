@@ -13,6 +13,8 @@ type CacheMock = {
 
 type UpstreamMock = {
   getContext: jest.Mock;
+  getContextForSession: jest.Mock;
+  getContextForCurrent: jest.Mock;
   ajax: jest.Mock;
 };
 
@@ -48,11 +50,17 @@ function makeCache(): CacheMock {
   };
 }
 
+const TEST_GEN = 'a'.repeat(32);
+const ref = (sub: string) => ({ sub, sessionGeneration: TEST_GEN });
+
 function makeUpstream(): UpstreamMock {
+  const canned = { cookie: 'cookie', sesskey: 'sesskey' };
   return {
     getContext: jest
       .fn()
-      .mockResolvedValue({ cookie: 'cookie', sesskey: 'sesskey' }),
+      .mockResolvedValue(canned),
+    getContextForSession: jest.fn().mockResolvedValue(canned),
+    getContextForCurrent: jest.fn().mockResolvedValue(canned),
     ajax: jest
       .fn()
       .mockImplementation(
@@ -117,7 +125,7 @@ describe('KulonService SWR course refresh', () => {
     internals(service).fetchCourseContent = () =>
       Promise.resolve({ courseId: 1, sections: [] });
 
-    const result = await service.getCourses('u1');
+    const result = await service.getCourses(ref('u1'));
 
     expect(result[0]?.id).toBe(1);
     const staleCalls = cache.getStale.mock.calls as unknown as Array<
@@ -152,7 +160,7 @@ describe('KulonService SWR course refresh', () => {
       'cookie',
       'sesskey',
       'u1',
-      { withProgress: false },
+      { withProgress: false, withLecturers: false },
     );
 
     expect(result).toEqual(cachedCourses);
@@ -168,22 +176,22 @@ describe('KulonService SWR course refresh', () => {
     }> = [
       {
         key: 'u1:kulon:courses',
-        run: (service) => service.getCourses('u1'),
+        run: (service) => service.getCourses(ref('u1')),
       },
       {
         key: 'u1:kulon:assignments:all',
-        run: (service) => service.getAllAssignments('u1'),
+        run: (service) => service.getAllAssignments(ref('u1')),
         prepare: (_service, upstream) => {
           upstream.ajax.mockResolvedValue({ courses: [] });
         },
       },
       {
         key: 'u1:kulon:assignment-detail:7',
-        run: (service) => service.getAssignmentDetail('u1', 9, 7),
+        run: (service) => service.getAssignmentDetail(ref('u1'), 9, 7),
       },
       {
         key: 'u1:kulon:course-content:7',
-        run: (service) => service.getCourseContent('u1', 7),
+        run: (service) => service.getCourseContent(ref('u1'), 7),
       },
     ];
 
