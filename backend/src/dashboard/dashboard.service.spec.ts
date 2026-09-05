@@ -47,16 +47,23 @@ describe('DashboardService', () => {
     expect(out.jadwal).toEqual([]);
   });
 
-  it('maps a 401 StaleUpstreamError to a per-slice errors entry, keeping other slices', async () => {
+  it('rethrows a 401 StaleUpstreamError instead of degrading an authenticated slice', async () => {
     const stale = new StaleUpstreamError('SIAP', 'login-redirect');
     const svc = makeService({
       getProfile: jest.fn().mockRejectedValue(stale),
     });
-    const out = await svc.getDashboard(ref('u1'));
-    expect(out.profile).toBeNull();
-    expect(out.errors.profile).toEqual({ status: 401, message: 'Session SIAP expired. Silakan login ulang via SSO' });
-    expect(out.courses).toEqual([COURSE]);
-    expect(out.assignments).toEqual([ASSIGN]);
+    await expect(svc.getDashboard(ref('u1'))).rejects.toBe(stale);
+  });
+
+  it('rethrows SESSION_DEAD from a settled slice', async () => {
+    const dead = new HttpException(
+      { message: 'Sesi berakhir', code: 'SESSION_DEAD' },
+      HttpStatus.UNAUTHORIZED,
+    );
+    const svc = makeService({
+      getCourses: jest.fn().mockRejectedValue(dead),
+    });
+    await expect(svc.getDashboard(ref('u1'))).rejects.toBe(dead);
   });
 
   it('maps a 502 transient StaleUpstreamError to errors with 502', async () => {

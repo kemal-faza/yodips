@@ -3,6 +3,7 @@ import type { DataCache } from '../cache/data-cache';
 import { KulonService } from './kulon.service';
 import type { KulonUpstreamSession } from './kulon-upstream.session';
 import type { KulonCourse, KulonCourseContent } from './kulon-parse';
+import { cacheKeyForCurrent, cacheKeyForSession } from '../session/session-scope';
 
 type CacheMock = {
   get: jest.Mock;
@@ -135,9 +136,9 @@ describe('KulonService SWR course refresh', () => {
         { freshTtlMs: number; staleTtlMs: number },
       ]
     >;
-    expect(staleCalls[0]?.[0]).toBe('u1:kulon:courses');
+    expect(staleCalls[0]?.[0]).toBe(cacheKeyForSession(ref('u1'), 'kulon', 'courses'));
     expect(staleCalls[0]?.[2].freshTtlMs).toBeGreaterThan(0);
-    expect(cache.get).not.toHaveBeenCalledWith('u1:kulon:courses');
+    expect(cache.get).not.toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'));
     expect(upstream.ajax).toHaveBeenCalledWith(
       'cookie',
       'sesskey',
@@ -164,7 +165,7 @@ describe('KulonService SWR course refresh', () => {
     );
 
     expect(result).toEqual(cachedCourses);
-    expect(cache.get).toHaveBeenCalledWith('u1:kulon:courses');
+    expect(cache.get).toHaveBeenCalledWith(cacheKeyForCurrent('u1', 'kulon', 'courses'));
     expect(upstream.ajax).not.toHaveBeenCalled();
   });
 
@@ -175,22 +176,22 @@ describe('KulonService SWR course refresh', () => {
       prepare?: (service: KulonService, upstream: UpstreamMock) => void;
     }> = [
       {
-        key: 'u1:kulon:courses',
+        key: cacheKeyForSession(ref('u1'), 'kulon', 'courses'),
         run: (service) => service.getCourses(ref('u1')),
       },
       {
-        key: 'u1:kulon:assignments:all',
+        key: cacheKeyForSession(ref('u1'), 'kulon', 'assignments', 'all'),
         run: (service) => service.getAllAssignments(ref('u1')),
         prepare: (_service, upstream) => {
           upstream.ajax.mockResolvedValue({ courses: [] });
         },
       },
       {
-        key: 'u1:kulon:assignment-detail:7',
+        key: cacheKeyForSession(ref('u1'), 'kulon', 'assignment-detail', '7'),
         run: (service) => service.getAssignmentDetail(ref('u1'), 9, 7),
       },
       {
-        key: 'u1:kulon:course-content:7',
+        key: cacheKeyForSession(ref('u1'), 'kulon', 'course-content', '7'),
         run: (service) => service.getCourseContent(ref('u1'), 7),
       },
     ];
