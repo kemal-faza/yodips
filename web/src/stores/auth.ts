@@ -5,6 +5,7 @@ import { clearCache } from '../api/cache';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 import { onTokenRefreshed } from '../lib/reauth';
 import { beginLogout, endLogout, isLogoutInProgress, getReauthEpoch } from '../lib/logout';
+import { useKulonStore } from './kulon';
 
 const TOKEN_KEY = 'sso_token';
 // Module scope, next to `const TOKEN_KEY = 'sso_token';`:
@@ -14,6 +15,22 @@ const SERVER_REVOKE_TIMEOUT_MS = 5000;
  *  wipe is local messaging and should settle fast; a hung extension must never
  *  hold logout (and its flag) open. */
 const EXT_WIPE_TIMEOUT_MS = 5000;
+
+type AuthAttempt = { id: number; epoch: number };
+
+let legacyLoginAttempt = 0;
+let fetchMeAttempt = 0;
+let extensionCheckAttempt = 0;
+let extensionLoginAttempt = 0;
+let logoutFlight: Promise<void> | null = null;
+
+function ownsAttempt(attempt: AuthAttempt, currentId: number): boolean {
+  return (
+    attempt.id === currentId &&
+    attempt.epoch === getReauthEpoch() &&
+    !isLogoutInProgress()
+  );
+}
 
 /** Race a promise against a timeout, clearing the losing timer. When `promise`
  *  wins the timeout is cancelled (no leaked timer); when the timeout wins the
@@ -66,22 +83,14 @@ export const useAuthStore = defineStore('auth', {
     onExtensionResult(handler: (payload: ExtOutboundStatus) => void): () => void {
       return useExtension().onResult(handler);
     },
-    async login(expectedEpoch?: number) {
+    async login() {
+      const attempt: AuthAttempt = { id: ++legacyLoginAttempt, epoch: getReauthEpoch() };
+      if (!ownsAttempt(attempt, legacyLoginAttempt)) return;
       this.checking = true;
       this.error = null;
-      // Epoch ownership for the legacy async commit below: the caller
-      // (LoginView) stamps the origin epoch BEFORE its first await and passes
-      // it here so the commit boundary is mandatory, not inferred. When the
-      // caller omits it (older call sites / unit tests), capture now — still
-      // before OUR first await — so a logout that begins (and possibly FULLY
-      // resolves) while capture() is in flight moves the epoch under us and
-      // the minted token is discarded, never written.
-      const epochAtStart = expectedEpoch ?? getReauthEpoch();
       try {
         const result = await capture();
-        // Logout crossed (flag up now, or bumped-and-released while awaiting):
-        // never mint into a logged-out session.
-        if (isLogoutInProgress() || getReauthEpoch() !== epochAtStart) return;
+        if (!ownsAttempt(attempt, legacyLoginAttempt)) return;
         this.token = result.accessToken;
         localStorage.setItem(TOKEN_KEY, result.accessToken);
         this.hasSiap = result.hasSiap ?? false;
@@ -96,6 +105,7 @@ export const useAuthStore = defineStore('auth', {
           this.error = 'Login SSO berhasil, tapi session Kulon belum lengkap. Beberapa data mungkin kosong.';
         }
       } catch (e) {
+        if (!ownsAttempt(attempt, legacyLoginAttempt)) return;
         const status = (e as { response?: { status?: number } })?.response?.status;
         if (status === 429) {
           this.error =
@@ -104,14 +114,19 @@ export const useAuthStore = defineStore('auth', {
           this.error = 'Gagal login: ' + ((e as Error).message ?? 'Terjadi kesalahan');
         }
       } finally {
-        this.checking = false;
+        if (ownsAttempt(attempt, legacyLoginAttempt)) this.checking = false;
       }
     },
     async fetchMe(): Promise<'ok' | 'incomplete' | 'invalid' | 'error'> {
+      const attempt: AuthAttempt = { id: ++fetchMeAttempt, epoch: getReauthEpoch() };
+      if (!ownsAttempt(attempt, fetchMeAttempt)) return 'error';
       try {
-        this.user = await me();
+        const user = await me();
+        if (!ownsAttempt(attempt, fetchMeAttempt)) return 'error';
+        this.user = user;
         this.hasSiap = this.user?.hasSiap ?? false;
         this.hasKulon = this.user?.hasKulon ?? false;
+        this.fotoUrl = null;
         if (this.user && this.user.complete === false) {
           this.clearSessionState(); // keep browser cookies for silent re-capture
           return 'incomplete';
@@ -120,11 +135,16 @@ export const useAuthStore = defineStore('auth', {
         // fallback letter stays when SIAP is unavailable or the fetch fails).
         if (this.hasSiap) {
           getSiapProfile()
-            .then((profile) => { this.fotoUrl = profile?.fotoUrl ?? null; })
+            .then((profile) => {
+              if (ownsAttempt(attempt, fetchMeAttempt)) {
+                this.fotoUrl = profile?.fotoUrl ?? null;
+              }
+            })
             .catch(() => {});
         }
         return 'ok';
       } catch (e: any) {
+        if (!ownsAttempt(attempt, fetchMeAttempt)) return 'error';
         // 401 = invalid JWT: the axios interceptor wipes the token and
         // redirects to /login. Other failures (network/5xx) must NOT bounce —
         // otherwise a downed backend causes a login loop.
@@ -132,7 +152,18 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     async isExtensionInstalled(): Promise<boolean> {
-      const status = await useExtension().readStatus();
+      const attempt: AuthAttempt = { id: ++extensionCheckAttempt, epoch: getReauthEpoch() };
+      if (!ownsAttempt(attempt, extensionCheckAttempt)) return false;
+      let status: Awaited<ReturnType<ReturnType<typeof useExtension>['readStatus']>>;
+      try {
+        status = await useExtension().readStatus();
+      } catch {
+        if (ownsAttempt(attempt, extensionCheckAttempt)) {
+          this.extensionError = 'Extension tidak terdeteksi atau tidak merespons.';
+        }
+        return false;
+      }
+      if (!ownsAttempt(attempt, extensionCheckAttempt)) return false;
       if (status !== null) {
         this.extensionError = null;
         return true;
@@ -140,33 +171,41 @@ export const useAuthStore = defineStore('auth', {
       this.extensionError = 'Extension tidak terdeteksi atau tidak merespons.';
       return false;
     },
-    async loginViaExtension(expectedEpoch?: number): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
+    async loginViaExtension(): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
+      const attempt: AuthAttempt = { id: ++extensionLoginAttempt, epoch: getReauthEpoch() };
+      if (!ownsAttempt(attempt, extensionLoginAttempt)) return 'error';
       this.error = null;
-      const resp = await useExtension().sendHandoff();
+      let resp: Awaited<ReturnType<ReturnType<typeof useExtension>['sendHandoff']>>;
+      try {
+        resp = await useExtension().sendHandoff();
+      } catch {
+        if (ownsAttempt(attempt, extensionLoginAttempt)) {
+          this.error = 'Login via extension gagal.';
+        }
+        return 'error';
+      }
+      // Every response branch below is owned by the same attempt and epoch.
+      // A stale response must return without touching the newer attempt's UI.
+      if (!ownsAttempt(attempt, extensionLoginAttempt)) return 'error';
       if (resp === 'not-installed') {
+        if (!ownsAttempt(attempt, extensionLoginAttempt)) return 'error';
         this.extensionError = 'Extension tidak terdeteksi. Pastikan ID extension dan origin web benar.';
         return 'not-installed';
       }
       if (resp.status === 'ok' && resp.accessToken) {
-        // Generation-aware guarded commit: a late extension ok that arrives
-        // after a logout began (flag up) or fully resolved (epoch bumped, flag
-        // down) must never write first — attemptReauth validates the same
-        // epoch AFTER this returns, but the write happens HERE, so the gate
-        // must live at this boundary. 'ok' always means committed.
-        if (isLogoutInProgress()) return 'error';
-        if (expectedEpoch !== undefined && expectedEpoch !== getReauthEpoch()) {
-          return 'error';
-        }
-        this.finishHandoff(resp.accessToken, expectedEpoch);
+        if (!ownsAttempt(attempt, extensionLoginAttempt)) return 'error';
+        this.finishHandoff(resp.accessToken, attempt.epoch);
         return 'ok';
       }
       if (resp.status === 'error') {
+        if (!ownsAttempt(attempt, extensionLoginAttempt)) return 'error';
         this.error = resp.message ?? 'Login via extension gagal.';
         return 'error';
       }
       // status 'started' — the background opened a login tab (auto) or waits for
       // the user to confirm (semi); the view reacts via onResult / status poll.
       if (resp.status === 'started') {
+        if (!ownsAttempt(attempt, extensionLoginAttempt)) return 'error';
         this.extensionMode = resp.mode ?? 'auto';
         return 'started';
       }
@@ -203,6 +242,8 @@ export const useAuthStore = defineStore('auth', {
       this.token = null;
       this.user = null;
       this.fotoUrl = null;
+      this.hasSiap = false;
+      this.hasKulon = false;
       localStorage.removeItem(TOKEN_KEY);
     },
     /** Poll/onResult wait for an in-flight extension handoff started by
@@ -307,7 +348,7 @@ export const useAuthStore = defineStore('auth', {
       this.reauthAttempted = true;
       this.reauthing = true;
       this.reauthPhase = null;
-      const resp = await this.loginViaExtension(epochAtStart);
+      const resp = await this.loginViaExtension();
       if (invalidated()) {
         // Logout began while the handoff was in flight (or FULLY finished —
         // flag already down, epoch bumped): never mint (the handoff boundary
@@ -328,16 +369,17 @@ export const useAuthStore = defineStore('auth', {
       this.reauthing = false;
       return 'failed';
     },
-    async logout() {
-      // Concurrent logout: the first call owns the teardown; every later call
-      // while one is in flight early-returns (the shared operation performs
-      // the single cleanup and releases the flag in its finally).
-      if (isLogoutInProgress()) return;
+    logout(): Promise<void> {
+      // All callers share the same full teardown. In particular, a concurrent
+      // caller must not resolve before the server revoke/local wipe/extension
+      // wipe owned by the first caller have completed.
+      if (logoutFlight) return logoutFlight;
       // (0) Flag FIRST: every sibling 401 / in-flight refresh success /
       // reauth attempt from this point on is suppressed by the shared
       // logout-in-progress state (client.ts interceptor + this store).
       beginLogout();
-      try {
+      const flight = (async () => {
+        try {
         // (1) Server-side revocation while this JWT still exists and can
         // authenticate the request, BOUNDED: race logoutSession() against a
         // ~5s settle window so a hung backend cannot extend logout. The
@@ -367,8 +409,15 @@ export const useAuthStore = defineStore('auth', {
         this.token = null;
         this.user = null;
         this.fotoUrl = null;
+        this.hasSiap = false;
+        this.hasKulon = false;
+        this.checking = false;
+        this.error = null;
+        this.extensionError = null;
+        this.extensionMode = 'auto';
+        useKulonStore().reset();
         localStorage.removeItem(TOKEN_KEY);
-      } finally {
+        } finally {
         // (3) Best-effort extension cookie wipe — AWAITED but BOUNDED so
         // logout() always releases: race the wipe against EXT_WIPE_TIMEOUT_MS
         // (withTimeout clears the losing timer). A hung extension (callback
@@ -383,6 +432,17 @@ export const useAuthStore = defineStore('auth', {
           endLogout();
         }
       }
+      })();
+      logoutFlight = flight;
+      // Identity-guarded release: a later operation can never clear a newer
+      // shared flight's slot. The rejection handler prevents an unhandled
+      // promise from this bookkeeping branch while preserving the caller's
+      // original result.
+      void flight.then(
+        () => { if (logoutFlight === flight) logoutFlight = null; },
+        () => { if (logoutFlight === flight) logoutFlight = null; },
+      );
+      return flight;
     },
   },
 });
