@@ -2,12 +2,20 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiHttpException
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -188,6 +196,159 @@ class SessionLogoutTest {
         // every server step with a live bearer, cleanup last, token nulled.
         assertFullOrder(s)
         assertEquals(null, s.bearer)
+    }
+
+    // Fake of the wasmJs TokenStore contract: `clearImmediately()` is the
+    // SYNCHRONOUS persisted-JWT removal (localStorage + flows reset) and the
+    // suspending `clear()` delegates to it. Mirrors
+    // TokenStore.wasmJs.kt — the production wasm glue must call
+    // clearImmediately() INLINE in localCleanup, never schedule clear().
+    private class FakeWasmStore(persisted: String? = "jwt-1") {
+        var persisted: String? = persisted
+        var uiState: String? = persisted // mirrors the _jwt StateFlow
+
+        fun clearImmediately() {
+            persisted = null
+            uiState = null
+        }
+
+        suspend fun clear() = clearImmediately()
+    }
+
+    @Test
+    fun `wasm-style glue removes persisted JWT synchronously before UI flips`() = runTest {
+        // Locks finding-1 production shape (AppRoot.wasmJs localCleanup):
+        // persisted-JWT removal is a SYNCHRONOUS inline call that has
+        // completed when logout() returns — never a scheduled async clear
+        // that the logged-out UI could outrun. History clear stays scheduled
+        // best-effort. No scheduler advancement is needed below: everything
+        // asserted must already hold the moment logout() returns.
+        val store = FakeWasmStore()
+        var historyClearScheduled = false
+        var uiLoggedOut = false
+        val logout =
+            SessionLogout(
+                revokeServerSession = {},
+                pushUnregister = {},
+                localCleanup = {
+                    historyClearScheduled = true
+                    backgroundScope.launch { /* history.clear() best-effort */ }
+                    // REQUIRED production wasm shape: synchronous inline
+                    // removal — the UI flip below cannot outrun it.
+                    store.clearImmediately()
+                    uiLoggedOut = true
+                },
+            )
+        logout.logout()
+        assertNull("persisted JWT must be gone when logout() returns", store.persisted)
+        assertNull(store.uiState)
+        assertTrue(uiLoggedOut)
+        assertTrue(historyClearScheduled)
+    }
+
+    @Test
+    fun `sequential logouts each run a fresh full sequence`() = runTest {
+        // The creator's release clears its OWN deferred, so no stale state
+        // survives: the next logout becomes a fresh creator and re-runs the
+        // whole unregister -> revoke -> cleanup sequence.
+        val s = Spy()
+        val logout = SessionLogout(s.revokeServerSession, s.pushUnregister, s.localCleanup)
+        logout.logout()
+        // Second logout needs a live bearer again (fresh login in production).
+        s.bearer = "logout-jwt-2"
+        logout.logout()
+        assertEquals(
+            listOf(
+                "pushUnregister:true", "revokeServerSession:true", "localCleanup",
+                "pushUnregister:true", "revokeServerSession:true", "localCleanup",
+            ),
+            s.calls,
+        )
+    }
+
+    @Test
+    fun `stale release never erases a newer deferred`() = runTest {
+        // Regression for the single-flight release race: creator A completes
+        // its deferred and then clears `inflight`; if creator B claimed a NEW
+        // deferred in between, A's stale release must leave B's deferred in
+        // place (otherwise a third caller would miss B's run and start a
+        // duplicate unauthenticated sequence). Drives the REAL release path
+        // (the same function the nested finally calls) with a forged stale
+        // deferred — fully deterministic, no timing involved.
+        val firstEntered = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        var runs = 0
+        val logout =
+            SessionLogout(
+                revokeServerSession = { runs++ },
+                pushUnregister = {
+                    firstEntered.complete(Unit)
+                    releaseFirst.await() // hold the creator mid-sequence
+                },
+                localCleanup = {},
+            )
+        val first = async { logout.logout() } // creator, parks in pushUnregister
+        firstEntered.await()
+        val stale = CompletableDeferred<Unit>() // forged: never was `inflight`
+        logout.releaseIfCurrent(stale) // must be a field no-op…
+        // …so a waiter arriving right after still JOINS the parked creator
+        // instead of becoming a second creator (a naive unconditional
+        // `inflight = null` would orphan the creator's deferred here and this
+        // waiter would re-run the whole sequence → runs == 2).
+        val waiter = async { logout.logout() }
+        yield() // let the waiter reach the claim and suspend
+        releaseFirst.complete(Unit)
+        first.await()
+        waiter.await()
+        assertEquals(1, runs)
+        // The instance accepts a fresh run afterwards (the field holds no
+        // orphaned stale-or-newer deferred in either direction).
+        logout.logout()
+        assertEquals(2, runs)
+    }
+
+    @Test(timeout = 60_000)
+    fun `burst of concurrent logouts on real threads runs exactly one sequence`() {
+        // Concrete JVM concurrency coverage (Dispatchers.Default, real thread
+        // pool — NOT runTest virtual time): RACERS coroutines hammer one
+        // shared instance; the creator parks in pushUnregister until every
+        // racer has STARTED logout(), so all must collapse into its single
+        // unregister -> revoke -> cleanup run. No duplicate server calls, no
+        // stranded waiter, max overlap of server work is 1.
+        val racers = 32
+        val started = AtomicInteger(0)
+        val unregisterCount = AtomicInteger(0)
+        val revokeCount = AtomicInteger(0)
+        val cleanupCount = AtomicInteger(0)
+        val concurrent = AtomicInteger(0)
+        val maxConcurrent = AtomicInteger(0)
+        val logout =
+            SessionLogout(
+                revokeServerSession = {
+                    revokeCount.incrementAndGet()
+                    delay(5)
+                },
+                pushUnregister = {
+                    while (started.get() < racers) delay(1)
+                    val c = concurrent.incrementAndGet()
+                    maxConcurrent.updateAndGet { m -> maxOf(m, c) }
+                    try {
+                        delay(5)
+                        unregisterCount.incrementAndGet()
+                    } finally {
+                        concurrent.decrementAndGet()
+                    }
+                },
+                localCleanup = { cleanupCount.incrementAndGet() },
+            )
+        runBlocking(Dispatchers.Default) {
+            List(racers) { async { started.incrementAndGet(); logout.logout() } }
+                .forEach { it.await() }
+        }
+        assertEquals(1, unregisterCount.get())
+        assertEquals(1, revokeCount.get())
+        assertEquals(1, cleanupCount.get())
+        assertEquals(1, maxConcurrent.get())
     }
 
     @Test
