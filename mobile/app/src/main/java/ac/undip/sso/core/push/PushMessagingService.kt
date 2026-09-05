@@ -2,7 +2,6 @@ package ac.undip.sso.core.push
 
 import ac.undip.sso.MainActivity
 import ac.undip.sso.R
-import ac.undip.sso.core.network.Backend
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -69,8 +68,13 @@ fun showPush(
  */
 class PushMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
-        val loggedIn = !Backend.authToken.isNullOrBlank()
-        PushGraph.ioScope.launch { PushGraph.onNewToken(token, loggedIn) }
+        // Ensure install on the service's application context FIRST: in a
+        // fresh process this callback can run before SsoApplication/
+        // MainActivity wiring, and a token dropped on an uninstalled graph
+        // is lost — it is device-owned and must reach the pending stash.
+        // Install is idempotent, so repeating it here is safe.
+        PushGraph.install(applicationContext)
+        PushGraph.ioScope.launch { PushGraph.onNewToken(token) }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {

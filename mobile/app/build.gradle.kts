@@ -174,6 +174,10 @@ kotlin {
             implementation(libs.ktor.client.js)
             implementation(npm("jsqr", "1.4.0"))
         }
+        wasmJsTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
+        }
     }
 }
 

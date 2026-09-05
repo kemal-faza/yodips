@@ -20,6 +20,7 @@ package ac.undip.sso.core.network
  *   GET  /api/notifications/vapid-public-key
  *   POST /api/notifications/web-device
  *   DELETE /api/notifications/web-device
+ *   POST /api/auth/logout
  *   POST /api/siap/kehadiran
  */
 interface SsoApi {
@@ -70,4 +71,11 @@ interface SsoApi {
 
     /** POST /api/siap/kehadiran */
     suspend fun markKehadiran(body: KehadiranRequest): KehadiranResponse
+
+    /** POST /api/auth/logout — server-side session revocation. The bearer is
+     *  attached by the shared client. Non-2xx throws [ApiHttpException].
+     *  Backend contract: accepts valid-or-expired signed tokens and clears the
+     *  session record; 401 when the token generation is stale (never clears a
+     *  newer session). */
+    suspend fun logout(): LogoutResponse
 }
