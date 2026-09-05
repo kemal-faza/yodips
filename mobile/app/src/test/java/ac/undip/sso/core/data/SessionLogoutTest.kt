@@ -198,54 +198,6 @@ class SessionLogoutTest {
         assertEquals(null, s.bearer)
     }
 
-    // Fake of the wasmJs TokenStore contract: `clearImmediately()` is the
-    // SYNCHRONOUS persisted-JWT removal (localStorage + flows reset) and the
-    // suspending `clear()` delegates to it. Mirrors
-    // TokenStore.wasmJs.kt — the production wasm glue must call
-    // clearImmediately() INLINE in localCleanup, never schedule clear().
-    private class FakeWasmStore(persisted: String? = "jwt-1") {
-        var persisted: String? = persisted
-        var uiState: String? = persisted // mirrors the _jwt StateFlow
-
-        fun clearImmediately() {
-            persisted = null
-            uiState = null
-        }
-
-        suspend fun clear() = clearImmediately()
-    }
-
-    @Test
-    fun `wasm-style glue removes persisted JWT synchronously before UI flips`() = runTest {
-        // Locks finding-1 production shape (AppRoot.wasmJs localCleanup):
-        // persisted-JWT removal is a SYNCHRONOUS inline call that has
-        // completed when logout() returns — never a scheduled async clear
-        // that the logged-out UI could outrun. History clear stays scheduled
-        // best-effort. No scheduler advancement is needed below: everything
-        // asserted must already hold the moment logout() returns.
-        val store = FakeWasmStore()
-        var historyClearScheduled = false
-        var uiLoggedOut = false
-        val logout =
-            SessionLogout(
-                revokeServerSession = {},
-                pushUnregister = {},
-                localCleanup = {
-                    historyClearScheduled = true
-                    backgroundScope.launch { /* history.clear() best-effort */ }
-                    // REQUIRED production wasm shape: synchronous inline
-                    // removal — the UI flip below cannot outrun it.
-                    store.clearImmediately()
-                    uiLoggedOut = true
-                },
-            )
-        logout.logout()
-        assertNull("persisted JWT must be gone when logout() returns", store.persisted)
-        assertNull(store.uiState)
-        assertTrue(uiLoggedOut)
-        assertTrue(historyClearScheduled)
-    }
-
     @Test
     fun `sequential logouts each run a fresh full sequence`() = runTest {
         // The creator's release clears its OWN deferred, so no stale state

@@ -2,6 +2,7 @@ package ac.undip.sso.ui
 
 import ac.undip.sso.core.data.NoOpPersistentCache
 import ac.undip.sso.core.data.SessionLogout
+import ac.undip.sso.core.data.WasmLogoutCoordinator
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.push.IdbNotificationHistoryStore
 import ac.undip.sso.core.push.PushSubscriptionManager
@@ -80,61 +81,57 @@ fun AppRoot(themeController: ThemeController) {
     // Hoisted ONCE for the app's lifetime: single-flight (requirement 2) only
     // spans invocations that share ONE SessionLogout instance — a fresh
     // instance per tap would create new single-flight state each time and
-    // defeat it.
-    val sessionLogout = remember {
-        SessionLogout(
-            pushUnregister = {
-                // Guard matches the login-time registration gate
-                // (AppRoot.wasmJs.kt:63-75): skip the whole block when the
-                // browser has no push support — no behavior change for
-                // non-push browsers.
-                if (PushSubscriptionManager.isSupported()) {
-                    // 1) Server DELETE (best-attempt prune — the shared client
-                    //    attaches the live bearer; may 401 on an expired JWT —
-                    //    best-effort by policy).
-                    // 2) UNCONDITIONAL browser unsubscribe — MUST run even when
-                    //    the DELETE throws an ordinary failure, so a stale
-                    //    server error never leaves the browser subscription
-                    //    live after logout (F3). Explicit try/catch per step
-                    //    (NOT runCatching — it swallows CancellationException):
-                    //    ordinary failures are caught; structured cancellation
-                    //    propagates to the orchestrator, which runs
-                    //    localCleanup before rethrow.
-                    try {
-                        val sub = PushSubscriptionManager.currentSubscription()
-                        if (sub != null) Backend.api.unregisterWebPushDevice(sub)
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // best-effort DELETE — unsubscribe below is unconditional
-                    }
-                    try {
-                        PushSubscriptionManager.unsubscribe()
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // best-effort — cleanup and revoke still run
-                    }
+    // defeat it. The wasm side effects live in the production
+    // [WasmLogoutCoordinator] (same ordering/cancellation contract as the
+    // unit-tested seam); this block only injects the browser/TokenStore
+    // primitives, which never enter common code.
+    val wasmLogoutGlue = remember {
+        WasmLogoutCoordinator(
+            object : WasmLogoutCoordinator.Ops {
+                override fun isPushSupported(): Boolean = PushSubscriptionManager.isSupported()
+
+                override suspend fun unregisterWebPushOnServer() {
+                    // Guard matches the login-time registration gate above:
+                    // unreachable when unsupported (pushUnregister already
+                    // checked), kept as defense in depth.
+                    val sub = PushSubscriptionManager.currentSubscription()
+                    if (sub != null) Backend.api.unregisterWebPushDevice(sub)
+                }
+
+                override suspend fun unsubscribeWebPushInBrowser() {
+                    PushSubscriptionManager.unsubscribe()
+                }
+
+                override fun scheduleHistoryClear() {
+                    // SUSPENDING (IndexedDB) so it is SCHEDULED on the
+                    // existing surviving GlobalScope (best-effort).
+                    GlobalScope.launch { runCatching { history.clear() } }
+                }
+
+                override fun clearAuthToken() {
+                    Backend.authToken = null
+                }
+
+                override fun clearPersistedCredentialsImmediately() {
+                    // SYNCHRONOUS localStorage + StateFlow reset, BEFORE the
+                    // UI flips: a scheduled clear would let `hasToken = false`
+                    // outrun the removal (a kill/restart in between resurrects
+                    // the session). tokenStore.clear() delegates to the same
+                    // primitive, so both paths remove identical state.
+                    tokenStore.clearImmediately()
+                }
+
+                override fun showLoggedOutUi() {
+                    hasToken = false
                 }
             },
+        )
+    }
+    val sessionLogout = remember {
+        SessionLogout(
+            pushUnregister = { wasmLogoutGlue.pushUnregister() },
             revokeServerSession = { Backend.api.logout() },
-            localCleanup = {
-                // NON-SUSPENDING, unconditional, runs LAST — both server
-                // calls already attempted with the live bearer. The lambda
-                // type is `() -> Unit` (R2-1/R2-5): history.clear() is
-                // SUSPENDING (IndexedDB) so it is SCHEDULED on the existing
-                // surviving GlobalScope (best-effort). The persisted JWT,
-                // however, MUST be removed SYNCHRONOUSLY inline via
-                // clearImmediately() BEFORE the UI flips: a scheduled clear
-                // would let `hasToken = false` outrun the localStorage
-                // removal (a kill/restart in between resurrects the
-                // session). tokenStore.clear() delegates to the same
-                // primitive, so both paths remove identical state.
-                GlobalScope.launch { runCatching { history.clear() } }
-                Backend.authToken = null
-                tokenStore.clearImmediately() // synchronous localStorage + StateFlow reset
-                hasToken = false
-            },
+            localCleanup = { wasmLogoutGlue.localCleanup() },
         )
     }
 
