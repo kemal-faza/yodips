@@ -303,4 +303,24 @@ describe("KulonCourseDetailView", () => {
     expect(w.text()).toContain("PDF");
     expect(w.text()).not.toContain("OTHER");
   });
+
+  it("silently discards stale content after logout instead of showing an error", async () => {
+    let resolveContent!: (value: any) => void;
+    (api.getCourses as any).mockResolvedValue([]);
+    (api.getCourseContent as any).mockImplementation(
+      () => new Promise((resolve) => { resolveContent = resolve; }),
+    );
+    const router = buildRouter(createMemoryHistory());
+    await router.push("/kulon/matakuliah/9");
+    const w = mount(KulonCourseDetailView, { global: { plugins: [router] } });
+    await flushPromises();
+    clearCache();
+    resolveContent(content);
+    await flushPromises();
+
+    expect(w.text()).not.toContain("generation stale");
+    expect(w.text()).not.toContain("Gagal memuat");
+    expect(w.text()).not.toContain("Terjadi kesalahan tidak diketahui.");
+    expect(w.text()).not.toContain("Announcements");
+  });
 });

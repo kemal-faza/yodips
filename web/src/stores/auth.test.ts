@@ -12,6 +12,7 @@ import { beginLogout, endLogout, isLogoutInProgress, getReauthEpoch } from '../l
 import * as api from '../api/client';
 import { EXTENSION_ID } from '../config/extension';
 import * as cache from '../api/cache';
+import { useKulonStore } from './kulon';
 
 vi.mock('../api/client', () => ({
   capture: vi.fn(),
@@ -86,6 +87,49 @@ describe('auth store', () => {
     expect(store.token).toBeNull();
     expect(store.error).not.toContain('Request failed with status code 429');
     expect(store.error).toContain('Terlalu banyak percobaan');
+  });
+
+  it('a stale legacy login success cannot overwrite a newer login attempt', async () => {
+    let resolveA!: (value: any) => void;
+    let resolveB!: (value: any) => void;
+    (api.capture as any)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    const store = useAuthStore();
+    const loginA = store.login();
+    const loginB = store.login();
+
+    resolveA({ accessToken: 'jwt-a', hasKulon: true, hasSiap: true });
+    await flushPromises();
+    expect(store.token).toBeNull();
+    expect(store.checking).toBe(true);
+    expect(store.error).toBeNull();
+
+    resolveB({ accessToken: 'jwt-b', hasKulon: true, hasSiap: true });
+    await Promise.all([loginA, loginB]);
+    expect(store.token).toBe('jwt-b');
+  });
+
+  it('a stale legacy login catch and finally cannot mutate the newer attempt', async () => {
+    let rejectA!: (reason?: unknown) => void;
+    let resolveB!: (value: any) => void;
+    (api.capture as any)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectA = reject; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    const store = useAuthStore();
+    const loginA = store.login();
+    const loginB = store.login();
+
+    rejectA(new Error('stale A failure'));
+    await flushPromises();
+    expect(store.error).toBeNull();
+    expect(store.checking).toBe(true);
+
+    resolveB({ accessToken: 'jwt-b', hasKulon: true, hasSiap: true });
+    await Promise.all([loginA, loginB]);
+    expect(store.token).toBe('jwt-b');
+    expect(store.error).toBeNull();
+    expect(store.checking).toBe(false);
   });
 
   it('logout clears token', async () => {
@@ -182,6 +226,48 @@ describe('auth store', () => {
     expect(status).toBe('invalid');
   });
 
+  it('a stale fetchMe success cannot overwrite a newer fetchMe attempt', async () => {
+    let resolveA!: (value: any) => void;
+    let resolveB!: (value: any) => void;
+    (api.me as any)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    const store = useAuthStore();
+    const fetchA = store.fetchMe();
+    const fetchB = store.fetchMe();
+
+    resolveA({ sub: 'a', hasKulon: true, hasSiap: true, complete: true });
+    await flushPromises();
+    expect(store.user).toBeNull();
+    expect(store.hasKulon).toBe(false);
+    expect(store.hasSiap).toBe(false);
+
+    resolveB({ sub: 'b', hasKulon: false, hasSiap: false, complete: true });
+    await Promise.all([fetchA, fetchB]);
+    expect(store.user?.sub).toBe('b');
+  });
+
+  it('a stale SIAP photo completion cannot overwrite the newer session state', async () => {
+    let resolvePhoto!: (value: any) => void;
+    (api.me as any)
+      .mockResolvedValueOnce({ sub: 'a', hasKulon: true, hasSiap: true, complete: true })
+      .mockResolvedValueOnce({ sub: 'b', hasKulon: false, hasSiap: false, complete: true });
+    (api.getSiapProfile as any).mockReturnValueOnce(
+      new Promise((resolve) => { resolvePhoto = resolve; }),
+    );
+    const store = useAuthStore();
+    const fetchA = store.fetchMe();
+    await flushPromises();
+    const fetchB = store.fetchMe();
+    await fetchB;
+    expect(store.user?.sub).toBe('b');
+    expect(store.fotoUrl).toBeNull();
+
+    resolvePhoto({ fotoUrl: 'https://example.com/stale-a.jpg' });
+    await Promise.all([fetchA, new Promise((resolve) => setTimeout(resolve, 0))]);
+    expect(store.fotoUrl).toBeNull();
+  });
+
   it('fetchMe loads the SIAP photo when hasSiap is true', async () => {
     (api.me as any).mockResolvedValue({
       sub: 'n', authenticated: true, hasSso: true, hasMicrosoft: false,
@@ -214,6 +300,51 @@ describe('auth store', () => {
     store.fotoUrl = 'https://example.com/x.jpg';
     await store.logout();
     expect(store.fotoUrl).toBeNull();
+  });
+
+  it('logout resets the Kulon identity store but keeps its local hidden preference', async () => {
+    const auth = useAuthStore();
+    const kulon = useKulonStore();
+    kulon.assignments = [{ id: 1 } as any];
+    kulon.courses = [{ id: 2 } as any];
+    kulon.hidden = [9];
+
+    await auth.logout();
+
+    expect(kulon.assignments).toEqual([]);
+    expect(kulon.courses).toEqual([]);
+    expect(kulon.hidden).toEqual([9]);
+  });
+
+  it('logout clears all identity-derived Pinia state but keeps no user data', async () => {
+    const store = useAuthStore();
+    store.token = 'jwt-user';
+    store.user = { sub: 'nim-a', nama: 'A' } as any;
+    store.hasSiap = true;
+    store.hasKulon = true;
+    store.fotoUrl = 'https://example.com/a.jpg';
+    store.error = 'old error';
+    store.extensionError = 'old extension error';
+    store.extensionMode = 'semi';
+    store.checking = true;
+    store.reauthing = true;
+    store.reauthPhase = 'kulon';
+    store.reauthAttempted = true;
+
+    await store.logout();
+
+    expect(store.token).toBeNull();
+    expect(store.user).toBeNull();
+    expect(store.hasSiap).toBe(false);
+    expect(store.hasKulon).toBe(false);
+    expect(store.fotoUrl).toBeNull();
+    expect(store.error).toBeNull();
+    expect(store.extensionError).toBeNull();
+    expect(store.extensionMode).toBe('auto');
+    expect(store.checking).toBe(false);
+    expect(store.reauthing).toBe(false);
+    expect(store.reauthPhase).toBeNull();
+    expect(store.reauthAttempted).toBe(false);
   });
 
   it('logout calls the server logout endpoint best-effort before local cleanup', async () => {
@@ -342,21 +473,30 @@ describe('auth store', () => {
     (api.logoutSession as any).mockResolvedValue(undefined); // restore default
   });
 
-  it('logout is idempotent under concurrency: a second logout() early-returns and cleanup runs once', async () => {
+  it('logout is shared under concurrency: the second caller waits for full cleanup', async () => {
     let serverCalls = 0;
     (api.logoutSession as any).mockImplementation(async () => { serverCalls += 1; });
+    let releaseWipe!: () => void;
+    const wipeGate = new Promise<void>((resolve) => { releaseWipe = resolve; });
+    extMockState.logoutImpl = () => wipeGate;
     localStorage.setItem('sso_token', 'x');
     const store = useAuthStore();
     store.token = 'x';
     const p1 = store.logout();
     const p2 = store.logout(); // second call while first is in flight
+    let secondSettled = false;
+    void p2.then(() => { secondSettled = true; });
+    await flushPromises();
+    expect(secondSettled).toBe(false);
+    releaseWipe();
     await Promise.all([p1, p2]);
     // The shared in-flight operation performs a single cleanup (one server
-    // call, one wipe); the second call early-returns.
+    // call, one wipe), and both callers resolve only after it completes.
     expect(serverCalls).toBe(1);
     expect(store.token).toBeNull();
     expect(localStorage.getItem('sso_token')).toBeNull();
     expect(isLogoutInProgress()).toBe(false);
+    extMockState.logoutImpl = undefined;
     (api.logoutSession as any).mockResolvedValue(undefined); // restore default
   });
 
@@ -475,6 +615,54 @@ describe('extension login', () => {
     const store = useAuthStore();
     expect(await store.loginViaExtension()).toBe('error');
     expect(store.token).toBeNull();
+  });
+
+  it('same-epoch extension attempts own response mutations independently', async () => {
+    const handoffCallbacks: Array<(response: any) => void> = [];
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (response: any) => void) => {
+          if (msg?.action === 'handoff') handoffCallbacks.push(cb);
+        },
+      },
+    };
+    const store = useAuthStore();
+    const attemptA = store.loginViaExtension();
+    const attemptB = store.loginViaExtension();
+    expect(handoffCallbacks).toHaveLength(2);
+
+    handoffCallbacks[0]({ status: 'error', message: 'stale A failure' });
+    await flushPromises();
+    expect(store.error).toBeNull();
+
+    handoffCallbacks[1]({ status: 'ok', accessToken: 'jwt-b' });
+    await expect(attemptA).resolves.toBe('error');
+    await expect(attemptB).resolves.toBe('ok');
+    expect(store.token).toBe('jwt-b');
+    expect(store.error).toBeNull();
+  });
+
+  it('loginViaExtension captures its epoch internally and rejects a post-logout response', async () => {
+    let resolveHandoff!: (response: any) => void;
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (response: any) => void) => {
+          if (msg?.action === 'handoff') resolveHandoff = cb;
+        },
+      },
+    };
+    const store = useAuthStore();
+    const attempt = store.loginViaExtension();
+    await flushPromises();
+    beginLogout();
+    endLogout();
+    resolveHandoff({ status: 'ok', accessToken: 'jwt-stale' });
+
+    await expect(attempt).resolves.toBe('error');
+    expect(store.token).toBeNull();
+    expect(localStorage.getItem('sso_token')).toBeNull();
   });
 
   it('onExtensionResult forwards the extension window message payload to the handler', async () => {
