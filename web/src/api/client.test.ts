@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAssignments, getCourses, capture } from './client';
-import { emitReauthRequested } from '../lib/reauth';
+import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
 
 const { getCachedMock } = vi.hoisted(() => ({ getCachedMock: vi.fn() }));
 vi.mock('./cache', () => ({
@@ -328,6 +328,129 @@ describe('api client', () => {
       await expect(responseHandlers.onRejected!(err)).rejects.toBeTruthy();
       expect(mockRequest).toHaveBeenCalledTimes(0); // no refresh POST, no retry
       expect(localStorage.getItem('sso_token')).toBe('old-jwt');
+    });
+  });
+
+  describe('logout race', () => {
+    beforeEach(() => {
+      // The reauth/refresh emit mocks accumulate call counts across the parent
+      // describe (only the 'silent refresh' describe clears them); our
+      // not.toHaveBeenCalled assertions need a clean slate.
+      (emitReauthRequested as any).mockClear();
+      (emitTokenRefreshed as any).mockClear();
+    });
+
+    it('sibling 401 during logout rejects immediately: no refresh POST, token untouched, no reauth/refresh emission', async () => {
+      localStorage.setItem('sso_token', 'keep-me');
+      await vi.resetModules();
+      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+        import('./client'),
+        import('../lib/logout'),
+      ]);
+      const onRejected = responseHandlers.onRejected!;
+      beginLogout(); // logout in progress
+      try {
+        const error = {
+          response: { status: 401, data: { code: 'SESSION_DEAD' } },
+          config: { method: 'get', url: '/api/kulon/assignments' },
+        };
+        await expect(onRejected(error)).rejects.toMatchObject(error);
+        expect(mockRequest).not.toHaveBeenCalled(); // no refresh POST, no retry
+        expect(localStorage.getItem('sso_token')).toBe('keep-me');
+        expect(emitReauthRequested).not.toHaveBeenCalled();
+        expect(emitTokenRefreshed).not.toHaveBeenCalled();
+      } finally {
+        endLogout();
+      }
+    });
+
+    it('refresh success that resolves after logout started is DISCARDED: token not written, no emission', async () => {
+      localStorage.setItem('sso_token', 'old-jwt');
+      let resolveRefresh!: (v: { data: { accessToken: string } }) => void;
+      mockRequest.mockImplementationOnce(
+        () => new Promise((res) => { resolveRefresh = res; }),
+      );
+      await vi.resetModules();
+      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+        import('./client'),
+        import('../lib/logout'),
+      ]);
+      const onRejected = responseHandlers.onRejected!;
+      const error = {
+        response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+        config: { method: 'get', url: '/api/auth/me' },
+      };
+      const pending = onRejected(error); // starts the refresh flight
+      beginLogout(); // logout starts while refresh is in flight
+      resolveRefresh({ data: { accessToken: 'minted-during-logout' } });
+      await expect(pending).rejects.toBeTruthy(); // interceptor rejects, never retries
+      expect(localStorage.getItem('sso_token')).toBe('old-jwt'); // discard, no write
+      expect(emitTokenRefreshed).not.toHaveBeenCalled();
+      expect(emitReauthRequested).not.toHaveBeenCalled();
+      endLogout();
+    });
+
+    it('refresh-failure 401 during logout does NOT wipe the token nor emit reauth', async () => {
+      localStorage.setItem('sso_token', 'old-jwt');
+      mockRequest.mockRejectedValueOnce({
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+      }); // the refresh POST itself 401s
+      await vi.resetModules();
+      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+        import('./client'),
+        import('../lib/logout'),
+      ]);
+      const onRejected = responseHandlers.onRejected!;
+      const error = {
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+        config: { method: 'get', url: '/api/auth/me' },
+      };
+      beginLogout();
+      try {
+        await expect(onRejected(error)).rejects.toBeTruthy();
+        expect(localStorage.getItem('sso_token')).toBe('old-jwt'); // logout wipes locally, not this gate
+        expect(emitReauthRequested).not.toHaveBeenCalled();
+      } finally {
+        endLogout();
+      }
+    });
+
+    it('sibling 401 whose response handler runs AFTER logout began (deferred ordering) rejects immediately — deterministic interceptor/store boundary proof', async () => {
+      // This is the F2 seam's exact shape, made deterministic: the user clicks
+      // logout while a sibling request is ALREADY in flight; the sibling's 401
+      // response handler runs after logout() has begun. `beginLogout()` here
+      // models "logout began" and is called BEFORE `onRejected` executes — the
+      // interceptor must see the flag up and reject with zero refresh/retry/
+      // reauth side effects. The interceptor reads the flag synchronously at the
+      // top of the 401 branch, so there is no race in the unit: the flag state
+      // at the moment the handler runs is fully determined by the test. (The
+      // store-side ordering — logout raises the flag before any await, so a
+      // response handler that runs after the click always sees it up — is the
+      // caller's contract, pinned by the store test in Step 9; this test pins
+      // the callee's contract: flag up ⇒ bare reject.)
+      localStorage.setItem('sso_token', 'keep-me');
+      await vi.resetModules();
+      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+        import('./client'),
+        import('../lib/logout'),
+      ]);
+      const onRejected = responseHandlers.onRejected!;
+      const error = {
+        response: { status: 401, data: { code: 'SESSION_DEAD' } },
+        config: { method: 'get', url: '/api/kulon/assignments' },
+      };
+      // Logout click: the request was sent earlier; its 401 response handler now
+      // runs with the flag up — exactly the deferred-ordering seam.
+      beginLogout();
+      try {
+        await expect(onRejected(error)).rejects.toMatchObject(error);
+        expect(mockRequest).not.toHaveBeenCalled(); // no refresh POST, no retry
+        expect(localStorage.getItem('sso_token')).toBe('keep-me');
+        expect(emitReauthRequested).not.toHaveBeenCalled();
+        expect(emitTokenRefreshed).not.toHaveBeenCalled();
+      } finally {
+        endLogout();
+      }
     });
   });
 
