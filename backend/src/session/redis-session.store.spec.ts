@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import crypto = require('crypto');
 import Redis from 'ioredis';
 import { RedisSessionStore } from './redis-session.store';
 
@@ -57,6 +58,18 @@ describe('RedisSessionStore', () => {
     const result = await store.get('24060121130000');
     expect(result?.kulonCookie).toContain('MoodleSession=A');
     expect(mockClient.expire).toHaveBeenCalledWith('sso:session:24060121130000', 1);
+
+    // Task 5 hardening regression: the explicit authTagLength (16) option must
+    // stay on the decipher construction. Spy on the real crypto module (never a
+    // full mock) — the 4th argument of createDecipheriv is the options bag.
+    const decipherSpy = jest.spyOn(crypto, 'createDecipheriv');
+    try {
+      await store.get('24060121130000');
+      const options = decipherSpy.mock.calls.find((call) => call[0] === 'aes-256-gcm')?.[3];
+      expect(options).toEqual({ authTagLength: 16 });
+    } finally {
+      decipherSpy.mockRestore();
+    }
   });
 
   it('get() returns null when the key is absent', async () => {
