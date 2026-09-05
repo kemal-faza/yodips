@@ -131,7 +131,7 @@ describe("LoginView", () => {
       global: {
         mocks: {
           $route: {
-            hash: "#access_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3",
+            hash: "#access_token=AAA.BBB.CCC",
             query: {},
           },
           $router: router,
@@ -141,7 +141,7 @@ describe("LoginView", () => {
     await flushPromises();
     expect(store.finishHandoff).toHaveBeenCalledTimes(1);
     expect(store.finishHandoff).toHaveBeenCalledWith(
-      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3",
+      "AAA.BBB.CCC",
     );
     expect(router.push).not.toHaveBeenCalled();
     expect(router.replace).toHaveBeenCalledWith("/");
@@ -400,7 +400,7 @@ describe("LoginView", () => {
 describe("LoginView fragment handoff (YD-AUTH-002)", () => {
   // Valid-looking strict three-segment JWT (header.payload.signature),
   // base64url-safe. Same shape the capture tool's #access_token delivers.
-  const GOOD_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3";
+  const GOOD_TOKEN = "AAA.BBB.CCC";
   const GOOD_HASH = `#access_token=${GOOD_TOKEN}`;
   const makeRoute = (hash: string, query: Record<string, unknown> = {}) => ({
     hash,
