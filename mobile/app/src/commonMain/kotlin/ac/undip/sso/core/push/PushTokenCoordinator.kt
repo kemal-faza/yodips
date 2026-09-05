@@ -1,7 +1,11 @@
 package ac.undip.sso.core.push
 
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * Constructible token/logout lifecycle coordinator over a [PushRegistration].
@@ -55,12 +59,8 @@ class PushTokenCoordinator(val registration: PushRegistration) {
                 sessionGeneration += 1
             }
             val generation = sessionGeneration
-            val t = registration.onLogin()
-            if (t != null && activeSession && sessionGeneration == generation) {
-                activeToken = t
-                registration.clearPending(t)
-            }
-            t
+            val token = registration.prepareLoginToken() ?: return@withLock null
+            registerAndFinalize(token, generation)
         }
 
     /** Dipanggil saat FCM merotasi token (thread background di produksi). */
@@ -71,12 +71,8 @@ class PushTokenCoordinator(val registration: PushRegistration) {
                 registration.stashPending(newToken)
                 return@withLock null
             }
-            val registered = registration.onNewToken(newToken)
-            if (registered != null && activeSession && sessionGeneration == generation) {
-                activeToken = registered
-                registration.clearPending(registered)
-            }
-            registered
+            val token = registration.prepareNewToken(newToken)
+            registerAndFinalize(token, generation)
         }
 
     /** Dipanggil sebelum sesi lokal dihapus (bearer masih hidup). */
@@ -96,5 +92,26 @@ class PushTokenCoordinator(val registration: PushRegistration) {
                 activeToken = null
             }
         }
+    }
+
+    /**
+     * Registration is bounded by the platform HTTP client's request timeout.
+     * NonCancellable only prevents the parent from interrupting the commit
+     * window; it does not remove that transport-level timeout.
+     */
+    private suspend fun registerAndFinalize(token: String, generation: Long): String? {
+        val registered = withContext(NonCancellable) {
+            if (!registration.registerOnBackend(token)) {
+                return@withContext null
+            }
+
+            if (activeSession && sessionGeneration == generation) {
+                activeToken = token
+                registration.clearPending(token)
+            }
+            token
+        }
+        currentCoroutineContext().ensureActive()
+        return registered
     }
 }

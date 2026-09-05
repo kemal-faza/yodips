@@ -121,6 +121,40 @@ class PushTokenCoordinatorTest {
     }
 
     @Test
+    fun `cancellation after backend commits finalizes active token before propagating`() = runTest {
+        val backendCommitted = CompletableDeferred<String>()
+        val releaseBackend = CompletableDeferred<Unit>()
+        val ops = FakeOps(current = "fcm-old")
+        val coordinator = coordinator(ops)
+        coordinator.onLogin()
+        ops.register = { token ->
+            if (token == "fcm-B") {
+                backendCommitted.complete(token)
+                releaseBackend.await()
+            }
+            true
+        }
+
+        val rotation = async { coordinator.onNewToken("fcm-B") }
+        assertEquals("fcm-B", backendCommitted.await())
+        rotation.cancel()
+        releaseBackend.complete(Unit)
+
+        try {
+            rotation.await()
+            fail("expected CancellationException")
+        } catch (expected: CancellationException) {
+            // Parent cancellation is reported only after backend ownership is tracked.
+        }
+
+        assertTrue(rotation.isCancelled)
+        assertEquals("fcm-B", coordinator.activeToken)
+        assertNull(ops.pending)
+        coordinator.onLogout()
+        assertEquals(listOf("fcm-B"), ops.unregistered)
+    }
+
+    @Test
     fun `pending cleanup failure leaves successfully registered token active for logout`() = runTest {
         val ops =
             FakeOps().apply {
