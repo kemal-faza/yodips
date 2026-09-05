@@ -636,3 +636,90 @@ describe('epoch ownership after logout fully resolves (RED: flag-down resurrecti
     expect(emitTokenRefreshed).not.toHaveBeenCalled();
   });
 });
+
+describe('shared refresh epoch ownership via production request stamp (E0 logout E1)', () => {
+  beforeEach(() => {
+    (emitReauthRequested as any).mockClear();
+    (emitTokenRefreshed as any).mockClear();
+    mockRequest.mockReset();
+  });
+
+  it('request interceptor stamps the reauth epoch via the production seam', async () => {
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const stamp = mockInstance.requestHandler!;
+    expect(typeof stamp).toBe('function');
+    const cfg: any = { method: 'get', url: '/api/auth/me', headers: {} };
+    stamp(cfg);
+    expect(cfg.__reauthEpoch).toBe(logoutMod.getReauthEpoch());
+    logoutMod.beginLogout();
+    const cfg2: any = { method: 'get', url: '/api/auth/me', headers: {} };
+    stamp(cfg2);
+    expect(cfg2.__reauthEpoch).toBe(logoutMod.getReauthEpoch());
+    expect(cfg2.__reauthEpoch).not.toBe(cfg.__reauthEpoch);
+    logoutMod.endLogout();
+  });
+
+  it('deferred E0 401 -> logout fully -> E1 401: E1 never joins/accepts the E0 flight (production stamp)', async () => {
+    // Exact deferred regression: E0's refresh is still pending when logout
+    // fully resolves, then a NEW E1 request (stamped AFTER logout via the real
+    // request interceptor) 401s. E1 must start its OWN refresh — never join or
+    // accept the orphaned E0 flight — and the old finally must not clear it.
+    localStorage.setItem('sso_token', 'old-jwt');
+    let resolveR0!: (v: { data: { accessToken: string } }) => void;
+    let resolveR1!: (v: { data: { accessToken: string } }) => void;
+    mockRequest.mockImplementationOnce(
+      () => new Promise((res) => { resolveR0 = res; }),
+    );
+    await vi.resetModules();
+    const [, logoutMod] = await Promise.all([
+      import('./client'),
+      import('../lib/logout'),
+    ]);
+    const onRejected = responseHandlers.onRejected!;
+    const stamp = mockInstance.requestHandler!;
+    // E0 request sent BEFORE logout (production stamp, not fabricated).
+    const cfgE0: any = { method: 'get', url: '/api/auth/me', headers: {} };
+    stamp(cfgE0);
+    const epochE0 = cfgE0.__reauthEpoch;
+    const errE0 = {
+      response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+      config: cfgE0,
+    };
+    const pendingE0 = onRejected(errE0); // starts refresh flight R0 at E0
+    expect(mockRequest).toHaveBeenCalledTimes(1);
+    // Logout FULLY resolves while R0 is pending.
+    logoutMod.beginLogout();
+    logoutMod.endLogout();
+    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    const epochE1 = logoutMod.getReauthEpoch();
+    expect(epochE1).not.toBe(epochE0);
+    // E1 request sent AFTER logout (fresh production stamp).
+    const cfgE1: any = { method: 'get', url: '/api/auth/me', headers: {} };
+    stamp(cfgE1);
+    expect(cfgE1.__reauthEpoch).toBe(epochE1);
+    // Queue E1's own refresh + its retry GET before triggering the handler.
+    mockRequest.mockImplementationOnce(
+      () => new Promise((res) => { resolveR1 = res; }),
+    );
+    mockRequest.mockResolvedValueOnce({ data: { id: 1 } }); // E1 retry GET
+    const errE1 = {
+      response: { status: 401, data: { code: 'INVALID_TOKEN' } },
+      config: cfgE1,
+    };
+    const pendingE1 = onRejected(errE1);
+    // E1 must NOT have joined R0: a second refresh POST started.
+    expect(mockRequest).toHaveBeenCalledTimes(2);
+    // Resolve the orphaned E0 flight first — it must be discarded.
+    resolveR0({ data: { accessToken: 'token-E0-orphaned' } });
+    await expect(pendingE0).rejects.toBeTruthy();
+    // Resolve E1's own flight — it retries and succeeds with its own token.
+    resolveR1({ data: { accessToken: 'token-E1' } });
+    const retried: any = await pendingE1;
+    expect(retried.data).toEqual({ id: 1 });
+    expect(localStorage.getItem('sso_token')).toBe('token-E1'); // never E0
+    expect(mockRequest).toHaveBeenCalledTimes(3); // R0 + R1 + E1 retry, no E0 retry
+  });

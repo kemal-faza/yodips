@@ -588,4 +588,294 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
     replaceState.mockRestore();
     w.unmount();
   });
+
+  it("synchronous fragment path keeps explicit current-flow semantics (single-arg commit, no epoch)", async () => {
+    // Justification: the fragment consume runs synchronously at mount with no
+    // await before the store write, so no logout can interleave — the current
+    // flow IS the owner by construction. Async paths below MUST pass an epoch;
+    // this path documents the deliberate exemption (exactly one arg).
+    const store = makeStore({ isHandoffMode: true });
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
+    const router = { replace: vi.fn(), push: vi.fn() };
+    const w = mount(LoginView, {
+      global: {
+        mocks: {
+          $route: makeRoute(GOOD_HASH),
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledTimes(1);
+    expect(store.finishHandoff.mock.calls[0].length).toBe(1); // no epoch arg
+    expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
+    replaceState.mockRestore();
+    w.unmount();
+  });
+});
+
+describe("LoginView async handoff epoch ownership (RED)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cfg.ssoCaptureEnabled = true;
+    cfg.mobile = false;
+  });
+
+  async function mountAfterExtensionDetected(store: any, router: any) {
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    return w;
+  }
+
+  it("normal handoff passes the pre-await epoch to loginViaExtension", async () => {
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue("ok"),
+    });
+    const w = await mountAfterExtensionDetected(store, router);
+    await w
+      .findAll("button")
+      .find((b) => b.text().includes("Login via Extension"))!
+      .trigger("click");
+    await flushPromises();
+    // Mandatory epoch at the commit boundary: the view stamps the origin.
+    expect(store.loginViaExtension).toHaveBeenCalledWith(expect.any(Number));
+    expect(router.push).toHaveBeenCalledWith("/");
+    w.unmount();
+  });
+
+  it("late normal-handoff ok resolving AFTER logout fully never navigates", async () => {
+    const logoutMod = await import("../lib/logout");
+    while (logoutMod.isLogoutInProgress()) logoutMod.endLogout();
+    let resolveLogin!: (v: string) => void;
+    const loginGate = new Promise<string>((resolve) => { resolveLogin = resolve; });
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockReturnValue(loginGate),
+    });
+    const w = await mountAfterExtensionDetected(store, router);
+    const click = w
+      .findAll("button")
+      .find((b) => b.text().includes("Login via Extension"))!
+      .trigger("click");
+    await flushPromises(); // handleExtensionLogin now awaits the gated handoff
+    expect(store.loginViaExtension).toHaveBeenCalled();
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // fully resolves while the handoff is pending
+    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    resolveLogin("ok"); // late pre-logout result arrives after endLogout
+    await click;
+    await flushPromises();
+    expect(router.push).not.toHaveBeenCalled(); // must not commit navigation
+    w.unmount();
+  });
+
+  it("status poll commits with the flow epoch on the fresh path", async () => {
+    vi.useFakeTimers();
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue("started"),
+      readExtensionResult: vi.fn().mockResolvedValue({ status: "active" }),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    await w
+      .findAll("button")
+      .find((b) => b.text().includes("Login via Extension"))!
+      .trigger("click");
+    await flushPromises();
+    store.readExtensionResult.mockResolvedValue({
+      status: "ok",
+      accessToken: "jwt-poll",
+    });
+    await vi.advanceTimersByTimeAsync(4000);
+    // Mandatory epoch at the poll commit boundary.
+    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-poll", expect.any(Number));
+    expect(router.push).toHaveBeenCalledWith("/");
+    vi.useRealTimers();
+    w.unmount();
+  });
+
+  it("late poll ok resolving AFTER logout fully never commits", async () => {
+    vi.useFakeTimers();
+    const logoutMod = await import("../lib/logout");
+    while (logoutMod.isLogoutInProgress()) logoutMod.endLogout();
+    let resolveRead!: (v: any) => void;
+    const readGate = new Promise<any>((resolve) => { resolveRead = resolve; });
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue("started"),
+      readExtensionResult: vi.fn().mockReturnValue(readGate),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    await w
+      .findAll("button")
+      .find((b) => b.text().includes("Login via Extension"))!
+      .trigger("click");
+    await flushPromises(); // poll tick now pending on readGate
+    expect(store.readExtensionResult).toHaveBeenCalled();
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // fully resolves while the poll read is pending
+    resolveRead({ status: "ok", accessToken: "jwt-late-poll" });
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushPromises();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    vi.useRealTimers();
+    w.unmount();
+  });
+
+  it("bridge ok commits with the flow epoch on the fresh path", async () => {
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    const handler = (store.onExtensionResult as any).mock.calls[0][0];
+    handler({ status: "ok", accessToken: "jwt-win" });
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-win", expect.any(Number));
+    expect(router.push).toHaveBeenCalledWith("/");
+    w.unmount();
+  });
+
+  it("late bridge ok arriving AFTER logout fully never commits", async () => {
+    const logoutMod = await import("../lib/logout");
+    while (logoutMod.isLogoutInProgress()) logoutMod.endLogout();
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    const handler = (store.onExtensionResult as any).mock.calls[0][0];
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // fully resolves before the bridge result arrives
+    handler({ status: "ok", accessToken: "jwt-late-bridge" });
+    await flushPromises();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it("late legacy login resolving AFTER logout fully never navigates", async () => {
+    const logoutMod = await import("../lib/logout");
+    while (logoutMod.isLogoutInProgress()) logoutMod.endLogout();
+    let resolveLogin!: () => void;
+    const loginGate = new Promise<void>((resolve) => { resolveLogin = resolve; });
+    const router = { push: vi.fn(), replace: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(false),
+      login: vi.fn().mockReturnValue(loginGate),
+      isAuthenticated: true, // would navigate unless the view guards the epoch
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    const btn = w.findAll("button").find((b) => b.text().includes("Login via SSO"));
+    expect(btn).toBeTruthy();
+    const click = btn!.trigger("click");
+    await flushPromises(); // handleLogin now awaits the gated login
+    logoutMod.beginLogout();
+    logoutMod.endLogout(); // fully resolves while legacy capture is pending
+    resolveLogin();
+    await click;
+    await flushPromises();
+    expect(router.push).not.toHaveBeenCalled();
+    w.unmount();
+  });
+});
+
+describe("LoginView poll serialization (RED)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cfg.ssoCaptureEnabled = true;
+    cfg.mobile = false;
+  });
+
+  it("never starts a second status read while one is still pending", async () => {
+    vi.useFakeTimers();
+    const router = { push: vi.fn() };
+    let resolveFirst!: (v: any) => void;
+    const firstGate = new Promise<any>((resolve) => { resolveFirst = resolve; });
+    let reads = 0;
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue("started"),
+      readExtensionResult: vi.fn().mockImplementation(() => {
+        reads += 1;
+        if (reads === 1) return firstGate; // hang the first poll read
+        return Promise.resolve({ status: "active" });
+      }),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    await w
+      .findAll("button")
+      .find((b) => b.text().includes("Login via Extension"))!
+      .trigger("click");
+    await flushPromises(); // first poll tick pending on firstGate
+    expect(reads).toBe(1);
+    await vi.advanceTimersByTimeAsync(4000); // next tick while first still pending
+    await flushPromises();
+    expect(reads).toBe(1); // serialized: no overlapping second read
+    resolveFirst({ status: "active" });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushPromises();
+    expect(reads).toBe(2); // next read only after the first settled
+    vi.useRealTimers();
+    w.unmount();
+  });
+
+  it("old flow never clears newer waiting state (ownership)", async () => {
+    vi.useFakeTimers();
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockResolvedValue("started"),
+      // Old flow's tick errors; the newer flow must keep waiting/polling.
+      readExtensionResult: vi
+        .fn()
+        .mockResolvedValueOnce({ status: "error", message: "old-flow-boom" })
+        .mockResolvedValue({ status: "active" }),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    const btn = () =>
+      w.findAll("button").find((b) => b.text().includes("Login via Extension"))!;
+    await btn().trigger("click"); // flow 1 starts waiting
+    await flushPromises();
+    await btn().trigger("click"); // flow 2 takes ownership (newer)
+    await flushPromises();
+    const readsBefore = (store.readExtensionResult as any).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushPromises();
+    // The old flow's error must not have torn down the newer flow's waiting UI:
+    // a newer tick still polls (reads grow) instead of the poll stopping.
+    expect((store.readExtensionResult as any).mock.calls.length).toBeGreaterThan(readsBefore);
+    vi.useRealTimers();
+    w.unmount();
+  });
 });
