@@ -39,9 +39,17 @@ import kotlinx.coroutines.CompletableDeferred
  * non-suspending atomic sections — the claim-or-join happens in one
  * `platformSynchronized` block (real JVM monitor on Android/unit tests; a
  * no-op on wasmJs, which is single-threaded), and the release happens inside
- * the creator's non-suspending nested `finally`. `CompletableDeferred.complete`
- * is thread-safe and idempotent, and the field is nulled on every creator exit
- * path, so no stale state can survive.
+ * the creator's non-suspending nested `finally` via [releaseIfCurrent].
+ * `CompletableDeferred.complete` is thread-safe and idempotent.
+ *
+ * RELEASE IDENTITY: the creator completes its deferred FIRST (releasing
+ * waiters) and then clears the field ONLY if it still holds the creator's
+ * own deferred (`inflight === creatorDeferred`). A newer creator that
+ * claimed a fresh deferred in between (it saw a completed deferred, which
+ * does not count as in-flight) is never erased — otherwise a third caller
+ * would miss the newer run and start a duplicate, post-cleanup
+ * (unauthenticated) sequence. The complete-then-conditional-clear pair is
+ * non-suspending, so no cancellation can interleave inside it.
  *
  * FAILURE POLICY: ordinary network/HTTP failures (offline, 5xx, 401, timeout,
  * including a no-bearer attempt) in the two server steps are best-effort —
@@ -103,10 +111,22 @@ class SessionLogout(
             try {
                 localCleanup() // non-suspending: token nulled, stores/cookies cleared
             } finally {
-                deferred.complete(Unit) // release waiters AFTER cleanup
-                platformSynchronized(logoutLock) { inflight = null }
+                releaseIfCurrent(deferred) // complete waiters, clear field iff ours
             }
         }
+    }
+
+    /**
+     * Creator release: complete the shared deferred FIRST (waiters observe the
+     * cleanup-done state and return normally), then clear [inflight] ONLY if
+     * it still references this creator's deferred. A stale release — e.g. a
+     * creator whose `complete` already let a successor claim a fresh deferred
+     * — must never erase the newer run. Non-suspending throughout, so it is
+     * safe inside the nested `finally` even while the creator is cancelling.
+     */
+    internal fun releaseIfCurrent(deferred: CompletableDeferred<Unit>) {
+        deferred.complete(Unit) // release waiters AFTER cleanup; idempotent
+        platformSynchronized(logoutLock) { if (inflight === deferred) inflight = null }
     }
 
     private companion object {
