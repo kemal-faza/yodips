@@ -2,7 +2,17 @@ package ac.undip.sso.core.push
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+
+/** Ktor's request timeout is 30 seconds on every mobile target. */
+internal const val DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS = 30_000L
+
+internal fun requirePushOperationTimeout(timeoutMillis: Long) {
+    require(timeoutMillis > 0) { "Push operation timeout must be positive" }
+}
 
 /**
  * Logika murni lifecycle token FCM terhadap registry backend
@@ -32,53 +42,96 @@ class PushRegistration(private val ops: Ops) {
 
     /** Stash a device token without registering it for the inactive account. */
     suspend fun stashPending(token: String) {
-        ops.stashPending(token)
+        stashPending(token, DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS)
+    }
+
+    /** Stash using the coordinator's injected bound while it owns the lock. */
+    internal suspend fun stashPending(token: String, timeoutMillis: Long) {
+        stashBeforeRegistration(token, timeoutMillis)
     }
 
     /** Clear only the pending value that was just registered. */
     suspend fun clearPending(token: String) {
-        ops.clearPending(token)
+        clearPending(token, DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS)
+    }
+
+    /** Clear using the coordinator's injected bound while it owns the lock. */
+    internal suspend fun clearPending(token: String, timeoutMillis: Long) {
+        requirePushOperationTimeout(timeoutMillis)
+        withContext(NonCancellable) {
+            withTimeout(timeoutMillis) {
+                ops.clearPending(token)
+            }
+        }
+        currentCoroutineContext().ensureActive()
     }
 
     /** Prepare a login token and durably stash a fresh token before registration. */
-    internal suspend fun prepareLoginToken(): String? {
-        val pending = ops.readPending()
-        val token = pending ?: ops.currentFcmToken() ?: return null
+    internal suspend fun prepareLoginToken(
+        timeoutMillis: Long = DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS,
+    ): String? {
+        requirePushOperationTimeout(timeoutMillis)
+        val pending = withTimeout(timeoutMillis) { ops.readPending() }
+        val token = pending ?: withTimeout(timeoutMillis) { ops.currentFcmToken() } ?: return null
         if (pending == null) {
-            stashBeforeRegistration(token)
+            stashBeforeRegistration(token, timeoutMillis)
         }
         return token
     }
 
     /** Durably stash a rotated token before it is registered for the live session. */
-    internal suspend fun prepareNewToken(newToken: String): String {
-        stashBeforeRegistration(newToken)
+    internal suspend fun prepareNewToken(
+        newToken: String,
+        timeoutMillis: Long = DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS,
+    ): String {
+        stashBeforeRegistration(newToken, timeoutMillis)
         return newToken
     }
 
     /** Register a token while the coordinator owns the transition lock. */
-    internal suspend fun registerOnBackend(token: String): Boolean = registerCatching(token)
+    internal suspend fun registerOnBackend(
+        token: String,
+        timeoutMillis: Long = DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS,
+    ): Boolean {
+        requirePushOperationTimeout(timeoutMillis)
+        val registered =
+            try {
+                withContext(NonCancellable) {
+                    withTimeout(timeoutMillis) {
+                        ops.registerOnBackend(token)
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                false
+            }
+        currentCoroutineContext().ensureActive()
+        return registered
+    }
 
     /**
      * Logout: cabut token device dari registry. Pending stash DIPERTAHANKAN —
      * token milik device, bukan akun.
      */
-    suspend fun onLogout(activeToken: String?) {
-        if (activeToken != null) ops.unregisterOnBackend(activeToken)
+    suspend fun onLogout(
+        activeToken: String?,
+        timeoutMillis: Long = DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS,
+    ) {
+        if (activeToken != null) {
+            requirePushOperationTimeout(timeoutMillis)
+            withTimeout(timeoutMillis) { ops.unregisterOnBackend(activeToken) }
+        }
     }
 
-    private suspend fun registerCatching(token: String): Boolean =
-        try {
-            ops.registerOnBackend(token)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            false
-        }
-
-    private suspend fun stashBeforeRegistration(token: String) {
+    private suspend fun stashBeforeRegistration(token: String, timeoutMillis: Long) {
+        requirePushOperationTimeout(timeoutMillis)
         withContext(NonCancellable) {
-            ops.stashPending(token)
+            withTimeout(timeoutMillis) {
+                ops.stashPending(token)
+            }
         }
+        currentCoroutineContext().ensureActive()
     }
+
 }
