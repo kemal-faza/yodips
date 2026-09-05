@@ -23,6 +23,18 @@ import { TELEMETRY_RUNTIME, type TelemetryRuntime } from '../observability/telem
 import { NestTelemetrySink } from '../observability/nest-telemetry.sink';
 import { KulonModule } from './kulon.module';
 import { cacheKeyForCurrent, cacheKeyForSession } from '../session/session-scope';
+import { SessionStore } from '../session/session-store';
+
+/** Minimal store stub for tests that never resolve the store (parseMoodleDate,
+ *  getCourseState, page-transport specs). */
+const NO_STORE: SessionStore = {
+  get: async () => null,
+  getIfGeneration: async () => null,
+  clear: async () => undefined,
+  clearIfGeneration: async () => true,
+  set: async () => undefined,
+  all: async () => [],
+};
 import type {
   KulonAssignment,
   KulonAssignmentDetail,
@@ -183,10 +195,10 @@ describe('sub-based session resolution (endpoint API)', () => {
     // Real seam wired with the same session-store fake: getContext resolves
     // the cookie from the store, fetchSesskeyOrThrow probes via global.fetch.
     return new KulonService(
+      store,
       undefined,
       undefined,
       new KulonUpstreamSession(store),
-      store,
     );
   }
 
@@ -268,7 +280,7 @@ describe('Kulon timed owner compatibility', () => {
         url: 'https://kulon2.undip.ac.id/user/profile.php',
         text: async () => '<title>Name 24060124120013: Public profile</title>',
       });
-    const service = new KulonService(undefined, undefined, undefined, undefined, runtime);
+    const service = new KulonService(NO_STORE, undefined, undefined, undefined, runtime);
 
     await expect(service.getSessionIdentity('cookie')).resolves.toBe('24060124120013');
     expect(events).toEqual([
@@ -305,7 +317,7 @@ describe('Kulon timed owner compatibility', () => {
         json: async () => [{ error: false, data: { courses: [] } }],
       } as any;
     }) as any;
-    const service = new KulonService(undefined, undefined, undefined, store, runtime);
+    const service = new KulonService(store as any, undefined, undefined, undefined, runtime);
 
     await expect(service.getCourses(ref('u1'))).resolves.toEqual([]);
     expect(events.some((event: any) => event.operation === 'sesskey')).toBe(true);
@@ -314,7 +326,7 @@ describe('Kulon timed owner compatibility', () => {
 
   it('uses timed fixed contexts for all four page operations', async () => {
     const { runtime, events } = recordingRuntime();
-    const service = new KulonService(undefined, undefined, undefined, undefined, runtime);
+    const service = new KulonService(NO_STORE, undefined, undefined, undefined, runtime);
     const internals = service as any;
     const page = '<html><head><title>Assignment</title></head><div id="intro"><div class="no-overflow">Description</div></div></html>';
     global.fetch = jest.fn().mockResolvedValue({
@@ -400,10 +412,10 @@ function makeAuthedKulonSvc(opts: { cache?: any; siap?: any } = {}): KulonServic
     checkSessionValid: (cookie: string) => real.checkSessionValid(cookie),
   };
   return new KulonService(
+    store as any,
     opts.cache,
     opts.siap,
     upstream as any,
-    store,
   );
 }
 
@@ -637,8 +649,6 @@ describe('KulonService', () => {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
-      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
-      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       checkSessionValid: jest.fn(),
       ajax: jest.fn(),
       fetchSesskeyOrThrow: jest.fn().mockResolvedValue('sk1'),
@@ -654,10 +664,10 @@ describe('KulonService', () => {
       .mockResolvedValueOnce({ courses: [] }) // 'inprogress'
       .mockResolvedValueOnce({ courses: [] }); // 'hidden'
     const service = new KulonService(
+      undefined as any,
       undefined,
       undefined,
       upstreamMock as any,
-      undefined,
     );
     await service.getCourses(ref('2304012012345'));
     expect(upstreamMock.getContextForSession).toHaveBeenCalledTimes(1);
@@ -679,15 +689,13 @@ describe('KulonService', () => {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
-      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
-      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const service = new KulonService(
+      undefined as any,
       cacheMock as any,
       undefined,
       upstreamMock as any,
-      undefined,
     );
     await service.getAllAssignments(ref('2304012012345'));
     expect(setSpy).toHaveBeenCalledWith(
@@ -714,10 +722,10 @@ describe('KulonService', () => {
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const svc = new KulonService(
+      undefined as any,
       cacheMock as any,
       undefined,
       upstreamMock as any,
-      undefined,
     );
     const spy = jest.spyOn(svc as any, 'fetchCourses');
     await svc.getAllAssignments(ref('u1'));
@@ -752,10 +760,10 @@ describe('KulonService', () => {
         .mockResolvedValue({ courses: [] }),
     };
     const svc = new KulonService(
+      undefined as any,
       cacheMock as any,
       undefined,
       upstreamMock as any,
-      undefined,
     );
     const progressSpy = jest.spyOn(svc as any, 'fetchCourseContent');
     await svc.getAllAssignments(ref('u1'));
@@ -794,10 +802,10 @@ describe('KulonService', () => {
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const svc = new KulonService(
+      undefined as any,
       { get: getSpy, getStale: getStaleSpy, set: setSpy, del: jest.fn() } as any,
       undefined,
       upstreamMock as any,
-      undefined,
     );
     // getAllAssignments will loop the cached course through fetchAssignmentIndex /
     // fetchQuizIndex (global.fetch). Mock it so the loop settles deterministically
@@ -846,10 +854,10 @@ describe('KulonService', () => {
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const service = new KulonService(
+      undefined as any,
       undefined,
       undefined,
       upstreamMock as any,
-      undefined,
     );
     await Promise.all([
       service.getAllAssignments(ref('S1')),
@@ -869,10 +877,10 @@ describe('KulonService', () => {
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const service = new KulonService(
+      undefined as any,
       undefined,
       undefined,
       upstreamMock as any,
-      undefined,
     );
     await Promise.all([
       service.getCourses(ref('S1')),
@@ -898,7 +906,7 @@ describe('KulonService', () => {
       getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
     };
-    const service = new KulonService(cache as any, undefined, upstreamMock as any);
+    const service = new KulonService(NO_STORE, cache as any, undefined, upstreamMock as any);
     const first = service.getCourses(ref('u1', 'a'.repeat(32)));
     await Promise.resolve();
     const second = service.getCourses(ref('u1', 'b'.repeat(32)));
@@ -929,7 +937,7 @@ describe('KulonService', () => {
       getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
     };
-    const service = new KulonService(cache as any, undefined, upstreamMock as any);
+    const service = new KulonService(NO_STORE, cache as any, undefined, upstreamMock as any);
     jest.spyOn(service as any, 'fetchAllAssignments').mockResolvedValue([]);
     await service.getAllAssignments(ref('u1', TEST_GEN));
     await service.getAllAssignmentsForCurrentSession('u1');
@@ -955,10 +963,10 @@ describe('KulonService', () => {
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const service = new KulonService(
+      undefined as any,
       undefined,
       undefined,
       upstreamMock as any,
-      undefined,
     );
     await service.getCourses(ref('S1'));
     await service.getCourses(ref('S1')); // sequential — NOT concurrent
@@ -1031,7 +1039,7 @@ describe('KulonService', () => {
           '<li id="section-2" data-sectionname="15 November - 22 November"></li>',
       });
     const courses = await svc.getCourses(ref('u1'));
-    expect(courses.find((c) => c.id === 1)?.progress).toBe(0);
+    expect((courses.find((c) => c.id === 1) as { progress?: number } | undefined)?.progress).toBe(0);
   });
 
   it('gets assignments with deadlines from calendar endpoint', async () => {
@@ -1618,7 +1626,7 @@ describe('KulonService', () => {
 describe('parseMoodleDate (B8 - WIB timezone)', () => {
   let svc: KulonService;
   beforeEach(() => {
-    svc = new KulonService();
+    svc = new KulonService(NO_STORE);
   });
 
   it('interprets Moodle timestamps as WIB (UTC+7) regardless of server timezone', () => {
@@ -1646,7 +1654,7 @@ describe('getCourseState', () => {
   });
 
   it('maps core_courseformat_get_state JSON into sections/items', async () => {
-    const svc = new KulonService();
+    const svc = new KulonService(NO_STORE);
     const state = JSON.parse(
       fs.readFileSync(
         path.join(__dirname, '../../test/fixtures/kulon/courseformat-state.json'),

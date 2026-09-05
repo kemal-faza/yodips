@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drainPendingEvent, type FlowEvent } from "./flow.js";
+import { drainPendingEvent, pollStatusForEpoch, type FlowEvent } from "./flow.js";
 import { createSerializedFlowRunner } from "./flow-runner.js";
 import {
   createLifecycleCoordinator,
@@ -213,6 +213,44 @@ describe("handoff race protection", () => {
     await logout;
     await expect(freshHandoff).resolves.toBe("fresh");
     expect(order).toEqual(["old-start", "old-end", "logout", "fresh"]);
+  });
+
+  it("restores a persisted epoch on SW restart so a pre-restart cached result stays fenced", async () => {
+    // Simulate: login completed at epoch 3 and cached a result; the SW is
+    // killed mid-logout (epoch bumped to 4 in memory but the process died
+    // before the persisted result was removed). On restart the persisted
+    // epoch 4 is restored, and the stale result tagged 3 is unreachable.
+    const lifecycle = createLifecycleCoordinator();
+    lifecycle.restoreEpoch(4);
+
+    // A fresh login request begins a NEW epoch, never joins the restored one.
+    const fresh = lifecycle.beginHandoff();
+    expect(fresh).toBe(5);
+
+    // A status poll carrying the OLD (pre-restart) epoch must never surface
+    // the stale pre-restart cached result — the epoch fence rejects it.
+    const stalePoll = pollStatusForEpoch(
+      3,
+      lifecycle.currentEpoch(),
+      { status: "ok", accessToken: "pre-restart-token" },
+      { core: "done", service: null },
+    );
+    expect(stalePoll).toEqual({
+      status: "error",
+      message: "Sesi login berubah. Silakan ulangi login.",
+    });
+  });
+
+  it("restoreEpoch never rewinds an already-advanced in-memory epoch", () => {
+    const lifecycle = createLifecycleCoordinator();
+    lifecycle.beginHandoff(); // → 1
+    lifecycle.invalidate(); // → 2
+    // A stale persisted value (e.g. written before the last invalidate) must
+    // not pull the epoch backwards.
+    lifecycle.restoreEpoch(1);
+    expect(lifecycle.currentEpoch()).toBe(2);
+    lifecycle.restoreEpoch(0);
+    expect(lifecycle.currentEpoch()).toBe(2);
   });
 
   it("clears parked events when the active flow fails", async () => {

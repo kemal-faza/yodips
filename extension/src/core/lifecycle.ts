@@ -14,7 +14,13 @@ import type { OutboundStatus } from "./contract.js";
 export interface HandoffLifecycleDeps {
   getState: () => Promise<FlowState>;
   setState: (state: FlowState) => Promise<void>;
-  removeLastResult: () => Promise<boolean>;
+  /**
+   * Remove the cached handoff result ONLY when it belongs to the CURRENT
+   * operation epoch. A result cached before an MV3 service-worker restart
+   * (or before a logout that never finished) carries an older tag and must
+   * NOT be removable by a fresh login — see lifecycle epoch persistence.
+   */
+  removeResult: (epoch: number) => Promise<boolean>;
   tabAlive: (tabId: number | null) => Promise<boolean>;
   getFlowCookies: (tabId: number | null) => Promise<CookieLite[]>;
   runFlow: (event: FlowEvent) => Promise<void>;
@@ -45,7 +51,11 @@ export async function performHandoff({
 
   let state = await deps.getState();
   if (cancelled()) return cancelledHandoff();
-  if (!(await deps.removeLastResult())) {
+  // Only a result tagged with THIS epoch may be cleared by this login. A
+  // pre-restart result (older tag) survives — it belongs to an operation the
+  // user never finished (e.g. logout interrupted by an SW kill), and the
+  // status poll must keep rejecting it via the epoch fence.
+  if (!(await deps.removeResult(requestEpoch))) {
     return {
       status: "error",
       message: "Login tidak dapat dimulai dengan aman. Coba lagi.",
@@ -87,7 +97,7 @@ export async function performHandoff({
 export interface LogoutLifecycleDeps {
   runLogout: () => Promise<void>;
   clearSessionCookies: () => Promise<boolean>;
-  removeLastResult: () => Promise<boolean>;
+  removeResult: (epoch: number) => Promise<boolean>;
   onFlowError?: (error: unknown) => void;
   onIncomplete?: (details: {
     flowCleared: boolean;
@@ -108,7 +118,7 @@ export async function performLogout(
   }
 
   const cookiesCleared = await deps.clearSessionCookies();
-  const resultCleared = await deps.removeLastResult();
+  const resultCleared = await deps.removeResult(0);
   if (!flowCleared || !cookiesCleared || !resultCleared) {
     deps.onIncomplete?.({ flowCleared, cookiesCleared, resultCleared });
     return {
@@ -116,7 +126,9 @@ export async function performLogout(
       message: "Logout belum selesai sempurna. Silakan coba lagi.",
     };
   }
-  return { status: "ok" };
+  // OutboundStatus requires accessToken on ok; a logout carries none, but the
+  // type is shared with handoff results. Callers only read `status`.
+  return { status: "ok" as const, accessToken: "" };
 }
 
 export interface StatusLifecycleDeps {

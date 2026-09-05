@@ -49,7 +49,7 @@ export function createSerializedFlowRunner(
         let guard = 0;
         while ((event !== null || pendingEvent !== null) && guard < 20) {
           guard++;
-          const currentEvent = event ?? (pendingEvent as FlowEvent);
+          const currentEvent: FlowEvent = event ?? (pendingEvent as FlowEvent);
           // Keep a parked event through a follow-up chain. It must be available
           // to drainPendingEvent after HANDOFF_OK has produced the terminal
           // state, rather than being silently discarded at the chain boundary.

@@ -1,32 +1,4 @@
-import { CapturedSession, isSessionGeneration } from '../playwright/playwright-auth.service';
-
-/**
- * Module-level singleton holder for the active SessionStore.
- *
- * NestJS module resolution has a blind spot: providers that are first needed
- * from a module whose own graph does not (yet) expose SessionStore get
- * constructed in that foreign context, where DI silently yields `undefined`
- * for an @Optional() SessionStore — even though the store exists and the
- * JWT guard (auth context) resolves it fine. The result was catastrophic and
- * hard to diagnose: `/api/auth/me` returned 200 (guard passed) while every
- * data endpoint returned 401 SESSION_DEAD (services saw no store).
- *
- * `createSessionStore` (SessionModule factory) registers the live instance
- * here; consumers (`KulonUpstreamSession`, `SiapUpstreamSession`,
- * `KulonService`, `SiapService`, poller) fall back to this holder when their
- * constructor injection came up empty. One process = one store; the holder is
- * written exactly once at bootstrap and never cleared.
- */
-let activeSessionStore: SessionStore | null = null;
-
-export function registerSessionStore(store: SessionStore): void {
-  activeSessionStore = store;
-}
-
-/** The bootstrap-registered store, or null before SessionModule initializes. */
-export function getRegisteredSessionStore(): SessionStore | null {
-  return activeSessionStore;
-}
+import { CapturedSession, isSessionGeneration } from './session-contract';
 
 /**
  * Generation-qualified reference to one login session: the JWT `sub` plus the
@@ -66,6 +38,16 @@ export function isSessionRef(v: unknown): v is SessionRef {
  * `capturedAt` is lifetime only; the JWT/session binding is the
  * collision-proof `sessionGeneration` (32 lowercase hex).
  * Bound to the DI token `SessionStore`; swap via SESSION_BACKEND.
+ *
+ * DI RULE (2026-09-05, SESSION_DEAD production blocker): every consumer MUST
+ * receive the store through MANDATORY constructor injection (`@Inject`), and
+ * SessionModule MUST be in the importing module's `imports` so Nest builds a
+ * real dependency edge to the async `useFactory` that awaits Redis
+ * connect()/ping(). There is deliberately NO process-global registry and NO
+ * `@Optional()` fallback here anymore: a provider constructed before the
+ * store exists (or in a module context that does not export it) must FAIL
+ * THE BOOTSTRAP loudly instead of capturing `undefined` and answering every
+ * data request with 401 SESSION_DEAD.
  */
 export abstract class SessionStore {
   abstract set(identity: string, session: CapturedSession): Promise<void>;

@@ -5,7 +5,12 @@ import { ConfigService } from '@nestjs/config';
 import { SSOAuthService } from '../sso/sso-auth.service';
 import { SSOTicketService } from '../sso/ticket.service';
 import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
-import { PlaywrightAuthService, CapturedSession, generateSessionGeneration, isSessionGeneration } from '../playwright/playwright-auth.service';
+import { PlaywrightAuthService } from '../playwright/playwright-auth.service';
+import {
+  CapturedSession,
+  generateSessionGeneration,
+  isSessionGeneration,
+} from '../session/session-contract';
 import { SessionStore } from '../session/session-store';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';

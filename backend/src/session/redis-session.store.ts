@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import Redis from 'ioredis';
-import { CapturedSession } from '../playwright/playwright-auth.service';
+import { CapturedSession } from './session-contract';
 import { SessionStore } from './session-store';
 
 const KEY_PREFIX = 'sso:session:';

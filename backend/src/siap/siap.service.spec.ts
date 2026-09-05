@@ -29,6 +29,7 @@ function makeAuthedSiapSvc(cache?: any): SiapService {
     getIfGeneration: async (_s: string, g: string) => (g === TEST_GEN ? record : null),
   };
   return new SiapService(
+    store as any,
     cache,
     new SiapUpstreamSession(store as any, cache),
   );
@@ -90,6 +91,7 @@ function makeRealSeamService(
   store: any = STORE,
 ): SiapService {
   return new SiapService(
+    store,
     cache,
     new SiapUpstreamSession(store, cache, api as any),
     api as any,
@@ -165,6 +167,7 @@ describe('SiapService', () => {
       // REAL seam: getContext reads the session store and mints through
       // apiMock.mintToken — no cookie → no-cookie stale 401.
       return new SiapService(
+        store as any,
         undefined,
         new SiapUpstreamSession(store as any, undefined, apiMock as any),
         apiMock as any,
@@ -280,7 +283,7 @@ describe('SiapService', () => {
         () => new Promise((resolve) => waiters.push(resolve)),
       );
       const upstream = makeSeamMock();
-      const service = new SiapService(cache as any, upstream);
+      const service = new SiapService(undefined as any, cache as any, upstream);
       const first = service.getProfile(ref('u1', 'a'.repeat(32)));
       await Promise.resolve();
       const second = service.getProfile(ref('u1', 'b'.repeat(32)));
@@ -310,7 +313,7 @@ describe('SiapService', () => {
         set: jest.fn(),
         del: jest.fn(),
       };
-      const service = new SiapService(cache as any, makeSeamMock());
+      const service = new SiapService(undefined as any, cache as any, makeSeamMock());
       await service.getJadwal(ref('u1', TEST_GEN));
       await service.getJadwalForCurrentSession('u1');
       expect(cache.getStale).toHaveBeenNthCalledWith(
@@ -661,6 +664,7 @@ describe('SiapService', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
     function notifSvc(): SiapService {
       return new SiapService(
+        undefined as any,
         undefined,
         makeSeamMock(),
         apiMock as any,
@@ -731,6 +735,7 @@ describe('SiapService', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
     function jadwalSvc(): SiapService {
       return new SiapService(
+        undefined as any,
         undefined,
         makeSeamMock(),
         apiMock as any,
@@ -813,6 +818,7 @@ describe('SiapService', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
     function absenSvc(): SiapService {
       return new SiapService(
+        undefined as any,
         undefined,
         makeSeamMock(),
         apiMock as any,
@@ -1249,6 +1255,7 @@ function makeApiSvc(
         : null,
   };
   return new SiapService(
+    store as any,
     cache,
     new SiapUpstreamSession(store as any, cache, apiMock as any),
     apiMock as SiapApiUpstream,
@@ -1265,6 +1272,7 @@ function makeService(opts: {
   cache?: any;
 }): SiapService {
   return new SiapService(
+    undefined as any,
     opts.cache,
     makeSeamMock(opts.seam ?? {}),
     opts.api as any,
@@ -1399,14 +1407,16 @@ describe('API-backed methods', () => {
           '<b>Email SSO</b>:</div><div class="col-sm-9">x@students.undip.ac.id</div>' +
           '</div></html>',
       );
+    const storeStub = {
+      get: async () => ({ siapCookie: 's', identity: '24060124120013', sessionGeneration: TEST_GEN, capturedAt: Date.now() }),
+      getIfGeneration: async (_s: string, g: string) =>
+        g === TEST_GEN ? { siapCookie: 's', identity: '24060124120013', sessionGeneration: TEST_GEN, capturedAt: Date.now() } : null,
+    } as any;
     const svc = new SiapService(
+      storeStub,
       undefined,
       new SiapUpstreamSession(
-        {
-          get: async () => ({ siapCookie: 's', identity: '24060124120013', sessionGeneration: TEST_GEN, capturedAt: Date.now() }),
-          getIfGeneration: async (_s: string, g: string) =>
-            g === TEST_GEN ? { siapCookie: 's', identity: '24060124120013', sessionGeneration: TEST_GEN, capturedAt: Date.now() } : null,
-        } as any,
+        storeStub,
         undefined,
         apiMock as any,
       ),
@@ -1442,6 +1452,7 @@ describe('API-backed methods', () => {
       getContextForCurrent: jest.fn().mockResolvedValue({ emailSso: EMAIL, nim: NIM, token: 'T1' }),
     };
     const svc = new SiapService(
+      undefined as any,
       undefined,
       upstreamMock as any,
       apiMock2 as unknown as SiapApiUpstream,
@@ -1590,7 +1601,7 @@ describe('API-backed methods', () => {
       wallNowMs: () => 1_000,
       monotonicNowNs: () => 1_000_000n,
     };
-     const service = new SiapService(undefined, undefined, undefined, undefined, runtime);
+     const service = new SiapService(undefined as any, undefined, undefined, undefined, undefined, runtime);
     const fetchMock = jest.spyOn(global, 'fetch');
     fetchMock.mockClear();
     fetchMock
