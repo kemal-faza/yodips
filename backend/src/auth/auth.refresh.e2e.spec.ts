@@ -66,9 +66,17 @@ describe('AuthModule refresh E2E (temporary)', () => {
   });
 
   it('an EXPIRED but validly-signed JWT is rejected by the guard, then silently rotated by /refresh; the new token passes the guard', async () => {
-    // Sign with a PAST expiry using the app's own config/secret/iss/aud.
+    // Seed a live session so the expired token below can carry a real generation
+    // (the guard requires the claim from Task 2 on).
+    const session = await request(app.getHttpServer())
+      .post('/api/auth/session/handoff')
+      .send({ kulonCookie: 'MoodleSession=E2E-ROT', siapCookie: 'sia_app_session=E2E-ROT' })
+      .expect(201);
+    const generation = session.body.capturedAt as number;
+    // Sign with a PAST expiry using the app's own config/secret/iss/aud and the
+    // live session generation.
     const expired = await jwt.signAsync(
-      { sub: NIM, via: 'handoff' },
+      { sub: NIM, via: 'handoff', sessionCapturedAt: generation },
       { expiresIn: '-1h' },
     );
 

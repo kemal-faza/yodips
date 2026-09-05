@@ -54,13 +54,17 @@ describe('PairingService', () => {
     });
   });
 
-  it('consume ternormalisasi (lowercase+dash+huruf ambigu) lalu mint JWT via=pair', async () => {
-    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '' });
+  it('consume ternormalisasi (lowercase+dash+huruf ambigu) lalu mint JWT via=pair dengan sessionCapturedAt dari record hidup', async () => {
+    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '', capturedAt: 1234 });
     // simpan via jalur service agar hash konsisten:
     const req = await service.requestPairing('NIM1');
     const messy = req.code.toLowerCase().slice(0, 4) + '-' + req.code.slice(4);
     const res = await service.consume(messy);
-    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: 'NIM1', via: 'pair' });
+    expect(jwt.signAsync).toHaveBeenCalledWith({
+      sub: 'NIM1',
+      via: 'pair',
+      sessionCapturedAt: 1234,
+    });
     expect(res).toEqual({ accessToken: 'jwt-pair', hasKulon: true, hasSiap: false });
   });
 

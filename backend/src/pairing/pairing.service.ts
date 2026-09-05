@@ -74,7 +74,11 @@ export class PairingService {
       );
     }
     // via='pair' → AuthService.me() tidak mensyaratkan ssoCookie (lihat me()).
-    const accessToken = await this.jwt.signAsync({ sub: outcome.record.sub, via: 'pair' });
+    const accessToken = await this.jwt.signAsync({
+      sub: outcome.record.sub,
+      via: 'pair',
+      sessionCapturedAt: session.capturedAt,
+    });
     return {
       accessToken,
       hasKulon: !!session.kulonCookie,
