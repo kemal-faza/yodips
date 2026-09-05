@@ -1,8 +1,11 @@
 package ac.undip.sso.core.push
 
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -157,6 +160,128 @@ class PushTokenCoordinatorTest {
         coordinator.onLogout()
         assertTrue(ops.unregistered.isEmpty())
         assertNull(coordinator.activeToken)
+    }
+
+    @Test
+    fun `concurrent onNewToken waits for paused onLogout, no orphan or overwrite`() = runTest {
+        // HIGH race: without serialization, a rotation racing logout can
+        // register on the backend BETWEEN the logout unregister and the
+        // activeToken nulling — leaving a backend-registered orphan nobody
+        // tracks, or its activeToken write gets wiped by the logout's
+        // finally. Deterministic: deferred gates, no sleeps, through the
+        // REAL production PushTokenCoordinator.
+        val unregisterEntered = CompletableDeferred<Unit>()
+        val releaseUnregister = CompletableDeferred<Unit>()
+        val registered = mutableListOf<String>()
+        val ops =
+            FakeOps(
+                unregister = {
+                    unregisterEntered.complete(Unit)
+                    releaseUnregister.await() // logout holds the transition
+                    true
+                },
+                register = {
+                    registered += it
+                    true
+                },
+            )
+        val coordinator = coordinator(ops)
+        coordinator.onNewToken("fcm-old", loggedIn = true)
+        assertEquals("fcm-old", coordinator.activeToken)
+        val logout = async { coordinator.onLogout() }
+        unregisterEntered.await() // logout is inside unregister, lock held
+        val rotated = async { coordinator.onNewToken("fcm-new", loggedIn = true) }
+        yield() // let the rotation reach the transition lock and suspend
+        yield()
+        assertTrue(
+            "rotation must wait for the paused logout, not register early",
+            "fcm-new" !in registered,
+        )
+        assertEquals("fcm-old", coordinator.activeToken)
+        releaseUnregister.complete(Unit)
+        logout.await()
+        rotated.await()
+        // Logout unregistered exactly the old token and cleared; the rotation
+        // then registered once and is tracked — no orphan, no stale wipe.
+        assertEquals(listOf("fcm-old"), ops.unregistered)
+        assertEquals(listOf("fcm-old", "fcm-new"), registered)
+        assertEquals("fcm-new", coordinator.activeToken)
+    }
+
+    @Test
+    fun `concurrent onLogin waits for paused onLogout`() = runTest {
+        // Same transition lock the other way: a login racing logout must not
+        // register + track a token that the logout's finally then wipes.
+        val unregisterEntered = CompletableDeferred<Unit>()
+        val releaseUnregister = CompletableDeferred<Unit>()
+        val registered = mutableListOf<String>()
+        val ops =
+            FakeOps(
+                unregister = {
+                    unregisterEntered.complete(Unit)
+                    releaseUnregister.await()
+                    true
+                },
+                register = {
+                    registered += it
+                    true
+                },
+            )
+        val coordinator = coordinator(ops)
+        coordinator.onNewToken("fcm-old", loggedIn = true)
+        val logout = async { coordinator.onLogout() }
+        unregisterEntered.await()
+        val login = async { coordinator.onLogin() }
+        yield() // let the login reach the transition lock and suspend
+        yield()
+        assertTrue("login must wait for the paused logout", "fcm-fresh" !in registered)
+        assertEquals("fcm-old", coordinator.activeToken)
+        releaseUnregister.complete(Unit)
+        logout.await()
+        assertEquals("fcm-fresh", login.await())
+        assertEquals(listOf("fcm-old", "fcm-fresh"), registered)
+        assertEquals("fcm-fresh", coordinator.activeToken)
+    }
+
+    @Test
+    fun `cancelled lock waiter propagates without touching backend or activeToken`() = runTest {
+        // Cancellation while QUEUED on the transition lock must rethrow from
+        // the waiter itself and leave backend + activeToken untouched.
+        val unregisterEntered = CompletableDeferred<Unit>()
+        val releaseUnregister = CompletableDeferred<Unit>()
+        val registered = mutableListOf<String>()
+        val ops =
+            FakeOps(
+                unregister = {
+                    unregisterEntered.complete(Unit)
+                    releaseUnregister.await()
+                    true
+                },
+                register = {
+                    registered += it
+                    true
+                },
+            )
+        val coordinator = coordinator(ops)
+        coordinator.onNewToken("fcm-old", loggedIn = true)
+        val logout = async { coordinator.onLogout() }
+        unregisterEntered.await()
+        val waiter = async { coordinator.onNewToken("fcm-new", loggedIn = true) }
+        yield() // let the waiter queue on the transition lock
+        yield()
+        waiter.cancel()
+        try {
+            waiter.await()
+            fail("expected CancellationException")
+        } catch (expected: CancellationException) {
+            // waiter never acquired the lock — must propagate
+        }
+        releaseUnregister.complete(Unit)
+        logout.await()
+        assertTrue("cancelled waiter must never hit the backend", "fcm-new" !in registered)
+        assertEquals(listOf("fcm-old"), registered)
+        assertEquals(listOf("fcm-old"), ops.unregistered)
+        assertNull("logout cleared the old token; nothing overwrote it", coordinator.activeToken)
     }
 
     @Test
