@@ -14,14 +14,17 @@ import kotlinx.coroutines.CancellationException
  *    [CancellationException] propagates from either step (never converted
  *    into best-effort); a server-side cancellation skips the browser step,
  *    exactly like the Android push path.
- *  - [localCleanup] is NON-SUSPENDING (`() -> Unit` compatible) and runs
- *    LAST: history clear is only SCHEDULED (IndexedDB suspends), while the
- *    persisted JWT is removed SYNCHRONOUSLY inline via
- *    [Ops.clearPersistedCredentialsImmediately] BEFORE [Ops.showLoggedOutUi]
- *    flips the UI — a scheduled clear would let the logged-out UI outrun
- *    the localStorage removal (a kill/restart in between resurrects the
- *    session). Production `TokenStore.wasmJs.clear()` delegates to the same
- *    `clearImmediately()` primitive, so both paths remove identical state.
+ *  - [localCleanup] is SUSPENDING (`suspend () -> Unit`, awaited inline by
+ *    [SessionLogout] under NonCancellable) and runs LAST: history clear is
+ *    only SCHEDULED (IndexedDB suspends), while the persisted JWT is removed
+ *    SYNCHRONOUSLY inline via [Ops.clearPersistedCredentialsImmediately]
+ *    BEFORE the first suspension point and BEFORE [Ops.showLoggedOutUi]
+ *    flips the UI — the synchronous removal never awaits anything, so no
+ *    cancellation can interleave between it and the call, and a scheduled
+ *    clear would let the logged-out UI outrun the localStorage removal (a
+ *    kill/restart in between resurrects the session). Production
+ *    `TokenStore.wasmJs.clear()` delegates to the same `clearImmediately()`
+ *    primitive, so both paths remove identical state.
  *
  * No browser/DOM API enters common code: every platform effect (push
  * support probe, server DELETE, browser unsubscribe, history scheduling,
@@ -57,10 +60,14 @@ class WasmLogoutCoordinator(private val ops: Ops) {
         }
     }
 
-    fun localCleanup() {
+    suspend fun localCleanup() {
         ops.scheduleHistoryClear()
         ops.clearAuthToken()
-        ops.clearPersistedCredentialsImmediately() // synchronous, before the UI flip
+        // SYNCHRONOUS persisted-JWT removal: this call itself never suspends
+        // (localStorage + StateFlow reset inline), so it completes BEFORE the
+        // first suspension point below and BEFORE the UI flip — even under
+        // cancellation, which NonCancellable defers until after this returns.
+        ops.clearPersistedCredentialsImmediately()
         ops.showLoggedOutUi()
     }
 }

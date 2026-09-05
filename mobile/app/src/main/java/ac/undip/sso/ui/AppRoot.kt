@@ -97,16 +97,16 @@ fun AppRoot(
             pushUnregister = { PushGraph.onLogout() },
             revokeServerSession = { Backend.api.logout() },
             localCleanup = {
-                // NON-SUSPENDING, unconditional, runs LAST — both server
-                // calls above already attempted with the (still-live)
-                // bearer. Token nulled, persisted session + WebView cookies
-                // wiped, expired-event counter reset, UI flips to login.
-                // The lambda type is `() -> Unit` (R2-1): nothing here may
-                // suspend. tokenStore.clear() is a suspending DataStore edit
-                // → launched fire-and-forget on the surviving hoisted scope,
-                // exactly as today, NEVER awaited inline.
+                // SUSPENDING, unconditional, runs LAST under NonCancellable
+                // inside SessionLogout.logout() — both server calls above
+                // already attempted with the (still-live) bearer. The
+                // DataStore edit is AWAITED inline (never fire-and-forget):
+                // a logout scope cancelled by Activity destruction mid-write
+                // still completes the removal, so the persisted JWT cannot
+                // survive to resurrect the session after restart. Durable
+                // removal completes BEFORE the UI flips to login (last).
+                tokenStore.clear() // durable: awaited DataStore edit, first
                 Backend.authToken = null
-                scope.launch { tokenStore.clear() }
                 runCatching { CookieManager.getInstance().removeAllCookies(null) }
                 SessionExpiredEvents.consume()
                 hasToken = false
