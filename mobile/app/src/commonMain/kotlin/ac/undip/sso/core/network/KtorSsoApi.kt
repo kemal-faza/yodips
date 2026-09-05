@@ -142,4 +142,15 @@ class KtorSsoApi(
         }
         return json.decodeFromString<PushDeviceResponse>(handle(resp))
     }
+
+    override suspend fun logout(): LogoutResponse {
+        val resp = client.post("$root/api/auth/logout") {
+            // Empty JSON body + explicit content type (pattern yang sama dengan
+            // Backend.refresh) — MockEngine/ktor meng-expose Content-Type lewat
+            // body.contentType hanya bila ada body yang ter-set.
+            setBody(ByteArray(0))
+            contentType(ContentType.Application.Json)
+        }
+        return json.decodeFromString<LogoutResponse>(handle(resp))
+    }
 }
