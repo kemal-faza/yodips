@@ -207,6 +207,21 @@ export function pollStatus(
   };
 }
 
+export function pollStatusForEpoch(
+  requestEpoch: number,
+  currentEpoch: number,
+  cached: OutboundStatus | undefined,
+  state: Pick<FlowState, "core" | "service">,
+): PollStatus {
+  if (requestEpoch !== currentEpoch) {
+    return {
+      status: "error",
+      message: "Sesi login berubah. Silakan ulangi login.",
+    };
+  }
+  return pollStatus(cached, state);
+}
+
 /** Adapter-gathered inputs for an external handoff request (chrome.* I/O). */
 export interface HandoffRequestInputs {
   state: FlowState;
@@ -278,6 +293,22 @@ export function handoffSyncResponse(
     };
   }
   return { status: "started", mode: after.mode };
+}
+
+/**
+ * Select an event parked while the serialized flow was busy. A REQUEST parked
+ * during a successful handoff is stale: replaying it would mint a second JWT
+ * and revoke the generation just handed to the app.
+ */
+export function drainPendingEvent(
+  completed: FlowEvent,
+  after: Pick<FlowState, "core">,
+  pending: FlowEvent | null,
+): FlowEvent | null {
+  if (completed.type === "HANDOFF_OK" && after.core === "done" && pending?.type === "REQUEST") {
+    return null;
+  }
+  return pending;
 }
 
 function deadline(deps: FlowDeps): number {
