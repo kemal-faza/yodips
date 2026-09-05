@@ -9,10 +9,6 @@ import {
   attachTab,
   redact,
   normalizeState,
-  pollStatus,
-  isPhaseSatisfied,
-  decideHandoffRequest,
-  handoffSyncResponse,
   type FlowState,
   type FlowEvent,
   type FlowEffect,
@@ -31,6 +27,9 @@ import {
   buildSiapTicketUrl,
 } from "./core/urls.js";
 import type { HandoffRaw, Service, OutboundStatus } from "./core/contract.js";
+import { createLifecycleCoordinator } from "./core/single-flight.js";
+import { createSerializedFlowRunner } from "./core/flow-runner.js";
+import { performHandoff, performLogout, performStatus } from "./core/lifecycle.js";
 
 const SERVER_KEY = "serverUrl";
 const STATE_KEY = "ssoLoginState";
@@ -120,11 +119,14 @@ async function fetchHandoff(url: string, body: unknown): Promise<HandoffRaw> {
   return { ok: res.ok, status: res.status, ...data };
 }
 
-async function clearCookies(service: Service): Promise<void> {
+async function clearCookies(service: Service): Promise<boolean> {
+  let complete = true;
   let stores: { id: string; tabIds: number[] }[] = [];
   try {
     stores = await chrome.cookies.getAllCookieStores();
-  } catch {
+  } catch (err) {
+    console.warn("[Undip SSO] cookie-store enumeration failed", { service, err });
+    complete = false;
     stores = [];
   }
   // Clear from EVERY cookie store (regular + each incognito store): a logout
@@ -142,24 +144,61 @@ async function clearCookies(service: Service): Promise<void> {
               ? c.name === p.name
               : p.name.test(c.name);
           if (!match) continue;
-          await chrome.cookies
-            .remove({
+          try {
+            const removed = await chrome.cookies.remove({
               name: c.name,
-              url: `https://${c.domain.replace(/^\./, "")}/`,
-              ...(storeId ? { storeId } : {}),
-            })
-            .catch(() => {});
+              url: `https://${c.domain.replace(/^\./, "")}${c.path.startsWith("/") ? c.path : `/${c.path}`}`,
+              storeId: c.storeId,
+              ...(c.partitionKey ? { partitionKey: c.partitionKey } : {}),
+            });
+            if (!removed) {
+              console.warn("[Undip SSO] cookie removal returned no cookie", {
+                service,
+                storeId: c.storeId,
+                name: c.name,
+              });
+              complete = false;
+            }
+          } catch (err) {
+            console.warn("[Undip SSO] cookie removal failed", {
+              service,
+              storeId: c.storeId,
+              name: c.name,
+              err,
+            });
+            complete = false;
+          }
         }
-      } catch {
-        /* best-effort */
+      } catch (err) {
+        console.warn("[Undip SSO] cookie enumeration failed", {
+          service,
+          storeId,
+          err,
+        });
+        complete = false;
       }
     }
   }
+  return complete;
 }
 
-async function clearSessionCookies(): Promise<void> {
+async function clearSessionCookies(): Promise<boolean> {
+  let complete = true;
   const all: Service[] = ["sso", "kulon", "siap"];
-  for (const s of all) await clearCookies(s);
+  for (const s of all) {
+    if (!(await clearCookies(s))) complete = false;
+  }
+  return complete;
+}
+
+async function removeLastResult(): Promise<boolean> {
+  try {
+    await chrome.storage.session.remove(LAST_RESULT_KEY);
+    return true;
+  } catch (err) {
+    console.warn("[Undip SSO] cached handoff result removal failed", err);
+    return false;
+  }
 }
 
 async function sendToApp(
@@ -293,159 +332,146 @@ async function applyEffect(
   }
 }
 
-let runBusy = false;
-// Event that arrived while the flow was busy — replay it right after the
-// current pass instead of silently dropping it (a dropped COOKIE_SET used to
-// stall the cascade until the next alarm tick).
-let pendingEvent: FlowEvent | null = null;
+const lifecycle = createLifecycleCoordinator();
 
 /**
  * Single serialized entry point. Reads state + cookies, feeds the event into
  * the pure state machine, applies generated effects, and — when an effect
  * yields a follow-up event (e.g. HANDOFF_*) — continues within the same pass.
- * Any event that arrives while this runs is parked in `pendingEvent` and
- * drained immediately after, so no cookie change is ever lost.
+ * Any event that arrives while this runs is parked and drained immediately
+ * after, so no cookie change is ever lost. Callers that arrive during an
+ * active run join its promise and do not observe completion until their
+ * parked event has been consumed or discarded.
  */
-async function runFlow(initialEvent: FlowEvent): Promise<void> {
-  if (runBusy) {
-    pendingEvent = initialEvent;
-    return;
-  }
-  runBusy = true;
-  try {
-    let event: FlowEvent | null = initialEvent;
-    let guard = 0;
-    // Process the initial event, its follow-up chain (handoff decisions), AND
-    // any events that arrived while we were inside effects — `pendingEvent` is
-    // drained inline so nothing is lost and nothing reconstructs the lock.
-    while ((event !== null || pendingEvent !== null) && guard < 20) {
-      guard++;
-      const ev: FlowEvent = event ?? (pendingEvent as FlowEvent);
-      pendingEvent = null; // consumed below (fresh ones re-arrive via listeners)
-      const state = await getState();
-      const cookies = await getFlowCookies(state.tabId);
-      const flags = evaluateCookies(cookies);
-      const deps = {
-        flags,
-        now: Date.now,
-        MAX_RELOGIN,
-        PHASE_TIMEOUT_MS,
-        SSO_GUARD_MS,
-        loginUrl,
-      };
-      console.info("[Undip SSO] transition", ev.type, {
-        ...redact(state),
-        flags,
-      });
-      const { state: next, effects } = advance(state, ev, deps);
+const runFlow = createSerializedFlowRunner(async (ev) => {
+  const state = await getState();
+  const cookies = await getFlowCookies(state.tabId);
+  const flags = evaluateCookies(cookies);
+  const deps = {
+    flags,
+    now: Date.now,
+    MAX_RELOGIN,
+    PHASE_TIMEOUT_MS,
+    SSO_GUARD_MS,
+    loginUrl,
+  };
+  console.info("[Undip SSO] transition", ev.type, {
+    ...redact(state),
+    flags,
+  });
+  const { state: next, effects } = advance(state, ev, deps);
 
-      let current = next;
-      let follow: FlowEvent | null = null;
-      for (const e of effects) {
-        const r = await applyEffect(current, e);
-        if (r.follow) follow = r.follow;
-        current = r.state;
-      }
-      await setState(current);
-      // Follow-up (handoff → HANDOFF_*) takes precedence; otherwise pick up a
-      // parked event so e.g. a cookie change mid-pass is not lost.
-      event = follow ?? pendingEvent;
-      if (event !== follow) pendingEvent = null;
-    }
-  } finally {
-    runBusy = false;
+  let current = next;
+  let follow: FlowEvent | null = null;
+  for (const e of effects) {
+    const r = await applyEffect(current, e);
+    if (r.follow) follow = r.follow;
+    current = r.state;
   }
-}
+  await setState(current);
+  return { after: current, follow };
+});
 
 chrome.runtime.onMessageExternal.addListener(
   (message, sender, sendResponse) => {
+    const action = (message as { action?: string })?.action;
+    if (action === "logout") lifecycle.invalidate();
+    const messageEpoch =
+      action === "handoff"
+        ? lifecycle.beginHandoff()
+        : lifecycle.currentEpoch();
     void (async () => {
       const appTabId = sender?.tab?.id ?? null;
       console.info(
         "[Undip SSO] external action",
-        (message as { action?: string })?.action,
+        action,
         { senderTabId: appTabId },
       );
       try {
-        switch ((message as { action?: string })?.action) {
-          case "ping":
-            return void sendResponse({ status: "ok" });
-          case "status": {
-            // Self-healing poll: return the last completed handoff result when
-            // one exists (lets the SPA recover the JWT), otherwise report the
-            // current flow state. pollStatus converts an inactive+no-result flow
-            // to a terminal error so the SPA polling loop can settle instead of
-            // hanging forever on a dead flow.
-            const cached = (await chrome.storage.session.get(LAST_RESULT_KEY))[
-              LAST_RESULT_KEY
-            ] as OutboundStatus | undefined;
-            const s = await getState();
-            return void sendResponse(pollStatus(cached, s));
-          }
-          case "logout":
-            // Full teardown so the next login starts clean: clear session cookies,
-            // reset the flow state machine (closes login tabs + clears timers), and
-            // drop any cached handoff result so a stale JWT can't resurface via the
-            // status poll after an explicit logout.
-            await clearSessionCookies();
-            await chrome.storage.session
-              .remove(LAST_RESULT_KEY)
-              .catch(() => {});
-            await runFlow({ type: "LOGOUT" });
-            return void sendResponse({ status: "ok" });
-          case "done": {
-            await runFlow({ type: "USER_DONE" });
-            return void sendResponse({ status: "started" });
-          }
-          case "handoff": {
-            let state = await getState();
-            // A fresh flow must not inherit a stale completed result (e.g. a
-            // previous login's JWT surfacing via the status poll).
-            await chrome.storage.session
-              .remove(LAST_RESULT_KEY)
-              .catch(() => {});
-            // Pre-run policy (zombie recovery, wedged-phase reset, double-start
-            // guard) is decided in core/flow.ts; the adapter gathers the
-            // chrome.* inputs and executes the returned decision.
-            const decision = decideHandoffRequest({
-              state,
-              tabAlive: await tabAlive(state.tabId),
-              phaseSatisfied: isPhaseSatisfied(
-                state,
-                evaluateCookies(await getFlowCookies(state.tabId)),
-              ),
-            });
-            if (decision.kind === "reset") {
-              console.info(
-                decision.reason === "zombie-tab"
-                  ? "[Undip SSO] zombie flow: login tab gone — resetting"
-                  : "[Undip SSO] wedged in a satisfied phase — resetting",
-                { core: state.core, tabId: state.tabId, service: state.service },
-              );
-              state = initialState(state.mode);
-            } else if (decision.kind === "already-started") {
-              return void sendResponse({
-                status: "started",
-                mode: decision.mode,
-                message: "Login sedang berjalan.",
-              });
-            }
-            await setState({ ...state, appTabId });
-            await runFlow({ type: "REQUEST", mode: "auto" });
-            const after = await getState();
-            // In-pass finish/failure interpretation + cached-result replay:
-            // decided in core, executed here.
-            const cached = (
-              await chrome.storage.session.get(LAST_RESULT_KEY)
-            )[LAST_RESULT_KEY] as OutboundStatus | undefined;
-            return void sendResponse(handoffSyncResponse(after, cached));
-          }
-          default:
-            return void sendResponse({
-              status: "error",
-              message: "Unknown action",
-            });
+        if (action === "logout") {
+          // Full teardown so the next login starts clean: clear session cookies,
+          // reset the flow state machine (closes login tabs + clears timers), and
+          // drop any cached handoff result so a stale JWT can't resurface via the
+          // status poll after an explicit logout. Run the state transition first
+          // so a handoff already in progress cannot cache a fresh token after
+          // these cleanup operations.
+          const result = await lifecycle.enqueue(() =>
+            performLogout({
+              runLogout: () => runFlow({ type: "LOGOUT" }),
+              clearSessionCookies,
+              removeLastResult,
+              onFlowError: (err) =>
+                console.warn(
+                  "[Undip SSO] flow teardown failed; continuing cleanup",
+                  err,
+                ),
+              onIncomplete: (details) =>
+                console.error("[Undip SSO] logout cleanup incomplete", details),
+            }),
+          );
+          return void sendResponse(result);
         }
+        if (action === "handoff") {
+          const response = await lifecycle.handoff(
+            messageEpoch,
+            () =>
+              performHandoff({
+                requestEpoch: messageEpoch,
+                currentEpoch: lifecycle.currentEpoch,
+                appTabId,
+                deps: {
+                  getState,
+                  setState,
+                  removeLastResult,
+                  tabAlive,
+                  getFlowCookies,
+                  runFlow,
+                  getCachedResult: async () =>
+                    (
+                      await chrome.storage.session.get(LAST_RESULT_KEY)
+                    )[LAST_RESULT_KEY] as OutboundStatus | undefined,
+                  onReset: (state, reason) =>
+                    console.info(
+                      reason === "zombie-tab"
+                        ? "[Undip SSO] zombie flow: login tab gone — resetting"
+                        : "[Undip SSO] wedged in a satisfied phase — resetting",
+                      { core: state.core, tabId: state.tabId, service: state.service },
+                    ),
+                },
+              }),
+          );
+          return void sendResponse(response);
+        }
+        if (action === "status") {
+          // Self-healing poll: return the last completed handoff result when
+          // one exists (lets the SPA recover the JWT), otherwise report the
+          // current flow state. pollStatus converts an inactive+no-result flow
+          // to a terminal error so the SPA polling loop can settle instead of
+          // hanging forever on a dead flow.
+          const response = await performStatus({
+            requestEpoch: messageEpoch,
+            currentEpoch: lifecycle.currentEpoch,
+            deps: {
+              getCachedResult: async () =>
+                (
+                  await chrome.storage.session.get(LAST_RESULT_KEY)
+                )[LAST_RESULT_KEY] as OutboundStatus | undefined,
+              getState,
+            },
+          });
+          return void sendResponse(response);
+        }
+        if (action === "done") {
+          await runFlow({ type: "USER_DONE" });
+          return void sendResponse({ status: "started" });
+        }
+        if (action === "ping") {
+          return void sendResponse({ status: "ok" });
+        }
+        return void sendResponse({
+          status: "error",
+          message: "Unknown action",
+        });
       } catch (err) {
         sendResponse({
           status: "error",
