@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useKulonStore } from './kulon';
 import * as api from '../api/client';
-import { clearCache } from '../api/cache';
+import { clearCache, CacheStaleError } from '../api/cache';
 
 vi.mock('../api/client', () => ({
   getAllAssignments: vi.fn(), getAssignments: vi.fn(),
@@ -48,5 +48,105 @@ describe('KulonStore', () => {
     clearCache();
     await store.ensureAssignments();
     expect(api.getAllAssignments).toHaveBeenCalledTimes(2); // cache purged → refetch
+  });
+
+  it('reset() clears user data but keeps device preferences', () => {
+    const store = useKulonStore();
+    store.assignments = [{ id: 1 } as any];
+    store.courses = [{ id: 2 } as any];
+    store.hide(7);
+    store.reset();
+    expect(store.assignments).toEqual([]);
+    expect(store.courses).toEqual([]);
+    expect(store.isHidden(7)).toBe(true); // local device preference, not server user data
+  });
+});
+
+describe('KulonStore generation-stale consumer (CRITICAL)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    clearCache();
+    vi.clearAllMocks();
+  });
+
+  it('deferred A completion after clearCache never writes the Pinia store', async () => {
+    // Real cache layer + real Pinia store: the A-era fetch is in flight when
+    // logout wipes the cache. The stale completion must neither populate the
+    // store with logged-out-user data nor surface a user-facing error — the
+    // waiter is cancelled silently and B refetches fresh.
+    const store = useKulonStore();
+    let resolveA!: (v: unknown) => void;
+    (api.getAllAssignments as any).mockImplementation(
+      () => new Promise((res) => { resolveA = res; }),
+    );
+    const pA = store.ensureAssignments(); // A-era, pending
+    clearCache(); // logout wipe crosses the in-flight fetch
+    resolveA([{ id: 1 }]); // A-era data arrives late
+    await pA; // swallowed silently — never rejects to the view, never writes
+    expect(store.assignments).toEqual([]); // no logged-out-user data in the store
+    // B-era refetch after the wipe gets fresh data, never A data.
+    (api.getAllAssignments as any).mockResolvedValue([{ id: 2 }]);
+    await store.ensureAssignments();
+    expect(store.assignments).toEqual([{ id: 2 }]);
+  });
+
+  it('deferred A courses completion after clearCache never writes the Pinia store', async () => {
+    const store = useKulonStore();
+    let resolveA!: (v: unknown) => void;
+    (api.getCourses as any).mockImplementation(
+      () => new Promise((res) => { resolveA = res; }),
+    );
+    const pA = store.ensureCourses();
+    clearCache();
+    resolveA([{ id: 9 }]);
+    await pA;
+    expect(store.courses).toEqual([]);
+    (api.getCourses as any).mockResolvedValue([{ id: 10 }]);
+    await store.ensureCourses();
+    expect(store.courses).toEqual([{ id: 10 }]);
+  });
+
+  it('fresh cache-hit completion after clearCache never commits to Pinia', async () => {
+    const store = useKulonStore();
+    (api.getAllAssignments as any).mockResolvedValue([{ id: 1 }]);
+    await store.ensureAssignments();
+    store.assignments = [];
+
+    const pending = store.ensureAssignments();
+    clearCache(); // the cache hit has been returned, but its async delivery is pending
+    await pending;
+
+    expect(store.assignments).toEqual([]);
+  });
+
+  it('stale cache-hit completion after clearCache never commits to Pinia', async () => {
+    const store = useKulonStore();
+    (api.getAllAssignments as any)
+      .mockResolvedValueOnce([{ id: 1 }])
+      .mockResolvedValueOnce([{ id: 2 }]);
+    await store.ensureAssignments();
+    store.assignments = [];
+
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 3 * 60_000 + 1);
+    const pending = store.ensureAssignments();
+    clearCache(); // crosses both stale delivery and its background refresh
+    await pending;
+    vi.useRealTimers();
+
+    expect(store.assignments).toEqual([]);
+  });
+
+  it('deferred A content completion after clearCache rejects typed (views swallow, never render stale)', async () => {
+    const store = useKulonStore();
+    let resolveA!: (v: unknown) => void;
+    (api.getCourseContent as any).mockImplementation(
+      () => new Promise((res) => { resolveA = res; }),
+    );
+    const pA = store.ensureContent(9);
+    void pA.catch(() => {}); // typed stale rejection asserted below, never unhandled
+    clearCache();
+    resolveA({ courseId: 9, sections: [] });
+    await expect(pA).rejects.toBeInstanceOf(CacheStaleError);
   });
 });

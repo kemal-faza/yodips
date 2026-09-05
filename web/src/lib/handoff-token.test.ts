@@ -8,7 +8,7 @@ import {
 describe('parseFragmentAccessToken (YD-AUTH-002 shared helper)', () => {
   // Strict three-segment base64url JWT fixture (header.payload.signature) —
   // same shape the capture tool's #access_token fragment delivers.
-  const GOOD_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-1_2-3';
+  const GOOD_TOKEN = 'AAA.BBB.CCC';
 
   it('parses a valid #access_token=<three-segment JWT> fragment', () => {
     expect(parseFragmentAccessToken(`#access_token=${GOOD_TOKEN}`)).toBe(GOOD_TOKEN);
