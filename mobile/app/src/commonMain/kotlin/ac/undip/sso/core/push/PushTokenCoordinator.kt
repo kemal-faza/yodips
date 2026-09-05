@@ -43,7 +43,14 @@ import kotlinx.coroutines.withContext
  * on the lock never entered the transition: it rethrows without touching
  * the backend or [activeToken].
  */
-class PushTokenCoordinator(val registration: PushRegistration) {
+class PushTokenCoordinator(
+    val registration: PushRegistration,
+    private val operationTimeoutMillis: Long = DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS,
+) {
+    init {
+        requirePushOperationTimeout(operationTimeoutMillis)
+    }
+
     private val transition = Mutex()
     private var activeSession = false
     private var sessionGeneration = 0L
@@ -59,7 +66,10 @@ class PushTokenCoordinator(val registration: PushRegistration) {
                 sessionGeneration += 1
             }
             val generation = sessionGeneration
-            val token = registration.prepareLoginToken() ?: return@withLock null
+            val token =
+                registration.prepareLoginToken(operationTimeoutMillis)
+                    ?: return@withLock null
+            currentCoroutineContext().ensureActive()
             registerAndFinalize(token, generation)
         }
 
@@ -68,10 +78,11 @@ class PushTokenCoordinator(val registration: PushRegistration) {
         transition.withLock {
             val generation = sessionGeneration
             if (!activeSession) {
-                registration.stashPending(newToken)
+                registration.stashPending(newToken, operationTimeoutMillis)
                 return@withLock null
             }
-            val token = registration.prepareNewToken(newToken)
+            val token = registration.prepareNewToken(newToken, operationTimeoutMillis)
+            currentCoroutineContext().ensureActive()
             registerAndFinalize(token, generation)
         }
 
@@ -84,7 +95,7 @@ class PushTokenCoordinator(val registration: PushRegistration) {
             activeSession = false
             sessionGeneration += 1
             try {
-                registration.onLogout(token)
+                registration.onLogout(token, operationTimeoutMillis)
             } finally {
                 // Cancellation (or any throw) from the unregister must neither
                 // retain the token nor strand the logout — the orchestrator's
@@ -101,13 +112,13 @@ class PushTokenCoordinator(val registration: PushRegistration) {
      */
     private suspend fun registerAndFinalize(token: String, generation: Long): String? {
         val registered = withContext(NonCancellable) {
-            if (!registration.registerOnBackend(token)) {
+            if (!registration.registerOnBackend(token, operationTimeoutMillis)) {
                 return@withContext null
             }
 
             if (activeSession && sessionGeneration == generation) {
                 activeToken = token
-                registration.clearPending(token)
+                registration.clearPending(token, operationTimeoutMillis)
             }
             token
         }

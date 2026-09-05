@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** Exercises the production DataStore-backed compare-and-clear seam. */
@@ -28,5 +29,15 @@ class PendingPushTokenStoreTest {
         store.clearIfMatches("token-old")
 
         assertEquals("token-new", store.read())
+    }
+
+    @Test
+    fun `clearing matching expected token removes pending token`() = runBlocking {
+        val store = PendingPushTokenStore(dataStore(File.createTempFile("push", ".preferences_pb")))
+
+        store.stash("token-match")
+        store.clearIfMatches("token-match")
+
+        assertNull(store.read())
     }
 }
