@@ -981,3 +981,100 @@ describe('bounded extension wipe: logout always releases (RED)', () => {
     clearSpy.mockRestore();
   }, 10000);
 });
+
+describe('poll serialization: no overlapping reads or out-of-order application (RED)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    delete (globalThis as any).chrome;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    while (isLogoutInProgress()) endLogout();
+    delete (globalThis as any).chrome;
+    vi.useRealTimers();
+  });
+
+  it('never starts a second read while one is still pending (in-flight gate)', async () => {
+    vi.useFakeTimers();
+    const store = useAuthStore();
+    store.token = 'x';
+    let reads = 0;
+    let releaseFirst!: (v: any) => void;
+    const firstGate = new Promise<any>((resolve) => { releaseFirst = resolve; });
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' });
+          reads += 1;
+          if (reads === 1) {
+            // First read hangs: the poll must NOT start a second read on the
+            // next tick while this one is pending.
+            firstGate.then(cb);
+            return;
+          }
+          return cb({ status: 'ok', active: true, phase: 'sso' });
+        },
+      },
+    };
+    const pollPromise = store.waitForReauthResult();
+    await vi.advanceTimersByTimeAsync(0); // immediate attempt starts read #1 (pending)
+    await flushPromises();
+    expect(reads).toBe(1);
+    // Next interval tick fires while read #1 is still pending:
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(reads).toBe(1); // serialized: no overlapping second read
+    // Release the first read (in-progress) then let the poll continue normally:
+    releaseFirst({ status: 'ok', active: true, phase: 'sso' });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(reads).toBe(2); // next read starts only AFTER the first settled
+    // Settle the poll so the test does not leak a pending timer:
+    beginLogout();
+    endLogout();
+    expect(await pollPromise).toBe('failed');
+    vi.useRealTimers();
+  }, 10000);
+
+  it('late out-of-order read after settle never mutates phase/token/overlay', async () => {
+    vi.useFakeTimers();
+    const store = useAuthStore();
+    store.token = 'x';
+    let reads = 0;
+    let releaseSlow!: (v: any) => void;
+    const slowGate = new Promise<any>((resolve) => { releaseSlow = resolve; });
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          if (msg?.action === 'logout') return cb({ status: 'ok' });
+          reads += 1;
+          if (reads === 1) {
+            slowGate.then(cb); // slow first read
+            return;
+          }
+          return cb({ status: 'error', message: 'boom' }); // fast second settles failed
+        },
+      },
+    };
+    const pollPromise = store.waitForReauthResult();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushPromises();
+    expect(reads).toBe(1);
+    // With serialization the second tick must wait; force-settle via logout so
+    // the slow read becomes stale, then release it late:
+    beginLogout();
+    endLogout();
+    releaseSlow({ status: 'ok', accessToken: 'jwt-late-slow', phase: 'siap' });
+    await flushPromises();
+    expect(await pollPromise).toBe('failed');
+    expect(store.token).toBe('x'); // late slow ok never minted
+    expect(store.reauthPhase).toBeNull(); // settle cleared (owner), late read did not re-set to siap
+    vi.useRealTimers();
+  }, 10000);

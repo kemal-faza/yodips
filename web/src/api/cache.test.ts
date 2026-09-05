@@ -87,3 +87,65 @@ describe('cache layer', () => {
     expect(next).toBe('old'); // still stale, no throw
   });
 });
+
+describe('cache epoch ownership (A-era logout vs B-era request)', () => {
+  beforeEach(() => { clearCache(); vi.useRealTimers(); });
+
+  it('old success resolving after clearCache never populates the store', async () => {
+    // A-era fetch starts and is still in flight when logout clears the cache.
+    // The production seam is getCached itself (deferred fetcher = deterministic).
+    let resolveA!: (v: string) => void;
+    const fetcherA = vi.fn(() => new Promise<string>((res) => { resolveA = res; }));
+    const pA = getCached('k', fetcherA, { freshTtl: FRESH, staleTtl: STALE });
+    clearCache(); // models logout's wipe crossing the in-flight fetch
+    resolveA('A-data');
+    await expect(pA).resolves.toBe('A-data'); // original waiter still gets its value
+    // B-era fetch after the wipe must MISS — A-data must never have been written.
+    const fetcherB = vi.fn().mockResolvedValue('B-data');
+    const b = await getCached('k', fetcherB, { freshTtl: FRESH, staleTtl: STALE });
+    expect(b).toBe('B-data');
+    expect(fetcherB).toHaveBeenCalledTimes(1);
+  });
+
+  it('B-era request never joins an A-era flight and never receives A data', async () => {
+    let resolveA!: (v: string) => void;
+    let resolveB!: (v: string) => void;
+    const fetcherA = vi.fn(() => new Promise<string>((res) => { resolveA = res; }));
+    const fetcherB = vi.fn(() => new Promise<string>((res) => { resolveB = res; }));
+    const pA = getCached('k', fetcherA, { freshTtl: FRESH, staleTtl: STALE });
+    clearCache(); // logout crosses: generation advances while A is pending
+    const pB = getCached('k', fetcherB, { freshTtl: FRESH, staleTtl: STALE });
+    // B must start its OWN fetch — never piggyback on the orphaned A flight.
+    expect(fetcherB).toHaveBeenCalledTimes(1);
+    resolveA('A-data');
+    resolveB('B-data');
+    await expect(pA).resolves.toBe('A-data');
+    await expect(pB).resolves.toBe('B-data'); // B receives B, never A
+    // Cache now holds B-data, not A-data: a fresh read serves B with no network.
+    const fetcherC = vi.fn().mockResolvedValue('C-unexpected');
+    const c = await getCached('k', fetcherC, { freshTtl: FRESH, staleTtl: STALE });
+    expect(c).toBe('B-data');
+    expect(fetcherC).not.toHaveBeenCalled();
+  });
+
+  it('stale background refresh that crosses clearCache never writes', async () => {
+    const fetcher = vi.fn().mockResolvedValue('old');
+    await getCached('k', fetcher, { freshTtl: FRESH, staleTtl: STALE });
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + FRESH + 1);
+    let resolveBg!: (v: string) => void;
+    const bgFetcher = vi.fn(() => new Promise<string>((res) => { resolveBg = res; }));
+    // Stale hit serves 'old' and kicks a background refresh (deferred).
+    const stale = await getCached('k', bgFetcher, { freshTtl: FRESH, staleTtl: STALE });
+    expect(stale).toBe('old');
+    clearCache(); // logout crosses the background flight
+    resolveBg('bg-new');
+    vi.useRealTimers();
+    await settle();
+    // Store was wiped and the late background value must not resurrect it.
+    const fetcherB = vi.fn().mockResolvedValue('B-data');
+    const b = await getCached('k', fetcherB, { freshTtl: FRESH, staleTtl: STALE });
+    expect(b).toBe('B-data');
+    expect(fetcherB).toHaveBeenCalledTimes(1);
+  });
+});
