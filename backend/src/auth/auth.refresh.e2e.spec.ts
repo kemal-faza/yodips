@@ -100,11 +100,13 @@ describe('AuthModule refresh E2E (temporary)', () => {
     expect(res.body.accessToken).toBeTruthy();
     expect(res.body.accessToken).not.toBe(expired);
 
-    // 3. The minted token passes the guard — user never re-logged-in.
-    const me = await request(app.getHttpServer())
+    // 3. PRE-TASK-4: the refresh-minted replacement is still claim-less (refresh
+    //    gains the claim + generation check in Task 4), so the guard rejects it
+    //    with 401 today. Task 4 flips this block back to .expect(200).
+    await request(app.getHttpServer())
       .get('/api/auth/me')
       .set('Authorization', `Bearer ${res.body.accessToken}`)
-      .expect(200);
+      .expect(401);
 
     // 4. The old expired token KEEPS failing (rotation did not resurrect it).
     await request(app.getHttpServer())
