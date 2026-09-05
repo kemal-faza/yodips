@@ -20,18 +20,14 @@ class PushRegistration(private val ops: Ops) {
 
     /** Login sukses / app start dgn sesi hidup. Pending didahulukan. */
     suspend fun onLogin(): String? {
-        val pending = ops.readPending()
-        val token = pending ?: ops.currentFcmToken() ?: return null
-        if (pending == null) {
-            stashBeforeRegistration(token)
-        }
-        return registerToken(token)
+        val token = prepareLoginToken() ?: return null
+        return if (registerOnBackend(token)) token else null
     }
 
     /** Rotasi token saat app hidup. */
     suspend fun onNewToken(newToken: String): String? {
-        stashBeforeRegistration(newToken)
-        return registerToken(newToken)
+        val token = prepareNewToken(newToken)
+        return if (registerOnBackend(token)) token else null
     }
 
     /** Stash a device token without registering it for the inactive account. */
@@ -41,10 +37,27 @@ class PushRegistration(private val ops: Ops) {
 
     /** Clear only the pending value that was just registered. */
     suspend fun clearPending(token: String) {
-        withContext(NonCancellable) {
-            ops.clearPending(token)
-        }
+        ops.clearPending(token)
     }
+
+    /** Prepare a login token and durably stash a fresh token before registration. */
+    internal suspend fun prepareLoginToken(): String? {
+        val pending = ops.readPending()
+        val token = pending ?: ops.currentFcmToken() ?: return null
+        if (pending == null) {
+            stashBeforeRegistration(token)
+        }
+        return token
+    }
+
+    /** Durably stash a rotated token before it is registered for the live session. */
+    internal suspend fun prepareNewToken(newToken: String): String {
+        stashBeforeRegistration(newToken)
+        return newToken
+    }
+
+    /** Register a token while the coordinator owns the transition lock. */
+    internal suspend fun registerOnBackend(token: String): Boolean = registerCatching(token)
 
     /**
      * Logout: cabut token device dari registry. Pending stash DIPERTAHANKAN —
@@ -62,9 +75,6 @@ class PushRegistration(private val ops: Ops) {
         } catch (_: Exception) {
             false
         }
-
-    private suspend fun registerToken(token: String): String? =
-        if (registerCatching(token)) token else null
 
     private suspend fun stashBeforeRegistration(token: String) {
         withContext(NonCancellable) {

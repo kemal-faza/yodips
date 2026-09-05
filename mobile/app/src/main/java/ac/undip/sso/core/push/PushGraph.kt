@@ -3,22 +3,18 @@ package ac.undip.sso.core.push
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.PushDeviceRequest
 import android.content.Context
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 private val Context.pushDataStore by preferencesDataStore(name = "sso_push")
-private val PENDING_KEY = stringPreferencesKey("pending_fcm_token")
 
 /**
  * Backend-unregister wrapper for the logout path: ordinary network/HTTP
@@ -118,6 +114,7 @@ object PushGraph {
     fun install(context: Context) {
         installOnce.ensure {
             val appContext = context.applicationContext
+            val pendingStore = PendingPushTokenStore(appContext.pushDataStore)
             history = DataStoreNotificationHistoryStore(appContext)
             coordinator =
                 PushTokenCoordinator(
@@ -136,16 +133,14 @@ object PushGraph {
                         }
 
                     override suspend fun stashPending(token: String) {
-                        appContext.pushDataStore.edit { it[PENDING_KEY] = token }
+                        pendingStore.stash(token)
                     }
 
                     override suspend fun readPending(): String? =
-                        appContext.pushDataStore.data.first()[PENDING_KEY]
+                        pendingStore.read()
 
                     override suspend fun clearPending(expectedToken: String) {
-                        appContext.pushDataStore.edit {
-                            if (it[PENDING_KEY] == expectedToken) it.remove(PENDING_KEY)
-                        }
+                        pendingStore.clearIfMatches(expectedToken)
                     }
                     },
                 ),
