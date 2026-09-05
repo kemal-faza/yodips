@@ -359,13 +359,55 @@ export class AuthService {
   }
 
   /**
-   * Server-side logout: drop the session record so no (possibly leaked) JWT for
-   * this subject can be silently refreshed again (YD-AUTH-001). Idempotent —
-   * clearing an already-dead record succeeds. The owner is `sub` set by
-   * JwtAuthGuard from the verified token; a body-supplied identity is never
-   * trusted (B4).
+   * Server-side logout. Verifies the SIGNATURE only (ignoreExpiration) so an
+   * expired-but-valid JWT can still clear its session, then applies the
+   * session-generation semantics:
+   *  - valid token + live record with a MATCHING generation → clear(sub).
+   *  - valid token + live record with a NEWER generation → SESSION_DEAD, NOT
+   *    cleared (an old-generation token must never destroy a newer session).
+   *  - valid token + no record → idempotent { ok: true } (already dead).
+   *  - missing/ill-typed claim, bad signature/iss/aud, or garbage → INVALID_TOKEN,
+   *    nothing cleared.
+   * `sub` comes only from the signed token (B4); a body-supplied identity is
+   * never trusted.
    */
-  async logout(sub: string): Promise<{ ok: true }> {
+  async logout(bearerToken: string): Promise<{ ok: true }> {
+    let payload: { sub?: unknown; sessionCapturedAt?: unknown };
+    try {
+      payload = await this.jwt.verifyAsync(bearerToken, {
+        secret: this.config.get<string>('JWT_SECRET'),
+        ignoreExpiration: true,
+        algorithms: ['HS256'],
+        issuer: 'yodips',
+        audience: 'yodips-web',
+      });
+    } catch {
+      throw new HttpException(
+        { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
+    const generation = payload?.sessionCapturedAt;
+    const genOk = typeof generation === 'number' && Number.isFinite(generation);
+    if (!sub || !genOk) {
+      throw new HttpException(
+        { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    const record = await this.sessionStore.get(sub);
+    if (!record) {
+      // Already dead / absolute-cap — idempotent, nothing to clear.
+      return { ok: true };
+    }
+    if (record.capturedAt !== generation) {
+      // Old-generation token against a newer live session — never clear.
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
     await this.sessionStore.clear(sub);
     this.logger.log(`SSO session cleared for ${sub}`);
     return { ok: true };
