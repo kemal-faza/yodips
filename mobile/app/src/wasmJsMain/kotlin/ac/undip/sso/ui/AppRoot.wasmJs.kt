@@ -1,6 +1,7 @@
 package ac.undip.sso.ui
 
 import ac.undip.sso.core.data.NoOpPersistentCache
+import ac.undip.sso.core.data.SessionLogout
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.push.IdbNotificationHistoryStore
 import ac.undip.sso.core.push.PushSubscriptionManager
@@ -76,28 +77,71 @@ fun AppRoot(themeController: ThemeController) {
 
     if (!checked) return
 
+    // Hoisted ONCE for the app's lifetime: single-flight (requirement 2) only
+    // spans invocations that share ONE SessionLogout instance — a fresh
+    // instance per tap would create new single-flight state each time and
+    // defeat it.
+    val sessionLogout = remember {
+        SessionLogout(
+            pushUnregister = {
+                // Guard matches the login-time registration gate
+                // (AppRoot.wasmJs.kt:63-75): skip the whole block when the
+                // browser has no push support — no behavior change for
+                // non-push browsers.
+                if (PushSubscriptionManager.isSupported()) {
+                    // 1) Server DELETE (best-attempt prune — the shared client
+                    //    attaches the live bearer; may 401 on an expired JWT —
+                    //    best-effort by policy).
+                    // 2) UNCONDITIONAL browser unsubscribe — MUST run even when
+                    //    the DELETE throws an ordinary failure, so a stale
+                    //    server error never leaves the browser subscription
+                    //    live after logout (F3). Explicit try/catch per step
+                    //    (NOT runCatching — it swallows CancellationException):
+                    //    ordinary failures are caught; structured cancellation
+                    //    propagates to the orchestrator, which runs
+                    //    localCleanup before rethrow.
+                    try {
+                        val sub = PushSubscriptionManager.currentSubscription()
+                        if (sub != null) Backend.api.unregisterWebPushDevice(sub)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // best-effort DELETE — unsubscribe below is unconditional
+                    }
+                    try {
+                        PushSubscriptionManager.unsubscribe()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // best-effort — cleanup and revoke still run
+                    }
+                }
+            },
+            revokeServerSession = { Backend.api.logout() },
+            localCleanup = {
+                // NON-SUSPENDING, unconditional, runs LAST — both server
+                // calls already attempted with the live bearer. The lambda
+                // type is `() -> Unit` (R2-1/R2-5): history.clear() AND
+                // tokenStore.clear() are SUSPENDING (IndexedDB / suspend
+                // interface), so they are SCHEDULED on the existing surviving
+                // GlobalScope (best-effort) — they can never be called inline
+                // here (would not compile). Everything below is synchronous:
+                // token nulled, UI flips.
+                GlobalScope.launch { runCatching { history.clear() } }
+                Backend.authToken = null
+                GlobalScope.launch { tokenStore.clear() } // suspend clear (localStorage + StateFlow)
+                hasToken = false
+            },
+        )
+    }
+
     if (hasToken) {
         AppShell(
             tokenStore = tokenStore,
             persistentCache = NoOpPersistentCache,
             themeController = themeController,
             onLogout = {
-                GlobalScope.launch {
-                    // URUTAN: unregister harus jalan SELAMA Backend.authToken
-                    // masih terpasang (DELETE web-device butuh Bearer). Cabut
-                    // subscription dulu, baru token dibersihkan.
-                    runCatching {
-                        PushSubscriptionManager.currentSubscription()
-                            ?.let { Backend.api.unregisterWebPushDevice(it) }
-                        PushSubscriptionManager.unsubscribe()
-                    }
-                    // Privasi: riwayat notifikasi IDB global (bukan per-NIM) — user B
-                    // tidak boleh melihat notifikasi user A. Kosongkan di logout.
-                    runCatching { history.clear() }
-                    Backend.authToken = null
-                    tokenStore.clear()
-                    hasToken = false
-                }
+                GlobalScope.launch { sessionLogout.logout() }
             },
             initialNavTarget = pendingNav,
             onNavConsumed = {
