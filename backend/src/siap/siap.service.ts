@@ -2,7 +2,7 @@ import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
-import { SessionRef, isSessionRef } from '../session/session-store';
+import { SessionRef, isSessionRef, getRegisteredSessionStore } from '../session/session-store';
 import {
   cacheKeyForCurrent,
   cacheKeyForSession,
