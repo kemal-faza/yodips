@@ -106,6 +106,37 @@ describe('KulonStore generation-stale consumer (CRITICAL)', () => {
     expect(store.courses).toEqual([{ id: 10 }]);
   });
 
+  it('fresh cache-hit completion after clearCache never commits to Pinia', async () => {
+    const store = useKulonStore();
+    (api.getAllAssignments as any).mockResolvedValue([{ id: 1 }]);
+    await store.ensureAssignments();
+    store.assignments = [];
+
+    const pending = store.ensureAssignments();
+    clearCache(); // the cache hit has been returned, but its async delivery is pending
+    await pending;
+
+    expect(store.assignments).toEqual([]);
+  });
+
+  it('stale cache-hit completion after clearCache never commits to Pinia', async () => {
+    const store = useKulonStore();
+    (api.getAllAssignments as any)
+      .mockResolvedValueOnce([{ id: 1 }])
+      .mockResolvedValueOnce([{ id: 2 }]);
+    await store.ensureAssignments();
+    store.assignments = [];
+
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 3 * 60_000 + 1);
+    const pending = store.ensureAssignments();
+    clearCache(); // crosses both stale delivery and its background refresh
+    await pending;
+    vi.useRealTimers();
+
+    expect(store.assignments).toEqual([]);
+  });
+
   it('deferred A content completion after clearCache rejects typed (views swallow, never render stale)', async () => {
     const store = useKulonStore();
     let resolveA!: (v: unknown) => void;

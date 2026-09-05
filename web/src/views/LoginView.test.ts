@@ -27,7 +27,7 @@ function makeStore(overrides: Record<string, any> = {}) {
     isExtensionInstalled: vi.fn().mockResolvedValue(false),
     finishHandoff: vi.fn(),
     onExtensionResult: vi.fn().mockReturnValue(() => {}),
-    readExtensionResult: vi.fn().mockResolvedValue({ status: "active" }),
+    readExtensionResult: vi.fn().mockResolvedValue({ status: "ok", active: true }),
     extensionMode: "auto",
     checking: false,
     error: null,
@@ -261,6 +261,58 @@ describe("LoginView", () => {
     expect(router.push).toHaveBeenCalledWith("/");
   });
 
+  it("releases extBusy when the owning interactive handoff rejects", async () => {
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn().mockRejectedValue(new Error("malformed extension response")),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    const button = w.findAll("button").find((b) => b.text().includes("Login via Extension"))!;
+
+    await button.trigger("click");
+    await flushPromises();
+
+    expect(button.attributes("disabled")).toBeUndefined();
+    expect(w.text()).toContain("Login via extension gagal");
+    w.unmount();
+  });
+
+  it("an older interactive catch cannot release a newer flow's extBusy", async () => {
+    let rejectFirst!: (reason?: unknown) => void;
+    let resolveSecond!: (status: string) => void;
+    const first = new Promise<string>((_resolve, reject) => { rejectFirst = reject; });
+    const second = new Promise<string>((resolve) => { resolveSecond = resolve; });
+    const router = { push: vi.fn() };
+    const store = makeStore({
+      isExtensionInstalled: vi.fn().mockResolvedValue(true),
+      loginViaExtension: vi.fn()
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second),
+    });
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: {} }, $router: router } },
+    });
+    await flushPromises();
+    const button = w.findAll("button").find((b) => b.text().includes("Login via Extension"))!;
+
+    const firstFlow = button.trigger("click");
+    await flushPromises();
+    const secondFlow = (w.vm as any).handleExtensionLogin();
+    await flushPromises();
+    rejectFirst(new Error("stale first failure"));
+    await flushPromises();
+    expect(button.attributes("disabled")).toBeDefined();
+
+    resolveSecond("error");
+    await Promise.all([firstFlow, secondFlow]);
+    expect(button.attributes("disabled")).toBeUndefined();
+    w.unmount();
+  });
+
   it("shows waiting notice when loginViaExtension returns started", async () => {
     const store = makeStore({
       isExtensionInstalled: vi.fn().mockResolvedValue(true),
@@ -284,7 +336,7 @@ describe("LoginView", () => {
     const store = makeStore({
       isExtensionInstalled: vi.fn().mockResolvedValue(true),
       loginViaExtension: vi.fn().mockResolvedValue("started"),
-      readExtensionResult: vi.fn().mockResolvedValue({ status: "active" }),
+      readExtensionResult: vi.fn().mockResolvedValue({ status: "ok", active: true }),
     });
     const w = mount(LoginView, {
       global: { mocks: { $route: { query: {} }, $router: router } },
@@ -409,7 +461,7 @@ describe("LoginView", () => {
       loginViaExtension: vi.fn().mockResolvedValue("started"),
       readExtensionResult: vi
         .fn()
-        .mockResolvedValue({ status: "active", phase: "kulon" }),
+        .mockResolvedValue({ status: "ok", active: true, phase: "kulon" }),
     });
     const w = mount(LoginView, {
       global: { mocks: { $route: { query: {} }, $router: { push: vi.fn() } } },
@@ -703,7 +755,7 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
     const store = makeStore({
       isExtensionInstalled: vi.fn().mockResolvedValue(true),
       loginViaExtension: vi.fn().mockResolvedValue("started"),
-      readExtensionResult: vi.fn().mockResolvedValue({ status: "active" }),
+      readExtensionResult: vi.fn().mockResolvedValue({ status: "ok", active: true }),
     });
     const w = mount(LoginView, {
       global: { mocks: { $route: { query: {} }, $router: router } },
@@ -850,7 +902,7 @@ describe("LoginView poll serialization (RED)", () => {
       readExtensionResult: vi.fn().mockImplementation(() => {
         reads += 1;
         if (reads === 1) return firstGate; // hang the first poll read
-        return Promise.resolve({ status: "active" });
+        return Promise.resolve({ status: "ok", active: true });
       }),
     });
     const w = mount(LoginView, {
@@ -870,7 +922,7 @@ describe("LoginView poll serialization (RED)", () => {
     await vi.advanceTimersByTimeAsync(4000); // while read #1 still pending
     await flushPromises();
     expect(reads).toBe(1); // serialized: no overlapping second read
-    resolveFirst({ status: "active" });
+    resolveFirst({ status: "ok", active: true });
     await flushPromises();
     await vi.advanceTimersByTimeAsync(4000);
     await flushPromises();
@@ -887,7 +939,7 @@ describe("LoginView poll serialization (RED)", () => {
     const store = makeStore({
       isExtensionInstalled: vi.fn().mockResolvedValue(true),
       loginViaExtension: vi.fn().mockResolvedValue("started"),
-      readExtensionResult: vi.fn().mockResolvedValue({ status: "active" }),
+      readExtensionResult: vi.fn().mockResolvedValue({ status: "ok", active: true }),
     });
     const w = mount(LoginView, {
       global: { mocks: { $route: { query: {} }, $router: router } },
@@ -917,7 +969,7 @@ describe("LoginView poll serialization (RED)", () => {
       loginViaExtension: vi.fn().mockResolvedValue("started"),
       readExtensionResult: vi.fn().mockImplementation(() => {
         reads += 1;
-        return reads === 1 ? oldRead : Promise.resolve({ status: "active" });
+        return reads === 1 ? oldRead : Promise.resolve({ status: "ok", active: true });
       }),
     });
     const w = mount(LoginView, {
@@ -939,7 +991,7 @@ describe("LoginView poll serialization (RED)", () => {
     await flushPromises();
     expect(reads).toBe(2);
 
-    resolveOldRead({ status: "active" });
+    resolveOldRead({ status: "ok", active: true });
     await flushPromises();
     w.unmount();
     vi.useRealTimers();

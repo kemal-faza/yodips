@@ -18,6 +18,19 @@ describe('cache layer', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a fresh cache-hit delivery when clearCache crosses before await', async () => {
+    const fetcher = vi.fn().mockResolvedValue('old');
+    await getCached('k', fetcher, { freshTtl: FRESH, staleTtl: STALE });
+
+    const pending = getCached('k', vi.fn().mockResolvedValue('unexpected'), {
+      freshTtl: FRESH,
+      staleTtl: STALE,
+    });
+    clearCache(); // synchronous wipe between getCached() and the caller's await
+
+    await expect(pending).rejects.toBeInstanceOf(CacheStaleError);
+  });
+
   it('serves stale data and refreshes in the background exactly once', async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce('old')
@@ -33,6 +46,21 @@ describe('cache layer', () => {
     const next = await getCached('k', fetcher, { freshTtl: FRESH, staleTtl: STALE });
     expect(next).toBe('new'); // cache now refreshed
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a stale cache-hit delivery when clearCache crosses before await', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce('old')
+      .mockResolvedValueOnce('new');
+    await getCached('k', fetcher, { freshTtl: FRESH, staleTtl: STALE });
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + FRESH + 1);
+
+    const pending = getCached('k', fetcher, { freshTtl: FRESH, staleTtl: STALE });
+    clearCache(); // crosses both the stale delivery and its background refresh
+
+    await expect(pending).rejects.toBeInstanceOf(CacheStaleError);
+    vi.useRealTimers();
   });
 
   it('refetches synchronously when expired (age >= staleTtl)', async () => {

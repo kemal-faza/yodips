@@ -52,6 +52,13 @@ let pollInFlightGen: number | null = null;
 let disposed = false;
 const POLL_INTERVAL_MS = 3000;
 
+function ownsFlow(gen: number, epoch: number): boolean {
+  return !disposed
+    && gen === flowGen
+    && getReauthEpoch() === epoch
+    && !isLogoutInProgress();
+}
+
 /** Stop the self-healing result poll. Gen-guarded: an old flow can never clear
  *  a newer flow's timer. Unconditional (no gen) = takeover/unmount only. */
 function stopPoll(gen?: number) {
@@ -107,7 +114,7 @@ async function pollExtensionResult(tickGen?: number, tickEpoch?: number | null) 
       return;
     }
     if (gen !== flowGen || getReauthEpoch() !== epoch || disposed) return;
-    extPhase.value = payload.phase ?? null;
+    extPhase.value = payload.status === 'ok' ? payload.phase ?? null : null;
     if (payload.status === 'ok' && payload.accessToken) {
       stopPoll(gen);
       store.finishHandoff(payload.accessToken, epoch); // mandatory epoch at commit
@@ -276,39 +283,38 @@ async function handleExtensionLogin() {
   const myGen = flowGen;
   extBusy.value = true;
   extMsg.value = null;
-  const status = await store.loginViaExtension();
-  if (disposed) return;
-  if (myGen !== flowGen) return; // superseded — a newer click owns the UI now
-  if (getReauthEpoch() !== epoch) {
-    // Crossed a logout (flag up, or bumped-and-released): never navigate,
-    // never start a poll, never claim the overlay. Only clear our own busy
-    // flag when no newer flow has taken it (gen already verified above).
-    extBusy.value = false;
-    return;
-  }
-  if (isLogoutInProgress()) {
-    extBusy.value = false;
-    return;
-  }
-  if (status === 'ok') {
-    await proxy().$router?.push('/');
-    if (!disposed && myGen === flowGen && getReauthEpoch() === epoch) {
-      extBusy.value = false;
+  try {
+    const status = await store.loginViaExtension();
+    if (disposed) return;
+    if (myGen !== flowGen) return; // superseded — a newer click owns the UI now
+    if (getReauthEpoch() !== epoch) {
+      // Crossed a logout (flag up, or bumped-and-released): never navigate,
+      // never start a poll, never claim the overlay. Only clear our own busy
+      // flag when no newer flow has taken it (gen already verified above).
+      return;
     }
-    return;
-  }
-  if (status === 'started') {
-    // The background opened a login tab (auto) or waits for explicit "Selesai"
-    // confirmation (semi). The bridge result/status poll delivers the JWT.
-    startWaiting(store.extensionMode ?? 'auto', epoch, myGen);
-    return;
-  }
-  if (status === 'error') {
-    extMsg.value = store.error ?? 'Login via extension gagal. Pastikan server berjalan.';
-    extBusy.value = false;
-  } else {
-    extMsg.value = 'Extension belum terpasang atau tidak merespons.';
-    extBusy.value = false;
+    if (isLogoutInProgress()) return;
+    if (status === 'ok') {
+      await proxy().$router?.push('/');
+      return;
+    }
+    if (status === 'started') {
+      // The background opened a login tab (auto) or waits for explicit "Selesai"
+      // confirmation (semi). The bridge result/status poll delivers the JWT.
+      startWaiting(store.extensionMode ?? 'auto', epoch, myGen);
+      return;
+    }
+    if (status === 'error') {
+      extMsg.value = store.error ?? 'Login via extension gagal. Pastikan server berjalan.';
+    } else {
+      extMsg.value = 'Extension belum terpasang atau tidak merespons.';
+    }
+  } catch {
+    if (ownsFlow(myGen, epoch)) {
+      extMsg.value = 'Login via extension gagal.';
+    }
+  } finally {
+    if (ownsFlow(myGen, epoch)) extBusy.value = false;
   }
 }
 
