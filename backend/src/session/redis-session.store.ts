@@ -14,6 +14,14 @@ const IV_LEN = 12;
 const CAS_DELETE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`;
 
 /**
+ * Atomic compare-and-expire: EXPIRE only if the current value still equals
+ * the exact envelope read earlier. Returns 1 when slid, 0 when replaced.
+ * A stale qualified read (A) that loses this CAS to a B-replacement returns
+ * null and never slides B's TTL.
+ */
+const CAS_EXPIRE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("EXPIRE", KEYS[1], ARGV[2]) else return 0 end`;
+
+/**
  * Redis-backed SessionStore for production.
  * - Key: `sso:session:{identity}`
  * - Value: envelope `v1:<iv>:<tag>:<ct>` (base64), AES-256-GCM encrypted.
@@ -117,7 +125,9 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
    * cap BEFORE the generation compare (dead → exact-envelope CAS-cleanup,
    * null either way, never a slide), returns null on decrypt failure
    * (exact-envelope CAS-cleanup, null either way) or generation mismatch
-   * (no slide, no delete), and EXPIRE-slides only on an exact live match.
+   * (no slide, no delete), and EXPIRE-slides only on an exact live match —
+   * via the Lua compare-and-expire of the exact envelope read, so a
+   * B-replacement between GET and slide loses the CAS (null, B untouched).
    */
   async getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null> {
     const key = `${KEY_PREFIX}${identity}`;
@@ -136,8 +146,16 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
       return null;
     }
     if (session.sessionGeneration !== generation) return null;
-    await this.client.expire(key, this.ttlSeconds());
+    const slid = await this.casExpireIfEqual(key, envelope, this.ttlSeconds());
+    if (slid !== 1) return null;
     return session;
+  }
+
+  private async casExpireIfEqual(key: string, expectedEnvelope: string, ttlSeconds: number): Promise<number> {
+    const res = await (this.client as unknown as {
+      eval: (script: string, numKeys: number, key: string, ...args: unknown[]) => Promise<unknown>;
+    }).eval(CAS_EXPIRE_LUA, 1, key, expectedEnvelope, ttlSeconds);
+    return res === 1 || res === '1' ? 1 : 0;
   }
 
   private async casDeleteIfEqual(key: string, expectedEnvelope: string): Promise<number> {

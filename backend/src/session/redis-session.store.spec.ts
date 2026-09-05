@@ -284,16 +284,26 @@ describe('RedisSessionStore', () => {
   });
 
   describe('getIfGeneration (generation-qualified atomic snapshot)', () => {
-    it('returns the live record only on exact match and slides EXPIRE; mismatch returns null without slide/delete', async () => {
+    it('returns the live record only on exact match and slides via Lua compare-and-EXPIRE; mismatch returns null without slide/delete', async () => {
       mockClient.set.mockResolvedValue('OK');
       await store.set('a', makeSession('a', 'MoodleSession=A', GEN_A));
       const envelope = mockClient.set.mock.calls[0][1];
       mockClient.get.mockResolvedValue(envelope);
-      mockClient.expire.mockResolvedValue(1);
+      mockClient.eval.mockResolvedValue(1);
       const hit = await (store as any).getIfGeneration('a', GEN_A);
       expect(hit?.kulonCookie).toContain('MoodleSession=A');
-      expect(mockClient.expire).toHaveBeenCalledWith('sso:session:a', 1);
+      // Atomic compare-and-expire of the EXACT envelope read: never a bare
+      // EXPIRE (which would slide a B-replacement's TTL on a stale A read).
+      expect(mockClient.eval).toHaveBeenCalledWith(
+        expect.stringContaining('EXPIRE'),
+        1,
+        'sso:session:a',
+        envelope,
+        expect.anything(),
+      );
+      expect(mockClient.expire).not.toHaveBeenCalled();
       mockClient.expire.mockClear();
+      mockClient.eval.mockClear();
       mockClient.get.mockResolvedValue(envelope);
       await expect((store as any).getIfGeneration('a', GEN_B)).resolves.toBeNull();
       expect(mockClient.expire).not.toHaveBeenCalled();
@@ -370,13 +380,22 @@ describe('RedisSessionStore', () => {
      */
     function makeStatefulClient() {
       const kv = new Map<string, string>();
+      const expiries = new Map<string, number>();
+      const expireCalls: Array<{ key: string; secs: number }> = [];
       let onGet: ((key: string, value: string | null) => void) | null = null;
       let onEval: ((key: string, expected: string, current: string | null) => void) | null = null;
       return {
         kv,
+        expiries,
+        expireCalls,
         set onGetHook(fn: typeof onGet) { onGet = fn; },
         set onEvalHook(fn: typeof onEval) { onEval = fn; },
-        async set(key: string, value: string) { kv.set(key, value); return 'OK'; },
+        async set(key: string, value: string, ...args: unknown[]) {
+          kv.set(key, value);
+          const exAt = args.indexOf('EX');
+          expiries.set(key, exAt >= 0 ? Number(args[exAt + 1]) : 0);
+          return 'OK';
+        },
         async get(key: string) {
           const v = kv.get(key) ?? null;
           // Defer the replacement until AFTER the value was read but BEFORE
@@ -385,12 +404,19 @@ describe('RedisSessionStore', () => {
           if (onGet) { const hook = onGet; onGet = null; await Promise.resolve(); hook(key, v); }
           return v;
         },
-        async expire() { return 1; },
-        async del(key: string) { return kv.delete(key) ? 1 : 0; },
-        async eval(_script: string, _n: number, key: string, expected: string) {
+        async expire(key: string, secs: number) { expireCalls.push({ key, secs }); return 1; },
+        async del(key: string) { expiries.delete(key); return kv.delete(key) ? 1 : 0; },
+        async eval(script: string, _n: number, key: string, expected: string, ...rest: unknown[]) {
           const current = kv.get(key) ?? null;
           if (onEval) { const hook = onEval; onEval = null; hook(key, expected, current); }
-          if (current === expected) { kv.delete(key); return 1; }
+          // REALLY evaluate the comparison like Redis would — no stubbed
+          // outcome: conditional EXPIRE and conditional DEL scripts compared
+          // against the live value.
+          if (script.includes('EXPIRE')) {
+            if (current === expected) { expiries.set(key, Number(rest[0])); return 1; }
+            return 0;
+          }
+          if (current === expected) { kv.delete(key); expiries.delete(key); return 1; }
           return 0;
         },
         async quit() { return 'OK'; },
@@ -433,6 +459,27 @@ describe('RedisSessionStore', () => {
       await expect((s as any).getIfGeneration('u', GEN_B)).resolves.toMatchObject({
         kulonCookie: expect.stringContaining('MoodleSession=NEW'),
       });
+    });
+
+    it('deferred GET -> B-replacement -> EVAL: the Lua compare loses, A is null, and B TTL is never slid', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      await s.set('u', makeSession('u', 'MoodleSession=OLD', GEN_A));
+      // Interleave: after the qualified-read GET observes the A-envelope, a
+      // re-login overwrites the SAME key with a B-envelope before the EVAL.
+      fake.onGetHook = () => {
+        void s.set('u', makeSession('u', 'MoodleSession=NEW', GEN_B));
+      };
+      await expect((s as any).getIfGeneration('u', GEN_A)).resolves.toBeNull();
+      // CAS loss: no unconditional EXPIRE ran, and the conditional EXPIRE
+      // Lua refused to touch B — B's sliding TTL is exactly what its own
+      // set() wrote, and B remains live.
+      expect(fake.expireCalls).toHaveLength(0);
+      expect(fake.expiries.get('sso:session:u')).toBe(60);
+      await expect((s as any).getIfGeneration('u', GEN_B)).resolves.toMatchObject({
+        kulonCookie: expect.stringContaining('MoodleSession=NEW'),
+      });
+      expect(fake.kv.has('sso:session:u')).toBe(true);
     });
   });
 });
