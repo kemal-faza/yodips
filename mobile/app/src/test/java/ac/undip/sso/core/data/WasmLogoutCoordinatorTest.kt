@@ -75,12 +75,14 @@ class WasmLogoutCoordinatorTest {
     }
 
     @Test
-    fun `localCleanup deletes persisted JWT synchronously before logged-out UI`() {
+    fun `localCleanup deletes persisted JWT synchronously before logged-out UI`() = runTest {
         val ops = RecordingOps()
         val glue = WasmLogoutCoordinator(ops)
         glue.localCleanup()
-        // No scheduler, no await: everything below holds the moment
-        // localCleanup() returns — the removal is synchronous, inline.
+        // No scheduler, no await on the removal itself: the persisted-JWT
+        // deletion is synchronous inline (before the first suspension point
+        // and before the UI flip), so everything below holds the moment
+        // localCleanup() returns.
         assertNull("persisted JWT must be gone when localCleanup() returns", ops.persistedJwt)
         assertTrue(ops.uiLoggedOut)
         assertTrue(ops.historyClearScheduled)

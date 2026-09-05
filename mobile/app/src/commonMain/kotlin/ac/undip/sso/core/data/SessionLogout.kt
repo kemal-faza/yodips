@@ -1,6 +1,8 @@
 package ac.undip.sso.core.data
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * Server-session logout orchestrator with guaranteed local cleanup.
@@ -15,11 +17,14 @@ import kotlinx.coroutines.CancellationException
  * session-presence-checked, so an unregister sent after the server logout
  * (record cleared) would 401 and leave a stale device row. Then
  * [revokeServerSession] (still bearer-authenticated). Local cleanup
- * ([localCleanup]) ALWAYS runs LAST and is NON-SUSPENDING — its type is
- * `() -> Unit`, which STRUCTURALLY prohibits any suspension inside it at
- * compile time — so token nulling / store clearing never precedes the two
- * authenticated server calls and no suspension point can be cancelled
- * mid-cleanup.
+ * ([localCleanup]) ALWAYS runs LAST under [NonCancellable] — its type is
+ * `suspend () -> Unit` and the orchestrator AWAITS it inline, so a
+ * suspending credential write (the Android DataStore edit) that is
+ * cancelled mid-flight by Activity destruction cannot leave the persisted
+ * JWT behind (a fire-and-forget clear cancelled mid-write resurrects the
+ * session after restart). Token nulling / store clearing never precedes
+ * the two authenticated server calls, and the logged-out UI flip is the
+ * LAST statement of the cleanup itself, after the durable removal.
  *
  * CONCURRENT/DOUBLE LOGOUT: [logout] is SINGLE-FLIGHT. The first (creator)
  * caller runs the whole unregister → revoke → cleanup sequence; a concurrent
@@ -38,7 +43,7 @@ import kotlinx.coroutines.CancellationException
  * sections (real JVM monitor on Android/unit tests; a no-op on wasmJs,
  * which is single-threaded): the claim-or-join happens in one
  * non-suspending atomic section, and the release happens inside the
- * creator's non-suspending nested `finally` via
+ * creator's nested `finally` (after the NonCancellable cleanup) via
  * [SingleFlightGate.releaseIfCurrent]. `CompletableDeferred.complete` is
  * thread-safe and idempotent.
  *
@@ -66,7 +71,7 @@ import kotlinx.coroutines.CancellationException
 class SessionLogout(
     private val revokeServerSession: suspend () -> Unit,
     private val pushUnregister: suspend () -> Unit,
-    private val localCleanup: () -> Unit,
+    private val localCleanup: suspend () -> Unit,
 ) {
     private val gate = SingleFlightGate()
 
@@ -98,15 +103,16 @@ class SessionLogout(
                 // offline / 5xx / 401 / timeout / no bearer — best-effort
             }
         } finally {
-            // NESTED finally: localCleanup runs first, then waiters are
-            // released EVEN IF cleanup itself throws (R2-2) — no stranded
-            // Deferred on any path. Nothing here suspends: the creator may
-            // already be in the cancelling state when a CancellationException
-            // is rethrown, and a suspension point here would throw
-            // CancellationException again and skip the release. `complete` is
-            // thread-safe/idempotent and the field clear is non-suspending.
+            // NESTED finally: localCleanup runs first (AWAITED inline under
+            // NonCancellable — a suspending DataStore edit cancelled
+            // mid-write by Activity destruction still completes, so the
+            // persisted JWT cannot survive), then waiters are released EVEN
+            // IF cleanup itself throws (R2-2) — no stranded Deferred on any
+            // path. `complete` is thread-safe/idempotent and the field clear
+            // is non-suspending, so the release itself can never be
+            // cancelled away once cleanup has finished.
             try {
-                localCleanup() // non-suspending: token nulled, stores/cookies cleared
+                withContext(NonCancellable) { localCleanup() }
             } finally {
                 gate.releaseIfCurrent(deferred) // complete waiters, clear field iff ours
             }
