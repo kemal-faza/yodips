@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SessionStore } from '../session/session-store';
+import { isSessionGeneration } from '../playwright/playwright-auth.service';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -19,7 +20,7 @@ export class JwtAuthGuard implements CanActivate {
     // to 403 Forbidden): clients key their silent-refresh / re-login flows off
     // the 401 status, and 401 is the semantically correct auth-failure code.
     if (!token) throw new UnauthorizedException();
-    let payload: { sub?: unknown; sessionCapturedAt?: unknown; via?: unknown };
+    let payload: { sub?: unknown; sessionGeneration?: unknown; via?: unknown };
     try {
       payload = await this.jwt.verifyAsync(token, {
         secret: this.config.get<string>('JWT_SECRET'),
@@ -33,24 +34,23 @@ export class JwtAuthGuard implements CanActivate {
     } catch {
       throw new UnauthorizedException(); // bare 401 (existing behavior)
     }
-    // Claim shape: non-empty string sub + finite numeric sessionCapturedAt.
+    // Claim shape: non-empty string sub + 32-hex sessionGeneration.
     // A legacy/no-claim token fails here → bare 401.
     const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
-    const generation = payload?.sessionCapturedAt;
-    const genOk = typeof generation === 'number' && Number.isFinite(generation);
-    if (!sub || !genOk) throw new UnauthorizedException();
+    const generation = payload?.sessionGeneration;
+    if (!sub || !isSessionGeneration(generation)) throw new UnauthorizedException();
     // Presence read lives OUTSIDE the verify try so SESSION_DEAD is not
     // swallowed into a bare 401.
     const record = await this.sessionStore.get(sub);
-    if (!record) {
+    if (!record || !isSessionGeneration(record.sessionGeneration)) {
       throw new UnauthorizedException({ code: 'SESSION_DEAD', message: 'Sesi berakhir. Silakan login ulang' });
     }
-    if (record.capturedAt !== generation) {
+    if (record.sessionGeneration !== generation) {
       // An old-generation token (minted before the user's last re-login) must
       // not pass against the newer live session.
       throw new UnauthorizedException({ code: 'SESSION_DEAD', message: 'Sesi berakhir. Silakan login ulang' });
     }
-    req.user = { sub, sessionCapturedAt: generation, ...payload };
+    req.user = { sub, sessionGeneration: generation, ...payload };
     return true;
   }
 }

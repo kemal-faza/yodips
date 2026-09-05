@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { SSOAuthService } from '../sso/sso-auth.service';
 import { SSOTicketService } from '../sso/ticket.service';
 import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
-import { PlaywrightAuthService, CapturedSession } from '../playwright/playwright-auth.service';
+import { PlaywrightAuthService, CapturedSession, generateSessionGeneration, isSessionGeneration } from '../playwright/playwright-auth.service';
 import { SessionStore } from '../session/session-store';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
@@ -52,6 +52,7 @@ export class AuthService {
     );
     // Store session server-side keyed by identity; JWT carries only a reference (not raw cookie).
     const capturedAt = this.runtime.wallNowMs();
+    const sessionGeneration = generateSessionGeneration();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: cookie,
@@ -59,8 +60,9 @@ export class AuthService {
       kulonCookie: '',
       siapCookie: '',
       capturedAt,
+      sessionGeneration,
     });
-    const payload = { sub: identity, via: 'sso', sessionCapturedAt: capturedAt };
+    const payload = { sub: identity, via: 'sso', sessionGeneration };
     const accessToken = await this.jwt.signAsync(payload);
     return { accessToken, redirectUrl };
   }
@@ -88,11 +90,12 @@ export class AuthService {
       : await this.preventReuse();
     if (existing) {
       this.logger.log('Reusing stored SSO session — no browser window needed');
-      const payload = { sub: existing.identity, via: 'reuse', sessionCapturedAt: existing.capturedAt };
+      const payload = { sub: existing.identity, via: 'reuse', sessionGeneration: existing.sessionGeneration };
       const accessToken = await this.jwt.signAsync(payload);
       return {
         accessToken,
         capturedAt: existing.capturedAt,
+        sessionGeneration: existing.sessionGeneration,
         reused: true,
         hasSso: !!existing.ssoCookie,
         hasMicrosoft: !!existing.microsoftCookie,
@@ -132,7 +135,7 @@ export class AuthService {
       : 'sso';
     await this.sessionStore.set(identity, { ...stored, identity });
 
-    const payload = { sub: identity, via: 'playwright', sessionCapturedAt: session.capturedAt };
+    const payload = { sub: identity, via: 'playwright', sessionGeneration: stored.sessionGeneration };
     const accessToken = await this.jwt.signAsync(payload);
     const siapCheck = session.siapCookie
       ? await this.siap.checkSessionValid(session.siapCookie)
@@ -140,6 +143,7 @@ export class AuthService {
     return {
       accessToken,
       capturedAt: session.capturedAt,
+      sessionGeneration: stored.sessionGeneration,
       reused: false,
       hasSso: !!session.ssoCookie,
       hasMicrosoft: !!session.microsoftCookie,
@@ -199,6 +203,7 @@ export class AuthService {
     // attempt, so the JWT sub is a stable reference to that session.
     const identity = state ? `microsoft:${state}` : 'microsoft';
     const capturedAt = this.runtime.wallNowMs();
+    const sessionGeneration = generateSessionGeneration();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: '',
@@ -206,8 +211,9 @@ export class AuthService {
       kulonCookie: '',
       siapCookie: '',
       capturedAt,
+      sessionGeneration,
     });
-    const payload = { sub: identity, via: 'oidc', sessionCapturedAt: capturedAt };
+    const payload = { sub: identity, via: 'oidc', sessionGeneration };
     const jwt = await this.jwt.signAsync(payload);
     return { accessToken: jwt };
   }
@@ -293,6 +299,7 @@ export class AuthService {
       }
     }
     const capturedAt = this.runtime.wallNowMs();
+    const sessionGeneration = generateSessionGeneration();
     await this.sessionStore.set(identity, {
       identity,
       ssoCookie: dto.ssoCookie ?? '',
@@ -301,12 +308,14 @@ export class AuthService {
       siapCookie: siapCheck.valid ? dto.siapCookie ?? '' : '',
       ...(emailSso ? { emailSso } : {}),
       capturedAt,
+      sessionGeneration,
     });
-    const payload = { sub: identity, via: 'handoff', sessionCapturedAt: capturedAt };
+    const payload = { sub: identity, via: 'handoff', sessionGeneration };
     const accessToken = await this.jwt.signAsync(payload);
     return {
       accessToken,
       capturedAt,
+      sessionGeneration,
       reused: false,
       hasSso: !!dto.ssoCookie,
       hasMicrosoft: !!dto.microsoftCookie,
@@ -319,14 +328,16 @@ export class AuthService {
    * Silent JWT rotation. The incoming token may be expired (JWT_EXPIRES_IN=12h
    * is far shorter than the 7d sliding session), so verify the SIGNATURE only
    * (ignoreExpiration) and mint a fresh JWT iff BOTH the backend session record
-   * is still alive AND its generation (capturedAt) exactly matches the token's
-   * sessionCapturedAt claim. A dead record or a generation mismatch means the
-   * user must re-login (SESSION_DEAD); a missing/ill-typed claim (legacy token)
-   * is INVALID_TOKEN. Re-mints are signed with the CURRENT record generation,
-   * so a future-generation token can never be produced from an old one.
+   * is still alive AND its collision-proof `sessionGeneration` exactly matches
+   * the token's `sessionGeneration` claim. A dead record, a legacy record
+   * without a generation, or a generation mismatch means the user must
+   * re-login (SESSION_DEAD); a missing/ill-typed claim (legacy token) is
+   * INVALID_TOKEN. Re-mints are signed with the CURRENT record generation, so
+   * a future-generation token can never be produced from an old one.
+   * `capturedAt` is lifetime only and never binds a JWT.
    */
   async refresh(token: string) {
-    let payload: { sub?: unknown; sessionCapturedAt?: unknown; via?: unknown };
+    let payload: { sub?: unknown; sessionGeneration?: unknown; via?: unknown };
     try {
       payload = await this.jwt.verifyAsync(token, {
         secret: this.config.get<string>('JWT_SECRET'),
@@ -342,22 +353,21 @@ export class AuthService {
       );
     }
     const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
-    const generation = payload?.sessionCapturedAt;
-    const genOk = typeof generation === 'number' && Number.isFinite(generation);
-    if (!sub || !genOk) {
+    const generation = payload?.sessionGeneration;
+    if (!sub || !isSessionGeneration(generation)) {
       throw new HttpException(
         { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
         HttpStatus.UNAUTHORIZED,
       );
     }
     const session = await this.sessionStore.get(sub);
-    if (!session) {
+    if (!session || !isSessionGeneration(session.sessionGeneration)) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
         HttpStatus.UNAUTHORIZED,
       );
     }
-    if (session.capturedAt !== generation) {
+    if (session.sessionGeneration !== generation) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
         HttpStatus.UNAUTHORIZED,
@@ -366,7 +376,7 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync({
       sub,
       via: typeof payload.via === 'string' ? payload.via : 'handoff',
-      sessionCapturedAt: session.capturedAt,
+      sessionGeneration: session.sessionGeneration,
     });
     return { accessToken };
   }
@@ -374,18 +384,18 @@ export class AuthService {
   /**
    * Server-side logout. Verifies the SIGNATURE only (ignoreExpiration) so an
    * expired-but-valid JWT can still clear its session, then applies the
-   * session-generation semantics:
-   *  - valid token + live record with a MATCHING generation → clear(sub).
-   *  - valid token + live record with a NEWER generation → SESSION_DEAD, NOT
-   *    cleared (an old-generation token must never destroy a newer session).
-   *  - valid token + no record → idempotent { ok: true } (already dead).
+   * atomic session-generation semantics via `clearIfGeneration`:
+   *  - valid token + live record with a MATCHING generation → cleared, ok.
+   *  - valid token + no record (or expired/absolute-dead) → idempotent ok.
+   *  - valid token + live record with a DIFFERENT generation, or the CAS lost
+   *    to a newer record → SESSION_DEAD, newer session NEVER cleared.
    *  - missing/ill-typed claim, bad signature/iss/aud, or garbage → INVALID_TOKEN,
    *    nothing cleared.
    * `sub` comes only from the signed token (B4); a body-supplied identity is
    * never trusted.
    */
   async logout(bearerToken: string): Promise<{ ok: true }> {
-    let payload: { sub?: unknown; sessionCapturedAt?: unknown };
+    let payload: { sub?: unknown; sessionGeneration?: unknown };
     try {
       payload = await this.jwt.verifyAsync(bearerToken, {
         secret: this.config.get<string>('JWT_SECRET'),
@@ -401,27 +411,21 @@ export class AuthService {
       );
     }
     const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
-    const generation = payload?.sessionCapturedAt;
-    const genOk = typeof generation === 'number' && Number.isFinite(generation);
-    if (!sub || !genOk) {
+    const generation = payload?.sessionGeneration;
+    if (!sub || !isSessionGeneration(generation)) {
       throw new HttpException(
         { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const record = await this.sessionStore.get(sub);
-    if (!record) {
-      // Already dead / absolute-cap — idempotent, nothing to clear.
-      return { ok: true };
-    }
-    if (record.capturedAt !== generation) {
-      // Old-generation token against a newer live session — never clear.
+    const cleared = await this.sessionStore.clearIfGeneration(sub, generation);
+    if (!cleared) {
+      // Mismatch or CAS lost to a newer live session — never cleared.
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
         HttpStatus.UNAUTHORIZED,
       );
     }
-    await this.sessionStore.clear(sub);
     this.logger.log(`SSO session cleared for ${sub}`);
     return { ok: true };
   }

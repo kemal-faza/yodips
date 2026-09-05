@@ -23,6 +23,13 @@ class FakeStore extends SessionStore {
     this.map.delete(k);
     return Promise.resolve();
   }
+  clearIfGeneration(k: string, generation: string): Promise<boolean> {
+    const rec = this.map.get(k) as CapturedSession | undefined;
+    if (!rec) return Promise.resolve(true);
+    if (rec.sessionGeneration !== generation) return Promise.resolve(false);
+    this.map.delete(k);
+    return Promise.resolve(true);
+  }
   all(): Promise<CapturedSession[]> {
     return Promise.resolve(
       Array.from(this.map.values()).map((value) => value as CapturedSession),
