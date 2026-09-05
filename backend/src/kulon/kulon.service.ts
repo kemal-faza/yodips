@@ -3,7 +3,7 @@ import { createKeyedSingleFlight } from '../common/single-flight';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
 import { SiapService } from '../siap/siap.service';
-import { SessionRef, SessionStore, isSessionRef } from '../session/session-store';
+import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
 import {
   cacheKeyForCurrent,
   cacheKeyForSession,
@@ -136,22 +136,25 @@ export class KulonService {
   private readonly runtime: TelemetryRuntime;
 
   constructor(
+    @Inject(SessionStore) sessionStore: SessionStore,
     @Optional() cache?: DataCache,
     @Optional() siap?: SiapService,
     @Optional() upstream?: KulonUpstreamSession,
-    @Optional() sessionStore?: SessionStore,
     @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
     this.cache = cache;
     this.siap = siap;
     this.runtime = runtime ?? createNoopTelemetryRuntime();
-    this.upstream = upstream ?? new KulonUpstreamSession(sessionStore, cache, this.runtime);
-    this.sessionStore = sessionStore;
+    // DI supplies the upstream seam when KulonModule is the constructing
+    // context; the manual fallback construction existed only to paper over
+    // the old optional-injection blind spot and is GONE (2026-09-05).
+    this.upstream =
+      upstream ??
+      new KulonUpstreamSession(sessionStore, cache, this.runtime);
   }
 
   private readonly cache?: DataCache;
   private readonly siap?: SiapService;
-  private readonly sessionStore?: SessionStore;
 
   /**
    * Method-level single-flight, keyed per `sub`: N concurrent callers of the

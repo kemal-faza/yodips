@@ -1,8 +1,8 @@
 import {
   HttpException,
   HttpStatus,
-  Injectable,
   Inject,
+  Injectable,
   Optional,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
@@ -17,12 +17,12 @@ import {
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
-import { SessionStore, SessionRef, isSessionRef, getRegisteredSessionStore } from '../session/session-store';
+import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
 import {
   cacheKeyForSession,
   currentRefForSession,
 } from '../session/session-scope';
-import { isSessionGeneration } from '../playwright/playwright-auth.service';
+import { isSessionGeneration } from '../session/session-contract';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import {
   createNoopTelemetryRuntime,
@@ -91,20 +91,22 @@ function hasSesskeyMarker(html: string): boolean {
  */
 @Injectable()
 export class KulonUpstreamSession {
-  private readonly sessionStore?: SessionStore;
   private readonly cache?: DataCache;
   private readonly runtime: TelemetryRuntime;
   private readonly sesskeyFlight = createKeyedSingleFlight<string>();
 
   constructor(
-    @Optional() sessionStore?: SessionStore,
+    @Inject(SessionStore) sessionStore: SessionStore,
     @Optional() cache?: DataCache,
     @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
-    this.sessionStore = sessionStore ?? getRegisteredSessionStore() ?? undefined;
     this.cache = cache;
     this.runtime = runtime ?? createNoopTelemetryRuntime();
+    this.store = sessionStore;
   }
+
+  /** Session store (mandatory DI; see session-store.ts DI rule). */
+  readonly store: SessionStore;
 
   /**
    * Single source of truth for Kulon session validity. A real session makes
@@ -163,7 +165,7 @@ export class KulonUpstreamSession {
    * authenticated controller/service path.
    */
   async getContextForCurrent(sub?: string): Promise<{ cookie: string; sesskey: string }> {
-    const session = sub ? await this.sessionStore?.get(sub) : null;
+    const session = sub ? await this.store.get(sub) : null;
     if (!session?.kulonCookie) {
       throw new StaleUpstreamError(
         'Kulon',
@@ -204,7 +206,7 @@ export class KulonUpstreamSession {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const session = await this.sessionStore?.getIfGeneration(ref.sub, ref.sessionGeneration) ?? null;
+    const session = await this.store.getIfGeneration(ref.sub, ref.sessionGeneration);
     if (!session?.kulonCookie || !isSessionGeneration(session.sessionGeneration)) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },

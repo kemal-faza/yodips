@@ -301,7 +301,7 @@ describe('SiapUpstreamSession.fetchText', () => {
 
   it('uses the fixed profile-page context and records one safe event per attempt', async () => {
     const { runtime, events } = recordingRuntime();
-    const seam = new SiapUpstreamSession(undefined, undefined, undefined, undefined, runtime);
+    const seam = new SiapUpstreamSession(undefined as never, undefined, undefined, undefined, runtime);
     const url = 'https://siap.undip.ac.id/pages/mhs/dashboard';
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
@@ -325,7 +325,7 @@ describe('SiapUpstreamSession.fetchText', () => {
 
   it('uses fixed attendance-page and notification-action contexts for text and JSON', async () => {
     const { runtime, events } = recordingRuntime();
-    const seam = new SiapUpstreamSession(undefined, undefined, undefined, undefined, runtime);
+    const seam = new SiapUpstreamSession(undefined as never, undefined, undefined, undefined, runtime);
     const attendanceUrl = 'https://siap.undip.ac.id/jadwal_mahasiswa/mhs/jadwal/get_absen';
     const notificationUrl = 'https://siap.undip.ac.id/pages/mhs/dashboard/ajax/unread';
     jest
@@ -368,7 +368,7 @@ describe('SiapUpstreamSession.fetchText', () => {
 
   it('times the session probe and keeps its no-throw stale contract', async () => {
     const { runtime, events } = recordingRuntime();
-    const seam = new SiapUpstreamSession(undefined, undefined, undefined, undefined, runtime);
+    const seam = new SiapUpstreamSession(undefined as never, undefined, undefined, undefined, runtime);
     const url = 'https://siap.undip.ac.id/pages/mhs/dashboard';
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
@@ -395,7 +395,7 @@ describe('SiapUpstreamSession.fetchText', () => {
 
   it('passes through a non-2xx QR JSON body while recording an HTTP error event', async () => {
     const { runtime, events } = recordingRuntime();
-    const seam = new SiapUpstreamSession(undefined, undefined, undefined, undefined, runtime);
+    const seam = new SiapUpstreamSession(undefined as never, undefined, undefined, undefined, runtime);
     const url = 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/';
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: false,
@@ -424,7 +424,7 @@ describe('SiapUpstreamSession.fetchText', () => {
 
   it('maps a QR redirect-loop transport to a 502 while retaining its marker', async () => {
     const { runtime, events } = recordingRuntime();
-    const seam = new SiapUpstreamSession(undefined, undefined, undefined, undefined, runtime);
+    const seam = new SiapUpstreamSession(undefined as never, undefined, undefined, undefined, runtime);
     const url = 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/';
     const transport = Object.assign(new TypeError('fetch failed SECRET'), {
       cause: new Error('redirect count exceeded'),
@@ -449,7 +449,7 @@ describe('SiapUpstreamSession.fetchText', () => {
 
   it('maps a non-JSON QR process response to stale 401 with a parse event', async () => {
     const { runtime, events } = recordingRuntime();
-    const seam = new SiapUpstreamSession(undefined, undefined, undefined, undefined, runtime);
+    const seam = new SiapUpstreamSession(undefined as never, undefined, undefined, undefined, runtime);
     const url = 'https://siap.undip.ac.id/master_perkuliahan/mhs/absensi/process/';
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
@@ -459,7 +459,7 @@ describe('SiapUpstreamSession.fetchText', () => {
       json: async () => {
         throw new Error('not JSON SECRET');
       },
-    } as Response);
+    } as unknown as Response);
 
     await expect(seam.fetchJsonAllowingHttpErrors(url, { method: 'POST' })).rejects.toMatchObject({
       reason: 'non-json-process',
@@ -477,7 +477,7 @@ describe('SiapUpstreamSession.fetchText', () => {
 
   it('rejects a page URL outside the fixed SIAP origin before fetching', async () => {
     const { runtime } = recordingRuntime();
-    const seam = new SiapUpstreamSession(undefined, undefined, undefined, undefined, runtime);
+    const seam = new SiapUpstreamSession(undefined as never, undefined, undefined, undefined, runtime);
     const fetchMock = jest.spyOn(global, 'fetch');
     fetchMock.mockClear();
     await expect(seam.fetchText('https://evil.example/pages/mhs/dashboard')).rejects.toThrow(TypeError);

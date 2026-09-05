@@ -219,7 +219,7 @@ describe('classifyUpstreamFetch', () => {
     );
 
     expect(out.kind).toBe('stale');
-    expect(out.reason).toBe('login-redirect');
+    expect(out).toMatchObject({ reason: 'login-redirect' });
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -227,7 +227,7 @@ describe('classifyUpstreamFetch', () => {
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('ECONNRESET'));
     const out = await classifyUpstreamFetch('https://up.test/x', {});
     expect(out.kind).toBe('gateway');
-    expect(out.reason).toBe('fetch-threw');
+    expect(out).toMatchObject({ reason: 'fetch-threw' });
     expect(out).not.toHaveProperty('networkMessage');
   });
 
@@ -239,7 +239,7 @@ describe('classifyUpstreamFetch', () => {
     jest.spyOn(global, 'fetch').mockRejectedValue(err);
     const out = await classifyUpstreamFetch('https://up.test/my/', {});
     expect(out.kind).toBe('stale');
-    expect(out.reason).toBe('redirect-loop');
+    expect(out).toMatchObject({ reason: 'redirect-loop' });
   });
 
   it('!ok → stale http-not-ok with response attached', async () => {
@@ -248,8 +248,8 @@ describe('classifyUpstreamFetch', () => {
       .mockResolvedValue(resStub({ ok: false, status: 500 }));
     const out = await classifyUpstreamFetch('https://up.test/x', {});
     expect(out.kind).toBe('stale');
-    expect(out.reason).toBe('http-not-ok');
-    expect(out.res?.status).toBe(500);
+    expect(out).toMatchObject({ reason: 'http-not-ok', res: { status: 500 } });
+    if (out.kind === 'stale') expect(out.res?.status).toBe(500);
   });
 
   it('ok but final URL on /login → stale login-redirect', async () => {
@@ -258,7 +258,7 @@ describe('classifyUpstreamFetch', () => {
       .mockResolvedValue(resStub({ url: 'https://siap.undip.ac.id/login/' }));
     const out = await classifyUpstreamFetch('https://up.test/dashboard', {});
     expect(out.kind).toBe('stale');
-    expect(out.reason).toBe('login-redirect');
+    expect(out).toMatchObject({ reason: 'login-redirect' });
   });
 
   it('ok page → ok with response attached', async () => {
@@ -267,7 +267,7 @@ describe('classifyUpstreamFetch', () => {
       .mockResolvedValue(resStub({ text: '<html>dashboard</html>' }));
     const out = await classifyUpstreamFetch('https://up.test/dashboard', {});
     expect(out.kind).toBe('ok');
-    expect(await out.res!.text()).toContain('dashboard');
+    if (out.kind === 'ok') expect(await out.res.text()).toContain('dashboard');
   });
 });
 

@@ -2,7 +2,7 @@ import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SessionStore } from '../session/session-store';
-import { isSessionGeneration } from '../playwright/playwright-auth.service';
+import { isSessionGeneration } from '../session/session-contract';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {

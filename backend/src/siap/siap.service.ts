@@ -2,7 +2,7 @@ import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
-import { SessionRef, isSessionRef, getRegisteredSessionStore } from '../session/session-store';
+import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
 import {
   cacheKeyForCurrent,
   cacheKeyForSession,
@@ -73,19 +73,34 @@ export class SiapService {
   private readonly upstream: SiapUpstreamSession;
   private readonly apiUpstream: SiapApiUpstream;
   private readonly cache?: DataCache;
+  /** Session store (mandatory DI; see session-store.ts DI rule). */
+  private readonly sessionStore: SessionStore;
   /** Keyed single-flight per user: N concurrent getKhs/getProfile/getIrs (and
    *  the shared-list methods) share ONE upstream+parse run. D2 done-criteria. */
   private readonly methodFlight = createKeyedSingleFlight<unknown>();
   constructor(
+    @Inject(SessionStore) sessionStore: SessionStore,
     @Optional() cache?: DataCache,
     @Optional() upstream?: SiapUpstreamSession,
     @Optional() apiUpstream?: SiapApiUpstream,
     @Optional() config?: ConfigService,
     @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
+    this.sessionStore = sessionStore;
     const telemetryRuntime = runtime ?? createNoopTelemetryRuntime();
     this.cache = cache;
-    this.upstream = upstream ?? new SiapUpstreamSession(undefined, undefined, undefined, undefined, telemetryRuntime);
+    // DI supplies the upstream seam when SiapModule is the constructing
+    // context; the manual fallback construction existed only to paper over
+    // the old optional-injection blind spot and is GONE (2026-09-05).
+    this.upstream =
+      upstream ??
+      new SiapUpstreamSession(
+        this.sessionStore,
+        cache,
+        undefined,
+        undefined,
+        telemetryRuntime,
+      );
     this.apiUpstream =
       apiUpstream ??
       new SiapApiUpstream(
@@ -218,8 +233,8 @@ export class SiapService {
   /**
    * Single seam for the stored SIAP page cookie on token-facing paths.
    * Delegates to the upstream adapter's exact-generation read — no duplicate
-   * `sessionStore.get` lives here, so cookies are retrieved in exactly one
-   * place and a B-replacement is SESSION_DEAD, never B's cookie.
+   * `sessionStore.get` lives in the seam, so cookies are retrieved in exactly
+   * one place and a B-replacement is SESSION_DEAD, never B's cookie.
    */
   private async requireSiapCookieForSession(ref: SessionRef): Promise<string> {
     this.requireRef(ref);

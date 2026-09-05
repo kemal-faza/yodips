@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { InMemorySessionStore } from './in-memory-session.store';
-import { generateSessionGeneration } from '../playwright/playwright-auth.service';
+import { generateSessionGeneration } from './session-contract';
 
 const GEN_A = 'a'.repeat(32);
 const GEN_B = 'b'.repeat(32);

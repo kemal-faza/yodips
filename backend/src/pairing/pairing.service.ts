@@ -2,7 +2,7 @@ import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { SessionRef, SessionStore, isSessionRef } from '../session/session-store';
-import { isSessionGeneration } from '../playwright/playwright-auth.service';
+import { isSessionGeneration } from '../session/session-contract';
 import { generatePairingCode, hashPairingCode, normalizePairingCode } from './pairing-code';
 import { PairingStore } from './pairing-store';
 

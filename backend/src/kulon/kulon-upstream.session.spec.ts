@@ -71,7 +71,7 @@ describe('KulonUpstreamSession.ajax', () => {
       status: 401,
       url: 'https://kulon2.undip.ac.id/login/index.php',
     } as unknown as Response);
-    const seam = new KulonUpstreamSession();
+    const seam = new KulonUpstreamSession(undefined as never);
 
     await expect(
       seam.ajax('cookie', 'sesskey', 'method', {}),
@@ -87,7 +87,7 @@ describe('KulonUpstreamSession.ajax', () => {
     jest
       .spyOn(global, 'fetch')
       .mockRejectedValue(new Error('connection reset'));
-    const seam = new KulonUpstreamSession();
+    const seam = new KulonUpstreamSession(undefined as never);
 
     await expect(
       seam.ajax('cookie', 'sesskey', 'method', {}),
@@ -111,7 +111,7 @@ describe('KulonUpstreamSession.ajax', () => {
         { error: true, exception: { message: 'Web service is disabled' } },
       ],
     } as unknown as Response);
-    const seam = new KulonUpstreamSession(undefined, undefined, runtime);
+    const seam = new KulonUpstreamSession(undefined as never, undefined, runtime);
 
     await expect(seam.ajax('cookie', 'secret', 'method', { courseid: 42 })).rejects.toMatchObject({
       reason: 'api-endpoint',
@@ -138,7 +138,7 @@ describe('KulonUpstreamSession.ajax', () => {
       url: 'https://kulon2.undip.ac.id/my/',
       text: async () => htmlWithSesskey('sesskey'),
     } as unknown as Response);
-    const seam = new KulonUpstreamSession(undefined, undefined, runtime);
+    const seam = new KulonUpstreamSession(undefined as never, undefined, runtime);
 
     await expect(seam.checkSessionValid('cookie')).resolves.toEqual({
       valid: true,
@@ -159,7 +159,7 @@ describe('KulonUpstreamSession.ajax', () => {
   it('keeps sesskey transport failures as a 502 compatibility response with a reason', async () => {
     const { runtime, events } = recordingRuntime();
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('connection reset'));
-    const seam = new KulonUpstreamSession(undefined, undefined, runtime);
+    const seam = new KulonUpstreamSession(undefined as never, undefined, runtime);
 
     await expect(seam.fetchSesskeyOrThrow('cookie')).rejects.toMatchObject({
       status: 502,
@@ -186,7 +186,7 @@ describe('KulonUpstreamSession.ajax', () => {
         status,
         url: 'https://kulon2.undip.ac.id/my/',
       } as unknown as Response);
-      const seam = new KulonUpstreamSession(undefined, undefined, runtime);
+      const seam = new KulonUpstreamSession(undefined as never, undefined, runtime);
 
       await expect(seam.fetchSesskeyOrThrow('cookie')).rejects.toMatchObject({
         status: 401,
