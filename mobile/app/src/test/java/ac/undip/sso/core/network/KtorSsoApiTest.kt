@@ -201,4 +201,31 @@ class KtorSsoApiTest {
         assertEquals(16294L, resp.courseId)
         assertEquals("Pertemuan 1", resp.sections[0].label)
     }
+
+    @Test
+    fun `logout posts to auth logout and parses ok`() = runBlocking {
+        val resp = api(
+            mockClient(
+                body = """{"ok":true}""",
+                assertRequest = { req ->
+                    assertEquals("POST", req.method.value)
+                    assertEquals("/api/auth/logout", req.url.encodedPath)
+                    assertTrue(
+                        "content-type present",
+                        req.body.contentType != null &&
+                            req.body.contentType.toString().startsWith("application/json"),
+                    )
+                },
+            ),
+        ).logout()
+        assertEquals(true, resp.ok)
+    }
+
+    @Test(expected = ApiHttpException::class)
+    fun `logout non-2xx throws ApiHttpException`() {
+        runBlocking {
+            api(mockClient(status = HttpStatusCode.InternalServerError, body = """{"message":"down"}"""))
+                .logout()
+        }
+    }
 }
