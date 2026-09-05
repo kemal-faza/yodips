@@ -18,6 +18,10 @@ import {
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
 import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import {
+  cacheKeyForSession,
+  currentRefForSession,
+} from '../session/session-scope';
 import { isSessionGeneration } from '../playwright/playwright-auth.service';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import {
@@ -64,14 +68,9 @@ function httpErrorResult<T>(
   return { ok: false, error, outcome: 'http_error', reason: 'http-not-ok', status };
 }
 
-/** Cache key for a user's sesskey, fingerprinted by the session cookie so a
- *  re-login (new cookie) is an automatic cache miss. */
-export function sesskeyCacheKey(sub: string, cookie: string): string {
-  const fp = createHash('sha256')
-    .update(cookie)
-    .digest('hex')
-    .slice(0, SESSKEY_FP_LEN);
-  return `${sub}:kulon:sesskey:${fp}`;
+/** Fingerprint binding a sesskey entry to the exact session cookie material. */
+function sesskeyFingerprint(cookie: string): string {
+  return createHash('sha256').update(cookie).digest('hex').slice(0, SESSKEY_FP_LEN);
 }
 
 /** Pull the AJAX sesskey out of a Kulon page (present only when authed). */
@@ -172,7 +171,23 @@ export class KulonUpstreamSession {
         'Kulon session belum ada. Silakan login ulang via SSO',
       );
     }
-    return { cookie: session.kulonCookie, sesskey: await this.resolveSesskey(sub, session.kulonCookie) };
+    // The live record scopes the read through the SAME scoped entry as the
+    // token path: same generation means the same cookie material, so sharing
+    // is safe and saves a duplicate /my/ probe. A legacy record without a
+    // generation cannot scope — stale, forcing a clean re-login.
+    const ref = sub ? currentRefForSession(sub, session) : null;
+    if (!ref) {
+      throw new StaleUpstreamError(
+        'Kulon',
+        'no-cookie',
+        'Kulon session belum ada. Silakan login ulang via SSO',
+      );
+    }
+    const key = cacheKeyForSession(ref, 'kulon', 'sesskey', sesskeyFingerprint(session.kulonCookie));
+    return {
+      cookie: session.kulonCookie,
+      sesskey: await this.resolveSesskey(key, session.kulonCookie),
+    };
   }
 
   /**
@@ -202,17 +217,21 @@ export class KulonUpstreamSession {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    return { cookie: session.kulonCookie, sesskey: await this.resolveSesskey(ref.sub, session.kulonCookie) };
+    // Generation-scoped sesskey entry: an A flight/entry is never joined or
+    // reused by a B generation, even when the cookie material is identical.
+    const key = cacheKeyForSession(ref, 'kulon', 'sesskey', sesskeyFingerprint(session.kulonCookie));
+    return { cookie: session.kulonCookie, sesskey: await this.resolveSesskey(key, session.kulonCookie) };
   }
 
-  /** Sesskey resolve shared by both reads: fingerprint cache + single-flight. */
-  private async resolveSesskey(sub: string | undefined, cookie: string): Promise<string> {
-    if (!sub || !this.cache) {
+  /** Sesskey resolve shared by both reads: scoped cache + scoped single-flight. */
+  private async resolveSesskey(key: string, cookie: string): Promise<string> {
+    if (!this.cache) {
       return this.fetchSesskeyOrThrow(cookie);
     }
-    const key = sesskeyCacheKey(sub, cookie);
     const cached = await this.cache.get<string>(key);
     if (cached) return cached;
+    // The flight slot IS the cache key: one in-flight slot per generation
+    // (or per current namespace) — A can never join B's /my/ fetch.
     const sesskey = await this.sesskeyFlight.run(key, () =>
       this.fetchSesskeyOrThrow(cookie),
     );

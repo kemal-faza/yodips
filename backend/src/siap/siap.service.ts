@@ -2,7 +2,13 @@ import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
-import { SessionRef, SessionStore, isSessionRef } from '../session/session-store';
+import { SessionRef, isSessionRef } from '../session/session-store';
+import {
+  cacheKeyForCurrent,
+  cacheKeyForSession,
+  flightKeyForCurrent,
+  flightKeyForSession,
+} from '../session/session-scope';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { mapWithConcurrency } from '../common/map-with-concurrency';
@@ -67,14 +73,12 @@ export class SiapService {
   private readonly upstream: SiapUpstreamSession;
   private readonly apiUpstream: SiapApiUpstream;
   private readonly cache?: DataCache;
-  private readonly sessionStore?: SessionStore;
   /** Keyed single-flight per user: N concurrent getKhs/getProfile/getIrs (and
    *  the shared-list methods) share ONE upstream+parse run. D2 done-criteria. */
   private readonly methodFlight = createKeyedSingleFlight<unknown>();
   constructor(
     @Optional() cache?: DataCache,
     @Optional() upstream?: SiapUpstreamSession,
-    @Optional() sessionStore?: SessionStore,
     @Optional() apiUpstream?: SiapApiUpstream,
     @Optional() config?: ConfigService,
     @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
@@ -82,7 +86,6 @@ export class SiapService {
     const telemetryRuntime = runtime ?? createNoopTelemetryRuntime();
     this.cache = cache;
     this.upstream = upstream ?? new SiapUpstreamSession(undefined, undefined, undefined, undefined, telemetryRuntime);
-    this.sessionStore = sessionStore;
     this.apiUpstream =
       apiUpstream ??
       new SiapApiUpstream(
@@ -113,7 +116,12 @@ export class SiapService {
     form: Record<string, string> = {},
   ): Promise<T> {
     this.requireRef(ref);
-    return this.fetchWithResolver<T>(ref.sub, () => this.upstream.getContextForSession(ref), endpoint, form);
+    return this.fetchWithResolver<T>(
+      () => this.upstream.getContextForSession(ref),
+      () => cacheKeyForSession(ref, 'siap', 'token'),
+      endpoint,
+      form,
+    );
   }
 
   /** CURRENT-session variant for background flows (poller) that own no JWT. */
@@ -122,13 +130,23 @@ export class SiapService {
     endpoint: string,
     form: Record<string, string> = {},
   ): Promise<T> {
-    return this.fetchWithResolver<T>(sub, () => this.upstream.getContextForCurrent(sub), endpoint, form);
+    let tokenCacheKey: string | undefined;
+    return this.fetchWithResolver<T>(
+      async () => {
+        const ref = await this.upstream.getCurrentSessionRef(sub);
+        tokenCacheKey = cacheKeyForSession(ref, 'siap', 'token');
+        return this.upstream.getContextForSession(ref);
+      },
+      () => tokenCacheKey,
+      endpoint,
+      form,
+    );
   }
 
   /** Shared fetch+once-retry core: the resolver owns the generation policy. */
   private async fetchWithResolver<T>(
-    sub: string,
     resolve: () => Promise<{ token: string; nim: string }>,
+    tokenCacheKey: () => string | undefined,
     endpoint: string,
     form: Record<string, string> = {},
   ): Promise<T> {
@@ -143,7 +161,8 @@ export class SiapService {
     } catch (e) {
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
         if (this.cache) {
-          await this.cache.del(`${sub}:siap:token`);
+          const key = tokenCacheKey();
+          if (key) await this.cache.del(key);
         }
         const fresh = await resolve();
         return await this.apiUpstream.fetch<T>(
@@ -239,11 +258,11 @@ export class SiapService {
   async getProfile(ref: SessionRef): Promise<SiapProfile> {
     this.requireRef(ref);
     return (await this.methodFlight.run(
-      `profile:${ref.sub}`,
+      flightKeyForSession(ref, 'profile'),
       async () => {
         if (this.cache) {
           const { value } = await this.cache.getStale<SiapProfile>(
-            `${ref.sub}:siap:profile`,
+            cacheKeyForSession(ref, 'siap', 'profile'),
             () => this.fetchProfileData(ref),
             swrWindow('SIAP_PROFILE'),
           );
@@ -358,7 +377,7 @@ export class SiapService {
       return irs;
     } catch (e) {
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
-        if (this.cache) await this.cache.del(`${ref.sub}:siap:token`);
+        if (this.cache) await this.cache.del(cacheKeyForSession(ref, 'siap', 'token'));
         ctx = await this.upstream.getContextForSession(ref); // re-mint
         const irs = await build();
         return irs;
@@ -370,11 +389,11 @@ export class SiapService {
   async getIrs(ref: SessionRef): Promise<SiapIrs> {
     this.requireRef(ref);
     return (await this.methodFlight.run(
-      `irs:${ref.sub}`,
+      flightKeyForSession(ref, 'irs'),
       async () => {
         if (this.cache) {
           const { value } = await this.cache.getStale<SiapIrs>(
-            `${ref.sub}:siap:irs`,
+            cacheKeyForSession(ref, 'siap', 'irs'),
             () => this.fetchIrs(ref),
             swrWindow('SIAP_IRS'),
           );
@@ -439,7 +458,7 @@ export class SiapService {
     } catch (e) {
       // Retry once on api-credential: invalidate the cached token + re-mint.
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
-        if (this.cache) await this.cache.del(`${ref.sub}:siap:token`);
+        if (this.cache) await this.cache.del(cacheKeyForSession(ref, 'siap', 'token'));
         ctx = await this.upstream.getContextForSession(ref);
         const khs = await build();
         return khs;
@@ -451,11 +470,11 @@ export class SiapService {
   async getKhs(ref: SessionRef): Promise<SiapKhs> {
     this.requireRef(ref);
     return (await this.methodFlight.run(
-      `khs:${ref.sub}`,
+      flightKeyForSession(ref, 'khs'),
       async () => {
         if (this.cache) {
           const { value } = await this.cache.getStale<SiapKhs>(
-            `${ref.sub}:siap:khs`,
+            cacheKeyForSession(ref, 'siap', 'khs'),
             () => this.fetchKhs(ref),
             swrWindow('SIAP_KHS'),
           );
@@ -528,7 +547,7 @@ export class SiapService {
       return await build();
     } catch (e) {
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
-        if (this.cache) await this.cache.del(`${ref.sub}:siap:token`);
+        if (this.cache) await this.cache.del(cacheKeyForSession(ref, 'siap', 'token'));
         ctx = await this.upstream.getContextForSession(ref);
         return await build();
       }
@@ -539,7 +558,7 @@ export class SiapService {
   async getLecturers(ref: SessionRef): Promise<{ kode: string; dosen: string }[]> {
     this.requireRef(ref);
     return (await this.methodFlight.run(
-      `lecturers:${ref.sub}`,
+      flightKeyForSession(ref, 'lecturers'),
       async () => {
         if (this.cache) {
           const { value } = await this.cache.getStale<
@@ -548,7 +567,7 @@ export class SiapService {
               dosen: string;
             }[]
           >(
-            `${ref.sub}:siap:lecturers`,
+            cacheKeyForSession(ref, 'siap', 'lecturers'),
             () => this.fetchLecturers(ref),
             swrWindow('SIAP_LECTURERS'),
           );
@@ -582,11 +601,11 @@ export class SiapService {
   async getNotifications(ref: SessionRef): Promise<SiapNotifications> {
     this.requireRef(ref);
     return (await this.methodFlight.run(
-      `notifications:${ref.sub}`,
+      flightKeyForSession(ref, 'notifications'),
       async () => {
         if (this.cache) {
           const { value } = await this.cache.getStale<SiapNotifications>(
-            `${ref.sub}:siap:notifications`,
+            cacheKeyForSession(ref, 'siap', 'notifications'),
             () => this.fetchNotifications(ref),
             swrWindow('SIAP_NOTIFICATIONS'),
           );
@@ -644,11 +663,11 @@ export class SiapService {
   async getJadwal(ref: SessionRef): Promise<SiapJadwal[]> {
     this.requireRef(ref);
     return (await this.methodFlight.run(
-      `jadwal:${ref.sub}`,
+      flightKeyForSession(ref, 'jadwal'),
       async () => {
         if (this.cache) {
           const { value } = await this.cache.getStale<SiapJadwal[]>(
-            `${ref.sub}:siap:jadwal`,
+            cacheKeyForSession(ref, 'siap', 'jadwal'),
             () => this.fetchJadwal(ref),
             swrWindow('SIAP_JADWAL'),
           );
@@ -666,11 +685,11 @@ export class SiapService {
    */
   async getJadwalForCurrentSession(sub: string): Promise<SiapJadwal[]> {
     return (await this.methodFlight.run(
-      `jadwal:current:${sub}`,
+      flightKeyForCurrent(sub, 'jadwal'),
       async () => {
         if (this.cache) {
           const { value } = await this.cache.getStale<SiapJadwal[]>(
-            `${sub}:siap:jadwal`,
+            cacheKeyForCurrent(sub, 'siap', 'jadwal'),
             async () => {
               const rows = await this.fetchWithCurrentContext<Array<Record<string, unknown>>>(
                 sub,
@@ -734,11 +753,11 @@ export class SiapService {
   async getAbsen(ref: SessionRef): Promise<SiapAbsenItem[]> {
     this.requireRef(ref);
     return (await this.methodFlight.run(
-      `absen:${ref.sub}`,
+      flightKeyForSession(ref, 'absen'),
       async () => {
         if (this.cache) {
           const { value } = await this.cache.getStale<SiapAbsenItem[]>(
-            `${ref.sub}:siap:absen`,
+            cacheKeyForSession(ref, 'siap', 'absen'),
             () => this.fetchAbsen(ref),
             swrWindow('SIAP_ABSEN'),
           );

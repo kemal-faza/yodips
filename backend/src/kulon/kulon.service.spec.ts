@@ -22,6 +22,7 @@ import { CachePolicy, swrWindow } from '../cache/cache-policy';
 import { TELEMETRY_RUNTIME, type TelemetryRuntime } from '../observability/telemetry';
 import { NestTelemetrySink } from '../observability/nest-telemetry.sink';
 import { KulonModule } from './kulon.module';
+import { cacheKeyForCurrent, cacheKeyForSession } from '../session/session-scope';
 import type {
   KulonAssignment,
   KulonAssignmentDetail,
@@ -690,7 +691,7 @@ describe('KulonService', () => {
     );
     await service.getAllAssignments(ref('2304012012345'));
     expect(setSpy).toHaveBeenCalledWith(
-      '2304012012345:kulon:assignments:all',
+      cacheKeyForSession(ref('2304012012345'), 'kulon', 'assignments', 'all'),
       expect.anything(),
       CachePolicy.KULON_ASSIGNMENTS_ALL,
     );
@@ -723,7 +724,7 @@ describe('KulonService', () => {
     expect(spy).toHaveBeenCalledWith(
       'c1',
       'sk1',
-      'u1',
+      { kind: 'session', ref: ref('u1') },
       { withLecturers: false, withProgress: false },
     );
     spy.mockRestore();
@@ -759,9 +760,9 @@ describe('KulonService', () => {
     const progressSpy = jest.spyOn(svc as any, 'fetchCourseContent');
     await svc.getAllAssignments(ref('u1'));
     expect(progressSpy).not.toHaveBeenCalled();
-    expect(setSpy).not.toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
+    expect(setSpy).not.toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.anything());
     // assignments:all is written by getStale, the sole payload owner.
-    expect(setSpy).toHaveBeenCalledWith('u1:kulon:assignments:all', expect.anything(), CachePolicy.KULON_ASSIGNMENTS_ALL);
+    expect(setSpy).toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'assignments', 'all'), expect.anything(), CachePolicy.KULON_ASSIGNMENTS_ALL);
     progressSpy.mockRestore();
   });
 
@@ -805,14 +806,14 @@ describe('KulonService', () => {
     const out = await svc.getAllAssignments(ref('u1'));
     // getAllAssignments' own payload read goes through getStale (miss → fetcher ran)
     expect(getStaleSpy).toHaveBeenCalledWith(
-      'u1:kulon:assignments:all',
+      cacheKeyForSession(ref('u1'), 'kulon', 'assignments', 'all'),
       expect.any(Function),
       swrWindow('KULON_ASSIGNMENTS_ALL'),
     );
     // fetchCourses' internal read still uses cache.get and hit the cached courses
-    expect(getSpy).toHaveBeenCalledWith('u1:kulon:courses');
+    expect(getSpy).toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'));
     expect(upstreamMock.ajax).not.toHaveBeenCalled();
-    expect(setSpy).not.toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
+    expect(setSpy).not.toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.anything());
     expect(out).toEqual([]);
   });
 
@@ -834,7 +835,7 @@ describe('KulonService', () => {
     ]) as any;
     (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
     await svcNew.getCourses(ref('u1'));
-    expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.anything(), CachePolicy.KULON_COURSES);
+    expect(cache.set).toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.anything(), CachePolicy.KULON_COURSES);
   });
 
   it('getAllAssignments single-flights concurrent callers (1 upstream run)', async () => {
@@ -880,6 +881,70 @@ describe('KulonService', () => {
     ]);
     // getContext called once for S1, once for S2 (3 timeline fetches each)
     expect(upstreamMock.getContextForSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not join authenticated course flights or payload caches across generations', async () => {
+    const cache = {
+      get: jest.fn(),
+      getStale: jest.fn(),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
+    const waiters: Array<(value: unknown) => void> = [];
+    cache.getStale.mockImplementation(
+      () => new Promise((resolve) => waiters.push(resolve)),
+    );
+    const upstreamMock = {
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+    };
+    const service = new KulonService(cache as any, undefined, upstreamMock as any);
+    const first = service.getCourses(ref('u1', 'a'.repeat(32)));
+    await Promise.resolve();
+    const second = service.getCourses(ref('u1', 'b'.repeat(32)));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(cache.getStale).toHaveBeenCalledWith(
+      cacheKeyForSession(ref('u1', 'a'.repeat(32)), 'kulon', 'courses'),
+      expect.any(Function),
+      swrWindow('KULON_COURSES'),
+    );
+    expect(cache.getStale).toHaveBeenCalledWith(
+      cacheKeyForSession(ref('u1', 'b'.repeat(32)), 'kulon', 'courses'),
+      expect.any(Function),
+      swrWindow('KULON_COURSES'),
+    );
+    waiters.forEach((resolve) => resolve({ value: [], stale: false }));
+    await expect(Promise.all([first, second])).resolves.toEqual([[], []]);
+  });
+
+  it('keeps authenticated and current/background assignment caches separate', async () => {
+    const cache = {
+      get: jest.fn(),
+      getStale: jest.fn().mockResolvedValue({ value: [], stale: false }),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
+    const upstreamMock = {
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+    };
+    const service = new KulonService(cache as any, undefined, upstreamMock as any);
+    jest.spyOn(service as any, 'fetchAllAssignments').mockResolvedValue([]);
+    await service.getAllAssignments(ref('u1', TEST_GEN));
+    await service.getAllAssignmentsForCurrentSession('u1');
+    expect(cache.getStale).toHaveBeenNthCalledWith(
+      1,
+      cacheKeyForSession(ref('u1', TEST_GEN), 'kulon', 'assignments', 'all'),
+      expect.any(Function),
+      swrWindow('KULON_ASSIGNMENTS_ALL'),
+    );
+    expect(cache.getStale).toHaveBeenNthCalledWith(
+      2,
+      cacheKeyForCurrent('u1', 'kulon', 'assignments', 'all'),
+      expect.any(Function),
+      swrWindow('KULON_ASSIGNMENTS_ALL'),
+    );
   });
 
   it('getCourses allows a fresh run after completion (keyed map cleaned)', async () => {
@@ -1445,7 +1510,7 @@ describe('KulonService', () => {
     cache.getStale.mockResolvedValue({ value: cachedCourses, stale: false });
     const out = await svcNew.getCourses(ref('u1'));
     expect(cache.getStale).toHaveBeenCalledWith(
-      'u1:kulon:courses',
+      cacheKeyForSession(ref('u1'), 'kulon', 'courses'),
       expect.any(Function),
       swrWindow('KULON_COURSES'),
     );
@@ -1471,7 +1536,7 @@ describe('KulonService', () => {
     ]) as any;
     (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
     const out = await svcNew.getCourses(ref('u1'));
-    expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.arrayContaining([
+    expect(cache.set).toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.arrayContaining([
       expect.objectContaining({ lecturer: 'Dr. X' }),
     ]), CachePolicy.KULON_COURSES);
     expect(siapFake.getLecturers).toHaveBeenCalledWith(ref('u1'));
@@ -1486,7 +1551,7 @@ describe('KulonService', () => {
     const svcNew = makeAuthedKulonSvc({ cache });
     const out = await svcNew.getAllAssignments(ref('u1'));
     expect(cache.getStale).toHaveBeenCalledWith(
-      'u1:kulon:assignments:all',
+      cacheKeyForSession(ref('u1'), 'kulon', 'assignments', 'all'),
       expect.any(Function),
       swrWindow('KULON_ASSIGNMENTS_ALL'),
     );
@@ -1508,7 +1573,7 @@ describe('KulonService', () => {
     const svcNew = makeAuthedKulonSvc({ cache });
     const out = await svcNew.getAssignmentDetail(ref('u1'), 42, 777);
     expect(cache.getStale).toHaveBeenCalledWith(
-      'u1:kulon:assignment-detail:777',
+      cacheKeyForSession(ref('u1'), 'kulon', 'assignment-detail', '777'),
       expect.any(Function),
       swrWindow('KULON_ASSIGNMENT_DETAIL'),
     );
@@ -1522,7 +1587,7 @@ describe('KulonService', () => {
     const svcNew = makeAuthedKulonSvc({ cache });
     const out = await svcNew.getCourseContent(ref('u1'), 16294);
     expect(cache.getStale).toHaveBeenCalledWith(
-      'u1:kulon:course-content:16294',
+      cacheKeyForSession(ref('u1'), 'kulon', 'course-content', '16294'),
       expect.any(Function),
       swrWindow('KULON_COURSE_CONTENT'),
     );

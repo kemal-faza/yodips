@@ -14,6 +14,11 @@ import {
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
 import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import {
+  cacheKeyForSession,
+  currentRefForSession,
+  flightKeyForSession,
+} from '../session/session-scope';
 import { isSessionGeneration } from '../playwright/playwright-auth.service';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { SiapApiUpstream } from './siap-api';
@@ -175,15 +180,22 @@ export class SiapUpstreamSession {
 
   /** CURRENT-session read for background flows (poller) that own no JWT. */
   async getContextForCurrent(sub?: string): Promise<SiapSessionContext> {
+    const ref = await this.getCurrentSessionRef(sub);
+    return this.getContextForSession(ref);
+  }
+
+  /** Resolve the live generation for a background caller before token work. */
+  async getCurrentSessionRef(sub?: string): Promise<SessionRef> {
     const session = sub ? await this.sessionStore?.get(sub) : null;
-    if (!session?.siapCookie) {
+    const ref = sub && session?.siapCookie ? currentRefForSession(sub, session) : null;
+    if (!ref) {
       throw new StaleUpstreamError(
         'Siap',
         'no-cookie',
         'SIAP session belum ada. Silakan login ulang via SSO',
       );
     }
-    return this.resolveWithCache(sub, session);
+    return ref;
   }
 
   /**
@@ -213,7 +225,7 @@ export class SiapUpstreamSession {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    return this.resolveWithCache(ref.sub, session);
+    return this.resolveScoped(ref, session);
   }
 
   /**
@@ -247,37 +259,47 @@ export class SiapUpstreamSession {
     return cookie;
   }
 
-  /** Shared identity+token resolve (cache + single-flight + scrape fallback). */
-  private async resolveWithCache(
-    sub: string | undefined,
+  /** Shared identity+token resolve (generation-scoped cache + single-flight).
+   *  Both the token path (exact-generation snapshot) and the current path
+   *  (live-record ref) funnel through here: one implementation, one scoping
+   *  rule — an A-token can neither join B's flights nor read A's primed
+   *  entries after a B-replacement. */
+  private async resolveScoped(
+    ref: SessionRef,
     session: { identity?: string; emailSso?: string; siapCookie?: string } | null,
   ): Promise<SiapSessionContext> {
-    if (!sub || !this.cache) {
+    if (!this.cache) {
       // No cache path: resolve directly (identity from store, scrape fallback).
-      const identity = await this.resolveIdentity(sub, session);
+      const identity = await this.resolveIdentity(ref.sub, session);
       const token = await this.mintFresh(identity.emailSso, identity.nim);
       return { ...identity, token };
     }
-    const identityKey = `${sub}:siap:identity`;
-    const identity = await this.identityFlight.run(identityKey, async () => {
-      const cached = await this.cache!.get<SiapIdentity>(identityKey);
-      if (cached) {
-        return cached;
-      }
-      const resolved = await this.resolveIdentity(sub, session);
-      await this.cache!.set(identityKey, resolved, CachePolicy.SIAP_IDENTITY);
-      return resolved;
-    });
-    const tokenKey = `${sub}:siap:token`;
-    const token = await this.tokenFlight.run(tokenKey, async () => {
-      const cached = await this.cache!.get<string>(tokenKey);
-      if (cached) {
-        return cached;
-      }
-      const fresh = await this.mintFresh(identity.emailSso, identity.nim);
-      await this.cache!.set(tokenKey, fresh, CachePolicy.SIAP_TOKEN);
-      return fresh;
-    });
+    const identityKey = cacheKeyForSession(ref, 'siap', 'identity');
+    const identity = await this.identityFlight.run(
+      flightKeyForSession(ref, 'siap.identity'),
+      async () => {
+        const cached = await this.cache!.get<SiapIdentity>(identityKey);
+        if (cached) {
+          return cached;
+        }
+        const resolved = await this.resolveIdentity(ref.sub, session);
+        await this.cache!.set(identityKey, resolved, CachePolicy.SIAP_IDENTITY);
+        return resolved;
+      },
+    );
+    const tokenKey = cacheKeyForSession(ref, 'siap', 'token');
+    const token = await this.tokenFlight.run(
+      flightKeyForSession(ref, 'siap.token'),
+      async () => {
+        const cached = await this.cache!.get<string>(tokenKey);
+        if (cached) {
+          return cached;
+        }
+        const fresh = await this.mintFresh(identity.emailSso, identity.nim);
+        await this.cache!.set(tokenKey, fresh, CachePolicy.SIAP_TOKEN);
+        return fresh;
+      },
+    );
     return { ...identity, token };
   }
 

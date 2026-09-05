@@ -57,6 +57,17 @@ function sliceError(e: unknown): SliceError {
   return { status: 500, message: 'Terjadi kesalahan internal' };
 }
 
+function isAuthenticatedFailure(e: unknown): boolean {
+  if (!(e instanceof HttpException)) return false;
+  if (e.getStatus() === HttpStatus.UNAUTHORIZED) return true;
+  const response = e.getResponse();
+  return (
+    typeof response === 'object' &&
+    response !== null &&
+    (response as { code?: unknown }).code === 'SESSION_DEAD'
+  );
+}
+
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger('Dashboard');
@@ -89,6 +100,7 @@ export class DashboardService {
       if (res.status === 'fulfilled') {
         (out as unknown as Record<string, unknown>)[name] = res.value;
       } else {
+        if (isAuthenticatedFailure(res.reason)) throw res.reason;
         const se = sliceError(res.reason);
         this.logger.debug(`[dashboard] slice ${name} failed status=${se.status}`);
         (out as unknown as Record<string, unknown>)[name] = Array.isArray(EMPTY[name])
