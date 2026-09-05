@@ -18,6 +18,7 @@ vi.mock('../api/client', () => ({
   capture: vi.fn(),
   me: vi.fn(),
   getSiapProfile: vi.fn().mockResolvedValue(null),
+  getAllAssignments: vi.fn(),
   logoutSession: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -49,6 +50,8 @@ vi.mock('../composables/useExtension', async (importOriginal) => {
       const api = actual.useExtension();
       return { ...api, logout: extLogout };
     },
+    isExtOutboundStatus: actual.isExtOutboundStatus,
+    isExtPollStatus: actual.isExtPollStatus,
   };
 });
 import { useExtension } from '../composables/useExtension';
@@ -206,6 +209,36 @@ describe('auth store', () => {
     expect(status).toBe('incomplete');
     expect(store.token).toBeNull();
     expect(localStorage.getItem('sso_token')).toBeNull();
+  });
+
+  it('A incomplete session clears Kulon data before relogin as B while keeping device preferences', async () => {
+    const auth = useAuthStore();
+    const kulon = useKulonStore();
+    auth.token = 'jwt-a';
+    auth.user = { sub: 'a', nama: 'A' } as any;
+    kulon.assignments = [{ id: 1 } as any];
+    kulon.courses = [{ id: 2 } as any];
+    kulon.hidden = [9];
+    (api.me as any).mockResolvedValue({
+      sub: 'a', authenticated: true, hasSso: true, hasMicrosoft: false,
+      hasKulon: false, hasSiap: false, complete: false,
+    });
+
+    expect(await auth.fetchMe()).toBe('incomplete');
+    expect(kulon.assignments).toEqual([]);
+    expect(kulon.courses).toEqual([]);
+    expect(kulon.hidden).toEqual([9]);
+
+    (api.capture as any).mockResolvedValue({
+      accessToken: 'jwt-b', capturedAt: 0, hasSso: true, hasMicrosoft: false,
+      hasKulon: true, hasSiap: true,
+    });
+    await auth.login();
+    expect(auth.token).toBe('jwt-b');
+    (api.getAllAssignments as any).mockResolvedValue([{ id: 3 }]);
+    await kulon.ensureAssignments();
+    expect(kulon.assignments).toEqual([{ id: 3 }]);
+    expect(kulon.assignments).not.toContainEqual({ id: 1 });
   });
 
   it('fetchMe returns error and keeps the token on network failure', async () => {
@@ -560,7 +593,13 @@ describe('extension login', () => {
             cb(undefined);
             return;
           }
-          cb(status === 'ok' ? { status: 'ok', accessToken } : { status });
+          cb(
+            status === 'ok'
+              ? { status: 'ok', accessToken }
+              : status === 'started'
+                ? { status: 'started', mode: 'auto' }
+                : { status: 'error', message: 'handoff failed' },
+          );
         },
       },
     };
@@ -614,6 +653,30 @@ describe('extension login', () => {
     stubChrome('error');
     const store = useAuthStore();
     expect(await store.loginViaExtension()).toBe('error');
+    expect(store.token).toBeNull();
+  });
+
+  it.each([
+    null,
+    undefined,
+    'malformed',
+    42,
+    {},
+    { status: 'unknown' },
+    { status: 'ok' },
+    { status: 'started' },
+    { status: 'error' },
+  ])('controls malformed extension handoff response %#', async (response) => {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) => cb(response),
+      },
+    };
+    const store = useAuthStore();
+
+    await expect(store.loginViaExtension()).resolves.toBe('error');
+    expect(store.error).toContain('Extension');
     expect(store.token).toBeNull();
   });
 
@@ -781,6 +844,51 @@ describe('reauth (auto-recover expired session)', () => {
     stubChrome('error');
     const store = useAuthStore();
     expect(await store.attemptReauth()).toBe('failed');
+  });
+
+  it.each([
+    null,
+    undefined,
+    'malformed',
+    42,
+    {},
+    { status: 'unknown' },
+    { status: 'ok' },
+    { status: 'started' },
+    { status: 'error' },
+  ])('silent reauth controls malformed handoff response %# and releases overlay', async (response) => {
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) => cb(response),
+      },
+    };
+    const store = useAuthStore();
+
+    await expect(store.attemptReauth()).resolves.toBe('failed');
+    expect(store.reauthing).toBe(false);
+    expect(store.reauthPhase).toBeNull();
+  });
+
+  it('silent reauth turns a malformed poll response into a failed attempt', async () => {
+    vi.useFakeTimers();
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: any, cb: (resp: any) => void) => {
+          if (msg?.action === 'handoff') return cb({ status: 'started', mode: 'auto' });
+          cb(null);
+        },
+      },
+    };
+    const store = useAuthStore();
+    const recovery = store.attemptReauth();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushPromises();
+
+    await expect(recovery).resolves.toBe('failed');
+    expect(store.reauthing).toBe(false);
+    vi.useRealTimers();
   });
 
   it('attemptReauth returns failed when called twice (loop guard), then resets on logout', async () => {

@@ -2,7 +2,12 @@ import { defineStore } from 'pinia';
 import { capture, me, getSiapProfile, logoutSession } from '../api/client';
 import type { User } from '../types';
 import { clearCache } from '../api/cache';
-import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
+import {
+  isExtOutboundStatus,
+  useExtension,
+  type ExtOutboundStatus,
+  type ExtPollStatus,
+} from '../composables/useExtension';
 import { onTokenRefreshed } from '../lib/reauth';
 import { beginLogout, endLogout, isLogoutInProgress, getReauthEpoch } from '../lib/logout';
 import { useKulonStore } from './kulon';
@@ -23,6 +28,23 @@ let fetchMeAttempt = 0;
 let extensionCheckAttempt = 0;
 let extensionLoginAttempt = 0;
 let logoutFlight: Promise<void> | null = null;
+
+function clearUserScopedState(state: {
+  token: string | null;
+  user: User | null;
+  fotoUrl: string | null;
+  hasSiap: boolean;
+  hasKulon: boolean;
+}) {
+  clearCache();
+  state.token = null;
+  state.user = null;
+  state.fotoUrl = null;
+  state.hasSiap = false;
+  state.hasKulon = false;
+  localStorage.removeItem(TOKEN_KEY);
+  useKulonStore().reset();
+}
 
 function ownsAttempt(attempt: AuthAttempt, currentId: number): boolean {
   return (
@@ -192,6 +214,10 @@ export const useAuthStore = defineStore('auth', {
         this.extensionError = 'Extension tidak terdeteksi. Pastikan ID extension dan origin web benar.';
         return 'not-installed';
       }
+      if (!isExtOutboundStatus(resp)) {
+        this.error = 'Login via extension gagal.';
+        return 'error';
+      }
       if (resp.status === 'ok' && resp.accessToken) {
         if (!ownsAttempt(attempt, extensionLoginAttempt)) return 'error';
         this.finishHandoff(resp.accessToken, attempt.epoch);
@@ -212,7 +238,7 @@ export const useAuthStore = defineStore('auth', {
       return 'error';
     },
     /** Pull the current extension state / last result (self-healing poll). */
-    async readExtensionResult(): Promise<any | null> {
+    async readExtensionResult(): Promise<ExtPollStatus | null> {
       return useExtension().readStatus();
     },
     finishHandoff(token: string, expectedEpoch?: number) {
@@ -238,13 +264,7 @@ export const useAuthStore = defineStore('auth', {
      *  session cookies. Used when the server-side session is incomplete so
      *  the still-valid browser cookies can be silently re-captured. */
     clearSessionState() {
-      clearCache();
-      this.token = null;
-      this.user = null;
-      this.fotoUrl = null;
-      this.hasSiap = false;
-      this.hasKulon = false;
-      localStorage.removeItem(TOKEN_KEY);
+      clearUserScopedState(this);
     },
     /** Poll/onResult wait for an in-flight extension handoff started by
      *  attemptReauth('started'). Resolves once a fresh JWT (recovered) or an
@@ -291,7 +311,7 @@ export const useAuthStore = defineStore('auth', {
           if (inFlight) return; // serialize: a read is already pending
           inFlight = true;
           try {
-            const payload: any = await this.readExtensionResult();
+            const payload = await this.readExtensionResult();
             // After EVERY await: re-check settled, ownership (epoch), before
             // any phase/token/overlay mutation — a logout or a newer owner may
             // have crossed while we were awaiting.
@@ -302,7 +322,7 @@ export const useAuthStore = defineStore('auth', {
               return;
             }
             if (!payload) return; // extension unavailable — keep waiting
-            const phase = payload.phase as 'sso' | 'kulon' | 'siap' | undefined;
+            const phase = payload.status === 'ok' ? payload.phase : undefined;
             if (phase) {
               if (settled || isInvalidated()) {
                 if (isInvalidated() && !settled) settle('failed');
@@ -315,13 +335,15 @@ export const useAuthStore = defineStore('auth', {
               if (isInvalidated() && !settled) settle('failed');
               return;
             }
-            if (payload.accessToken && payload.status !== 'error') {
+            if (payload.status === 'ok' && payload.accessToken) {
               this.finishHandoff(payload.accessToken, epochAtStart);
               settle('recovered');
             } else if (payload.status === 'error') {
               settle('failed');
             }
             // {status:'ok', active:true} → still in progress; poll continues.
+          } catch {
+            if (!settled) settle('failed');
           } finally {
             inFlight = false;
           }
@@ -345,29 +367,39 @@ export const useAuthStore = defineStore('auth', {
       // drops on endLogout, but the epoch stays bumped).
       const epochAtStart = getReauthEpoch();
       const invalidated = () => getReauthEpoch() !== epochAtStart;
+      const ownsReauthState = () => !invalidated() && !isLogoutInProgress();
       this.reauthAttempted = true;
       this.reauthing = true;
       this.reauthPhase = null;
-      const resp = await this.loginViaExtension();
-      if (invalidated()) {
-        // Logout began while the handoff was in flight (or FULLY finished —
-        // flag already down, epoch bumped): never mint (the handoff boundary
-        // above already refused the write), never claim recovery, never start
-        // a poll — and never touch reauthing/phase, which the logout cleared
-        // or a NEWER attempt now owns.
+      try {
+        const resp = await this.loginViaExtension();
+        if (invalidated()) {
+          // Logout began while the handoff was in flight (or FULLY finished —
+          // flag already down, epoch bumped): never mint (the handoff boundary
+          // above already refused the write), never claim recovery, never start
+          // a poll — and never touch reauthing/phase, which the logout cleared
+          // or a NEWER attempt now owns.
+          return 'failed';
+        }
+        if (resp === 'ok') return 'recovered';
+        if (resp === 'started') {
+          this.reauthPhase = 'sso';
+          onPhase?.('sso');
+          return await this.waitForReauthResult(onPhase);
+        }
         return 'failed';
+      } catch {
+        return 'failed';
+      } finally {
+        // A handoff failure or malformed response must not strand the overlay.
+        // `return await` above keeps this owner alive until the polling promise
+        // settles, while the epoch guard prevents an old attempt from clearing
+        // a newer owner's state.
+        if (ownsReauthState()) {
+          this.reauthing = false;
+          this.reauthPhase = null;
+        }
       }
-      if (resp === 'ok') {
-        this.reauthing = false;
-        return 'recovered';
-      }
-      if (resp === 'started') {
-        this.reauthPhase = 'sso';
-        onPhase?.('sso');
-        return this.waitForReauthResult(onPhase);
-      }
-      this.reauthing = false;
-      return 'failed';
     },
     logout(): Promise<void> {
       // All callers share the same full teardown. In particular, a concurrent
@@ -402,21 +434,14 @@ export const useAuthStore = defineStore('auth', {
         // refresh-failure emitted during the race), logout must tear it down:
         // a logged-out user must never be left under the "Memulihkan sesi…"
         // overlay, and the loop guard is cleared for a future login.
-        clearCache();
+        this.clearSessionState();
         this.reauthing = false;
         this.reauthPhase = null;
         this.reauthAttempted = false; // a next expiry event may auto-reauth again
-        this.token = null;
-        this.user = null;
-        this.fotoUrl = null;
-        this.hasSiap = false;
-        this.hasKulon = false;
         this.checking = false;
         this.error = null;
         this.extensionError = null;
         this.extensionMode = 'auto';
-        useKulonStore().reset();
-        localStorage.removeItem(TOKEN_KEY);
         } finally {
         // (3) Best-effort extension cookie wipe — AWAITED but BOUNDED so
         // logout() always releases: race the wipe against EXT_WIPE_TIMEOUT_MS
