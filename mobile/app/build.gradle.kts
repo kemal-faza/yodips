@@ -39,8 +39,8 @@ android {
         applicationId = "ac.undip.sso"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.5.2"
+        versionCode = 10
+        versionName = "0.6.0"
     }
 
     signingConfigs {
