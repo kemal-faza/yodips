@@ -1034,9 +1034,12 @@ describe('poll serialization: no overlapping reads or out-of-order application (
     await vi.advanceTimersByTimeAsync(3000);
     await flushPromises();
     expect(reads).toBe(2); // next read starts only AFTER the first settled
-    // Settle the poll so the test does not leak a pending timer:
+    // Settle the poll so the test does not leak a pending timer: logout bumps
+    // the epoch and the NEXT tick self-cancels (advance to fire it).
     beginLogout();
     endLogout();
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
     expect(await pollPromise).toBe('failed');
     vi.useRealTimers();
   }, 10000);
@@ -1078,3 +1081,4 @@ describe('poll serialization: no overlapping reads or out-of-order application (
     expect(store.reauthPhase).toBeNull(); // settle cleared (owner), late read did not re-set to siap
     vi.useRealTimers();
   }, 10000);
+});

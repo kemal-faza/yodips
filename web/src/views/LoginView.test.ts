@@ -268,7 +268,7 @@ describe("LoginView", () => {
     });
     await vi.advanceTimersByTimeAsync(4000);
     expect(store.readExtensionResult).toHaveBeenCalled();
-    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-poll");
+    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-poll", expect.any(Number));
     expect(router.push).toHaveBeenCalledWith("/");
     vi.useRealTimers();
   });
@@ -350,7 +350,7 @@ describe("LoginView", () => {
     const handler = (store.onExtensionResult as any).mock.calls[0][0];
     handler({ status: "ok", accessToken: "jwt-win" });
     await flushPromises();
-    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-win");
+    expect(store.finishHandoff).toHaveBeenCalledWith("jwt-win", expect.any(Number));
     expect(router.push).toHaveBeenCalledWith("/");
   });
 
@@ -723,11 +723,16 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
       .findAll("button")
       .find((b) => b.text().includes("Login via Extension"))!
       .trigger("click");
-    await flushPromises(); // poll tick now pending on readGate
-    expect(store.readExtensionResult).toHaveBeenCalled();
+    await flushPromises();
+    // Recursive timeout: the first tick fires after the interval and hangs on
+    // the gated read.
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushPromises();
+    expect(store.readExtensionResult).toHaveBeenCalledTimes(1);
     logoutMod.beginLogout();
     logoutMod.endLogout(); // fully resolves while the poll read is pending
     resolveRead({ status: "ok", accessToken: "jwt-late-poll" });
+    await flushPromises();
     await vi.advanceTimersByTimeAsync(4000);
     await flushPromises();
     expect(store.finishHandoff).not.toHaveBeenCalled();
@@ -833,9 +838,13 @@ describe("LoginView poll serialization (RED)", () => {
       .findAll("button")
       .find((b) => b.text().includes("Login via Extension"))!
       .trigger("click");
-    await flushPromises(); // first poll tick pending on firstGate
+    await flushPromises();
+    // Recursive timeout: nothing reads until the first interval elapses.
+    expect(reads).toBe(0);
+    await vi.advanceTimersByTimeAsync(3000); // first tick starts read #1 (pending)
+    await flushPromises();
     expect(reads).toBe(1);
-    await vi.advanceTimersByTimeAsync(4000); // next tick while first still pending
+    await vi.advanceTimersByTimeAsync(4000); // while read #1 still pending
     await flushPromises();
     expect(reads).toBe(1); // serialized: no overlapping second read
     resolveFirst({ status: "active" });
@@ -847,35 +856,30 @@ describe("LoginView poll serialization (RED)", () => {
     w.unmount();
   });
 
-  it("old flow never clears newer waiting state (ownership)", async () => {
+  it("stale scheduled tick after unmount never reads (no leaked timer work)", async () => {
+    // Bounded-cleanup ownership: unmount disposes the flow — a timeout that
+    // was already scheduled must not perform a read after disposal.
     vi.useFakeTimers();
     const router = { push: vi.fn() };
     const store = makeStore({
       isExtensionInstalled: vi.fn().mockResolvedValue(true),
       loginViaExtension: vi.fn().mockResolvedValue("started"),
-      // Old flow's tick errors; the newer flow must keep waiting/polling.
-      readExtensionResult: vi
-        .fn()
-        .mockResolvedValueOnce({ status: "error", message: "old-flow-boom" })
-        .mockResolvedValue({ status: "active" }),
+      readExtensionResult: vi.fn().mockResolvedValue({ status: "active" }),
     });
     const w = mount(LoginView, {
       global: { mocks: { $route: { query: {} }, $router: router } },
     });
     await flushPromises();
-    const btn = () =>
-      w.findAll("button").find((b) => b.text().includes("Login via Extension"))!;
-    await btn().trigger("click"); // flow 1 starts waiting
+    await w
+      .findAll("button")
+      .find((b) => b.text().includes("Login via Extension"))!
+      .trigger("click");
     await flushPromises();
-    await btn().trigger("click"); // flow 2 takes ownership (newer)
+    w.unmount(); // dispose while the first poll timeout is still scheduled
+    await vi.advanceTimersByTimeAsync(10000);
     await flushPromises();
-    const readsBefore = (store.readExtensionResult as any).mock.calls.length;
-    await vi.advanceTimersByTimeAsync(4000);
-    await flushPromises();
-    // The old flow's error must not have torn down the newer flow's waiting UI:
-    // a newer tick still polls (reads grow) instead of the poll stopping.
-    expect((store.readExtensionResult as any).mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(store.readExtensionResult).not.toHaveBeenCalled();
+    expect(store.finishHandoff).not.toHaveBeenCalled();
     vi.useRealTimers();
-    w.unmount();
   });
 });

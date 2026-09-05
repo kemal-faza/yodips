@@ -66,13 +66,17 @@ export const useAuthStore = defineStore('auth', {
     onExtensionResult(handler: (payload: ExtOutboundStatus) => void): () => void {
       return useExtension().onResult(handler);
     },
-    async login() {
+    async login(expectedEpoch?: number) {
       this.checking = true;
       this.error = null;
-      // Epoch ownership for the legacy async commit below: if a logout begins
-      // (and possibly FULLY resolves) while capture() is in flight, the epoch
-      // moves under us and the minted token must be discarded, never written.
-      const epochAtStart = getReauthEpoch();
+      // Epoch ownership for the legacy async commit below: the caller
+      // (LoginView) stamps the origin epoch BEFORE its first await and passes
+      // it here so the commit boundary is mandatory, not inferred. When the
+      // caller omits it (older call sites / unit tests), capture now — still
+      // before OUR first await — so a logout that begins (and possibly FULLY
+      // resolves) while capture() is in flight moves the epoch under us and
+      // the minted token is discarded, never written.
+      const epochAtStart = expectedEpoch ?? getReauthEpoch();
       try {
         const result = await capture();
         // Logout crossed (flag up now, or bumped-and-released while awaiting):
@@ -215,6 +219,11 @@ export const useAuthStore = defineStore('auth', {
       return new Promise<'recovered' | 'failed'>((resolve) => {
         let settled = false;
         let timer: ReturnType<typeof setInterval> | undefined;
+        // Serialization gate (reviewer D): setInterval ticks can overlap when a
+        // read hangs past 3s. A second tick arriving while one is pending must
+        // NOT start a second read — it returns early so reads never overlap and
+        // late resolutions cannot apply out of order.
+        let inFlight = false;
         const isInvalidated = () => getReauthEpoch() !== epochAtStart;
         const settle = (r: 'recovered' | 'failed') => {
           if (settled) return;
@@ -231,31 +240,50 @@ export const useAuthStore = defineStore('auth', {
           resolve(r);
         };
         const attempt = async () => {
+          if (settled) return; // already resolved — never read or mutate again
           if (isInvalidated()) {
             // Logout began while we were polling: never read the extension,
             // never finishHandoff, never raise the overlay. settle('failed').
             settle('failed');
             return;
           }
-          const payload: any = await this.readExtensionResult();
-          if (isInvalidated()) {
-            // The read crossed a logout boundary: discard whatever came back.
-            settle('failed');
-            return;
+          if (inFlight) return; // serialize: a read is already pending
+          inFlight = true;
+          try {
+            const payload: any = await this.readExtensionResult();
+            // After EVERY await: re-check settled, ownership (epoch), before
+            // any phase/token/overlay mutation — a logout or a newer owner may
+            // have crossed while we were awaiting.
+            if (settled) return;
+            if (isInvalidated()) {
+              // The read crossed a logout boundary: discard whatever came back.
+              settle('failed');
+              return;
+            }
+            if (!payload) return; // extension unavailable — keep waiting
+            const phase = payload.phase as 'sso' | 'kulon' | 'siap' | undefined;
+            if (phase) {
+              if (settled || isInvalidated()) {
+                if (isInvalidated() && !settled) settle('failed');
+                return;
+              }
+              this.reauthPhase = phase;
+              onPhase?.(phase);
+            }
+            if (settled || isInvalidated()) {
+              if (isInvalidated() && !settled) settle('failed');
+              return;
+            }
+            if (payload.accessToken && payload.status !== 'error') {
+              this.finishHandoff(payload.accessToken, epochAtStart);
+              settle('recovered');
+            } else if (payload.status === 'error') {
+              settle('failed');
+            }
+            // {status:'ok', active:true} → still in progress; poll continues.
+          } finally {
+            inFlight = false;
           }
-          if (!payload) return; // extension unavailable — keep waiting
-          const phase = payload.phase as 'sso' | 'kulon' | 'siap' | undefined;
-          if (phase) {
-            this.reauthPhase = phase;
-            onPhase?.(phase);
-          }
-          if (payload.accessToken && payload.status !== 'error') {
-            this.finishHandoff(payload.accessToken, epochAtStart);
-            settle('recovered');
-          } else if (payload.status === 'error') {
-            settle('failed');
-          }
-          // {status:'ok', active:true} → still in progress; poll continues.
         };
         timer = setInterval(attempt, 3000);
         attempt();
