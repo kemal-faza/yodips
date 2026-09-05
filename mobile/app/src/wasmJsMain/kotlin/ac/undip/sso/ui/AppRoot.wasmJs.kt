@@ -121,15 +121,18 @@ fun AppRoot(themeController: ThemeController) {
             localCleanup = {
                 // NON-SUSPENDING, unconditional, runs LAST — both server
                 // calls already attempted with the live bearer. The lambda
-                // type is `() -> Unit` (R2-1/R2-5): history.clear() AND
-                // tokenStore.clear() are SUSPENDING (IndexedDB / suspend
-                // interface), so they are SCHEDULED on the existing surviving
-                // GlobalScope (best-effort) — they can never be called inline
-                // here (would not compile). Everything below is synchronous:
-                // token nulled, UI flips.
+                // type is `() -> Unit` (R2-1/R2-5): history.clear() is
+                // SUSPENDING (IndexedDB) so it is SCHEDULED on the existing
+                // surviving GlobalScope (best-effort). The persisted JWT,
+                // however, MUST be removed SYNCHRONOUSLY inline via
+                // clearImmediately() BEFORE the UI flips: a scheduled clear
+                // would let `hasToken = false` outrun the localStorage
+                // removal (a kill/restart in between resurrects the
+                // session). tokenStore.clear() delegates to the same
+                // primitive, so both paths remove identical state.
                 GlobalScope.launch { runCatching { history.clear() } }
                 Backend.authToken = null
-                GlobalScope.launch { tokenStore.clear() } // suspend clear (localStorage + StateFlow)
+                tokenStore.clearImmediately() // synchronous localStorage + StateFlow reset
                 hasToken = false
             },
         )
