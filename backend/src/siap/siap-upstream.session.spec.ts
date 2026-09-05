@@ -15,6 +15,13 @@ class FakeStore extends SessionStore {
   async set(k: string, v: any) { this.map.set(k, v); }
   async get(k: string) { return this.map.get(k) ?? null; }
   async clear(k: string) { this.map.delete(k); }
+  async clearIfGeneration(k: string, generation: string) {
+    const rec = this.map.get(k);
+    if (!rec) return true;
+    if (rec.sessionGeneration !== generation) return false;
+    this.map.delete(k);
+    return true;
+  }
   async all() { return Array.from(this.map.values()); }
 }
 
