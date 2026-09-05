@@ -20,6 +20,11 @@ class FakeSessionStore extends SessionStore {
   async get(identity: string): Promise<CapturedSession | null> {
     return this.records.get(identity) ?? null;
   }
+  async getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null> {
+    const rec = this.records.get(identity) ?? null;
+    if (!rec || rec.sessionGeneration !== generation) return null;
+    return rec;
+  }
   async clear(identity: string): Promise<void> {
     this.records.delete(identity);
   }

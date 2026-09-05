@@ -169,4 +169,45 @@ describe('InMemorySessionStore (per-user, TTL)', () => {
       expect(g1).not.toBe(g2);
     });
   });
+
+  describe('getIfGeneration (generation-qualified atomic snapshot)', () => {
+    it('returns the live record only on exact generation match (and slides TTL)', async () => {
+      await store.set('a', makeSession('a', 'MoodleSession=A', GEN_A));
+      const hit = await (store as any).getIfGeneration('a', GEN_A);
+      expect(hit?.kulonCookie).toContain('MoodleSession=A');
+      const miss = await (store as any).getIfGeneration('a', GEN_B);
+      expect(miss).toBeNull();
+      // Mismatch must NOT destroy the live record.
+      expect((await store.get('a'))?.kulonCookie).toContain('MoodleSession=A');
+    });
+
+    it('returns null for unknown identity', async () => {
+      await expect((store as any).getIfGeneration('ghost', GEN_A)).resolves.toBeNull();
+    });
+
+    it('returns null for a legacy record without generation (never matches)', async () => {
+      await store.set('a', { ...makeSession('a', 'A', GEN_A), sessionGeneration: undefined as any });
+      await expect((store as any).getIfGeneration('a', GEN_A)).resolves.toBeNull();
+    });
+
+    it('treats expired/absolute-dead records as absent before the mismatch check', async () => {
+      store = new InMemorySessionStore(20);
+      await store.set('a', makeSession('a', 'A', GEN_A));
+      await new Promise((r) => setTimeout(r, 30));
+      await expect((store as any).getIfGeneration('a', 'f'.repeat(32))).resolves.toBeNull();
+      const abs = new InMemorySessionStore(1000, 200);
+      await abs.set('a', { ...makeSession('a', 'OLD', GEN_A), capturedAt: Date.now() - 250 });
+      await expect((abs as any).getIfGeneration('a', GEN_A)).resolves.toBeNull();
+    });
+
+    it('deterministic race: replacement between guard read and service read never returns the new cookie to the old generation', async () => {
+      await store.set('a', makeSession('a', 'MoodleSession=OLD', GEN_A));
+      await store.set('a', makeSession('a', 'MoodleSession=NEW', GEN_B));
+      // Old-generation read must miss even though a live record exists.
+      await expect((store as any).getIfGeneration('a', GEN_A)).resolves.toBeNull();
+      // New-generation read hits the replacement.
+      const hit = await (store as any).getIfGeneration('a', GEN_B);
+      expect(hit?.kulonCookie).toContain('MoodleSession=NEW');
+    });
+  });
 });

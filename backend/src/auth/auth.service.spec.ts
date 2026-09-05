@@ -31,6 +31,11 @@ const mockSessionStore = {
   get(identity: string) {
     return this._map.get(identity) ?? null;
   },
+  getIfGeneration(identity: string, generation: string) {
+    const rec = this._map.get(identity) ?? null;
+    if (!rec || rec.sessionGeneration !== generation) return null;
+    return rec;
+  },
   clear(identity: string) {
     this._map.delete(identity);
   },
@@ -191,6 +196,31 @@ describe('AuthService.login clock', () => {
 });
 
 describe('AuthService.captureSsoSession', () => {
+  it('never reuses a legacy stored session without a valid generation (E)', async () => {
+    mockSessionStore._map.set('24060121130000', {
+      identity: '24060121130000',
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: 'ESTSAUTH=MS',
+      kulonCookie: 'MoodleSession=K',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      // no sessionGeneration (legacy)
+    });
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
+    mockPlaywright.launchAndCaptureSession.mockResolvedValue({
+      ssoCookie: 'ci_session_sso=SSO',
+      microsoftCookie: '',
+      kulonCookie: 'MoodleSession=FRESH',
+      siapCookie: '',
+      capturedAt: Date.now(),
+      sessionGeneration: GEN_1,
+    });
+    const svc = makeService();
+    const res = await svc.captureSsoSession();
+    expect(res.reused).toBe(false);
+    expect(mockPlaywright.launchAndCaptureSession).toHaveBeenCalled();
+  });
+
   it('reuses a fresh valid session WITHOUT opening a browser window', async () => {
     mockSessionStore._map.set('24060121130000', {
       identity: '24060121130000',

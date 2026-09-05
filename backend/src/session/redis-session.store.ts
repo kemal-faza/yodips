@@ -78,7 +78,10 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
 
   /**
    * Atomic compare-and-clear on `sessionGeneration`. Reads the envelope,
-   * checks the decrypted generation, then Lua-CAS-DELs the exact raw envelope.
+   * enforces the absolute cap BEFORE the generation compare (an absolute-dead
+   * record is CAS-cleaned and reports true when the cleanup wins / no live
+   * record remains, false when the CAS lost to a newer replacement),
+   * then Lua-CAS-DELs the exact raw envelope.
    * No record → true; generation mismatch or CAS lost → false.
    */
   async clearIfGeneration(identity: string, generation: string): Promise<boolean> {
@@ -93,9 +96,48 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
       const deleted = await this.casDeleteIfEqual(key, envelope);
       return deleted === 1;
     }
+    // Absolute lifetime BEFORE the generation compare (parity with InMemory):
+    // a capturedAt-dead record is cleaned via the exact-envelope CAS. A won
+    // CAS (or no live record) → true; a lost CAS (B-replacement landed) →
+    // false so the caller maps to SESSION_DEAD and never clears B.
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - session.capturedAt >= this.absoluteMs
+    ) {
+      const deleted = await this.casDeleteIfEqual(key, envelope);
+      return deleted === 1;
+    }
     if (session.sessionGeneration !== generation) return false;
     const deleted = await this.casDeleteIfEqual(key, envelope);
     return deleted === 1 ? true : false;
+  }
+
+  /**
+   * Generation-qualified snapshot. GETs the envelope, enforces the absolute
+   * cap BEFORE the generation compare (dead → exact-envelope CAS-cleanup,
+   * null either way, never a slide), returns null on decrypt failure
+   * (exact-envelope CAS-cleanup, null either way) or generation mismatch
+   * (no slide, no delete), and EXPIRE-slides only on an exact live match.
+   */
+  async getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null> {
+    const key = `${KEY_PREFIX}${identity}`;
+    const envelope = await this.client.get(key);
+    if (!envelope) return null;
+    const session = this.decrypt(envelope);
+    if (!session) {
+      await this.casDeleteIfEqual(key, envelope);
+      return null;
+    }
+    if (
+      this.absoluteMs !== undefined &&
+      Date.now() - session.capturedAt >= this.absoluteMs
+    ) {
+      await this.casDeleteIfEqual(key, envelope);
+      return null;
+    }
+    if (session.sessionGeneration !== generation) return null;
+    await this.client.expire(key, this.ttlSeconds());
+    return session;
   }
 
   private async casDeleteIfEqual(key: string, expectedEnvelope: string): Promise<number> {
