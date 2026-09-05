@@ -64,6 +64,48 @@ function recordingRuntime(): { runtime: TelemetryRuntime; events: any[] } {
   };
 }
 
+describe('SiapUpstreamSession.getContextForSession (B: generation-qualified TOCTOU seam)', () => {
+  const GEN_A = 'a'.repeat(32);
+  const GEN_B = 'b'.repeat(32);
+  it('resolves identity+token for the exact live generation', async () => {
+    const store = new FakeStore(
+      new Map([[NIM, { identity: NIM, emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }]]),
+    );
+    const { seam, api } = makeSeam({ store });
+    const ctx = await (seam as any).getContextForSession({ sub: NIM, sessionGeneration: GEN_A });
+    expect(ctx).toEqual({ emailSso: EMAIL, nim: NIM, token: 'T1' });
+    expect(api.mintToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('replacement between guard and service read rejects SESSION_DEAD and never mints with B', async () => {
+    const store = new FakeStore(
+      new Map([[NIM, { identity: NIM, emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }]]),
+    );
+    const { seam, api } = makeSeam({ store });
+    // Re-login replaces with B before the qualified read.
+    await store.set(NIM, { identity: NIM, emailSso: EMAIL, siapCookie: 'cB', sessionGeneration: GEN_B });
+    await expect(
+      (seam as any).getContextForSession({ sub: NIM, sessionGeneration: GEN_A }),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+    expect(api.mintToken).not.toHaveBeenCalled();
+    // B itself is hittable with its own generation.
+    const ctxB = await (seam as any).getContextForSession({ sub: NIM, sessionGeneration: GEN_B });
+    expect(ctxB.token).toBe('T1');
+  });
+
+  it('getCookieForSession returns the exact-generation cookie and rejects a replacement with SESSION_DEAD', async () => {
+    const store = new FakeStore(
+      new Map([[NIM, { siapCookie: 'cA', sessionGeneration: GEN_A }]]),
+    );
+    const { seam } = makeSeam({ store });
+    await expect((seam as any).getCookieForSession({ sub: NIM, sessionGeneration: GEN_A })).resolves.toBe('cA');
+    await store.set(NIM, { siapCookie: 'cB', sessionGeneration: GEN_B });
+    await expect(
+      (seam as any).getCookieForSession({ sub: NIM, sessionGeneration: GEN_A }),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+  });
+});
+
 describe('SiapUpstreamSession.getContext', () => {
   it('resolves identity from session store + mints token once', async () => {
     const { seam, api } = makeSeam({});

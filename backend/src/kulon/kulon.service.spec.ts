@@ -28,6 +28,9 @@ import type {
   KulonCourseContent,
 } from './kulon-parse';
 
+const TEST_GEN = 'a'.repeat(32);
+const ref = (sub: string, sessionGeneration: string = TEST_GEN) => ({ sub, sessionGeneration });
+
 function recordingRuntime(): { runtime: TelemetryRuntime; events: unknown[] } {
   const events: unknown[] = [];
   let now = 0n;
@@ -165,8 +168,17 @@ describe('sub-based session resolution (endpoint API)', () => {
   function svcWith(session?: {
     kulonCookie?: string;
     siapCookie?: string;
+    sessionGeneration?: string;
   }): KulonService {
-    const store = { get: jest.fn().mockResolvedValue(session ?? null) } as any;
+    const full = session
+      ? { sessionGeneration: TEST_GEN, capturedAt: Date.now(), ...session }
+      : null;
+    const store = {
+      get: jest.fn().mockResolvedValue(full),
+      getIfGeneration: jest.fn(async (_sub: string, gen: string) =>
+        full && (full as any).sessionGeneration === gen ? full : null,
+      ),
+    } as any;
     // Real seam wired with the same session-store fake: getContext resolves
     // the cookie from the store, fetchSesskeyOrThrow probes via global.fetch.
     return new KulonService(
@@ -198,21 +210,24 @@ describe('sub-based session resolution (endpoint API)', () => {
       }
       throw new Error(`unmocked fetch: ${url}`);
     }) as any;
-    const content = await svcWith({ kulonCookie: 'MoodleSession=K' }).getCourseContent('u1', 77);
+    const content = await svcWith({ kulonCookie: 'MoodleSession=K' }).getCourseContent(ref('u1'), 77);
     expect(content.courseId).toBe(77);
   });
 
-  it('throws a typed stale 401 when no Kulon session exists for sub', async () => {
+  it('throws 401 SESSION_DEAD when no Kulon session exists for the exact generation', async () => {
     global.fetch = jest.fn();
-    await expect(
-      svcWith(undefined).getCourses('u1'),
-    ).rejects.toBeInstanceOf(StaleUpstreamError);
-    await expect(svcWith(undefined).getCourses('u1')).rejects.toMatchObject({
+    await expect(svcWith(undefined).getCourses(ref('u1'))).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    await expect(svcWith(undefined).getCourses(ref('u1'))).rejects.toMatchObject({
       status: 401,
     });
-    await expect(svcWith({ kulonCookie: '' }).getAssignments('u1')).rejects.toThrow(
-      'Kulon session belum ada. Silakan login ulang via SSO',
-    );
+    // Empty-cookie record for the live generation is still a dead session on the
+    // token path (SESSION_DEAD, not a silent stale reuse).
+    await expect(svcWith({ kulonCookie: '' }).getAssignments(ref('u1'))).rejects.toMatchObject({
+      status: 401,
+    });
   });
 
   it('propagates the probe stale 401 (login page) instead of a raw fetch error', async () => {
@@ -222,7 +237,7 @@ describe('sub-based session resolution (endpoint API)', () => {
       throw new Error(`unmocked fetch: ${url}`);
     }) as any;
     await expect(
-      svcWith({ kulonCookie: 'MoodleSession=OLD' }).getCourseContent('u1', 77),
+      svcWith({ kulonCookie: 'MoodleSession=OLD' }).getCourseContent(ref('u1'), 77),
     ).rejects.toBeInstanceOf(StaleUpstreamError);
   });
 });
@@ -266,8 +281,12 @@ describe('Kulon timed owner compatibility', () => {
 
   it('propagates a recording runtime to the fallback upstream session', async () => {
     const { runtime, events } = recordingRuntime();
+    const record = { kulonCookie: 'cookie', sessionGeneration: TEST_GEN, capturedAt: Date.now() };
     const store = {
-      get: jest.fn().mockResolvedValue({ kulonCookie: 'cookie' }),
+      get: jest.fn().mockResolvedValue(record),
+      getIfGeneration: jest.fn(async (_sub: string, gen: string) =>
+        gen === TEST_GEN ? record : null,
+      ),
     } as any;
     global.fetch = jest.fn(async (input: string) => {
       if (input.includes('/my/')) {
@@ -287,7 +306,7 @@ describe('Kulon timed owner compatibility', () => {
     }) as any;
     const service = new KulonService(undefined, undefined, undefined, store, runtime);
 
-    await expect(service.getCourses('u1')).resolves.toEqual([]);
+    await expect(service.getCourses(ref('u1'))).resolves.toEqual([]);
     expect(events.some((event: any) => event.operation === 'sesskey')).toBe(true);
     expect(events.filter((event: any) => event.operation === 'ajax')).toHaveLength(3);
   });
@@ -355,13 +374,26 @@ function makeAuthedKulonSvc(opts: { cache?: any; siap?: any } = {}): KulonServic
     get: async () => ({
       kulonCookie: 'session-cookie',
       siapCookie: 'siap-cookie',
+      sessionGeneration: TEST_GEN,
+      capturedAt: Date.now(),
     }),
+    getIfGeneration: async (_sub: string, gen: string) =>
+      gen === TEST_GEN
+        ? {
+            kulonCookie: 'session-cookie',
+            siapCookie: 'siap-cookie',
+            sessionGeneration: TEST_GEN,
+            capturedAt: Date.now(),
+          }
+        : null,
   } as any;
   const real = new KulonUpstreamSession(store);
   (real as any).fetchSesskeyOrThrow = async () => 'sesskey123';
   const upstream = {
     fetchSesskeyOrThrow: async () => 'sesskey123',
     getContext: (sub?: string) => real.getContext(sub),
+    getContextForSession: (r: any) => real.getContextForSession(r),
+    getContextForCurrent: (sub?: string) => real.getContextForCurrent(sub),
     ajax: (...args: Parameters<KulonUpstreamSession['ajax']>) =>
       real.ajax(...args),
     checkSessionValid: (cookie: string) => real.checkSessionValid(cookie),
@@ -387,7 +419,7 @@ describe('getCourseContent (HTML fixture)', () => {
       url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
       text: async () => html,
     }) as any;
-    const content = await svc.getCourseContent('u1', 16294);
+    const content = await svc.getCourseContent(ref('u1'), 16294);
     expect(content.courseId).toBe(16294);
     // Section 0 = General (forum Announcements).
     const gen = content.sections.find((s) => s.id === 0);
@@ -435,7 +467,7 @@ describe('getCourseContent (HTML fixture)', () => {
       text: async () => html,
     }) as any;
 
-    const content = await svc.getCourseContent('u1', 77);
+    const content = await svc.getCourseContent(ref('u1'), 77);
     const s2 = content.sections.find((s) => s.id === 2);
     const item = s2?.items[0];
     expect(item?.kind).toBe('assign');
@@ -461,7 +493,7 @@ describe('getCourseContent (HTML fixture)', () => {
       url: 'https://kulon2.undip.ac.id/course/view.php?id=77',
       text: async () => html,
     }) as any;
-    const content = await svc.getCourseContent('u1', 77);
+    const content = await svc.getCourseContent(ref('u1'), 77);
     const s1 = content.sections.find((s) => s.id === 1);
     expect(s1?.items).toEqual([]);
   });
@@ -487,7 +519,7 @@ describe('getCourseContent (HTML fixture)', () => {
         url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
         text: async () => html,
       });
-    const content = await svc.getCourseContent('u1', 16294);
+    const content = await svc.getCourseContent(ref('u1'), 16294);
     expect(content.courseId).toBe(16294);
     const gen = content.sections.find((s) => s.id === 0);
     expect(gen?.label).toBe('General');
@@ -515,7 +547,7 @@ describe('getCourseContent (HTML fixture)', () => {
         url: 'https://kulon2.undip.ac.id/course/view.php?id=16294',
         text: async () => html,
       });
-    const content = await svc.getCourseContent('u1', 16294);
+    const content = await svc.getCourseContent(ref('u1'), 16294);
     expect(content.courseId).toBe(16294);
     const gen = content.sections.find((s) => s.id === 0);
     expect(gen?.label).toBe('General');
@@ -582,7 +614,7 @@ describe('KulonService', () => {
       .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' })
       .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' });
 
-    const courses = await svc.getCourses('u1');
+    const courses = await svc.getCourses(ref('u1'));
 
     // merge + dedupe: A and B visible, C hidden
     expect(courses.map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
@@ -602,11 +634,18 @@ describe('KulonService', () => {
   it('resolves session context once and reuses it for course fetches', async () => {
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       checkSessionValid: jest.fn(),
       ajax: jest.fn(),
       fetchSesskeyOrThrow: jest.fn().mockResolvedValue('sk1'),
     };
     upstreamMock.getContext = jest
+      .fn()
+      .mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' });
+    upstreamMock.getContextForSession = jest
       .fn()
       .mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' });
     upstreamMock.ajax
@@ -619,8 +658,8 @@ describe('KulonService', () => {
       upstreamMock as any,
       undefined,
     );
-    await service.getCourses('2304012012345');
-    expect(upstreamMock.getContext).toHaveBeenCalledTimes(1);
+    await service.getCourses(ref('2304012012345'));
+    expect(upstreamMock.getContextForSession).toHaveBeenCalledTimes(1);
   });
 
   it('getAllAssignments uses renamed key + 3-min TTL', async () => {
@@ -637,6 +676,10 @@ describe('KulonService', () => {
     };
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const service = new KulonService(
@@ -645,7 +688,7 @@ describe('KulonService', () => {
       upstreamMock as any,
       undefined,
     );
-    await service.getAllAssignments('2304012012345');
+    await service.getAllAssignments(ref('2304012012345'));
     expect(setSpy).toHaveBeenCalledWith(
       '2304012012345:kulon:assignments:all',
       expect.anything(),
@@ -665,6 +708,8 @@ describe('KulonService', () => {
     };
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const svc = new KulonService(
@@ -674,7 +719,7 @@ describe('KulonService', () => {
       undefined,
     );
     const spy = jest.spyOn(svc as any, 'fetchCourses');
-    await svc.getAllAssignments('u1');
+    await svc.getAllAssignments(ref('u1'));
     expect(spy).toHaveBeenCalledWith(
       'c1',
       'sk1',
@@ -698,6 +743,8 @@ describe('KulonService', () => {
     };
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest
         .fn()
         // timeline 'all' / 'inprogress' / 'hidden' each resolve an empty course list
@@ -710,7 +757,7 @@ describe('KulonService', () => {
       undefined,
     );
     const progressSpy = jest.spyOn(svc as any, 'fetchCourseContent');
-    await svc.getAllAssignments('u1');
+    await svc.getAllAssignments(ref('u1'));
     expect(progressSpy).not.toHaveBeenCalled();
     expect(setSpy).not.toHaveBeenCalledWith('u1:kulon:courses', expect.anything());
     // assignments:all is written by getStale, the sole payload owner.
@@ -741,6 +788,8 @@ describe('KulonService', () => {
     const setSpy = jest.fn();
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const svc = new KulonService(
@@ -753,7 +802,7 @@ describe('KulonService', () => {
     // fetchQuizIndex (global.fetch). Mock it so the loop settles deterministically
     // instead of relying on fetchAssignmentIndex's error-swallowing catch.
     global.fetch = jest.fn().mockResolvedValue({ ok: false }) as any;
-    const out = await svc.getAllAssignments('u1');
+    const out = await svc.getAllAssignments(ref('u1'));
     // getAllAssignments' own payload read goes through getStale (miss → fetcher ran)
     expect(getStaleSpy).toHaveBeenCalledWith(
       'u1:kulon:assignments:all',
@@ -784,13 +833,15 @@ describe('KulonService', () => {
       { id: 1, fullname: 'Matkul', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress' },
     ]) as any;
     (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
-    await svcNew.getCourses('u1');
+    await svcNew.getCourses(ref('u1'));
     expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.anything(), CachePolicy.KULON_COURSES);
   });
 
   it('getAllAssignments single-flights concurrent callers (1 upstream run)', async () => {
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const service = new KulonService(
@@ -800,18 +851,20 @@ describe('KulonService', () => {
       undefined,
     );
     await Promise.all([
-      service.getAllAssignments('S1'),
-      service.getAllAssignments('S1'),
-      service.getAllAssignments('S1'),
+      service.getAllAssignments(ref('S1')),
+      service.getAllAssignments(ref('S1')),
+      service.getAllAssignments(ref('S1')),
     ]);
     // One allAssignmentsFlight run for the whole burst: the upstream run
     // (getContext) happens exactly once, not once per caller.
-    expect(upstreamMock.getContext).toHaveBeenCalledTimes(1);
+    expect(upstreamMock.getContextForSession).toHaveBeenCalledTimes(1);
   });
 
   it('getCourses single-flights concurrent callers per sub', async () => {
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const service = new KulonService(
@@ -821,17 +874,19 @@ describe('KulonService', () => {
       undefined,
     );
     await Promise.all([
-      service.getCourses('S1'),
-      service.getCourses('S1'),
-      service.getCourses('S2'),
+      service.getCourses(ref('S1')),
+      service.getCourses(ref('S1')),
+      service.getCourses(ref('S2')),
     ]);
     // getContext called once for S1, once for S2 (3 timeline fetches each)
-    expect(upstreamMock.getContext).toHaveBeenCalledTimes(2);
+    expect(upstreamMock.getContextForSession).toHaveBeenCalledTimes(2);
   });
 
   it('getCourses allows a fresh run after completion (keyed map cleaned)', async () => {
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForSession: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
+      getContextForCurrent: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
       ajax: jest.fn().mockResolvedValue({ courses: [] }),
     };
     const service = new KulonService(
@@ -840,9 +895,9 @@ describe('KulonService', () => {
       upstreamMock as any,
       undefined,
     );
-    await service.getCourses('S1');
-    await service.getCourses('S1'); // sequential — NOT concurrent
-    expect(upstreamMock.getContext).toHaveBeenCalledTimes(2);
+    await service.getCourses(ref('S1'));
+    await service.getCourses(ref('S1')); // sequential — NOT concurrent
+    expect(upstreamMock.getContextForSession).toHaveBeenCalledTimes(2);
   });
 
   it('gets courses with semester extracted from fullname', async () => {
@@ -866,7 +921,7 @@ describe('KulonService', () => {
       // (no json() -> TypeError -> HTML fallback), the second is the /course/view.php scrape.
       .mockResolvedValueOnce({ ok: true, text: async () => '' })
       .mockResolvedValueOnce({ ok: true, text: async () => '<html></html>' });
-    const courses = await svc.getCourses('u1');
+    const courses = await svc.getCourses(ref('u1'));
     expect(courses[0].semester).toBe('2025/2026 Genap');
     // not present in the 'inprogress' bucket -> past
     expect(courses[0].timelineStatus).toBe('past');
@@ -910,7 +965,7 @@ describe('KulonService', () => {
           '<li id="section-1" data-sectionname="1 November - 8 November"></li>' +
           '<li id="section-2" data-sectionname="15 November - 22 November"></li>',
       });
-    const courses = await svc.getCourses('u1');
+    const courses = await svc.getCourses(ref('u1'));
     expect(courses.find((c) => c.id === 1)?.progress).toBe(0);
   });
 
@@ -936,7 +991,7 @@ describe('KulonService', () => {
         },
       ],
     });
-    const assignments = await svc.getAssignments('u1');
+    const assignments = await svc.getAssignments(ref('u1'));
     expect(assignments[0].name).toBe('Tugas Kelompok I');
     expect(assignments[0].duedate).toBe(1742230800);
     expect(assignments[0].course).toBe('Metode Numerik D');
@@ -973,7 +1028,7 @@ describe('KulonService', () => {
         },
       ],
     });
-    const assignments = await svc.getAssignments('u1');
+    const assignments = await svc.getAssignments(ref('u1'));
     expect(assignments[0].assignmentId).toBe(42);
     expect(assignments[0].courseModuleId).toBe(777);
   });
@@ -1003,7 +1058,7 @@ describe('KulonService', () => {
         },
       ],
     });
-    const assignments = await svc.getAssignments('u1');
+    const assignments = await svc.getAssignments(ref('u1'));
     expect(assignments[0].courseModuleId).toBe(3335);
     // Exactly one fetch: the calendar AJAX. No course-module lookup call.
     expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
@@ -1033,7 +1088,7 @@ describe('KulonService', () => {
         },
       ],
     });
-    const assignments = await svc.getAssignments('u1');
+    const assignments = await svc.getAssignments(ref('u1'));
     expect(assignments[0].courseModuleId).toBe(0);
   });
 
@@ -1052,7 +1107,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('u1', 42, 777);
+    const detail = await svc.getAssignmentDetail(ref('u1'), 42, 777);
     expect(detail.assignmentId).toBe(42);
     expect(detail.name).toBe('Tugas Kelompok I');
     expect(detail.descriptionHtml).toContain('Kerjakan laporan kelompok.');
@@ -1078,7 +1133,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('u1', 42, 777);
+    const detail = await svc.getAssignmentDetail(ref('u1'), 42, 777);
     expect(detail.submission.status).toBe('submitted');
     expect(detail.submission.grade).toBeNull();
     expect(detail.submission.maxGrade).toBeNull();
@@ -1099,7 +1154,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('u1', 42, 777);
+    const detail = await svc.getAssignmentDetail(ref('u1'), 42, 777);
     expect(detail.name).toBe('Task');
     expect(detail.descriptionHtml).toBe('');
     expect(detail.submission.status).toBe('not_submitted');
@@ -1123,7 +1178,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('u1', 42, 777);
+    const detail = await svc.getAssignmentDetail(ref('u1'), 42, 777);
     expect(detail.submission.status).toBe('not_submitted');
     expect(detail.submission.grade).toBeNull();
     expect(detail.submission.maxGrade).toBeNull();
@@ -1137,7 +1192,7 @@ describe('KulonService', () => {
       ok: true,
       text: async () => pageHtml,
     });
-    const detail = await svc.getAssignmentDetail('u1', 42, 777);
+    const detail = await svc.getAssignmentDetail(ref('u1'), 42, 777);
     expect(detail.submission.status).toBe('unknown');
     expect(detail.submission.grade).toBeNull();
     expect(detail.submission.maxGrade).toBeNull();
@@ -1149,7 +1204,7 @@ describe('KulonService', () => {
       status: 404,
     });
     await expect(
-      svc.getAssignmentDetail('u1', 42, 777),
+      svc.getAssignmentDetail(ref('u1'), 42, 777),
     ).rejects.toThrow('ASSIGNMENT_NOT_FOUND');
   });
 
@@ -1388,7 +1443,7 @@ describe('KulonService', () => {
     const cache = { get: jest.fn(), getStale: jest.fn(), set: jest.fn(), del: jest.fn() };
     const svcNew = makeAuthedKulonSvc({ cache });
     cache.getStale.mockResolvedValue({ value: cachedCourses, stale: false });
-    const out = await svcNew.getCourses('u1');
+    const out = await svcNew.getCourses(ref('u1'));
     expect(cache.getStale).toHaveBeenCalledWith(
       'u1:kulon:courses',
       expect.any(Function),
@@ -1415,11 +1470,11 @@ describe('KulonService', () => {
       { id: 1, fullname: 'Matkul', shortname: 'MIK1624105', idnumber: '', timelineStatus: 'inprogress' },
     ]) as any;
     (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
-    const out = await svcNew.getCourses('u1');
+    const out = await svcNew.getCourses(ref('u1'));
     expect(cache.set).toHaveBeenCalledWith('u1:kulon:courses', expect.arrayContaining([
       expect.objectContaining({ lecturer: 'Dr. X' }),
     ]), CachePolicy.KULON_COURSES);
-    expect(siapFake.getLecturers).toHaveBeenCalledWith('u1');
+    expect(siapFake.getLecturers).toHaveBeenCalledWith(ref('u1'));
   });
 
   it('getAllAssignments uses getStale for the payload key (SWR)', async () => {
@@ -1429,7 +1484,7 @@ describe('KulonService', () => {
     const cache = { get: jest.fn(), getStale: jest.fn(), set: jest.fn(), del: jest.fn() };
     cache.getStale.mockResolvedValue({ value: cachedAssignments, stale: false });
     const svcNew = makeAuthedKulonSvc({ cache });
-    const out = await svcNew.getAllAssignments('u1');
+    const out = await svcNew.getAllAssignments(ref('u1'));
     expect(cache.getStale).toHaveBeenCalledWith(
       'u1:kulon:assignments:all',
       expect.any(Function),
@@ -1451,7 +1506,7 @@ describe('KulonService', () => {
     const cache = { get: jest.fn(), getStale: jest.fn(), set: jest.fn(), del: jest.fn() };
     cache.getStale.mockResolvedValue({ value: cachedDetail, stale: false });
     const svcNew = makeAuthedKulonSvc({ cache });
-    const out = await svcNew.getAssignmentDetail('u1', 42, 777);
+    const out = await svcNew.getAssignmentDetail(ref('u1'), 42, 777);
     expect(cache.getStale).toHaveBeenCalledWith(
       'u1:kulon:assignment-detail:777',
       expect.any(Function),
@@ -1465,7 +1520,7 @@ describe('KulonService', () => {
     const cache = { get: jest.fn(), getStale: jest.fn(), set: jest.fn(), del: jest.fn() };
     cache.getStale.mockResolvedValue({ value: cachedContent, stale: false });
     const svcNew = makeAuthedKulonSvc({ cache });
-    const out = await svcNew.getCourseContent('u1', 16294);
+    const out = await svcNew.getCourseContent(ref('u1'), 16294);
     expect(cache.getStale).toHaveBeenCalledWith(
       'u1:kulon:course-content:16294',
       expect.any(Function),
@@ -1489,7 +1544,7 @@ describe('KulonService', () => {
         ok: true,
         json: async () => [{ error: false, data: { courses: [] } }],
       });
-    const out = await svcNoCache.getCourses('u1');
+    const out = await svcNoCache.getCourses(ref('u1'));
     // No cache -> plain fetch path, resolves with the (empty) timeline merge.
     expect(out).toEqual([]);
   });

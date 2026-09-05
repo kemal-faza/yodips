@@ -361,7 +361,7 @@ export class AuthService {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const session = await this.sessionStore.get(sub);
+    const session = await this.sessionStore.getIfGeneration(sub, generation);
     if (!session || !isSessionGeneration(session.sessionGeneration)) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
@@ -431,21 +431,33 @@ export class AuthService {
     return { ok: true };
   }
 
-  async me(user: any) {
-    const session = await this.sessionStore.get(user?.sub);
-    const present = !!session;
+  async me(user: { sub?: unknown; sessionGeneration?: unknown; via?: unknown }) {
+    const sub = typeof user?.sub === 'string' && user.sub.length > 0 ? user.sub : null;
+    const generation = user?.sessionGeneration;
+    // Generation-qualified snapshot: guard validated A, but a B-replacement
+    // before this read must NOT surface B's cookies/validity to an A-token.
+    // A miss (no record, dead, legacy, mismatch) is unauthenticated — never a
+    // silent switch to the replacement.
+    const session =
+      sub && isSessionGeneration(generation)
+        ? await this.sessionStore.getIfGeneration(sub, generation)
+        : null;
+    const present =
+      !!session &&
+      isSessionGeneration(session.sessionGeneration) &&
+      session.sessionGeneration === generation;
     // B1: live-probe validity (Kulon/SIAP) instead of only checking cookie
     // presence. Results are cached ~60s so the boot gate & polls get accurate
     // answers without hammering upstream on every /me.
     const kulonValid =
-      present && session.kulonCookie
-        ? await this.probeValid(`${user.sub}:kulon`, session.kulonCookie, () =>
+      present && session?.kulonCookie
+        ? await this.probeValid(`${sub}:kulon`, session.kulonCookie, () =>
             this.kulon.checkSessionValid(session.kulonCookie),
           )
         : false;
     const siapValid =
-      present && session.siapCookie
-        ? await this.probeValid(`${user.sub}:siap`, session.siapCookie, () =>
+      present && session?.siapCookie
+        ? await this.probeValid(`${sub}:siap`, session.siapCookie, () =>
             this.siap.checkSessionValid(session.siapCookie),
           )
         : false;
@@ -455,15 +467,15 @@ export class AuthService {
     // perangkat paired bounce balik ke login selamanya.
     const requireSsoCookie = user?.via !== 'pair';
     return {
-      sub: user?.sub,
+      sub,
       authenticated: present,
-      hasSso: present ? !!session.ssoCookie : false,
-      hasMicrosoft: present ? !!session.microsoftCookie : false,
+      hasSso: present ? !!session?.ssoCookie : false,
+      hasMicrosoft: present ? !!session?.microsoftCookie : false,
       hasKulon: kulonValid,
       hasSiap: siapValid,
       complete:
         present &&
-        (!requireSsoCookie || !!session.ssoCookie) &&
+        (!requireSsoCookie || !!session?.ssoCookie) &&
         kulonValid &&
         siapValid,
     };

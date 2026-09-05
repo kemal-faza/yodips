@@ -1,6 +1,7 @@
-import { HttpException, Injectable, Logger, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
 import { SiapService } from '../siap/siap.service';
 import { KulonService } from '../kulon/kulon.service';
+import { SessionRef, isSessionRef } from '../session/session-store';
 import type {
   SiapIrs,
   SiapJadwal,
@@ -65,14 +66,20 @@ export class DashboardService {
     @Optional() private readonly kulon?: KulonService,
   ) {}
 
-  async getDashboard(sub?: string): Promise<DashboardPayload> {
+  async getDashboard(ref: SessionRef): Promise<DashboardPayload> {
+    if (!isSessionRef(ref)) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
     const runs: Array<{ name: DashboardSliceName; p: Promise<unknown> }> = [
-      { name: 'profile', p: this.siap?.getProfile(sub) ?? Promise.resolve(null) },
-      { name: 'khs', p: this.siap?.getKhs(sub) ?? Promise.resolve(null) },
-      { name: 'irs', p: this.siap?.getIrs(sub) ?? Promise.resolve(null) },
-      { name: 'jadwal', p: this.siap?.getJadwal(sub) ?? Promise.resolve([]) },
-      { name: 'courses', p: this.kulon?.getCourses(sub) ?? Promise.resolve([]) },
-      { name: 'assignments', p: this.kulon?.getAllAssignments(sub) ?? Promise.resolve([]) },
+      { name: 'profile', p: this.siap?.getProfile(ref) ?? Promise.resolve(null) },
+      { name: 'khs', p: this.siap?.getKhs(ref) ?? Promise.resolve(null) },
+      { name: 'irs', p: this.siap?.getIrs(ref) ?? Promise.resolve(null) },
+      { name: 'jadwal', p: this.siap?.getJadwal(ref) ?? Promise.resolve([]) },
+      { name: 'courses', p: this.kulon?.getCourses(ref) ?? Promise.resolve([]) },
+      { name: 'assignments', p: this.kulon?.getAllAssignments(ref) ?? Promise.resolve([]) },
     ];
     const settled = await Promise.allSettled(runs.map((r) => r.p));
     const out: DashboardPayload = { ...(EMPTY as unknown as DashboardPayload) };

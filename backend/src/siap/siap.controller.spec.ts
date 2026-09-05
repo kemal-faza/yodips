@@ -5,12 +5,17 @@ import { SiapService } from './siap.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 /**
- * After the upstream-session consolidation the controller is a thin router:
- * it resolves nothing but `sub`, validates input, and delegates. Session
- * resolution + stale behaviour live in siap.service / siap-upstream specs.
+ * After the generation-qualified consolidation the controller is a thin router:
+ * it builds the exact SessionRef (sub + sessionGeneration), validates input,
+ * and delegates. A missing generation never drops to sub-only — it is
+ * 401 SESSION_DEAD. Session resolution + stale behaviour live in
+ * siap.service / siap-upstream specs.
  */
 describe('SiapController', () => {
   let controller: SiapController;
+  const GEN = 'a'.repeat(32);
+  const REF = { sub: 'u1', sessionGeneration: GEN };
+  const user = { sub: 'u1', sessionGeneration: GEN };
   const mockSiap = {
     checkSessionValid: jest.fn(),
     getProfile: jest.fn(),
@@ -32,24 +37,24 @@ describe('SiapController', () => {
     controller = moduleRef.get(SiapController);
   });
 
-  it('routes profile by sub only', async () => {
+  it('routes profile by SessionRef', async () => {
     mockSiap.getProfile.mockResolvedValue({ nama: 'Budi' });
     await expect(
-      controller.getProfile({ user: { sub: 'u1' } }),
+      controller.getProfile({ user } as any),
     ).resolves.toEqual({ nama: 'Budi' });
-    expect(mockSiap.getProfile).toHaveBeenCalledWith('u1');
+    expect(mockSiap.getProfile).toHaveBeenCalledWith(REF);
   });
 
-  it('routes lecturers by sub only', async () => {
+  it('routes lecturers by SessionRef', async () => {
     mockSiap.getLecturers.mockResolvedValue([
       { kode: 'MIK1624105', dosen: 'Dr. X' },
     ]);
     await expect(
-      controller.getLecturers({ user: { sub: 'u1' } }),
+      controller.getLecturers({ user } as any),
     ).resolves.toEqual([{ kode: 'MIK1624105', dosen: 'Dr. X' }]);
   });
 
-  it('routes jadwal by sub only', async () => {
+  it('routes jadwal by SessionRef', async () => {
     mockSiap.getJadwal.mockResolvedValue([
       {
         kode: 'MIK1624503',
@@ -61,19 +66,26 @@ describe('SiapController', () => {
       },
     ]);
     await expect(
-      controller.getJadwal({ user: { sub: 'u1' } }),
+      controller.getJadwal({ user } as any),
     ).resolves.toHaveLength(1);
   });
 
-  it('validates kehadiran id (numeric only) and routes by sub', async () => {
+  it('rejects 401 SESSION_DEAD without a generation (never drops to sub-only)', async () => {
     await expect(
-      controller.getKehadiran('bukan-angka', { user: { sub: 'u1' } }),
+      controller.getProfile({ user: { sub: 'u1' } } as any),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+    expect(mockSiap.getProfile).not.toHaveBeenCalled();
+  });
+
+  it('validates kehadiran id (numeric only) and routes by SessionRef', async () => {
+    await expect(
+      controller.getKehadiran('bukan-angka', { user } as any),
     ).rejects.toMatchObject({ status: 400 });
     mockSiap.getKehadiran.mockResolvedValue({ pertemuanId: '3747941' });
     await expect(
-      controller.getKehadiran('3747941', { user: { sub: 'u1' } }),
+      controller.getKehadiran('3747941', { user } as any),
     ).resolves.toMatchObject({ pertemuanId: '3747941' });
-    expect(mockSiap.getKehadiran).toHaveBeenCalledWith('u1', '3747941');
+    expect(mockSiap.getKehadiran).toHaveBeenCalledWith(REF, '3747941');
   });
 
   it('proxies a QR token to markKehadiran when present', async () => {
@@ -82,14 +94,14 @@ describe('SiapController', () => {
       message: 'ok',
     });
     await expect(
-      controller.markKehadiran({ user: { sub: 'u1' } }, { token: 'qrcode123' }),
+      controller.markKehadiran({ user } as any, { token: 'qrcode123' }),
     ).resolves.toEqual({ status: 'success', message: 'ok' });
-    expect(mockSiap.markKehadiran).toHaveBeenCalledWith('u1', 'qrcode123');
+    expect(mockSiap.markKehadiran).toHaveBeenCalledWith(REF, 'qrcode123');
   });
 
   it('throws 400 when token QR missing', async () => {
     await expect(
-      controller.markKehadiran({ user: { sub: 'u1' } }, {}),
+      controller.markKehadiran({ user } as any, {} as any),
     ).rejects.toMatchObject({ status: 400 });
   });
 });
