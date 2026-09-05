@@ -1,6 +1,7 @@
 package ac.undip.sso.core.push
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 /**
@@ -14,53 +15,35 @@ class PushRegistration(private val ops: Ops) {
         suspend fun unregisterOnBackend(token: String): Boolean
         suspend fun stashPending(token: String)
         suspend fun readPending(): String?
-        suspend fun clearPending()
+        suspend fun clearPending(expectedToken: String)
     }
 
     /** Login sukses / app start dgn sesi hidup. Pending didahulukan. */
     suspend fun onLogin(): String? {
         val pending = ops.readPending()
-        if (pending != null) {
-            return try {
-                if (registerCatching(pending)) {
-                    ops.clearPending()
-                    pending
-                } else {
-                    null
-                }
-            } catch (error: CancellationException) {
-                preservePendingAndRethrow(pending, error)
-            }
+        val token = pending ?: ops.currentFcmToken() ?: return null
+        if (pending == null) {
+            stashBeforeRegistration(token)
         }
-        val fresh = ops.currentFcmToken() ?: return null
-        return try {
-            if (registerCatching(fresh)) {
-                fresh
-            } else {
-                ops.stashPending(fresh)
-                null
-            }
-        } catch (error: CancellationException) {
-            preservePendingAndRethrow(fresh, error)
-        }
+        return registerToken(token)
     }
 
     /** Rotasi token saat app hidup. */
-    suspend fun onNewToken(newToken: String): String? =
-        try {
-            if (registerCatching(newToken)) {
-                newToken
-            } else {
-                ops.stashPending(newToken) // offline -> dicoba lagi saat login berikut
-                null
-            }
-        } catch (error: CancellationException) {
-            preservePendingAndRethrow(newToken, error)
-        }
+    suspend fun onNewToken(newToken: String): String? {
+        stashBeforeRegistration(newToken)
+        return registerToken(newToken)
+    }
 
     /** Stash a device token without registering it for the inactive account. */
     suspend fun stashPending(token: String) {
         ops.stashPending(token)
+    }
+
+    /** Clear only the pending value that was just registered. */
+    suspend fun clearPending(token: String) {
+        withContext(NonCancellable) {
+            ops.clearPending(token)
+        }
     }
 
     /**
@@ -80,13 +63,12 @@ class PushRegistration(private val ops: Ops) {
             false
         }
 
-    private suspend fun preservePendingAndRethrow(
-        token: String,
-        error: CancellationException,
-    ): Nothing {
-        withContext(kotlinx.coroutines.NonCancellable) {
+    private suspend fun registerToken(token: String): String? =
+        if (registerCatching(token)) token else null
+
+    private suspend fun stashBeforeRegistration(token: String) {
+        withContext(NonCancellable) {
             ops.stashPending(token)
         }
-        throw error
     }
 }

@@ -40,6 +40,9 @@ class PushTokenCoordinatorTest {
         val registered = mutableListOf<String>()
         val stashed = mutableListOf<String>()
         var pending: String? = null
+        var clearPendingAction: suspend (String) -> Unit = { expectedToken ->
+            if (pending == expectedToken) pending = null
+        }
         override suspend fun currentFcmToken(): String? = current
         override suspend fun registerOnBackend(token: String): Boolean = register(token)
         override suspend fun unregisterOnBackend(token: String): Boolean {
@@ -51,9 +54,7 @@ class PushTokenCoordinatorTest {
             pending = token
         }
         override suspend fun readPending(): String? = pending
-        override suspend fun clearPending() {
-            pending = null
-        }
+        override suspend fun clearPending(expectedToken: String) = clearPendingAction(expectedToken)
     }
 
     private fun coordinator(ops: FakeOps = FakeOps()) = PushTokenCoordinator(PushRegistration(ops))
@@ -74,6 +75,90 @@ class PushTokenCoordinatorTest {
         assertEquals("fcm-pending", coordinator.onLogin())
         assertEquals("fcm-pending", coordinator.activeToken)
         assertNull(ops.pending)
+    }
+
+    @Test
+    fun `successful registration makes fresh token pending before backend call`() = runTest {
+        val ops = FakeOps(current = "fcm-fresh")
+        var pendingAtRegistration: String? = null
+        ops.register = {
+            pendingAtRegistration = ops.pending
+            true
+        }
+
+        assertEquals("fcm-fresh", coordinator(ops).onLogin())
+        assertEquals("fcm-fresh", pendingAtRegistration)
+    }
+
+    @Test
+    fun `successful rotation tracks active token before cancellable pending clear`() = runTest {
+        val clearEntered = CompletableDeferred<Unit>()
+        val releaseClear = CompletableDeferred<Unit>()
+        val ops = FakeOps(current = "fcm-old")
+        val coordinator = coordinator(ops)
+        coordinator.onLogin()
+        ops.clearPendingAction = {
+            clearEntered.complete(Unit)
+            releaseClear.await()
+            ops.pending = null
+        }
+        val rotation = async { coordinator.onNewToken("fcm-new") }
+
+        clearEntered.await()
+        assertEquals("fcm-new", coordinator.activeToken)
+        rotation.cancel()
+        releaseClear.complete(Unit)
+        try {
+            rotation.await()
+            fail("expected CancellationException")
+        } catch (expected: CancellationException) {
+            // Cancellation is allowed to propagate only after finalization.
+        }
+
+        assertEquals("fcm-new", coordinator.activeToken)
+        coordinator.onLogout()
+        assertEquals(listOf("fcm-new"), ops.unregistered)
+    }
+
+    @Test
+    fun `pending cleanup failure leaves successfully registered token active for logout`() = runTest {
+        val ops =
+            FakeOps().apply {
+                pending = "fcm-new"
+                clearPendingAction = { throw IOException("storage unavailable") }
+            }
+        val coordinator = coordinator(ops)
+
+        try {
+            coordinator.onLogin()
+            fail("expected storage failure")
+        } catch (expected: IOException) {
+            // The backend registration succeeded before durable cleanup failed.
+        }
+
+        assertEquals("fcm-new", coordinator.activeToken)
+        coordinator.onLogout()
+        assertEquals(listOf("fcm-new"), ops.unregistered)
+    }
+
+    @Test
+    fun `pending cleanup cannot erase a newer pending token`() = runTest {
+        val ops =
+            FakeOps().apply {
+                pending = "fcm-new"
+                register = {
+                    pending = "fcm-newer"
+                    true
+                }
+                clearPendingAction = { expectedToken ->
+                    if (pending == expectedToken) pending = null
+                }
+            }
+        val coordinator = coordinator(ops)
+
+        assertEquals("fcm-new", coordinator.onLogin())
+        assertEquals("fcm-new", coordinator.activeToken)
+        assertEquals("fcm-newer", ops.pending)
     }
 
     @Test

@@ -142,8 +142,10 @@ object PushGraph {
                     override suspend fun readPending(): String? =
                         appContext.pushDataStore.data.first()[PENDING_KEY]
 
-                    override suspend fun clearPending() {
-                        appContext.pushDataStore.edit { it.remove(PENDING_KEY) }
+                    override suspend fun clearPending(expectedToken: String) {
+                        appContext.pushDataStore.edit {
+                            if (it[PENDING_KEY] == expectedToken) it.remove(PENDING_KEY)
+                        }
                     }
                     },
                 ),
