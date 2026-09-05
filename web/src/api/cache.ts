@@ -73,12 +73,12 @@ export async function getCached<T>(
   if (entry && entry.gen === genAtStart) {
     const age = Date.now() - entry.fetchedAt;
     if (age < opts.freshTtl) {
-      return entry.value as T;
+      return guardGeneration(Promise.resolve(entry.value as T), key, genAtStart);
     }
     if (age < opts.staleTtl) {
       // stale: serve cache now, refresh in background (fire-and-forget)
       void refresh(key, fetcher, genAtStart);
-      return entry.value as T;
+      return guardGeneration(Promise.resolve(entry.value as T), key, genAtStart);
     }
   }
   // expired, miss, or stale-generation entry: sync fetch
