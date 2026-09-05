@@ -19,10 +19,27 @@ import kotlinx.coroutines.flow.asStateFlow
  * and no refresh path re-writes them (see [SessionRefresher], which only
  * re-saves whatever the flows return — null here).
  */
-class TokenStore(
-    private val cipher: TokenCipher = WasmJsTokenCipher(),
+internal interface WasmTokenStorage {
+    fun get(key: String): String?
+    fun set(key: String, value: String)
+    fun remove(key: String)
+}
+
+private object BrowserLocalStorage : WasmTokenStorage {
+    override fun get(key: String): String? = jsLocalStorageGetItem(key)
+    override fun set(key: String, value: String) = jsLocalStorageSetItem(key, value)
+    override fun remove(key: String) = jsLocalStorageRemoveItem(key)
+}
+
+class TokenStore private constructor(
+    private val cipher: TokenCipher,
+    private val storage: WasmTokenStorage,
 ) : TokenStoreLike {
-    private val _jwt = MutableStateFlow<String?>(rawGet(JWT_KEY)?.let { cipher.decrypt(it) })
+    constructor() : this(WasmJsTokenCipher(), BrowserLocalStorage)
+
+    internal constructor(storage: WasmTokenStorage) : this(WasmJsTokenCipher(), storage)
+
+    private val _jwt = MutableStateFlow<String?>(storage.get(JWT_KEY)?.let { cipher.decrypt(it) })
     private val _siap = MutableStateFlow<String?>(null)
     private val _kulon = MutableStateFlow<String?>(null)
 
@@ -34,23 +51,36 @@ class TokenStore(
         val allowed = webPersistableCredentials(token, siap, kulon)
         val jwt = allowed[WebCredentialKind.Jwt]
         if (jwt != null) {
-            rawSet(JWT_KEY, cipher.encrypt(jwt))
+            persistToken(cipher.encrypt(jwt))
             _jwt.value = jwt
         }
     }
 
     override suspend fun currentToken(): String? = _jwt.value
 
-    override suspend fun clear() {
-        rawRemove(JWT_KEY)
+    /**
+     * SYNCHRONOUS persisted-JWT removal (localStorage + flows reset).
+     *
+     * Logout-cleanup contract: [SessionLogout]'s `localCleanup` is
+     * suspending, so the persisted session must be removable without a
+     * suspension point inside the removal itself — INLINE, before the UI flips to the
+     * logged-out state. A scheduled `GlobalScope.launch { clear() }` would
+     * let the UI outrun the removal (a kill/restart in between resurrects
+     * the session). The suspending [clear] delegates to this primitive so
+     * both paths remove exactly the same state.
+     */
+    fun clearImmediately() {
+        storage.remove(JWT_KEY)
         _jwt.value = null
         _siap.value = null
         _kulon.value = null
     }
 
-    private fun rawGet(key: String): String? = jsLocalStorageGetItem(key)
-    private fun rawSet(key: String, value: String) { jsLocalStorageSetItem(key, value) }
-    private fun rawRemove(key: String) { jsLocalStorageRemoveItem(key) }
+    override suspend fun clear() = clearImmediately()
+
+    private fun persistToken(value: String) {
+        storage.set(JWT_KEY, value)
+    }
 
     companion object {
         private const val JWT_KEY = "sso_token"

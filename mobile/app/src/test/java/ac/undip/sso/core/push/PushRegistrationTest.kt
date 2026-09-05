@@ -30,8 +30,8 @@ private class FakeOps : PushRegistration.Ops {
     }
 
     override suspend fun readPending(): String? = pending
-    override suspend fun clearPending() {
-        pending = null
+    override suspend fun clearPending(expectedToken: String) {
+        if (pending == expectedToken) pending = null
     }
 }
 
@@ -46,8 +46,10 @@ class PushRegistrationTest {
     @Test
     fun `onLogin flushes pending token first`() = runTest {
         val ops = FakeOps().apply { pending = "stale-tok" }
-        assertEquals("stale-tok", PushRegistration(ops).onLogin())
+        val registration = PushRegistration(ops)
+        assertEquals("stale-tok", registration.onLogin())
         assertEquals(listOf("stale-tok"), ops.registered)
+        registration.clearPending("stale-tok")
         assertNull(ops.pending)
     }
 
@@ -59,19 +61,19 @@ class PushRegistrationTest {
     }
 
     @Test
-    fun `rotation logged-in registers, failure falls back to stash`() = runTest {
+    fun `rotation registers, failure falls back to stash`() = runTest {
         val ok = FakeOps()
-        assertEquals("fcm-new", PushRegistration(ok).onNewToken("fcm-new", loggedIn = true))
+        assertEquals("fcm-new", PushRegistration(ok).onNewToken("fcm-new"))
 
         val fail = FakeOps().apply { registerOk = false }
-        assertNull(PushRegistration(fail).onNewToken("fcm-new", loggedIn = true))
+        assertNull(PushRegistration(fail).onNewToken("fcm-new"))
         assertEquals("fcm-new", fail.pending)
     }
 
     @Test
-    fun `rotation while logged out only stashes`() = runTest {
+    fun `rotation can be stashed without registration`() = runTest {
         val ops = FakeOps()
-        assertNull(PushRegistration(ops).onNewToken("fcm-x", loggedIn = false))
+        PushRegistration(ops).stashPending("fcm-x")
         assertTrue(ops.registered.isEmpty())
         assertEquals("fcm-x", ops.pending)
     }
