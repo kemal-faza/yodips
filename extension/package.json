@@ -2,7 +2,7 @@
   "name": "yodips-extension",
   "private": true,
   "type": "module",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "scripts": {
     "release": "node scripts/release.mjs",
     "build": "vite build && node scripts/pack-popup.mjs",

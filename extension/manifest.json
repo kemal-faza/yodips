@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YoDips",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "YoDips SSO Undip browser extension untuk mahasiswa Universitas Diponegoro. Integrasi login Kulon, SIAP, IRS, KHS tanpa kredensial.",
   "icons": {
     "16": "icon16.png",
