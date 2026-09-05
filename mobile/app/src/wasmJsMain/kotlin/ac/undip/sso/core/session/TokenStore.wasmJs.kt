@@ -41,12 +41,25 @@ class TokenStore(
 
     override suspend fun currentToken(): String? = _jwt.value
 
-    override suspend fun clear() {
+    /**
+     * SYNCHRONOUS persisted-JWT removal (localStorage + flows reset).
+     *
+     * Logout-cleanup contract: [SessionLogout]'s `localCleanup` is
+     * NON-SUSPENDING (`() -> Unit`), so the persisted session must be
+     * removable without suspension — INLINE, before the UI flips to the
+     * logged-out state. A scheduled `GlobalScope.launch { clear() }` would
+     * let the UI outrun the removal (a kill/restart in between resurrects
+     * the session). The suspending [clear] delegates to this primitive so
+     * both paths remove exactly the same state.
+     */
+    fun clearImmediately() {
         rawRemove(JWT_KEY)
         _jwt.value = null
         _siap.value = null
         _kulon.value = null
     }
+
+    override suspend fun clear() = clearImmediately()
 
     private fun rawGet(key: String): String? = jsLocalStorageGetItem(key)
     private fun rawSet(key: String, value: String) { jsLocalStorageSetItem(key, value) }
