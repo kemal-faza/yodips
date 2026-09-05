@@ -110,7 +110,10 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
       const tag = Buffer.from(tagB64, 'base64');
       if (iv.length !== IV_LEN) return null; // 12-byte IV enforced
       if (tag.length !== 16) return null; // 16-byte GCM tag enforced
-      const decipher = createDecipheriv(ALGO, this.key, iv);
+      // Explicit authTagLength (16) — Node's GCM default is already 16 bytes, so
+      // this is a no-op hardening that pins the contract in case the default ever
+      // changes. The 16-byte tag is enforced above (tag.length !== 16 → null).
+      const decipher = createDecipheriv(ALGO, this.key, iv, { authTagLength: 16 });
       decipher.setAuthTag(tag);
       const plaintext = Buffer.concat([
         decipher.update(Buffer.from(ctB64, 'base64')),
