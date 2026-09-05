@@ -48,7 +48,7 @@ let flowEpoch: number | null = null;
 // orphaned bridge results are discarded via the mismatch below.
 const mountEpoch = getReauthEpoch();
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
-let pollInFlight = false;
+let pollInFlightGen: number | null = null;
 let disposed = false;
 const POLL_INTERVAL_MS = 3000;
 
@@ -90,8 +90,10 @@ async function pollExtensionResult(tickGen?: number, tickEpoch?: number | null) 
   if (disposed) return;
   if (gen !== flowGen) return; // old flow — never read
   if (getReauthEpoch() !== epoch) return; // crossed logout before read — never read
-  if (pollInFlight) return; // serialize: a read is already pending
-  pollInFlight = true;
+  if (pollInFlightGen === gen) return; // serialize this flow's reads
+  // A newer flow owns an independent read. The old flow's finally is
+  // identity-guarded below and cannot clear the newer flow's gate.
+  pollInFlightGen = gen;
   try {
     const payload = await store.readExtensionResult();
     // After EVERY await: settled/disposed, ownership, epoch — before ANY
@@ -122,7 +124,7 @@ async function pollExtensionResult(tickGen?: number, tickEpoch?: number | null) 
       scheduleNextPoll(gen, epoch);
     }
   } finally {
-    pollInFlight = false;
+    if (pollInFlightGen === gen) pollInFlightGen = null;
   }
 }
 
@@ -143,9 +145,11 @@ function startWaiting(mode: 'auto' | 'semi', epoch: number, gen: number) {
 async function checkExtension() {
   extChecking.value = true;
   try {
-    extInstalled.value = await store.isExtensionInstalled();
+    const installed = await store.isExtensionInstalled();
+    if (disposed) return;
+    extInstalled.value = installed;
   } finally {
-    extChecking.value = false;
+    if (!disposed) extChecking.value = false;
   }
 }
 
@@ -173,9 +177,12 @@ onMounted(async () => {
       // router.replace re-writes the SAME history entry via vue-router's own
       // replaceState — no extra replaceState call is needed or wanted.
       await proxy().$router?.replace('/');
+      if (disposed) return;
+      return;
     }
   }
   await checkExtension();
+  if (disposed) return;
   // Listen for the extension's final result (posted to the window by the
   // content-script bridge). Handles both success (JWT) and failure/timeout.
   // Epoch ownership (reviewer C): the bridge push arrives asynchronously, so
@@ -247,7 +254,7 @@ async function handleLogin() {
   flowEpoch = epoch;
   flowGen += 1;
   const myGen = flowGen;
-  await store.login(epoch);
+  await store.login();
   if (disposed) return;
   if (myGen !== flowGen) return; // superseded by a newer flow — never mutate
   if (getReauthEpoch() !== epoch) return; // logout crossed (possibly fully) — never navigate
@@ -269,7 +276,7 @@ async function handleExtensionLogin() {
   const myGen = flowGen;
   extBusy.value = true;
   extMsg.value = null;
-  const status = await store.loginViaExtension(epoch);
+  const status = await store.loginViaExtension();
   if (disposed) return;
   if (myGen !== flowGen) return; // superseded — a newer click owns the UI now
   if (getReauthEpoch() !== epoch) {

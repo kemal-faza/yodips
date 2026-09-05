@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useKulonStore } from '../stores/kulon';
 import { useAuthStore } from '../stores/auth';
 import { useKulonSession } from '../composables/useKulonSession';
+import { isCacheStaleError } from '../api/cache';
 import DetailPanel from '../components/DetailPanel.vue';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -209,6 +210,7 @@ async function load() {
     await store.ensureCourses().catch(() => undefined);
     content.value = await store.ensureContent(courseId.value);
   } catch (e) {
+    if (isCacheStaleError(e)) return;
     error.value = extract(e);
   } finally {
     loading.value = false;

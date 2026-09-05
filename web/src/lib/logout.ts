@@ -1,8 +1,7 @@
 // Plain module state: ref-counted logout-in-progress flag + a monotonic reauth
-// epoch. No Pinia/Vue/axios. No Promise barrier — there is no real consumer
-// that must await an external "logout finished" signal (the interceptor only
-// needs the flag; the store's own logout() already awaits its cleanup steps
-// directly). The epoch invalidates an ALREADY-RUNNING waitForReauthResult poll
+// epoch. No Pinia/Vue/axios. No Promise barrier — the auth store owns the
+// shared `logoutFlight` that callers await, while this module only owns the
+// synchronous gate. The epoch invalidates an ALREADY-RUNNING waitForReauthResult poll
 // started before logout: each beginLogout() bumps it, and the poll's ticks
 // compare the epoch they captured at start against the current one.
 let inFlight = 0;
