@@ -551,6 +551,10 @@ describe('epoch ownership after logout fully resolves (RED: flag-down resurrecti
   beforeEach(() => {
     (emitReauthRequested as any).mockClear();
     (emitTokenRefreshed as any).mockClear();
+    // This describe lives OUTSIDE the outer 'api client' describe, so its
+    // beforeEach (mockReset + resetModules) does not run here — reset the
+    // shared axios mock so per-test call-count assertions are isolated.
+    mockRequest.mockReset();
   });
 
   it('refresh success resolving AFTER logout fully is DISCARDED: no write, no emit, no retry', async () => {
