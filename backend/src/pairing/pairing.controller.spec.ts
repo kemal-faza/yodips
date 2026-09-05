@@ -7,6 +7,7 @@ import { PairingController } from './pairing.controller';
 import { PairingService } from './pairing.service';
 import { ConsumeDto } from './dto/pair.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { SessionStore } from '../session/session-store';
 
 /** Mock ExecutionContext minimal utk JwtAuthGuard. */
 function ctxWith(req: any): any {
@@ -73,8 +74,14 @@ describe('PairingController', () => {
     ).rejects.toThrow();
   });
 
-  it('round-trip: JWT via=pair dari JwtModule ter-pin LOLOS JwtAuthGuard asli (iss/aud benar)', async () => {
+  it('round-trip: JWT via=pair (with sessionCapturedAt) dari JwtModule ter-pin LOLOS JwtAuthGuard asli — SessionStore DI resolves', async () => {
     const SECRET = 's'.repeat(32);
+    const records = new Map<string, any>([
+      ['X', { identity: 'X', ssoCookie: '', microsoftCookie: '', kulonCookie: 'K', siapCookie: '', capturedAt: 99 }],
+    ]);
+    const fakeStore = {
+      get: async (sub: string) => records.get(sub) ?? null,
+    };
     const module = await Test.createTestingModule({
       controllers: [PairingController],
       imports: [
@@ -88,13 +95,17 @@ describe('PairingController', () => {
       providers: [
         JwtAuthGuard,
         { provide: PairingService, useValue: pairing },
+        { provide: SessionStore, useValue: fakeStore },
         { provide: ConfigService, useValue: { get: (k: string) => (k === 'JWT_SECRET' ? SECRET : undefined) } },
       ],
     }).compile();
 
     const jwt = module.get(JwtService);
     const guard = module.get(JwtAuthGuard);
-    const token = await jwt.signAsync({ sub: 'X', via: 'pair' });
+    // The token carries the claim the fake record holds (generation 99), so the
+    // guard's shape check passes and the exact-generation compare (99 === 99)
+    // passes.
+    const token = await jwt.signAsync({ sub: 'X', via: 'pair', sessionCapturedAt: 99 });
     await expect(guard.canActivate(ctxWith({ headers: { authorization: `Bearer ${token}` } }))).resolves.toBe(true);
   });
 });
