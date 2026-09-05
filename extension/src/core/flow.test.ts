@@ -5,6 +5,7 @@ import {
   attachTab,
   normalizeState,
   pollStatus,
+  pollStatusForEpoch,
   isPhaseSatisfied,
   isSsoLoggedInUrl,
   decideHandoffRequest,
@@ -786,6 +787,18 @@ describe("pollStatus (SPA status poll — self-healing)", () => {
   it("treats done/error state with no cached result as inactive → error", () => {
     const r = pollStatus(undefined, { core: "done", service: "siap" });
     expect(r.status).toBe("error");
+  });
+  it("rejects a cached result from an older lifecycle epoch", () => {
+    const r = pollStatusForEpoch(
+      3,
+      4,
+      { status: "ok", accessToken: "stale-token" },
+      { core: "done", service: null },
+    );
+    expect(r).toEqual({
+      status: "error",
+      message: "Sesi login berubah. Silakan ulangi login.",
+    });
   });
 });
 
