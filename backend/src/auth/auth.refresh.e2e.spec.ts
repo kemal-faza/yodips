@@ -72,11 +72,12 @@ describe('AuthModule refresh E2E (temporary)', () => {
       .post('/api/auth/session/handoff')
       .send({ kulonCookie: 'MoodleSession=E2E-ROT', siapCookie: 'sia_app_session=E2E-ROT' })
       .expect(201);
-    const generation = session.body.capturedAt as number;
+    const generation = session.body.sessionGeneration as string;
+    expect(generation).toMatch(/^[0-9a-f]{32}$/);
     // Sign with a PAST expiry using the app's own config/secret/iss/aud and the
     // live session generation.
     const expired = await jwt.signAsync(
-      { sub: NIM, via: 'handoff', sessionCapturedAt: generation },
+      { sub: NIM, via: 'handoff', sessionGeneration: generation },
       { expiresIn: '-1h' },
     );
 
@@ -119,7 +120,7 @@ describe('AuthModule refresh E2E (temporary)', () => {
 
   it('refresh returns SESSION_DEAD when no backend session exists for sub', async () => {
     const orphan = await jwt.signAsync(
-      { sub: 'nobody-e2e', via: 'handoff', sessionCapturedAt: 1 },
+      { sub: 'nobody-e2e', via: 'handoff', sessionGeneration: 'f'.repeat(32) },
       { expiresIn: '-1h' },
     );
     const res = await request(app.getHttpServer())
@@ -159,9 +160,9 @@ describe('AuthModule refresh E2E (temporary)', () => {
       .send({ kulonCookie: 'MoodleSession=E2E-LOGOUT', siapCookie: 'sia_app_session=E2E-LOGOUT' })
       .expect(201);
     const token = handoff.body.accessToken;
-    const generation = handoff.body.capturedAt as number;
+    const generation = handoff.body.sessionGeneration as string;
     expect(token).toBeTruthy();
-    expect(typeof generation).toBe('number');
+    expect(generation).toMatch(/^[0-9a-f]{32}$/);
 
     // Guard passes (token valid, live record) before logout.
     await request(app.getHttpServer())
@@ -223,9 +224,9 @@ describe('AuthModule refresh E2E (temporary)', () => {
       .post('/api/auth/session/handoff')
       .send({ kulonCookie: 'MoodleSession=E2E-EXP', siapCookie: 'sia_app_session=E2E-EXP' })
       .expect(201);
-    const generation = handoff.body.capturedAt as number;
+    const generation = handoff.body.sessionGeneration as string;
     const expired = await jwt.signAsync(
-      { sub: NIM, via: 'handoff', sessionCapturedAt: generation },
+      { sub: NIM, via: 'handoff', sessionGeneration: generation },
       { expiresIn: '-1h' },
     );
 
@@ -247,24 +248,22 @@ describe('AuthModule refresh E2E (temporary)', () => {
   });
 
   it('an OLD-GENERATION valid token cannot clear a NEWER live session (SESSION_DEAD, record survives)', async () => {
-    // First handoff mints generation G1.
+    // First handoff mints generation G1 (crypto random — never collides).
     const first = await request(app.getHttpServer())
       .post('/api/auth/session/handoff')
       .send({ kulonCookie: 'MoodleSession=E2E-GEN1', siapCookie: 'sia_app_session=E2E-GEN1' })
       .expect(201);
     const g1Token = first.body.accessToken;
-    const g1 = first.body.capturedAt as number;
+    const g1 = first.body.sessionGeneration as string;
 
     // Same NIM re-logs-in → new generation G2 (handoff overwrites the record).
-    // Guard against a same-ms Date.now() collision: capturedAt has ms resolution,
-    // so guarantee the second handoff lands in a later millisecond.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Crypto generations never collide, so no same-ms sleep is needed.
     const second = await request(app.getHttpServer())
       .post('/api/auth/session/handoff')
       .send({ kulonCookie: 'MoodleSession=E2E-GEN2', siapCookie: 'sia_app_session=E2E-GEN2' })
       .expect(201);
     const g2Token = second.body.accessToken;
-    const g2 = second.body.capturedAt as number;
+    const g2 = second.body.sessionGeneration as string;
     expect(g2).not.toBe(g1);
 
     // The NEW token works.
@@ -316,7 +315,7 @@ describe('AuthModule refresh E2E (temporary)', () => {
     // No bearer at all → 401 (INVALID_TOKEN at the controller).
     await request(app.getHttpServer()).post('/api/auth/logout').expect(401);
 
-    // A well-formed token with NO sessionCapturedAt claim (legacy) → 401 INVALID_TOKEN.
+    // A well-formed token with NO sessionGeneration claim (legacy) → 401 INVALID_TOKEN.
     const legacy = await jwt.signAsync({ sub: NIM, via: 'handoff' });
     const legacyRes = await request(app.getHttpServer())
       .post('/api/auth/logout')

@@ -2,6 +2,7 @@ import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { SessionStore } from '../session/session-store';
+import { isSessionGeneration } from '../playwright/playwright-auth.service';
 import { generatePairingCode, hashPairingCode, normalizePairingCode } from './pairing-code';
 import { PairingStore } from './pairing-store';
 
@@ -22,7 +23,7 @@ export class PairingService {
     sub: string,
   ): Promise<{ code: string; qrUrl: string; expiresAt: number }> {
     const session = await this.sessionStore.get(sub);
-    if (!session) {
+    if (!session || !isSessionGeneration(session.sessionGeneration)) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
         HttpStatus.UNAUTHORIZED,
@@ -62,8 +63,8 @@ export class PairingService {
       );
     }
     const session = await this.sessionStore.get(outcome.record.sub);
-    if (!session) {
-      this.logger.warn(`Pairing consumed for dead session ${outcome.record.sub}`);
+    if (!session || !isSessionGeneration(session.sessionGeneration)) {
+      this.logger.warn(`Pairing consumed for dead/legacy session ${outcome.record.sub}`);
       throw new HttpException(
         {
           message:
@@ -77,7 +78,7 @@ export class PairingService {
     const accessToken = await this.jwt.signAsync({
       sub: outcome.record.sub,
       via: 'pair',
-      sessionCapturedAt: session.capturedAt,
+      sessionGeneration: session.sessionGeneration,
     });
     return {
       accessToken,

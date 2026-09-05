@@ -74,10 +74,11 @@ describe('PairingController', () => {
     ).rejects.toThrow();
   });
 
-  it('round-trip: JWT via=pair (with sessionCapturedAt) dari JwtModule ter-pin LOLOS JwtAuthGuard asli — SessionStore DI resolves', async () => {
+  it('round-trip: JWT via=pair (with sessionGeneration) dari JwtModule ter-pin LOLOS JwtAuthGuard asli — SessionStore DI resolves', async () => {
     const SECRET = 's'.repeat(32);
+    const gen = '9'.repeat(32);
     const records = new Map<string, any>([
-      ['X', { identity: 'X', ssoCookie: '', microsoftCookie: '', kulonCookie: 'K', siapCookie: '', capturedAt: 99 }],
+      ['X', { identity: 'X', ssoCookie: '', microsoftCookie: '', kulonCookie: 'K', siapCookie: '', capturedAt: Date.now(), sessionGeneration: gen }],
     ]);
     const fakeStore = {
       get: async (sub: string) => records.get(sub) ?? null,
@@ -102,10 +103,9 @@ describe('PairingController', () => {
 
     const jwt = module.get(JwtService);
     const guard = module.get(JwtAuthGuard);
-    // The token carries the claim the fake record holds (generation 99), so the
-    // guard's shape check passes and the exact-generation compare (99 === 99)
-    // passes.
-    const token = await jwt.signAsync({ sub: 'X', via: 'pair', sessionCapturedAt: 99 });
+    // The token carries the claim the fake record holds (generation gen), so the
+    // guard's shape check passes and the exact-generation compare passes.
+    const token = await jwt.signAsync({ sub: 'X', via: 'pair', sessionGeneration: gen });
     await expect(guard.canActivate(ctxWith({ headers: { authorization: `Bearer ${token}` } }))).resolves.toBe(true);
   });
 });

@@ -10,13 +10,17 @@ const mockClient = {
   get: jest.fn(),
   expire: jest.fn(),
   del: jest.fn(),
+  eval: jest.fn(),
   scan: jest.fn(),
   mget: jest.fn(),
   pipeline: jest.fn(),
   quit: jest.fn(),
 };
 
-function makeSession(identity: string, kulon: string) {
+const GEN_A = 'a'.repeat(32);
+const GEN_B = 'b'.repeat(32);
+
+function makeSession(identity: string, kulon: string, sessionGeneration: string = GEN_A) {
   return {
     identity,
     ssoCookie: 'ci_session_sso=SSO',
@@ -24,6 +28,7 @@ function makeSession(identity: string, kulon: string) {
     kulonCookie: kulon,
     siapCookie: '',
     capturedAt: Date.now(),
+    sessionGeneration,
   };
 }
 
@@ -115,10 +120,16 @@ describe('RedisSessionStore', () => {
     const envelope = mockClient.set.mock.calls[0][1];
 
     mockClient.get.mockResolvedValue(envelope);
-    mockClient.del.mockResolvedValue(1);
+    mockClient.eval.mockResolvedValue(1);
     expect(await storeAbs.get('a')).toBeNull();
-    // Dead session is DELeted and must NOT be re-slid.
-    expect(mockClient.del).toHaveBeenCalledWith('sso:session:a');
+    // Dead session is CAS-DELeted (exact envelope) and must NOT be re-slid.
+    expect(mockClient.eval).toHaveBeenCalledWith(
+      expect.stringContaining('redis.call("GET"'),
+      1,
+      'sso:session:a',
+      envelope,
+    );
+    expect(mockClient.del).not.toHaveBeenCalled();
     expect(mockClient.expire).not.toHaveBeenCalled();
   });
 
@@ -175,23 +186,100 @@ describe('RedisSessionStore', () => {
   it('natural re-login: a session past the absolute cap is dead, and a fresh set() for the same identity is readable again', async () => {
     const now = Date.now();
     const storeAbs = new RedisSessionStore(mockClient as unknown as Redis, 1000, 'test-enc-key', 200);
-    // Old session captured 250ms ago > 200ms cap → dead on read (DELeted).
+    // Old session captured 250ms ago > 200ms cap → dead on read (CAS-DELeted).
     const oldSession = makeSession('a', 'MoodleSession=OLD');
     mockClient.set.mockResolvedValue('OK');
     await storeAbs.set('a', { ...oldSession, capturedAt: now - 250 });
     const oldEnvelope = mockClient.set.mock.calls[0][1];
     mockClient.get.mockResolvedValue(oldEnvelope);
-    mockClient.del.mockResolvedValue(1);
+    mockClient.eval.mockResolvedValue(1);
     expect(await storeAbs.get('a')).toBeNull();
 
     // The user re-logins: a new handoff stores a fresh session under the SAME
     // identity with a current capturedAt → must be readable again (sliding EXPIRE).
     mockClient.set.mockResolvedValue('OK');
-    await storeAbs.set('a', { ...makeSession('a', 'MoodleSession=NEW'), capturedAt: Date.now() });
+    await storeAbs.set('a', { ...makeSession('a', 'MoodleSession=NEW', GEN_B), capturedAt: Date.now() });
     const newEnvelope = mockClient.set.mock.calls[1][1];
     mockClient.get.mockResolvedValue(newEnvelope);
     mockClient.expire.mockResolvedValue(1);
     const result = await storeAbs.get('a');
     expect(result?.kulonCookie).toContain('MoodleSession=NEW');
+  });
+
+  describe('clearIfGeneration (atomic CAS)', () => {
+    it('clears on matching generation via Lua compare of the exact envelope', async () => {
+      mockClient.set.mockResolvedValue('OK');
+      await store.set('a', makeSession('a', 'MoodleSession=A', GEN_A));
+      const envelope = mockClient.set.mock.calls[0][1];
+      mockClient.get.mockResolvedValue(envelope);
+      mockClient.eval.mockResolvedValue(1);
+      await expect(store.clearIfGeneration('a', GEN_A)).resolves.toBe(true);
+      expect(mockClient.eval).toHaveBeenCalledWith(
+        expect.stringContaining('redis.call("GET"'),
+        1,
+        'sso:session:a',
+        envelope,
+      );
+      expect(mockClient.del).not.toHaveBeenCalled();
+    });
+
+    it('returns true without touching Redis writes when no record exists', async () => {
+      mockClient.get.mockResolvedValue(null);
+      await expect(store.clearIfGeneration('ghost', GEN_A)).resolves.toBe(true);
+      expect(mockClient.eval).not.toHaveBeenCalled();
+      expect(mockClient.del).not.toHaveBeenCalled();
+    });
+
+    it('returns false on generation mismatch and never deletes', async () => {
+      mockClient.set.mockResolvedValue('OK');
+      await store.set('a', makeSession('a', 'MoodleSession=NEW', GEN_B));
+      const envelope = mockClient.set.mock.calls[0][1];
+      mockClient.get.mockResolvedValue(envelope);
+      await expect(store.clearIfGeneration('a', GEN_A)).resolves.toBe(false);
+      expect(mockClient.eval).not.toHaveBeenCalled();
+      expect(mockClient.del).not.toHaveBeenCalled();
+    });
+
+    it('deterministic race: replacement between GET and CAS loses the CAS and preserves the newer session', async () => {
+      // Seed gen-A envelope, then simulate a re-login (gen-B) landing between
+      // the logout GET (old envelope) and the Lua CAS. The Lua layer sees a
+      // different current value → returns 0 → clearIfGeneration false.
+      mockClient.set.mockResolvedValue('OK');
+      await store.set('a', makeSession('a', 'MoodleSession=OLD', GEN_A));
+      const oldEnvelope = mockClient.set.mock.calls[0][1];
+      await store.set('a', makeSession('a', 'MoodleSession=NEW', GEN_B));
+      mockClient.get.mockResolvedValue(oldEnvelope);
+      mockClient.eval.mockResolvedValue(0); // current != expected → not deleted
+      await expect(store.clearIfGeneration('a', GEN_A)).resolves.toBe(false);
+      expect(mockClient.eval).toHaveBeenCalledWith(
+        expect.stringContaining('redis.call("GET"'),
+        1,
+        'sso:session:a',
+        oldEnvelope,
+      );
+      expect(mockClient.del).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('absolute-expiry CAS race', () => {
+    it('never DELs a replacement stored between GET and cleanup (Lua compare, lost CAS)', async () => {
+      const now = Date.now();
+      const storeAbs = new RedisSessionStore(mockClient as unknown as Redis, 1000, 'test-enc-key', 200);
+      mockClient.set.mockResolvedValue('OK');
+      await storeAbs.set('a', { ...makeSession('a', 'MoodleSession=OLD', GEN_A), capturedAt: now - 250 });
+      const oldEnvelope = mockClient.set.mock.calls[0][1];
+      // Replacement (fresh re-login) lands after the stale GET but before cleanup.
+      mockClient.get.mockResolvedValue(oldEnvelope);
+      mockClient.eval.mockResolvedValue(0); // CAS lost: current != old → no DEL
+      expect(await storeAbs.get('a')).toBeNull();
+      expect(mockClient.eval).toHaveBeenCalledWith(
+        expect.stringContaining('redis.call("GET"'),
+        1,
+        'sso:session:a',
+        oldEnvelope,
+      );
+      expect(mockClient.del).not.toHaveBeenCalled();
+      expect(mockClient.expire).not.toHaveBeenCalled();
+    });
   });
 });

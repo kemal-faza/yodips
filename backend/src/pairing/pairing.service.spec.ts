@@ -12,6 +12,14 @@ describe('PairingService', () => {
   let pairingStore: InMemoryPairingStore;
   let sessionStore: Map<string, any>;
   const jwt = { signAsync: jest.fn().mockResolvedValue('jwt-pair') };
+  const GEN = 'a'.repeat(32);
+  const liveSession = (over: Record<string, unknown> = {}) => ({
+    kulonCookie: 'k',
+    siapCookie: 's',
+    capturedAt: Date.now(),
+    sessionGeneration: GEN,
+    ...over,
+  });
   const config = {
     get: jest.fn((key: string) =>
       key === 'FRONTEND_BASE_URL' ? 'https://app.example' : undefined,
@@ -35,7 +43,7 @@ describe('PairingService', () => {
   });
 
   it('requestPairing menyimpan HASH (bukan kode), mengembalikan qrUrl + kode valid', async () => {
-    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+    sessionStore.set('NIM1', liveSession());
     const spySet = jest.spyOn(pairingStore, 'set');
     const res = await service.requestPairing('NIM1');
     expect(res.code).toMatch(/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{8}$/);
@@ -54,8 +62,9 @@ describe('PairingService', () => {
     });
   });
 
-  it('consume ternormalisasi (lowercase+dash+huruf ambigu) lalu mint JWT via=pair dengan sessionCapturedAt dari record hidup', async () => {
-    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '', capturedAt: 1234 });
+  it('consume ternormalisasi (lowercase+dash+huruf ambigu) lalu mint JWT via=pair dengan sessionGeneration dari record hidup', async () => {
+    const gen = 'd'.repeat(32);
+    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '', capturedAt: Date.now(), sessionGeneration: gen });
     // simpan via jalur service agar hash konsisten:
     const req = await service.requestPairing('NIM1');
     const messy = req.code.toLowerCase().slice(0, 4) + '-' + req.code.slice(4);
@@ -63,13 +72,28 @@ describe('PairingService', () => {
     expect(jwt.signAsync).toHaveBeenCalledWith({
       sub: 'NIM1',
       via: 'pair',
-      sessionCapturedAt: 1234,
+      sessionGeneration: gen,
     });
     expect(res).toEqual({ accessToken: 'jwt-pair', hasKulon: true, hasSiap: false });
   });
 
+  it('consume binds the CURRENT stored generation (re-login rotates the bound value)', async () => {
+    const genOld = 'e'.repeat(32);
+    const genNew = 'f'.repeat(32);
+    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '', capturedAt: Date.now(), sessionGeneration: genOld });
+    const { code } = await service.requestPairing('NIM1');
+    // Re-login rotates the stored generation before consume.
+    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: '', capturedAt: Date.now(), sessionGeneration: genNew });
+    await service.consume(code);
+    expect(jwt.signAsync).toHaveBeenCalledWith({
+      sub: 'NIM1',
+      via: 'pair',
+      sessionGeneration: genNew,
+    });
+  });
+
   it('consume single-use: panggilan kedua 400 INVALID_CODE', async () => {
-    sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+    sessionStore.set('NIM1', liveSession());
     const { code } = await service.requestPairing('NIM1');
     await service.consume(code);
     await expect(service.consume(code)).rejects.toMatchObject({
@@ -85,7 +109,7 @@ describe('PairingService', () => {
       (key: string) => (key === 'PAIRING_TTL_MS' ? -1 : prev?.(key)),
     );
     try {
-      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      sessionStore.set('NIM1', liveSession());
       const { code } = await service.requestPairing('NIM1');
       await expect(service.consume(code)).rejects.toMatchObject({
         status: 400,
@@ -102,7 +126,7 @@ describe('PairingService', () => {
   });
 
   it('consume kode sah tapi sesi sumber sudah mati 409 SESSION_DEAD', async () => {
-    sessionStore.set('NIM2', {});
+    sessionStore.set('NIM2', liveSession());
     const { code } = await service.requestPairing('NIM2');
     sessionStore.delete('NIM2'); // sesi mati setelah kode dibuat
     await expect(service.consume(code)).rejects.toMatchObject({
@@ -111,9 +135,28 @@ describe('PairingService', () => {
     });
   });
 
+  it('requestPairing menolak legacy tanpa generation dengan 401 SESSION_DEAD', async () => {
+    sessionStore.set('NIM-LEGACY', { kulonCookie: 'k', siapCookie: 's', capturedAt: Date.now() });
+    await expect(service.requestPairing('NIM-LEGACY')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+  });
+
+  it('consume menolak legacy tanpa generation dengan 409 SESSION_DEAD', async () => {
+    sessionStore.set('NIM-LEGACY2', liveSession());
+    const { code } = await service.requestPairing('NIM-LEGACY2');
+    // Session rotates to legacy (generation stripped) before consume.
+    sessionStore.set('NIM-LEGACY2', { kulonCookie: 'k', siapCookie: 's', capturedAt: Date.now() });
+    await expect(service.consume(code)).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'SESSION_DEAD' },
+    });
+  });
+
   describe('statusFor (polling web: pending/consumed/invalid)', () => {
     it('pending + expiresAt utk pemilik kode yang masih hidup', async () => {
-      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      sessionStore.set('NIM1', liveSession());
       const { code, expiresAt } = await service.requestPairing('NIM1');
       await expect(service.statusFor('NIM1', code)).resolves.toEqual({
         status: 'pending',
@@ -122,7 +165,7 @@ describe('PairingService', () => {
     });
 
     it('consumed setelah dipakai (pemilik), tanpa expiresAt', async () => {
-      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      sessionStore.set('NIM1', liveSession());
       const { code } = await service.requestPairing('NIM1');
       await service.consume(code);
       await expect(service.statusFor('NIM1', code)).resolves.toEqual({
@@ -131,7 +174,7 @@ describe('PairingService', () => {
     });
 
     it('kode milik sub lain → invalid (tanpa bocor keberadaan)', async () => {
-      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      sessionStore.set('NIM1', liveSession());
       const { code } = await service.requestPairing('NIM1');
       await expect(service.statusFor('NIM2', code)).resolves.toEqual({
         status: 'invalid',
@@ -158,7 +201,7 @@ describe('PairingService', () => {
         (key: string) => (key === 'PAIRING_TTL_MS' ? -1 : prev?.(key)),
       );
       try {
-        sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+        sessionStore.set('NIM1', liveSession());
         const { code } = await service.requestPairing('NIM1');
         await expect(service.statusFor('NIM1', code)).resolves.toEqual({
           status: 'invalid',
@@ -169,7 +212,7 @@ describe('PairingService', () => {
     });
 
     it('normalisasi input (lowercase/dash) diterima', async () => {
-      sessionStore.set('NIM1', { kulonCookie: 'k', siapCookie: 's' });
+      sessionStore.set('NIM1', liveSession());
       const { code } = await service.requestPairing('NIM1');
       const messy = code.toLowerCase().slice(0, 4) + '-' + code.slice(4);
       await expect(service.statusFor('NIM1', messy)).resolves.toMatchObject({
