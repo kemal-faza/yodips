@@ -42,4 +42,24 @@ class PushGraphTest {
             // structured cancellation must propagate, never become `false`
         }
     }
+
+    @Test
+    fun `register wrapper passes backend true through`() = runTest {
+        assertTrue(backendRegisterCatching { true })
+    }
+
+    @Test
+    fun `register wrapper maps ordinary failure to false`() = runTest {
+        assertFalse(backendRegisterCatching { throw IOException("offline") })
+    }
+
+    @Test
+    fun `register wrapper rethrows CancellationException`() = runTest {
+        try {
+            backendRegisterCatching { throw CancellationException("cancelled") }
+            fail("expected CancellationException")
+        } catch (expected: CancellationException) {
+            // structured cancellation must propagate, never become `false`
+        }
+    }
 }
