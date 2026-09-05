@@ -318,11 +318,15 @@ export class AuthService {
   /**
    * Silent JWT rotation. The incoming token may be expired (JWT_EXPIRES_IN=12h
    * is far shorter than the 7d sliding session), so verify the SIGNATURE only
-   * (ignoreExpiration) and mint a fresh JWT iff the backend session record is
-   * still alive. A dead record means the user must re-login (SESSION_DEAD).
+   * (ignoreExpiration) and mint a fresh JWT iff BOTH the backend session record
+   * is still alive AND its generation (capturedAt) exactly matches the token's
+   * sessionCapturedAt claim. A dead record or a generation mismatch means the
+   * user must re-login (SESSION_DEAD); a missing/ill-typed claim (legacy token)
+   * is INVALID_TOKEN. Re-mints are signed with the CURRENT record generation,
+   * so a future-generation token can never be produced from an old one.
    */
   async refresh(token: string) {
-    let payload: { sub?: string; via?: string };
+    let payload: { sub?: unknown; sessionCapturedAt?: unknown; via?: unknown };
     try {
       payload = await this.jwt.verifyAsync(token, {
         secret: this.config.get<string>('JWT_SECRET'),
@@ -337,8 +341,10 @@ export class AuthService {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const sub = payload?.sub;
-    if (!sub) {
+    const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
+    const generation = payload?.sessionCapturedAt;
+    const genOk = typeof generation === 'number' && Number.isFinite(generation);
+    if (!sub || !genOk) {
       throw new HttpException(
         { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
         HttpStatus.UNAUTHORIZED,
@@ -351,9 +357,16 @@ export class AuthService {
         HttpStatus.UNAUTHORIZED,
       );
     }
+    if (session.capturedAt !== generation) {
+      throw new HttpException(
+        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
     const accessToken = await this.jwt.signAsync({
       sub,
       via: typeof payload.via === 'string' ? payload.via : 'handoff',
+      sessionCapturedAt: session.capturedAt,
     });
     return { accessToken };
   }
