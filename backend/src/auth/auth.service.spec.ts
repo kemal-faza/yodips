@@ -41,6 +41,9 @@ const mockJwt = {
   }),
   verifyAsync: jest.fn(async (token: string, opts: any) => {
     if (token === 'expired-but-valid') return { sub: '24060121130000', via: 'handoff' };
+    if (token === 'logout-gen-1') return { sub: '24060121130000', via: 'handoff', sessionCapturedAt: 111 };
+    if (token === 'logout-gen-2') return { sub: '24060121130000', via: 'handoff', sessionCapturedAt: 222 };
+    if (token === 'logout-no-claim') return { sub: '24060121130000', via: 'handoff' };
     if (token === 'forged') throw new Error('invalid signature');
     throw new Error('unknown token');
   }),
@@ -946,22 +949,63 @@ describe('AuthService.me', () => {
 });
 
 describe('AuthService.logout', () => {
-  it('clears the server session for the subject', async () => {
-    mockSessionStore._map.set('24060121130000', {
-      identity: '24060121130000',
-      ssoCookie: 'ci_session_sso=SSO',
-      microsoftCookie: '',
-      kulonCookie: 'MoodleSession=K',
-      siapCookie: '',
-      capturedAt: Date.now(),
-    });
+  const SEEDED = {
+    identity: '24060121130000',
+    ssoCookie: 'ci_session_sso=SSO',
+    microsoftCookie: '',
+    kulonCookie: 'MoodleSession=K',
+    siapCookie: '',
+    capturedAt: 111,
+  };
+
+  it('clears the server session when the claim matches the live record generation', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED });
     const svc = makeService();
-    await expect(svc.logout('24060121130000')).resolves.toEqual({ ok: true });
+    await expect(svc.logout('logout-gen-1')).resolves.toEqual({ ok: true });
     expect(mockSessionStore.get('24060121130000')).toBeNull();
   });
 
-  it('is idempotent when the session is already gone', async () => {
+  it('is idempotent when the session is already gone (no record)', async () => {
     const svc = makeService();
-    await expect(svc.logout('nobody')).resolves.toEqual({ ok: true });
+    await expect(svc.logout('logout-gen-1')).resolves.toEqual({ ok: true });
+  });
+
+  it('does NOT clear a NEWER live record when the token claim is an OLDER generation (SESSION_DEAD)', async () => {
+    // Re-login happened: live record generation 222, token minted at 111.
+    mockSessionStore._map.set('24060121130000', { ...SEEDED, capturedAt: 222 });
+    const svc = makeService();
+    await expect(svc.logout('logout-gen-1')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    // The newer session survives.
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+  });
+
+  it('clears the live record when the token claim matches generation 222', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED, capturedAt: 222 });
+    const svc = makeService();
+    await expect(svc.logout('logout-gen-2')).resolves.toEqual({ ok: true });
+    expect(mockSessionStore.get('24060121130000')).toBeNull();
+  });
+
+  it('rejects a forged token with INVALID_TOKEN and clears nothing', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED });
+    const svc = makeService();
+    await expect(svc.logout('forged')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
+  });
+
+  it('rejects a validly-signed token with NO sessionCapturedAt claim (legacy) with INVALID_TOKEN and clears nothing', async () => {
+    mockSessionStore._map.set('24060121130000', { ...SEEDED });
+    const svc = makeService();
+    await expect(svc.logout('logout-no-claim')).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+    expect(mockSessionStore.get('24060121130000')).not.toBeNull();
   });
 });
