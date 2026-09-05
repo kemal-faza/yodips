@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
+import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,7 +29,6 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -159,6 +159,19 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         }
     }
 
+    // Single-tap gallery entry: used on every surface (permission prompt,
+    // camera frame and outcome popup) — sharing one launch lambda keeps the
+    // code DRY. While a gallery decode runs, `galleryBusy` shows a spinner
+    // (both in the frame icon and the no-camera button) and gates re-entry.
+    val pickGallery =
+        remember {
+            {
+                galleryLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            }
+        }
+
     val previewView =
         remember {
             PreviewView(context).apply {
@@ -181,6 +194,11 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                 val analysis =
                     ImageAnalysis
                         .Builder()
+                        // Resolution: VGA (640x480) default terlalu kecil untuk
+                        // QR jarak jauh (harus zoom). Minta resolusi tertinggi
+                        // yang didukung analysis; aspect ratio dijaga 4:3 agar
+                        // sama dengan sensor & target dimensi MLKit.
+                        .setTargetResolution(Size(1920, 1440))
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build()
                 analysis.setAnalyzer(scanExecutor) { imageProxy ->
@@ -207,6 +225,9 @@ internal actual fun ScanScreen(repo: SsoRepository) {
     }
 
     // Push the selected zoom onto the live camera whenever it (or the camera) changes.
+    // CameraX zoom is a sensor-level crop, so it genuinely magnifies what the
+    // decoder sees (ImageAnalysis stream) — for QRs too far to decode even at
+    // 1080p+ resolution, zooming crops the sensor region and helps decoding.
     LaunchedEffect(camera, zoomRatio) {
         val cam = camera ?: return@LaunchedEffect
         if (zoomRatio != 1f) cam.cameraControl.setZoomRatio(zoomRatio)
@@ -223,8 +244,7 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                     PermissionPrompt { permissionLauncher.launch(Manifest.permission.CAMERA) }
                     GalleryButton(
                         busy = galleryBusy,
-                        enabled = true,
-                        onClick = { galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        onClick = pickGallery,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 16.dp),
                     )
                 }
@@ -238,10 +258,12 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                             .fillMaxWidth()
                             .background(Color.Black)
                             .pointerInput(Unit) {
-                                // Pinch to zoom over the live preview.
+                                // Pinch to zoom over the live preview. Zoom is a
+                                // real sensor crop (CameraX) — it magnifies both
+                                // what the user sees and the decoder's analysis
+                                // stream, so it doubles as a reach extender.
                                 detectTransformGestures { _, _, zoom, _ ->
-                                    val target = (zoomRatio * zoom).coerceIn(1f, maxZoom.coerceAtLeast(1f))
-                                    zoomRatio = target
+                                    adjustZoom(zoom)
                                 }
                             },
                     ) {
@@ -250,27 +272,17 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                         ScanControls(
                             useFrontCamera = useFrontCamera,
                             zoomRatio = zoomRatio,
+                            galleryBusy = galleryBusy,
                             onFlipCamera = {
                                 useFrontCamera = !useFrontCamera
                                 zoomRatio = 1f
                             },
                             onZoomIn = { adjustZoom(1.25f) },
                             onZoomOut = { adjustZoom(0.8f) },
+                            onPickGallery = pickGallery,
                             modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
                         )
                     }
-                    // Asisten: pilih foto QR dari galeri (mis. screenshot CCTV dosen),
-                    // tanpa harus menyalakan kamera.
-                    GalleryButton(
-                        busy = galleryBusy,
-                        enabled = true,
-                        onClick = {
-                            galleryLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    )
                 }
                 // Centered result popup over the still-running camera.
                 outcome?.let { o ->
@@ -287,19 +299,14 @@ internal actual fun ScanScreen(repo: SsoRepository) {
     }
 }
 
-/** Bottom full-width button to pick a QR photo from the gallery. */
+/** Bottom full-width button to pick a QR photo from the gallery (no-camera surface). */
 @Composable
 private fun GalleryButton(
     busy: Boolean,
-    enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Button(
-        onClick = onClick,
-        enabled = enabled && !busy,
-        modifier = modifier,
-    ) {
+    Button(onClick = onClick, enabled = !busy, modifier = modifier) {
         Icon(
             Icons.Filled.PhotoLibrary,
             contentDescription = null,
@@ -344,14 +351,16 @@ private fun ScanOverlay() {
     }
 }
 
-/** Overlay buttons (flip camera + zoom in/out + level) pinned to the preview. */
+/** Overlay buttons (flip camera + zoom in/out + level + gallery) pinned to the preview. */
 @Composable
 private fun ScanControls(
     useFrontCamera: Boolean,
     zoomRatio: Float,
+    galleryBusy: Boolean,
     onFlipCamera: () -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
+    onPickGallery: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -382,6 +391,17 @@ private fun ScanControls(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             )
+        }
+        // Galeri menyatu dengan kontrol lain (bukan menyendiri di pojok):
+        // buka foto QR dari galeri tanpa harus menyalakan kamera.
+        Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.45f)) {
+            IconButton(onClick = onPickGallery, enabled = !galleryBusy) {
+                Icon(
+                    if (galleryBusy) Icons.Filled.Refresh else Icons.Filled.PhotoLibrary,
+                    contentDescription = "Pilih dari Galeri",
+                    tint = Color.White,
+                )
+            }
         }
         if (useFrontCamera) {
             Text("Depan", style = MaterialTheme.typography.labelSmall, color = Color.White)
