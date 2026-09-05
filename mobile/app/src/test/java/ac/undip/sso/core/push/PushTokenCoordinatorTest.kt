@@ -19,7 +19,8 @@ import org.junit.Test
  * normal DI (a pure fake [PushRegistration.Ops]), so suites isolate state
  * with no companion-singleton contamination and no reflection:
  *  - onLogin registers the FCM token and tracks it as active;
- *  - onNewToken tracks only when logged in (otherwise stashes pending);
+ *  - onNewToken consults coordinator-owned active-session state (otherwise
+ *    stashes pending);
  *  - onLogout unregisters the active token and ALWAYS clears it in a
  *    `finally` — success, ordinary backend `false`, unexpected throw
  *    (propagates), or [CancellationException] (rethrows AND clears);
@@ -33,11 +34,13 @@ class PushTokenCoordinatorTest {
     private class FakeOps(
         var unregister: suspend (String) -> Boolean = { true },
         var register: suspend (String) -> Boolean = { true },
+        var current: String? = "fcm-fresh",
     ) : PushRegistration.Ops {
         val unregistered = mutableListOf<String>()
+        val registered = mutableListOf<String>()
         val stashed = mutableListOf<String>()
         var pending: String? = null
-        override suspend fun currentFcmToken(): String? = "fcm-fresh"
+        override suspend fun currentFcmToken(): String? = current
         override suspend fun registerOnBackend(token: String): Boolean = register(token)
         override suspend fun unregisterOnBackend(token: String): Boolean {
             unregistered += token
@@ -74,9 +77,10 @@ class PushTokenCoordinatorTest {
     }
 
     @Test
-    fun `onNewToken while logged in tracks the rotated token`() = runTest {
+    fun `onNewToken while active tracks the rotated token`() = runTest {
         val coordinator = coordinator()
-        coordinator.onNewToken("fcm-rotated", loggedIn = true)
+        coordinator.onLogin()
+        coordinator.onNewToken("fcm-rotated")
         assertEquals("fcm-rotated", coordinator.activeToken)
     }
 
@@ -84,7 +88,7 @@ class PushTokenCoordinatorTest {
     fun `onNewToken while logged out stashes and tracks nothing`() = runTest {
         val ops = FakeOps()
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-rotated", loggedIn = false)
+        coordinator.onNewToken("fcm-rotated")
         assertEquals(listOf("fcm-rotated"), ops.stashed)
         assertNull(coordinator.activeToken)
     }
@@ -93,9 +97,9 @@ class PushTokenCoordinatorTest {
     fun `onLogout unregisters active token and clears it`() = runTest {
         val ops = FakeOps()
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-1", loggedIn = true)
+        coordinator.onLogin()
         coordinator.onLogout()
-        assertEquals(listOf("fcm-1"), ops.unregistered)
+        assertEquals(listOf("fcm-fresh"), ops.unregistered)
         assertNull(coordinator.activeToken)
     }
 
@@ -103,9 +107,9 @@ class PushTokenCoordinatorTest {
     fun `onLogout clears activeToken when unregister reports ordinary failure`() = runTest {
         val ops = FakeOps(unregister = { false })
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-1", loggedIn = true)
+        coordinator.onLogin()
         coordinator.onLogout() // ordinary failure: no throw, token still cleared
-        assertEquals(listOf("fcm-1"), ops.unregistered)
+        assertEquals(listOf("fcm-fresh"), ops.unregistered)
         assertNull(coordinator.activeToken)
     }
 
@@ -113,7 +117,7 @@ class PushTokenCoordinatorTest {
     fun `onLogout clears activeToken even on unexpected throw`() = runTest {
         val ops = FakeOps(unregister = { throw IllegalStateException("boom") })
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-1", loggedIn = true)
+        coordinator.onLogin()
         try {
             coordinator.onLogout()
             fail("expected IllegalStateException")
@@ -121,7 +125,7 @@ class PushTokenCoordinatorTest {
             // propagates…
         }
         // …but the token is never retained.
-        assertEquals(listOf("fcm-1"), ops.unregistered)
+        assertEquals(listOf("fcm-fresh"), ops.unregistered)
         assertNull(coordinator.activeToken)
     }
 
@@ -129,7 +133,7 @@ class PushTokenCoordinatorTest {
     fun `onLogout rethrows cancellation and still clears activeToken`() = runTest {
         val ops = FakeOps(unregister = { throw CancellationException("cancelled") })
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-1", loggedIn = true)
+        coordinator.onLogin()
         try {
             coordinator.onLogout()
             fail("expected CancellationException")
@@ -137,7 +141,7 @@ class PushTokenCoordinatorTest {
             // must propagate to the SessionLogout orchestrator…
         }
         // …but must never retain the token (cancellation cannot keep state).
-        assertEquals(listOf("fcm-1"), ops.unregistered)
+        assertEquals(listOf("fcm-fresh"), ops.unregistered)
         assertNull(coordinator.activeToken)
     }
 
@@ -147,9 +151,9 @@ class PushTokenCoordinatorTest {
         // backend surfaces as `false`, never as a throw.
         val ops = FakeOps(unregister = { backendUnregisterCatching { throw IOException("offline") } })
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-1", loggedIn = true)
+        coordinator.onLogin()
         coordinator.onLogout()
-        assertEquals(listOf("fcm-1"), ops.unregistered)
+        assertEquals(listOf("fcm-fresh"), ops.unregistered)
         assertNull(coordinator.activeToken)
     }
 
@@ -163,18 +167,16 @@ class PushTokenCoordinatorTest {
     }
 
     @Test
-    fun `concurrent onNewToken waits for paused onLogout, no orphan or overwrite`() = runTest {
-        // HIGH race: without serialization, a rotation racing logout can
-        // register on the backend BETWEEN the logout unregister and the
-        // activeToken nulling — leaving a backend-registered orphan nobody
-        // tracks, or its activeToken write gets wiped by the logout's
-        // finally. Deterministic: deferred gates, no sleeps, through the
-        // REAL production PushTokenCoordinator.
+    fun `rotation queued during logout is stashed for the next account`() = runTest {
+        // HIGH race: a callback captured while logout is paused must not use
+        // a stale bearer snapshot to register token B after token A is
+        // unregistered. It must remain pending for the next account/login.
         val unregisterEntered = CompletableDeferred<Unit>()
         val releaseUnregister = CompletableDeferred<Unit>()
         val registered = mutableListOf<String>()
         val ops =
             FakeOps(
+                current = "fcm-old",
                 unregister = {
                     unregisterEntered.complete(Unit)
                     releaseUnregister.await() // logout holds the transition
@@ -186,11 +188,11 @@ class PushTokenCoordinatorTest {
                 },
             )
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-old", loggedIn = true)
+        coordinator.onLogin()
         assertEquals("fcm-old", coordinator.activeToken)
         val logout = async { coordinator.onLogout() }
         unregisterEntered.await() // logout is inside unregister, lock held
-        val rotated = async { coordinator.onNewToken("fcm-new", loggedIn = true) }
+        val rotated = async { coordinator.onNewToken("fcm-new") }
         yield() // let the rotation reach the transition lock and suspend
         yield()
         assertTrue(
@@ -201,9 +203,16 @@ class PushTokenCoordinatorTest {
         releaseUnregister.complete(Unit)
         logout.await()
         rotated.await()
-        // Logout unregistered exactly the old token and cleared; the rotation
-        // then registered once and is tracked — no orphan, no stale wipe.
+        // Logout unregistered exactly the old token and cleared; the queued
+        // rotation was stashed rather than orphaning a backend registration.
         assertEquals(listOf("fcm-old"), ops.unregistered)
+        assertEquals(listOf("fcm-old"), registered)
+        assertEquals("fcm-new", ops.pending)
+        assertNull(coordinator.activeToken)
+
+        // Account switch: the pending device token is registered only by the
+        // new login, never by the stale callback under the new bearer.
+        assertEquals("fcm-new", coordinator.onLogin())
         assertEquals(listOf("fcm-old", "fcm-new"), registered)
         assertEquals("fcm-new", coordinator.activeToken)
     }
@@ -217,6 +226,7 @@ class PushTokenCoordinatorTest {
         val registered = mutableListOf<String>()
         val ops =
             FakeOps(
+                current = "fcm-old",
                 unregister = {
                     unregisterEntered.complete(Unit)
                     releaseUnregister.await()
@@ -228,7 +238,7 @@ class PushTokenCoordinatorTest {
                 },
             )
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-old", loggedIn = true)
+        coordinator.onLogin()
         val logout = async { coordinator.onLogout() }
         unregisterEntered.await()
         val login = async { coordinator.onLogin() }
@@ -236,6 +246,7 @@ class PushTokenCoordinatorTest {
         yield()
         assertTrue("login must wait for the paused logout", "fcm-fresh" !in registered)
         assertEquals("fcm-old", coordinator.activeToken)
+        ops.current = "fcm-fresh"
         releaseUnregister.complete(Unit)
         logout.await()
         assertEquals("fcm-fresh", login.await())
@@ -252,6 +263,7 @@ class PushTokenCoordinatorTest {
         val registered = mutableListOf<String>()
         val ops =
             FakeOps(
+                current = "fcm-old",
                 unregister = {
                     unregisterEntered.complete(Unit)
                     releaseUnregister.await()
@@ -263,10 +275,10 @@ class PushTokenCoordinatorTest {
                 },
             )
         val coordinator = coordinator(ops)
-        coordinator.onNewToken("fcm-old", loggedIn = true)
+        coordinator.onLogin()
         val logout = async { coordinator.onLogout() }
         unregisterEntered.await()
-        val waiter = async { coordinator.onNewToken("fcm-new", loggedIn = true) }
+        val waiter = async { coordinator.onNewToken("fcm-new") }
         yield() // let the waiter queue on the transition lock
         yield()
         waiter.cancel()
@@ -285,11 +297,55 @@ class PushTokenCoordinatorTest {
     }
 
     @Test
+    fun `onLogin rethrows cancellation and keeps fresh token pending for retry`() = runTest {
+        val ops = FakeOps(current = "fcm-current")
+        ops.register = { throw CancellationException("registration cancelled") }
+        val coordinator = coordinator(ops)
+
+        try {
+            coordinator.onLogin()
+            fail("expected CancellationException")
+        } catch (expected: CancellationException) {
+            // registration cancellation must reach the caller
+        }
+
+        assertEquals("fcm-current", ops.pending)
+        assertNull(coordinator.activeToken)
+
+        ops.register = { token -> ops.registered += token; true }
+        assertEquals("fcm-current", coordinator.onLogin())
+        assertEquals("fcm-current", coordinator.activeToken)
+    }
+
+    @Test
+    fun `onNewToken rethrows cancellation and keeps prior active token recoverable`() = runTest {
+        val ops = FakeOps(current = "fcm-old")
+        val coordinator = coordinator(ops)
+        coordinator.onLogin()
+        ops.register = { throw CancellationException("rotation cancelled") }
+
+        try {
+            coordinator.onNewToken("fcm-new")
+            fail("expected CancellationException")
+        } catch (expected: CancellationException) {
+            // registration cancellation must reach the caller
+        }
+
+        assertEquals("fcm-old", coordinator.activeToken)
+        assertEquals("fcm-new", ops.pending)
+
+        ops.register = { token -> ops.registered += token; true }
+        assertEquals("fcm-new", coordinator.onLogin())
+        assertEquals("fcm-new", coordinator.activeToken)
+    }
+
+    @Test
     fun `coordinators never share state`() = runTest {
         val first = coordinator()
         val second = coordinator()
         assertNotSame(first, second)
-        first.onNewToken("fcm-first", loggedIn = true)
+        first.onLogin()
+        first.onNewToken("fcm-first")
         assertEquals("fcm-first", first.activeToken)
         assertNull("fresh instance starts with no active token", second.activeToken)
         first.onLogout()

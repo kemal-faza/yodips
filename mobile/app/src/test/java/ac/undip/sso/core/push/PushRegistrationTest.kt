@@ -59,19 +59,19 @@ class PushRegistrationTest {
     }
 
     @Test
-    fun `rotation logged-in registers, failure falls back to stash`() = runTest {
+    fun `rotation registers, failure falls back to stash`() = runTest {
         val ok = FakeOps()
-        assertEquals("fcm-new", PushRegistration(ok).onNewToken("fcm-new", loggedIn = true))
+        assertEquals("fcm-new", PushRegistration(ok).onNewToken("fcm-new"))
 
         val fail = FakeOps().apply { registerOk = false }
-        assertNull(PushRegistration(fail).onNewToken("fcm-new", loggedIn = true))
+        assertNull(PushRegistration(fail).onNewToken("fcm-new"))
         assertEquals("fcm-new", fail.pending)
     }
 
     @Test
-    fun `rotation while logged out only stashes`() = runTest {
+    fun `rotation can be stashed without registration`() = runTest {
         val ops = FakeOps()
-        assertNull(PushRegistration(ops).onNewToken("fcm-x", loggedIn = false))
+        PushRegistration(ops).stashPending("fcm-x")
         assertTrue(ops.registered.isEmpty())
         assertEquals("fcm-x", ops.pending)
     }
