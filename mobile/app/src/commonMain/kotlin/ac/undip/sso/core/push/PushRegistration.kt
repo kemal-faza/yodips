@@ -1,5 +1,8 @@
 package ac.undip.sso.core.push
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
+
 /**
  * Logika murni lifecycle token FCM terhadap registry backend
  * (POST/DELETE /api/notifications/device). Semua I/O disuntik lewat [Ops].
@@ -18,33 +21,46 @@ class PushRegistration(private val ops: Ops) {
     suspend fun onLogin(): String? {
         val pending = ops.readPending()
         if (pending != null) {
-            if (ops.registerOnBackend(pending)) {
-                ops.clearPending()
-                return pending
+            return try {
+                if (registerCatching(pending)) {
+                    ops.clearPending()
+                    pending
+                } else {
+                    null
+                }
+            } catch (error: CancellationException) {
+                preservePendingAndRethrow(pending, error)
             }
-            return null
         }
         val fresh = ops.currentFcmToken() ?: return null
-        return if (ops.registerOnBackend(fresh)) {
-            fresh
-        } else {
-            ops.stashPending(fresh)
-            null
+        return try {
+            if (registerCatching(fresh)) {
+                fresh
+            } else {
+                ops.stashPending(fresh)
+                null
+            }
+        } catch (error: CancellationException) {
+            preservePendingAndRethrow(fresh, error)
         }
     }
 
     /** Rotasi token saat app hidup. */
-    suspend fun onNewToken(newToken: String, loggedIn: Boolean): String? {
-        if (!loggedIn) {
-            ops.stashPending(newToken)
-            return null
+    suspend fun onNewToken(newToken: String): String? =
+        try {
+            if (registerCatching(newToken)) {
+                newToken
+            } else {
+                ops.stashPending(newToken) // offline -> dicoba lagi saat login berikut
+                null
+            }
+        } catch (error: CancellationException) {
+            preservePendingAndRethrow(newToken, error)
         }
-        return if (ops.registerOnBackend(newToken)) {
-            newToken
-        } else {
-            ops.stashPending(newToken) // offline -> dicoba lagi saat login berikut
-            null
-        }
+
+    /** Stash a device token without registering it for the inactive account. */
+    suspend fun stashPending(token: String) {
+        ops.stashPending(token)
     }
 
     /**
@@ -53,5 +69,24 @@ class PushRegistration(private val ops: Ops) {
      */
     suspend fun onLogout(activeToken: String?) {
         if (activeToken != null) ops.unregisterOnBackend(activeToken)
+    }
+
+    private suspend fun registerCatching(token: String): Boolean =
+        try {
+            ops.registerOnBackend(token)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
+        }
+
+    private suspend fun preservePendingAndRethrow(
+        token: String,
+        error: CancellationException,
+    ): Nothing {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            ops.stashPending(token)
+        }
+        throw error
     }
 }
