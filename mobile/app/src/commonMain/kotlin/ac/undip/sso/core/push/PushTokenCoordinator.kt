@@ -58,6 +58,7 @@ class PushTokenCoordinator(val registration: PushRegistration) {
             val t = registration.onLogin()
             if (t != null && activeSession && sessionGeneration == generation) {
                 activeToken = t
+                registration.clearPending(t)
             }
             t
         }
@@ -73,6 +74,7 @@ class PushTokenCoordinator(val registration: PushRegistration) {
             val registered = registration.onNewToken(newToken)
             if (registered != null && activeSession && sessionGeneration == generation) {
                 activeToken = registered
+                registration.clearPending(registered)
             }
             registered
         }

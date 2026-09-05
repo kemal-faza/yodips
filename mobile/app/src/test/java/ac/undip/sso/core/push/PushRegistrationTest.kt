@@ -30,8 +30,8 @@ private class FakeOps : PushRegistration.Ops {
     }
 
     override suspend fun readPending(): String? = pending
-    override suspend fun clearPending() {
-        pending = null
+    override suspend fun clearPending(expectedToken: String) {
+        if (pending == expectedToken) pending = null
     }
 }
 
@@ -46,8 +46,10 @@ class PushRegistrationTest {
     @Test
     fun `onLogin flushes pending token first`() = runTest {
         val ops = FakeOps().apply { pending = "stale-tok" }
-        assertEquals("stale-tok", PushRegistration(ops).onLogin())
+        val registration = PushRegistration(ops)
+        assertEquals("stale-tok", registration.onLogin())
         assertEquals(listOf("stale-tok"), ops.registered)
+        registration.clearPending("stale-tok")
         assertNull(ops.pending)
     }
 
