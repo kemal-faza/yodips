@@ -69,6 +69,12 @@ fun showPush(
  */
 class PushMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
+        // Ensure install on the service's application context FIRST: in a
+        // fresh process this callback can run before SsoApplication/
+        // MainActivity wiring, and a token dropped on an uninstalled graph
+        // is lost — it is device-owned and must reach the pending stash.
+        // Install is idempotent, so repeating it here is safe.
+        PushGraph.install(applicationContext)
         val loggedIn = !Backend.authToken.isNullOrBlank()
         PushGraph.ioScope.launch { PushGraph.onNewToken(token, loggedIn) }
     }

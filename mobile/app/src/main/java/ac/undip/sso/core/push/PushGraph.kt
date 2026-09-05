@@ -39,6 +39,33 @@ internal suspend fun backendUnregisterCatching(call: suspend () -> Boolean): Boo
 }
 
 /**
+ * Idempotent once-gate behind [PushGraph.install]: collapses concurrent
+ * first installs into a single build and publishes only a fully-built
+ * value. Pure + JVM-testable (see PushInstallOnceTest): no Context,
+ * Backend, or Firebase enters here, so tests construct their own instance
+ * — never the [PushGraph] global, never reflection.
+ *
+ * Implementation is a JVM `synchronized` double-check: this file is
+ * Android-only, and the guarded build is non-suspending. A throwing build
+ * does NOT latch (the next ensure retries) so a transient install failure
+ * stays visible instead of wedging the graph uninstalled.
+ */
+internal class PushInstallOnce {
+    private val lock = Any()
+
+    @Volatile
+    private var done = false
+
+    fun ensure(build: () -> Unit) {
+        if (done) return
+        synchronized(lock) {
+            if (done) return
+            build()
+            done = true
+        }
+    }
+}
+/**
  * Singleton glue app-scope: menyambungkan [PushRegistration] (pure) ke
  * Firebase/Retrofit/DataStore nyata. FCM token BUKAN secret (device-scoped,
  * dapat dirotasi server) → plaintext DataStore cukup; berbeda dari JWT yang
@@ -51,6 +78,9 @@ internal suspend fun backendUnregisterCatching(call: suspend () -> Boolean): Boo
  * coordinator — never mutated by tests.
  */
 object PushGraph {
+    private val installOnce = PushInstallOnce()
+
+    @Volatile
     private var coordinator: PushTokenCoordinator? = null
 
     val activeToken: String?
@@ -60,17 +90,25 @@ object PushGraph {
         get() = checkNotNull(coordinator?.registration) { "PushGraph not installed" }
 
     /** Riwayat push yang pernah diterima (disimpan lokal, non-PII). */
+    @Volatile
     var history: NotificationHistoryStore? = null
         private set
 
+    /**
+     * Idempotent + thread-safe: safe to call from `SsoApplication.onCreate`,
+     * `MainActivity.onCreate`, AND `PushMessagingService.onNewToken` (a fresh
+     * process can deliver an FCM rotation before any activity runs). Only
+     * the first call builds; the coordinator is fully constructed before
+     * publication, so readers never observe a half-built graph.
+     */
     fun install(context: Context) {
-        if (coordinator != null) return
-        val appContext = context.applicationContext
-        history = DataStoreNotificationHistoryStore(appContext)
-        coordinator =
-            PushTokenCoordinator(
-                PushRegistration(
-                    object : PushRegistration.Ops {
+        installOnce.ensure {
+            val appContext = context.applicationContext
+            history = DataStoreNotificationHistoryStore(appContext)
+            coordinator =
+                PushTokenCoordinator(
+                    PushRegistration(
+                        object : PushRegistration.Ops {
                     override suspend fun currentFcmToken(): String? = firebaseToken()
 
                     // runCatching: offline/5xx TIDAK boleh melempar keluar
@@ -99,6 +137,7 @@ object PushGraph {
                     },
                 ),
             )
+        }
     }
 
     /** Dipanggil AppRoot saat hasToken menjadi true. */
