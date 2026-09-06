@@ -26,3 +26,19 @@ export function groupCoursesBySemester(courses: Course[]): { semester: string; c
   }));
   return groups.sort((a, b) => semesterSortKey(b.semester) - semesterSortKey(a.semester));
 }
+
+/**
+ * Progress agregat semester berjalan: rata-rata `progress` mata kuliah AKTIF
+ * yang datanya terukur (course tanpa `progress` diabaikan — bukan dihitung 0).
+ * Karena seluruh course `inprogress` berada di semester yang sama, nilai tiap
+ * kartu sebenarnya identik; agregat ini dipakai untuk progress bar TUNGGAL di
+ * bawah judul "Aktif". Null bila tidak ada yang terukur → bar disembunyikan.
+ */
+export function semesterProgress(activeCourses: Course[]): number | null {
+  const measured = activeCourses
+    .filter((c) => c.timelineStatus === 'inprogress')
+    .map((c) => c.progress)
+    .filter((p): p is number => typeof p === 'number');
+  if (measured.length === 0) return null;
+  return Math.round(measured.reduce((s, p) => s + p, 0) / measured.length);
+}

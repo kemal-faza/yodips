@@ -53,13 +53,13 @@ describe('CourseCard', () => {
     const w = mount(CourseCard, { props: { course: base({}) } });
     expect(w.find('[data-test="course-lecturer"]').exists()).toBe(false);
   });
-  it('renders progress bar and % when progress present', () => {
-    const w = mount(CourseCard, { props: { course: base({ progress: 50 }) } });
-    expect(w.text()).toContain('50%');
-    expect(w.find('[data-test="course-progress"]').exists()).toBe(true);
-  });
   it('hides progress bar when progress absent', () => {
     const w = mount(CourseCard, { props: { course: base({}) } });
     expect(w.find('[data-test="course-progress"]').exists()).toBe(false);
+  });
+  it('no longer renders the per-course progress bar (moved to the Aktif header)', () => {
+    const w = mount(CourseCard, { props: { course: base({ progress: 50 }) } });
+    expect(w.find('[data-test="course-progress"]').exists()).toBe(false);
+    expect(w.text()).not.toContain('50%');
   });
 });
