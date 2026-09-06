@@ -10,6 +10,7 @@ import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.network.KulonCourseContent
 import ac.undip.sso.core.network.LogoutResponse
+import ac.undip.sso.core.network.MeResponse
 import ac.undip.sso.core.network.PushDeviceRequest
 import ac.undip.sso.core.network.PushDeviceResponse
 import ac.undip.sso.core.network.VapidPublicKeyResponse
@@ -51,10 +52,13 @@ private class FakeTokenStore(
 /** Stub-able SsoApi fake so the repository's error mapping is unit-testable. */
 private class FakeApi : SsoApi {
     var profileStub: suspend () -> SiapProfile = { throw UnsupportedOperationException("profile not stubbed") }
+    var meStub: suspend () -> MeResponse = { throw UnsupportedOperationException("me not stubbed") }
     var markKehadiranStub: suspend (KehadiranRequest) -> KehadiranResponse = { throw UnsupportedOperationException("markKehadiran not stubbed") }
     var registerPushDeviceStub: suspend (PushDeviceRequest) -> PushDeviceResponse = { throw UnsupportedOperationException("registerPushDevice not stubbed") }
 
     override suspend fun profile(): SiapProfile = profileStub()
+
+    override suspend fun me(): MeResponse = meStub()
 
     override suspend fun irs(): SiapIrs = throw UnsupportedOperationException()
 

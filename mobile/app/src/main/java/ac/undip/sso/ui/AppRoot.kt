@@ -2,8 +2,11 @@ package ac.undip.sso.ui
 
 import ac.undip.sso.core.data.PersistentCache
 import ac.undip.sso.core.data.SessionLogout
+import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.data.TokenStoreLike
+import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.Backend
+import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.normalizeNavTarget
@@ -74,6 +77,39 @@ fun AppRoot(
         if (t != null) Backend.authToken = t
         hasToken = t != null
         checked = true
+    }
+
+    // Deteksi dini sesi upstream mati (SIAP/Kulon) saat pertama masuk: `/me`
+    // live-probe validitas cookie (cache 60s di backend) — kalau `complete=false`
+    // padahal JWT masih hidup, langsung munculkan dialog login ulang universal,
+    // tanpa harus menunggu aksi (mis. scan QR) yang akan gagal lebih dulu.
+    // Network error diabaikan (offline ≠ sesi mati); 401 JWT → dialog via
+    // SessionExpiredEvents di dalam repository path.
+    val bootRepo =
+        remember {
+            SsoRepository(
+                persistent = persistentCache,
+                tokenStore = tokenStore,
+            )
+        }
+    LaunchedEffect(hasToken) {
+        if (!hasToken) return@LaunchedEffect
+        // Jeda kecil: biarkan AppShell/notifikasi-permission memulai lebih dulu;
+        // check ini sekali saja per boot.
+        when (val r = bootRepo.sessionStatus()) {
+            is ApiResult.Success -> {
+                if (!r.data.complete) SessionExpiredEvents.notifySessionExpired()
+            }
+
+            is ApiResult.Error -> {
+                // UNAUTHORIZED sudah memicu dialog lewat refresher (retryable=false,
+                // serviceStale=false). Jangan tambah notifikasi ganda di sini.
+                if (r.type == ErrorType.UNAUTHORIZED) {
+                    SessionExpiredEvents.notifySessionExpired()
+                }
+                // NETWORK/SERVER/UPSTREAM → biarkan (bukan bukti sesi mati).
+            }
+        }
     }
 
     if (!checked) return

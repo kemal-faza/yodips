@@ -39,10 +39,14 @@ private fun jsonEscape(s: String): String = s.replace("\\", "\\\\").replace("\""
 fun handoffBody(
     siapCookie: String?,
     kulonCookie: String?,
+    ssoCookie: String? = null,
 ): String =
     buildString {
         append("{")
         append("\"capturedAt\":").append(nowMs() / 1000)
+        if (ssoCookie != null) {
+            append(",\"ssoCookie\":\"").append(jsonEscape(ssoCookie)).append("\"")
+        }
         if (siapCookie != null) {
             append(",\"siapCookie\":\"").append(jsonEscape(siapCookie)).append("\"")
         }

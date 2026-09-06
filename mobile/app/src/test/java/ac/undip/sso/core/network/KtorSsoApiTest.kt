@@ -228,4 +228,22 @@ class KtorSsoApiTest {
                 .logout()
         }
     }
+
+    @Test
+    fun `me hits auth me and parses status fields`() = runBlocking {
+        val me = api(
+            mockClient(
+                body = """{"sub":"24060124120013","authenticated":true,"hasKulon":false,"hasSiap":false,"complete":false}""",
+                assertRequest = { req ->
+                    assertEquals("GET", req.method.value)
+                    assertEquals("/api/auth/me", req.url.encodedPath)
+                },
+            ),
+        ).me()
+        assertEquals("24060124120013", me.sub)
+        assertEquals(true, me.authenticated)
+        assertEquals(false, me.hasKulon)
+        assertEquals(false, me.hasSiap)
+        assertEquals(false, me.complete)
+    }
 }

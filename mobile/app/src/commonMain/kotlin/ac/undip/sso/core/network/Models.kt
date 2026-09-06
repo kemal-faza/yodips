@@ -205,6 +205,20 @@ data class VapidPublicKeyResponse(val publicKey: String = "")
 @Serializable
 data class LogoutResponse(val ok: Boolean = true)
 
+/** Response GET /api/auth/me — status kehadiran sesi upstream (live-probed
+ *  backend, cache ~60s). `complete=false` berarti SSO/Kulon/SIAP ada yang mati
+ *  walau JWT masih valid → user perlu login ulang. */
+@Serializable
+data class MeResponse(
+    val sub: String = "",
+    val authenticated: Boolean = false,
+    val hasSso: Boolean = false,
+    val hasMicrosoft: Boolean = false,
+    val hasKulon: Boolean = false,
+    val hasSiap: Boolean = false,
+    val complete: Boolean = false,
+)
+
 /** Konten satu course (GET /api/kulon/courses/:id/content) — sections pertemuan
  *  berisi item materi/kuis/tugas/link/forum. Mirror backend `KulonCourseContent`
  *  (kulon-parse.ts). */

@@ -8,6 +8,7 @@ import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.network.KulonCourseContent
+import ac.undip.sso.core.network.MeResponse
 import ac.undip.sso.core.network.PushDeviceRequest
 import ac.undip.sso.core.network.PushDeviceResponse
 import ac.undip.sso.core.network.SiapAbsen
@@ -80,6 +81,13 @@ class SsoRepository(
         cached("profile", SiapProfile.serializer(), force) {
             refresher.safe(serviceStale = true) { api.profile() }
         }
+
+    /** GET /api/auth/me — status sesi upstream (dipakai deteksi dini saat boot:
+     *  `complete=false` → tampilkan dialog login ulang tanpa menunggu aksi
+     *  pengguna). Tidak retryable — 401 berarti JWT mati, dialog via
+     *  onSessionExpired; network error dibiarkan (offline ≠ sesi mati). */
+    suspend fun sessionStatus(): ApiResult<MeResponse> =
+        refresher.safe(retryable = false, serviceStale = false) { api.me() }
 
     suspend fun irs(force: Boolean = false): ApiResult<SiapIrs> =
         cached("irs", SiapIrs.serializer(), force) {
