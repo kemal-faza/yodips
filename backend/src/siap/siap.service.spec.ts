@@ -1144,6 +1144,52 @@ describe('SiapService', () => {
         status: 401,
       });
     });
+
+    it('maps an upstream 500 to a clear not-available message (not session expired)', async () => {
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 500,
+        url: 'https://siap.undip.ac.id/mahasiswa/mhs/profile/get_detail_nilai',
+        headers: { get: () => 'text/html' },
+        text: async () => '<html>internal server error</html>',
+        json: async () => {
+          throw new Error('no json');
+        },
+      });
+      const storeWithEmail = {
+        ...STORE,
+        get: async () => ({
+          siapCookie: 'sia_app_session=TEST',
+          identity: NIM,
+          emailSso: EMAIL,
+          sessionGeneration: TEST_GEN,
+          capturedAt: Date.now(),
+        }),
+        getIfGeneration: async (_s: string, g: string) =>
+          g === TEST_GEN
+            ? {
+                siapCookie: 'sia_app_session=TEST',
+                identity: NIM,
+                emailSso: EMAIL,
+                sessionGeneration: TEST_GEN,
+                capturedAt: Date.now(),
+              }
+            : null,
+      };
+      const svcWithEmail = new SiapService(
+        storeWithEmail as any,
+        undefined,
+        new SiapUpstreamSession(storeWithEmail as any, undefined),
+      );
+      await expect(
+        svcWithEmail.getNilaiDetail(ref('u1'), '10622042'),
+      ).rejects.toMatchObject({
+        status: 502, // upstream 5xx → BAD_GATEWAY (bukan 401 re-login)
+        message: expect.stringContaining('belum tersedia di SIAP'),
+      });
+    });
   });
 
   describe('markKehadiran', () => {

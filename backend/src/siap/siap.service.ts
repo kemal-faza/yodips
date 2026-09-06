@@ -839,15 +839,23 @@ export class SiapService {
     // tambahan (endpoint ini murni cookie-path).
     const { cookie, nim } = await this.upstream.requireCookieAndNimForSession(ref);
     const url = `${this.baseUrl}/mahasiswa/mhs/profile/get_detail_nilai`;
-    const html = await this.upstream.fetchText(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Cookie: cookie,
-        'X-Requested-With': 'XMLHttpRequest',
+    const html = await this.upstream.fetchText(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: cookie,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: `id=${encodeURIComponent(`${id}#${nim}#460110`)}`,
       },
-      body: `id=${encodeURIComponent(`${id}#${nim}#460110`)}`,
-    });
+      // Upstream SIAP menjawab 500 utk matkul yg TIDAK punya rincian komponen
+      // (mis. Matematika II — verified live 2026-09-07: 200 utk Statistika,
+      // 500 konsisten utk 10622042). Sesi tetap sehat — jangan bilang
+      // "expired"; beri pesan yang benar.
+      { notOkMessage: 'Detail nilai komponen belum tersedia di SIAP untuk mata kuliah ini' },
+    );
     return parseDetailNilaiTable(html, id);
   }
 
