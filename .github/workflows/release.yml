@@ -137,6 +137,11 @@ jobs:
             *) echo "release job requires a v* tag ref (got ${GITHUB_REF_NAME})"; exit 1 ;;
           esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          # Butuh SEMUA tag + history utk generate body changelog (git tag -l,
+          # git log PREV..ref). Shallow default (fetch-depth 1) membuat prev
+          # kosong → body release tanpa deskripsi (lihat rilis v0.6.1).
+          fetch-depth: 0
       - name: Download semua artefak
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
