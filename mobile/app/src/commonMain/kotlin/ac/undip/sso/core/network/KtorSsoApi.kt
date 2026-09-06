@@ -1,5 +1,6 @@
 package ac.undip.sso.core.network
 
+import ac.undip.sso.encodeUriComponent
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -65,7 +66,10 @@ class KtorSsoApi(
     }
 
     override suspend fun nilaiDetail(id: String): SiapNilaiDetail {
-        val resp = client.get("$root/api/siap/nilai/$id/detail")
+        // id = full SIAP detail-id `id_irs#nim#kode` — `#` harus di-encode
+        // (%23) atau Ktor memperlakukannya sbg fragment URL dan request
+        // terpotong jadi /api/siap/nilai/<id_irs> (404).
+        val resp = client.get("$root/api/siap/nilai/${encodeUriComponent(id)}/detail")
         return json.decodeFromString<SiapNilaiDetail>(handle(resp))
     }
 
