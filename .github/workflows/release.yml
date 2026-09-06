@@ -147,18 +147,42 @@ jobs:
           cd release-assets
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # Generate body release DINAMIS: daftar commit sejak tag sebelumnya (deskripsi
+      # nyata, bukan template statis — perbaikan atas rilis 0.5.2/0.6.0 yang body-nya
+      # kosong deskripsi). GITHUB_REF_NAME = vX.Y.Z; tag sebelumnya diambil dari
+      # daftar tag ber-format v* selain ref ini (urutan versi terakhir).
+      - name: Susun body release dari changelog commit
+        id: body
+        run: |
+          set -euo pipefail
+          PREV="$(
+            git tag -l 'v*' --sort=-v:refname --format='%(refname:short)' \
+              | grep -vx "${GITHUB_REF_NAME}" | head -1 || true
+          )"
+          echo "ref=${GITHUB_REF_NAME} prev=${PREV:-<none>}"
+          {
+            echo "Artefak rilis **${GITHUB_REF_NAME}** (monorepo \`sso\`)."
+            echo
+            echo "### Perubahan sejak ${PREV:-rilis sebelumnya}"
+            if [ -n "${PREV:-}" ] && git rev-parse -q --verify "${PREV}" >/dev/null; then
+              git log --no-merges --pretty=format:'- %s' "${PREV}..${GITHUB_REF_NAME}" 2>/dev/null | head -60 || true
+              echo
+            else
+              echo "- (tidak ada commit tambahan yang tercatat)"
+            fi
+            echo
+            echo "### Install"
+            echo "- **Android:** download \`undip-sso-<tag>.apk\`, izinkan \"instal dari sumber tidak dikenal\", lalu instal. Update berikutnya cukup instal APK versi lebih baru (data tetap)."
+            echo "- **Extension:** \`undip-sso-ext-<tag>.zip\` untuk load manual, atau pasang dari Chrome Web Store kalau sudah terpublish."
+            echo
+            echo "Instruksi lengkap: lihat \`INSTALL.md\`."
+          } > release-body.md
+          cat release-body.md
       - name: Buat GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3
         with:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
-          body: |
-            Artefak rilis **${{ github.ref_name }}** (monorepo `sso`).
-
-            ### Install
-            - **Android:** download `undip-sso-<tag>.apk`, izinkan "instal dari sumber tidak dikenal", lalu instal. Update berikutnya cukup instal APK versi lebih baru (data tetap).
-            - **Extension:** `undip-sso-ext-<tag>.zip` untuk load manual, atau pasang dari Chrome Web Store kalau sudah terpublish.
-
-            Instruksi lengkap: lihat `INSTALL.md`.
+          body_path: release-body.md
           files: release-assets/*
           fail_on_unmatched_files: true
