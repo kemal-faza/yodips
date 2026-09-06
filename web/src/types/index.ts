@@ -160,7 +160,18 @@ export interface SiapKhsSemester {
   semester: string;
   ip: number;
   totalSks: number;
-  nilai: Array<{ mataKuliah: string; sks: number; nilaiHuruf: string; bobot?: number }>;
+  nilai: Array<{
+    id?: string;
+    /**
+     * Full SIAP detail-id `id_irs#nim#kode` (only when the web KHS table
+     * carries the per-komponen detail icon; older semesters lack it).
+     */
+    detailId?: string;
+    mataKuliah: string;
+    sks: number;
+    nilaiHuruf: string;
+    bobot?: number;
+  }>;
 }
 
 export interface SiapKhs {

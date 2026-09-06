@@ -53,8 +53,16 @@ export interface SiapKhsSemester {
   ip: number;
   totalSks: number;
   nilai: Array<{
-    /** `id_irs` SIAP — id internal matkul utk `get_detail_nilai` (detail nilai). */
+    /** `id_irs` SIAP — id internal matkul (sebelah kiri `detailId`). */
     id?: string;
+    /**
+     * Data-id LENGKAP utk `get_detail_nilai`: `id_irs#nim#kode` (mis.
+     * `10622042#24060124120013#460149`). Segmen ke-3 (`460149`) unik per
+     * matkul & HANYA tersedia di HTML `get_khs` web (icon
+     * `.get_detail_khs`) — API `v2/lihat_khs` tidak memilikinya. Absen utk
+     * semester yg tidak menyediakan rincian komponen (mis. 2024/2025 Ganjil).
+     */
+    detailId?: string;
     kode: string;
     mataKuliah: string;
     sks: number;
@@ -529,6 +537,62 @@ export function parseApiKhs(
         : undefined,
     bobot: Number(r.nilai_bobot) || 0,
   }));
+}
+
+/**
+ * Parse the full `data-id` (id#nim#kode) of every detail-nilai icon in a
+ * `get_khs` HTML table. The web renders one `<i class="... get_detail_khs"
+ * data-id="...">` per matkul that has komponen breakdown; semesters WITHOUT
+ * any icon (e.g. 2024/2025 Ganjil) simply predate it and return [].
+ */
+export function parseKhsDetailIds(
+  html: string,
+): Array<{ kode: string; detailId: string }> {
+  const out: Array<{ kode: string; detailId: string }> = [];
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  const dataIdRe =
+    /class="[^"]*\bget_detail_khs\b[^"]*"[^>]*data-id="([^"]+)"/i;
+  let row: RegExpExecArray | null;
+  while ((row = rowRe.exec(html)) !== null) {
+    if (!/<td/i.test(row[1])) continue;
+    const m = dataIdRe.exec(row[1]);
+    if (!m) continue;
+    const detailId = m[1].trim();
+    // <td> NILAI HURUF is column 6 in the KHS layout; the icon sits in it.
+    // Pull the KODE (column 2) from the same row so we can join to API rows.
+    const tds: string[] = [];
+    const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    let td: RegExpExecArray | null;
+    while ((td = tdRe.exec(row[1])) !== null) tds.push(td[1]);
+    const kode = (tds[1] ?? '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (/^[A-Z]{2,4}\d{4,}$/.test(kode)) out.push({ kode, detailId });
+  }
+  return out;
+}
+
+/**
+ * Attach the web-only `detailId` (full `id#nim#kode`) onto API KHS rows, keyed
+ * by kode. The API row keeps its own `id` (`id_irs`); the leading segment of
+ * `detailId` must agree with it (defensive — real HTML is server-rendered, so
+ * a mismatch indicates a stale/tampered page and the detail is dropped).
+ * Rows without a matching icon keep `detailId` undefined → the UI must NOT
+ * offer a detail tap for them.
+ */
+export function mergeKhsDetailIds(
+  nilai: SiapKhsSemester['nilai'],
+  ids: Array<{ kode: string; detailId: string }>,
+): SiapKhsSemester['nilai'] {
+  const byKode = new Map(ids.map((i) => [i.kode, i.detailId]));
+  return nilai.map((n) => {
+    const detailId = byKode.get(n.kode);
+    if (!detailId) return n;
+    const leadingId = detailId.split('#')[0];
+    if (leadingId && n.id && leadingId !== n.id) return n; // defensive mismatch
+    return { ...n, detailId };
+  });
 }
 
 /** Map API `v2/daftar_khs` rows into ipk + semester metadata list. */

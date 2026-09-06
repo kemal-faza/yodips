@@ -91,6 +91,11 @@ export const UPSTREAM_ROUTES = [
   },
   {
     service: 'siap',
+    operation: 'khs_page',
+    route: 'POST /irs/mhs/irs/get_khs',
+  },
+  {
+    service: 'siap',
     operation: 'qr_presence',
     route: 'POST /master_perkuliahan/mhs/absensi/process/',
   },

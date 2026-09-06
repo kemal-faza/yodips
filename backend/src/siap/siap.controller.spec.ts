@@ -89,15 +89,21 @@ describe('SiapController', () => {
     expect(mockSiap.getKehadiran).toHaveBeenCalledWith(REF, '3747941');
   });
 
-  it('routes nilai/:id/detail by SessionRef and validates numeric id', async () => {
+  it('routes nilai/:id/detail by SessionRef and validates the full detail-id', async () => {
+    const fullId = '10622042#24060124120013#460149';
     await expect(
       controller.getNilaiDetail('bukan-angka', { user } as any),
     ).rejects.toMatchObject({ status: 400 });
-    mockSiap.getNilaiDetail.mockResolvedValue({ id: '10622041', kode: 'MIK1624203' });
+    // Bare id_irs (numeric only) is no longer enough — the endpoint needs the
+    // full `id#nim#kode` served by the web KHS table.
     await expect(
-      controller.getNilaiDetail('10622041', { user } as any),
-    ).resolves.toMatchObject({ id: '10622041' });
-    expect(mockSiap.getNilaiDetail).toHaveBeenCalledWith(REF, '10622041');
+      controller.getNilaiDetail('10622042', { user } as any),
+    ).rejects.toMatchObject({ status: 400 });
+    mockSiap.getNilaiDetail.mockResolvedValue({ id: fullId, kode: 'MIK1624204' });
+    await expect(
+      controller.getNilaiDetail(fullId, { user } as any),
+    ).resolves.toMatchObject({ id: fullId });
+    expect(mockSiap.getNilaiDetail).toHaveBeenCalledWith(REF, fullId);
   });
 
   it('proxies a QR token to markKehadiran when present', async () => {

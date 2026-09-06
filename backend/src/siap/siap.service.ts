@@ -31,6 +31,7 @@ import type {
 } from './siap-parse';
 import {
   currentSemesterCount,
+  mergeKhsDetailIds,
   parseAbsenTable,
   parseApiAbsen,
   parseApiDaftarKhs,
@@ -41,6 +42,7 @@ import {
   parseApiProfile,
   parseDetailNilaiTable,
   parseIrsTable,
+  parseKhsDetailIds,
   parseNumber,
   pickProfileValue,
   pickProfileValueHtml,
@@ -423,6 +425,33 @@ export class SiapService {
   }
 
   /**
+   * Web `get_khs` HTML for ONE semester (cookie-path POST — same shape as
+   * fetchLecturers' `get_irs`). It is the ONLY source of the per-matkul
+   * `detailId` (`id_irs#nim#kode`) that `get_detail_nilai` requires: the API
+   * `v2/lihat_khs` rows carry only `id_irs`. A semester whose rows have no
+   * `.get_detail_khs` icon yields [] → its `nilai` rows simply get no
+   * `detailId` and the UI must not offer the detail tap.
+   */
+  private async fetchKhsDetailIdsHtml(
+    url: string,
+    siapCookie: string,
+    ta: string,
+    smtAmbil: string,
+    smt: string,
+  ): Promise<string> {
+    return this.upstream.fetchText(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: siapCookie,
+        // Same CI is_ajax_request() guard as getJadwal / getNotifications.
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: `ta=${ta}&smt_ambil=${smtAmbil}&smt=${smt}`,
+    });
+  }
+
+  /**
    * KHS: getContext ONCE, fetch `v2/daftar_khs` (ipk + semester metadata) then
    * `v2/lihat_khs` per semester. `smt_ambil` = cumulative index; `smt` =
    * within-year index the API keys on. Retry the whole batch once on
@@ -442,8 +471,12 @@ export class SiapService {
         await fetchBatch<Array<Record<string, unknown>>>('v2/daftar_khs');
       const list = Array.isArray(daftar) ? daftar : [];
       const ipk = parseApiDaftarKhs(list).ipk;
+      const siapCookie = await this.requireSiapCookieForSession(ref);
+      const khsUrl = `${this.baseUrl}/irs/mhs/irs/get_khs`;
       // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
-      // order preserved so `semesters` stays in `list` order.
+      // order preserved so `semesters` stays in `list` order. Each semester
+      // ALSO scrapes the web `get_khs` HTML: it carries the `detailId`
+      // (`id#nim#kode`) that `get_detail_nilai` requires and the API lacks.
       const semesters = await mapWithConcurrency(list, 4, async (d) => {
         const ta = String(d.ta ?? '');
         // smt_ambil = cumulative index; smt = within-year index that v2/lihat_khss keys on.
@@ -453,7 +486,18 @@ export class SiapService {
           'v2/lihat_khs',
           { ta, smt_ambil: smtAmbil, smt },
         );
-        const nilai = parseApiKhs(Array.isArray(rows) ? rows : []);
+        const nilai = mergeKhsDetailIds(
+          parseApiKhs(Array.isArray(rows) ? rows : []),
+          parseKhsDetailIds(
+            await this.fetchKhsDetailIdsHtml(
+              khsUrl,
+              siapCookie,
+              ta,
+              smtAmbil,
+              smt,
+            ),
+          ),
+        );
         const totalSks = nilai.reduce((s, n) => s + n.sks, 0);
         const rawIp = nilai.length
           ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
@@ -824,20 +868,17 @@ export class SiapService {
   /**
    * Rincian nilai per komponen untuk satu matakuliah. Endpoint web SIAP
    * (`/mahasiswa/mhs/profile/get_detail_nilai`, cookie-path AJAX) menerima
-   * `id = <id_irs>#<nim>#<460110>`. `id_irs` berasal dari payload `v2/lihat_khs`
-   * (exposed sbg `SiapKhsSemester.nilai[].id`) — verified live 2026-09-07:
-   * `10622041` (Statistika) di `v2/lihat_khs` == id yg dipakai get_detail_nilai.
-   * `460110` konstan per prodi (belum diverifikasi berubah antar prodi — aman
-   * utk scope ini; kalau berubah, lookup diperlukan sebelum panggil).
+   * `id = <id_irs>#<nim>#<kode>` — `id` di sini adalah FULL data-id tsb (yg
+   * diserve HTML `get_khs` sbg `detailId` per matkul, verified live
+   * 2026-09-07: `10622042#24060124120013#460149` utk Matematika II — segmen
+   * ketiga `460149` unik per matkul, BUKAN konstanta `460110`; API
+   * `v2/lihat_khs` hanya menyediakan segmen pertama `id_irs`).
    */
   async getNilaiDetail(ref: SessionRef, id: string): Promise<SiapNilaiDetail> {
     this.requireRef(ref);
-    // NIM (bukan `sub`) adalah komponen `id` upstream. Cookie-path endpoint
-    // yang lain (kehadiran) hanya butuh cookie — di sini nim juga diperlukan,
-    // dan `identity` sesi (yg = NIM) tersedia tanpa mint token. Cukup baca
-    // sesi sekali (generation-scoped) bersama cookie; tak ada mint token
-    // tambahan (endpoint ini murni cookie-path).
-    const { cookie, nim } = await this.upstream.requireCookieAndNimForSession(ref);
+    // Cookie-path endpoint (murni cookie; tanpa mint token API). `nim` tidak
+    // lagi dipakai menyusun body — `id` sudah memuat nim di segmen kedua.
+    const { cookie } = await this.upstream.requireCookieAndNimForSession(ref);
     const url = `${this.baseUrl}/mahasiswa/mhs/profile/get_detail_nilai`;
     const html = await this.upstream.fetchText(
       url,
@@ -848,12 +889,10 @@ export class SiapService {
           Cookie: cookie,
           'X-Requested-With': 'XMLHttpRequest',
         },
-        body: `id=${encodeURIComponent(`${id}#${nim}#460110`)}`,
+        body: `id=${encodeURIComponent(id)}`,
       },
-      // Upstream SIAP menjawab 500 utk matkul yg TIDAK punya rincian komponen
-      // (mis. Matematika II — verified live 2026-09-07: 200 utk Statistika,
-      // 500 konsisten utk 10622042). Sesi tetap sehat — jangan bilang
-      // "expired"; beri pesan yang benar.
+      // Upstream SIAP menjawab 500 utk matkul yg TIDAK punya rincian komponen.
+      // Sesi tetap sehat — jangan bilang "expired"; beri pesan yang benar.
       { notOkMessage: 'Detail nilai komponen belum tersedia di SIAP untuk mata kuliah ini' },
     );
     return parseDetailNilaiTable(html, id);

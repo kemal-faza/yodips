@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   currentSemesterCount,
   lecturersFromIrs,
+  mergeKhsDetailIds,
   parseAbsenTable,
   parseApiAbsen,
   parseApiDaftarKhs,
@@ -12,6 +13,7 @@ import {
   parseApiProfile,
   parseDetailNilaiTable,
   parseIrsTable,
+  parseKhsDetailIds,
   parseKhsNilai,
   pickProfileValue,
   semesterLabel,
@@ -326,5 +328,80 @@ describe('parseApiNotifications', () => {
     expect(out.count).toBe(1);
     expect(out.items[0].title).toBe('Pengumuman');
     expect(out.items[0].type).toBe('info');
+  });
+});
+
+describe('parseKhsDetailIds', () => {
+  // Real SIAP get_khs layout (verified live 2026-09-07): the detail icon is an
+  // <i class="fa fa-info-circle get_detail_khs" data-id="id#nim#kode"> inside the
+  // NILAI HURUF cell of each row. Semesters that predate komponen breakdown
+  // (e.g. 2024/2025 Ganjil) render the same table WITHOUT any .get_detail_khs.
+  const html = `
+    <table class="table table-bordered">
+      <thead><tr><th>NO</th><th>KODE</th><th>MATA KULIAH</th><th>SKS</th>
+        <th style="width: 40px;">NILAI HURUF</th><th>BOBOT</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>1</td><td>MIK1624203</td>
+          <td><div class="row"><div class="col-md-10">Statistika</div></div></td>
+          <td>WAJIB</td><td>BARU</td><td>2</td>
+          <td style="position: relative;">A
+            <i class="fa fa-info-circle get_detail_khs"
+               data-id="10622041#24060124120013#460110"
+               style="cursor:pointer;position:absolute;right:5px"></i>
+          </td>
+          <td>4</td><td>8</td>
+        </tr>
+        <tr>
+          <td>2</td><td>MIK1624204</td><td>Matematika II</td>
+          <td>WAJIB</td><td>BARU</td><td>2</td>
+          <td style="position: relative;">AB
+            <i class="fa fa-info-circle get_detail_khs"
+               data-id="10622042#24060124120013#460149"></i>
+          </td>
+          <td>3.5</td><td>7</td>
+        </tr>
+      </tbody>
+    </table>`;
+
+  it('maps kode → full data-id (id#nim#kode) from .get_detail_khs icons', () => {
+    expect(parseKhsDetailIds(html)).toEqual([
+      { kode: 'MIK1624203', detailId: '10622041#24060124120013#460110' },
+      { kode: 'MIK1624204', detailId: '10622042#24060124120013#460149' },
+    ]);
+  });
+
+  it('returns [] when no .get_detail_khs icons are present', () => {
+    expect(parseKhsDetailIds('<table><tr><td>A</td></tr></table>')).toEqual([]);
+  });
+});
+
+describe('mergeKhsDetailIds', () => {
+  it('attaches detailId by kode without clobbering id/others; keeps no-match entries', () => {
+    const nilai = parseApiKhs([
+      { id_irs: '10622041', kode_mk: 'MIK1624203', nama_mk: 'Statistika', sks_mk: '2', nilai_akhir_huruf: 'A' },
+      { id_irs: '10622042', kode_mk: 'MIK1624204', nama_mk: 'Matematika II', sks_mk: '2', nilai_akhir_huruf: 'AB' },
+      { id_irs: '10480788', kode_mk: 'MIK1624105', nama_mk: 'Aljabar Linier', sks_mk: '3', nilai_akhir_huruf: 'A' },
+    ] as any);
+    const merged = mergeKhsDetailIds(nilai, [
+      { kode: 'MIK1624203', detailId: '10622041#24060124120013#460110' },
+      { kode: 'MIK1624204', detailId: '10622042#24060124120013#460149' },
+    ]);
+    expect(merged).toHaveLength(3);
+    expect(merged[0].id).toBe('10622041'); // id_irs preserved
+    expect(merged[0].detailId).toBe('10622041#24060124120013#460110');
+    expect(merged[1].detailId).toBe('10622042#24060124120013#460149');
+    expect(merged[2].detailId).toBeUndefined(); // no icon in web → no detail available
+  });
+
+  it('drops a detailId whose leading id_irs segment does not match the API row id', () => {
+    const nilai = parseApiKhs([
+      { id_irs: '10622041', kode_mk: 'MIK1624203', nama_mk: 'Statistika', sks_mk: '2', nilai_akhir_huruf: 'A' },
+    ] as any);
+    const merged = mergeKhsDetailIds(nilai, [
+      // Tampered HTML would never appear in practice; guard the mismatch anyway.
+      { kode: 'MIK1624203', detailId: '99999999#24060124120013#460110' },
+    ]);
+    expect(merged[0].detailId).toBeUndefined();
   });
 });

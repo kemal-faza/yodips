@@ -1076,7 +1076,7 @@ describe('SiapService', () => {
       expect(res.lastUpdate).toBe('30-06-2025 20:38:58');
     });
 
-    it('POSTs to get_detail_nilai with the CI guard header + session cookie + id#nim#460110 body', async () => {
+    it('POSTs the FULL detail-id (id#nim#kode) body to get_detail_nilai', async () => {
       const fetchMock = jest.fn();
       (global.fetch as jest.Mock) = fetchMock;
       fetchMock.mockResolvedValue({
@@ -1113,7 +1113,10 @@ describe('SiapService', () => {
         undefined,
         new SiapUpstreamSession(storeWithEmail as any, undefined),
       );
-      await svcWithEmail.getNilaiDetail(ref('u1'), '10622041');
+      await svcWithEmail.getNilaiDetail(
+        ref('u1'),
+        '10622041#24060124120013#460110',
+      );
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('/mahasiswa/mhs/profile/get_detail_nilai'),
         expect.objectContaining({
@@ -1256,6 +1259,25 @@ describe('SiapService', () => {
 
   describe('getKhs', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+    // getKhs now also scrapes the web `get_khs` HTML per semester for the
+    // detail-id icons (cookie-path, global.fetch). Default: a table WITHOUT
+    // icons so existing multi-semester tests still exercise API mapping; tests
+    // that assert detailId merging override this route.
+    function mockKhsHtml(body: string = '<table><tr><td>1</td></tr></table>') {
+      (global.fetch as jest.Mock).mockImplementation(async (input: any) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.includes('/irs/mhs/irs/get_khs')) {
+          return {
+            ok: true,
+            url,
+            headers: { get: () => 'text/html' },
+            text: async () => body,
+            json: async () => { throw new Error('no json'); },
+          };
+        }
+        throw new Error(`unmocked fetch: ${url}`);
+      });
+    }
     // REAL seam (sessionStore + InMemoryDataCache + apiMock): getContext mints
     // through apiMock.mintToken, so the retry/invalidate tests below assert real
     // mint counts and the token-cache invalidation on api-credential. A FRESH
@@ -1289,6 +1311,7 @@ describe('SiapService', () => {
     });
 
     it('parses v2/daftar_khs (ipk) + v2/lihat_khs per semester into SiapKhs', async () => {
+      mockKhsHtml(fixture('get_khs.html'));
       const daftar = [
         { ta: '2024', smt: '1', smt_ambil: '1', ipk: '3.65' },
         { ta: '2024', smt: '2', smt_ambil: '2', ipk: '3.70' },
@@ -1325,6 +1348,7 @@ describe('SiapService', () => {
     });
 
     it('sends the within-year `smt` param per semester (NOT cumulative)', async () => {
+      mockKhsHtml();
       const seen: Array<Record<string, string>> = [];
       apiMock.fetch
         .mockResolvedValueOnce([
@@ -1352,6 +1376,7 @@ describe('SiapService', () => {
     });
 
     it('fetches semesters with bounded concurrency (multiple in flight, peak <= 4)', async () => {
+      mockKhsHtml();
       let inFlight = 0;
       let peak = 0;
       const daftar = Array.from({ length: 8 }, (_, i) => ({
@@ -1375,6 +1400,7 @@ describe('SiapService', () => {
     });
 
     it('retries the whole batch once on an invalid-credential', async () => {
+      mockKhsHtml();
       apiMock.mintToken
         .mockResolvedValueOnce({ token: 'T1', data: {} })
         .mockResolvedValueOnce({ token: 'T2', data: {} });
@@ -1392,9 +1418,42 @@ describe('SiapService', () => {
     });
 
     it('propagates a non-stale error', async () => {
+      mockKhsHtml();
       apiMock.fetch.mockRejectedValue(new Error('network'));
       await expect(khsSvc().getKhs(ref('u1'))).rejects.toThrow('network');
       expect(apiMock.mintToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('merges the web get_khs detailId (id#nim#kode) onto API rows by kode', async () => {
+      mockKhsHtml(fixture('get_khs.html'));
+      apiMock.fetch
+        .mockResolvedValueOnce([
+          { ta: '2024', smt: '1', smt_ambil: '1', ipk: '3.65' },
+          { ta: '2024', smt: '2', smt_ambil: '2', ipk: '3.65' },
+        ]) // v2/daftar_khs
+        .mockResolvedValueOnce([
+          // sem 1 rows (no icons in its HTML — but fixture has them; see below)
+          { id_irs: '10480788', kode_mk: 'MIK1624105', nama_mk: 'Aljabar Linier', sks_mk: '3', nilai_akhir_huruf: 'A', nilai_bobot: '4' },
+        ]) // v2/lihat_khs smt1 (returns NO icons since fixture-less)
+        .mockResolvedValue([
+          // sem 2 rows — fixture get_khs.html carries icons for these codes
+          { id_irs: '10622041', kode_mk: 'MIK1624203', nama_mk: 'Statistika', sks_mk: '2', nilai_akhir_huruf: 'A', nilai_bobot: '4' },
+          { id_irs: '10622042', kode_mk: 'MIK1624204', nama_mk: 'Matematika II', sks_mk: '2', nilai_akhir_huruf: 'AB', nilai_bobot: '3.5' },
+        ]);
+      // The mock routes EVERY get_khs to the icon fixture, so sem1's API rows
+      // (kode MIK1624105) won't match any icon → stays undefined; sem2 rows
+      // match by kode → detailId attached. Assert both outcomes.
+      const khs = await khsSvc().getKhs(ref('u1'));
+      const sem2 = khs.semesters.find((s2: any) => s2.semester === '2024/2025 Genap')!;
+      expect(sem2.nilai).toHaveLength(2);
+      expect(sem2.nilai[0]).toMatchObject({
+        id: '10622041',
+        kode: 'MIK1624203',
+        detailId: '10622041#24060124120013#460110',
+      });
+      expect(sem2.nilai[1].detailId).toBe('10622042#24060124120013#460149');
+      const sem1 = khs.semesters.find((s1: any) => s1.semester === '2024/2025 Ganjil')!;
+      expect(sem1.nilai[0].detailId).toBeUndefined();
     });
   });
 });

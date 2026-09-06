@@ -81,7 +81,8 @@ export class SiapController {
 
   @Get('nilai/:id/detail')
   async getNilaiDetail(@Param('id') id: string, @Req() req: AuthedRequest) {
-    if (!/^\d+$/.test(id)) {
+    // Full SIAP detail-id: `<id_irs>#<nim>#<kode>` (contains `#`).
+    if (!/^\d+(?:#\d+){1,2}$/.test(id)) {
       throw new HttpException(
         { message: 'ID nilai tidak valid' },
         HttpStatus.BAD_REQUEST,
