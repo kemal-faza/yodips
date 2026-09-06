@@ -2,8 +2,12 @@ package ac.undip.sso.ui
 
 import ac.undip.sso.core.data.NoOpPersistentCache
 import ac.undip.sso.core.data.SessionLogout
+import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.data.WasmLogoutCoordinator
+import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.Backend
+import ac.undip.sso.core.network.ErrorType
+import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.IdbNotificationHistoryStore
 import ac.undip.sso.core.push.PushSubscriptionManager
 import ac.undip.sso.core.push.StoredNotification
@@ -34,6 +38,32 @@ fun AppRoot(themeController: ThemeController) {
         if (t != null) Backend.authToken = t
         hasToken = t != null
         checked = true
+    }
+
+    // Deteksi dini sesi upstream mati (PWA): /me sekali saat boot setelah token
+    // dimuat. complete=false → dialog login ulang universal (lihat AppRoot
+    // android untuk penjelasan lengkap). Network error diabaikan.
+    val bootRepo =
+        remember {
+            SsoRepository(
+                persistent = NoOpPersistentCache,
+                tokenStore = tokenStore,
+            )
+        }
+    LaunchedEffect(hasToken) {
+        if (!hasToken) return@LaunchedEffect
+        when (val r = bootRepo.sessionStatus()) {
+            is ApiResult.Success -> {
+                if (!r.data.complete) SessionExpiredEvents.notifySessionExpired()
+            }
+
+            is ApiResult.Error -> {
+                if (r.type == ErrorType.UNAUTHORIZED) {
+                    SessionExpiredEvents.notifySessionExpired()
+                }
+                // NETWORK/SERVER/UPSTREAM → bukan bukti sesi mati, biarkan.
+            }
+        }
     }
 
     // Live push/nav dari service worker (postMessage):
