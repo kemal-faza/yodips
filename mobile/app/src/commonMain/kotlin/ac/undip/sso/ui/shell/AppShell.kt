@@ -15,6 +15,7 @@ import ac.undip.sso.ui.feature.DashboardScreen
 import ac.undip.sso.ui.feature.NotificationsScreen
 import ac.undip.sso.ui.feature.IrsScreen
 import ac.undip.sso.ui.feature.KhsScreen
+import ac.undip.sso.ui.feature.NilaiDetailScreen
 import ac.undip.sso.ui.feature.ProfileScreen
 import ac.undip.sso.ui.feature.ScanScreen
 import ac.undip.sso.ui.feature.ScheduleScreen
@@ -121,6 +122,9 @@ fun AppShell(
     // Selected course handed to the course-detail sub-screen (same pattern as
     // selectedTask — route carries only the id, the full object rides here).
     var selectedCourse by remember { mutableStateOf<KulonCourse?>(null) }
+    // Selected KHS grade handed to the nilai-detail sub-screen (route carries
+    // only the id; the row (nama matkul utk judul) rides here).
+    var selectedNilai by remember { mutableStateOf<ac.undip.sso.core.network.SiapNilai?>(null) }
 
     CompositionLocalProvider(
         LocalAppNavigation provides AppNavigation(
@@ -169,7 +173,29 @@ fun AppShell(
                     onLogout = onLogout,
                 )
             }
-            composable("khs") { KhsScreen(repo, onBack = { navController.popBackStack() }) }
+            composable("khs") {
+                KhsScreen(
+                    repo = repo,
+                    onBack = { navController.popBackStack() },
+                    onOpenNilaiDetail = { nilai ->
+                        selectedNilai = nilai
+                        nilai.id?.let { navController.navigate("nilai/$it") }
+                    },
+                )
+            }
+            composable("nilai/{nilaiId}") {
+                val nilai = selectedNilai
+                if (nilai?.id == null) {
+                    navController.popBackStack()
+                } else {
+                    NilaiDetailScreen(
+                        repo = repo,
+                        nilaiId = nilai.id!!,
+                        mataKuliah = nilai.mataKuliah,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+            }
             composable("irs") { IrsScreen(repo, onBack = { navController.popBackStack() }) }
             composable("notifications") {
                 val history = notificationHistory

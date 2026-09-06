@@ -39,6 +39,34 @@ class ModelsTest {
     }
 
     @Test
+    fun `parses SiapKhs with id kode nilaiAngka on each grade`() {
+        val s =
+            """{"ipk":3.65,"semesters":[{"semester":"2024/2025 Genap","ip":3.6,"totalSks":20,"nilai":[{"id":"10622041","kode":"MIK1624203","mataKuliah":"Statistika","sks":2,"nilaiHuruf":"A","nilaiAngka":88.45,"bobot":4}]}]}"""
+        val k = lenientJson.decodeFromString<SiapKhs>(s)
+        val n = k.semesters[0].nilai[0]
+        assertEquals("10622041", n.id)
+        assertEquals("MIK1624203", n.kode)
+        assertEquals("Statistika", n.mataKuliah)
+        assertEquals(88.45, n.nilaiAngka!!, 0.001)
+    }
+
+    @Test
+    fun `parses SiapNilaiDetail with komponen rows`() {
+        val s =
+            """{"id":"10622041","kode":"MIK1624203","nama":"Statistika","sks":2,"komponen":[{"nama":"Nilai UTS","bobotPct":15,"nilai":87},{"nama":"Nilai UAS","bobotPct":15,"nilai":80}],"nilaiAkhir":88.45,"lastUpdate":"30-06-2025 20:38:58"}"""
+        val d = lenientJson.decodeFromString<SiapNilaiDetail>(s)
+        assertEquals("10622041", d.id)
+        assertEquals("Statistika", d.nama)
+        assertEquals(2.0, d.sks, 0.001)
+        assertEquals(2, d.komponen.size)
+        assertEquals("Nilai UTS", d.komponen[0].nama)
+        assertEquals(15.0, d.komponen[0].bobotPct, 0.001)
+        assertEquals(87.0, d.komponen[0].nilai, 0.001)
+        assertEquals(88.45, d.nilaiAkhir, 0.001)
+        assertEquals("30-06-2025 20:38:58", d.lastUpdate)
+    }
+
+    @Test
     fun `tolerates unknown and missing optional fields`() {
         val s =
             """{"nama":"MUHAMAD KEMAL","nim":"24040121120008","prodi":"Teknik","fakultas":"F","status":"aktif","extraField":123}"""

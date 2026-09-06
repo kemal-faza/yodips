@@ -16,6 +16,7 @@ import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.SiapLecturer
+import ac.undip.sso.core.network.SiapNilaiDetail
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.network.SsoApi
@@ -98,6 +99,11 @@ class SsoRepository(
         cached("khs", SiapKhs.serializer(), force) {
             refresher.safe(serviceStale = true) { api.khs() }
         }
+
+    /** Rincian nilai per komponen satu matkul — JANGAN di-cache (data nilai
+     *  bisa berubah pasca-pengumuman; endpoint ringan). */
+    suspend fun nilaiDetail(id: String): ApiResult<SiapNilaiDetail> =
+        refresher.safe(serviceStale = true) { api.nilaiDetail(id) }
 
     suspend fun jadwal(force: Boolean = false): ApiResult<List<SiapJadwal>> =
         cached("jadwal", ListSerializer(SiapJadwal.serializer()), force) {

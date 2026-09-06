@@ -37,6 +37,9 @@ interface SsoApi {
     /** GET /api/siap/khs */
     suspend fun khs(): SiapKhs
 
+    /** GET /api/siap/nilai/:id/detail — rincian nilai per komponen satu matkul. */
+    suspend fun nilaiDetail(id: String): SiapNilaiDetail
+
     /** GET /api/siap/jadwal */
     suspend fun jadwal(): List<SiapJadwal>
 

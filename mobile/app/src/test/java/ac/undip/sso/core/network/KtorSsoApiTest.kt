@@ -71,6 +71,25 @@ class KtorSsoApiTest {
     }
 
     @Test
+    fun `nilaiDetail GETs the detail route and parses komponen`() = runBlocking {
+        val resp = api(
+            mockClient(
+                body = """{"id":"10622041","kode":"MIK1624203","nama":"Statistika","sks":2,"komponen":[{"nama":"Nilai UAS","bobotPct":15,"nilai":80}],"nilaiAkhir":88.45}""",
+                assertRequest = { req ->
+                    assertEquals("GET", req.method.value)
+                    assertEquals("/api/siap/nilai/10622041/detail", req.url.encodedPath)
+                },
+            ),
+        ).nilaiDetail("10622041")
+        assertEquals("10622041", resp.id)
+        assertEquals("Statistika", resp.nama)
+        assertEquals(1, resp.komponen.size)
+        assertEquals("Nilai UAS", resp.komponen[0].nama)
+        assertEquals(80.0, resp.komponen[0].nilai, 0.001)
+        assertEquals(88.45, resp.nilaiAkhir, 0.001)
+    }
+
+    @Test
     fun `unregisterPushDevice sends DELETE with body`() = runBlocking {
         val resp = api(
             mockClient(

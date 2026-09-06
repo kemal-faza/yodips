@@ -1,9 +1,10 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
-import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.core.network.SiapNilai
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.theme.accentForeground
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,6 +29,7 @@ import androidx.compose.ui.unit.dp
 fun KhsScreen(
     repo: SsoRepository,
     onBack: () -> Unit,
+    onOpenNilaiDetail: (SiapNilai) -> Unit = {},
 ) {
     FeatureScreen("KHS", onBack = onBack) {
         RefreshableLoadableData(load = { repo.khs() }, onRefresh = { repo.khs(force = true) }, emptyMessage = "Belum ada KHS") { khs ->
@@ -72,7 +74,7 @@ fun KhsScreen(
                                 )
                             }
                             Spacer(Modifier.height(8.dp))
-                            semanticNilai(sem)
+                            semanticNilai(sem, onOpenNilaiDetail)
                         }
                     }
                 }
@@ -82,14 +84,24 @@ fun KhsScreen(
 }
 
 @Composable
-private fun semanticNilai(sem: ac.undip.sso.core.network.SiapKhsSemester) {
+private fun semanticNilai(
+    sem: ac.undip.sso.core.network.SiapKhsSemester,
+    onOpenNilaiDetail: (SiapNilai) -> Unit,
+) {
     if (sem.nilai.isEmpty()) {
         Text("Belum ada nilai", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
     Column {
         sem.nilai.forEach { n ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            val clickable = n.id != null
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .then(if (clickable) Modifier.clickable { onOpenNilaiDetail(n) } else Modifier),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
                 Text(
                     n.mataKuliah,
                     style = MaterialTheme.typography.bodyMedium,
