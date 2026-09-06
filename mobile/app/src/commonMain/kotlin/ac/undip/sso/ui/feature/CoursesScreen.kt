@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,9 +33,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 @Composable
 fun CoursesScreen(
@@ -60,6 +63,7 @@ private fun CoursesContent(
     val active = activeCourses(courses)
     val past = pastCourses(courses)
     val semSub = actualSemester(active)
+    val progress = activeProgressPercent(active)
     val pastGroups = groupCoursesBySemester(past)
     var pastExpanded by remember { mutableStateOf(false) }
 
@@ -76,6 +80,14 @@ private fun CoursesContent(
                 if (semSub != null) {
                     Text(semSub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+        }
+        if (progress != null) {
+            // Satu progress bar untuk SEMUA kartu aktif (rata-rata) — bukan per
+            // kartu: nilai tiap course sesemester identik, jadi bar per kartu
+            // hanya berulang. Disembunyikan bila tak ada course yang terukur.
+            item(key = "active-progress") {
+                SemesterProgressBar(progress)
             }
         }
         if (active.isEmpty()) {
@@ -114,6 +126,41 @@ private fun CoursesContent(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SemesterProgressBar(percent: Int) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Progres Semester",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "$percent%",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = accentForeground(),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { (percent / 100.0).coerceIn(0.0, 1.0).toFloat() },
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                drawStopIndicator = {},
+            )
         }
     }
 }

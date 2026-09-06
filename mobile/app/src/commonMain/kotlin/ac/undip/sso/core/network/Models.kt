@@ -47,6 +47,8 @@ data class KulonCourse(
     val semester: String? = null,
     val timelineStatus: String = "",
     val lecturer: String? = null,
+    /** Past-dated-section progress 0–100 (omitted/unmeasurable → null). */
+    val progress: Double? = null,
 )
 
 /** SIAP lecturer per course code (from `get_irs`), joined to schedule by `kode` (MIK). */
