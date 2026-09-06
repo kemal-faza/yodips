@@ -27,3 +27,8 @@ actual val appBaseUrl: String
             "https://backend.crunchy.my.id"
         }
     }
+
+@JsFun("(v) => encodeURIComponent(v)")
+private external fun jsEncodeUriComponent(value: String): String
+
+internal actual fun encodeUriComponent(value: String): String = jsEncodeUriComponent(value)

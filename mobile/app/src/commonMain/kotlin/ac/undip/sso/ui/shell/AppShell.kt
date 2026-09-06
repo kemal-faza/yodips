@@ -7,6 +7,7 @@ import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.push.NotificationHistoryStore
 import ac.undip.sso.core.push.PushTargets
+import ac.undip.sso.encodeUriComponent
 import ac.undip.sso.uptimeMs
 import ac.undip.sso.ui.feature.AssignmentDetailScreen
 import ac.undip.sso.ui.feature.CourseDetailScreen
@@ -179,18 +180,20 @@ fun AppShell(
                     onBack = { navController.popBackStack() },
                     onOpenNilaiDetail = { nilai ->
                         selectedNilai = nilai
-                        nilai.id?.let { navController.navigate("nilai/$it") }
+                        // detailId (`id#nim#kode`) memuat `#` yg akan dipecah
+                        // Navigation Compose sbg fragment → URL-encode dulu.
+                        nilai.detailId?.let { navController.navigate("nilai/${encodeUriComponent(it)}") }
                     },
                 )
             }
             composable("nilai/{nilaiId}") {
                 val nilai = selectedNilai
-                if (nilai?.id == null) {
+                if (nilai?.detailId == null) {
                     navController.popBackStack()
                 } else {
                     NilaiDetailScreen(
                         repo = repo,
-                        nilaiId = nilai.id!!,
+                        nilaiId = nilai.detailId!!,
                         mataKuliah = nilai.mataKuliah,
                         onBack = { navController.popBackStack() },
                     )
