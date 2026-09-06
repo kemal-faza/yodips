@@ -72,9 +72,14 @@ data class SiapAbsen(
 
 @Serializable
 data class SiapNilai(
+    /** `id_irs` SIAP — id internal matkul utk `get_detail_nilai` (detail nilai). */
+    val id: String? = null,
+    val kode: String = "",
     val mataKuliah: String = "",
     val sks: Double = 0.0,
     val nilaiHuruf: String = "",
+    /** Nilai akhir angka (mis. 88.45) dari `nilai_akhir_angka` API. */
+    val nilaiAngka: Double? = null,
     val bobot: Double? = null,
 )
 
@@ -90,6 +95,29 @@ data class SiapKhsSemester(
 data class SiapKhs(
     val ipk: Double = 0.0,
     val semesters: List<SiapKhsSemester> = emptyList(),
+)
+
+/** Satu komponen nilai berbobot (dari get_detail_nilai SIAP). */
+@Serializable
+data class SiapNilaiKomponen(
+    val nama: String = "",
+    /** Bobot komponen dalam persen (mis. 10 utk "(10%)"). */
+    val bobotPct: Double = 0.0,
+    val nilai: Double = 0.0,
+)
+
+/** Rincian nilai per komponen satu matakuliah (GET /api/siap/nilai/:id/detail). */
+@Serializable
+data class SiapNilaiDetail(
+    val id: String = "",
+    val kode: String = "",
+    val nama: String = "",
+    val sks: Double = 0.0,
+    val komponen: List<SiapNilaiKomponen> = emptyList(),
+    /** Nilai akhir angka (jumlah bobot × nilai). */
+    val nilaiAkhir: Double = 0.0,
+    /** Stamp "last update" mentah dari halaman (dd-MM-yyyy HH:mm:ss). */
+    val lastUpdate: String? = null,
 )
 
 /** Σ SKS taken across every semester, including the current/on-going term (1 → sekarang). */

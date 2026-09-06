@@ -20,6 +20,7 @@ import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.SiapLecturer
+import ac.undip.sso.core.network.SiapNilaiDetail
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SsoApi
 import kotlinx.coroutines.async
@@ -63,6 +64,9 @@ private class FakeApi : SsoApi {
     override suspend fun irs(): SiapIrs = throw UnsupportedOperationException()
 
     override suspend fun khs(): SiapKhs = throw UnsupportedOperationException()
+
+    override suspend fun nilaiDetail(id: String): SiapNilaiDetail =
+        throw UnsupportedOperationException()
 
     override suspend fun jadwal(): List<SiapJadwal> = throw UnsupportedOperationException()
 

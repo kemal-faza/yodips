@@ -64,6 +64,11 @@ class KtorSsoApi(
         return json.decodeFromString<SiapKhs>(handle(resp))
     }
 
+    override suspend fun nilaiDetail(id: String): SiapNilaiDetail {
+        val resp = client.get("$root/api/siap/nilai/$id/detail")
+        return json.decodeFromString<SiapNilaiDetail>(handle(resp))
+    }
+
     override suspend fun jadwal(): List<SiapJadwal> {
         val resp = client.get("$root/api/siap/jadwal")
         return json.decodeFromString<List<SiapJadwal>>(handle(resp))
