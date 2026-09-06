@@ -157,11 +157,13 @@ fun ScheduleScreen(repo: SsoRepository) {
             emptyMessage = "Belum ada jadwal.",
         ) { jadwal ->
             val byTanggal = eventsByTanggal(jadwal)
-            var yearMonth by remember { mutableIntStateOf(currentCalendarMonth(byTanggal)) }
+            // Kalender dibuka di bulan HARI INI; default pilihan = hari ini bila
+            // ada pertemuan, kalau tidak event terdekat di bulan berjalan
+            // (konsisten header kalender vs daftar kartu di bawah).
+            val today = todayLocalDate()
+            var yearMonth by remember { mutableIntStateOf(calendarStart(byTanggal, today)) }
             var selected by remember { mutableStateOf<String?>(null) }
-            // Default selection: today if it has meetings, else the first dated event.
-            val today = todayLocalDate().toString()
-            var defaultSelected by remember { mutableStateOf(if (byTanggal.containsKey(today)) today else byTanggal.keys.minOrNull()) }
+            var defaultSelected by remember { mutableStateOf(defaultSelectedDate(byTanggal, today)) }
             if (selected == null) selected = defaultSelected
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
@@ -205,6 +207,36 @@ internal fun currentCalendarMonth(byTanggal: Map<String, List<SiapJadwal>>): Int
             today
         }
     return base.year * 100 + base.monthNumber
+}
+
+/**
+ * Kalender SELALU dibuka di bulan hari ini (bukan bulan event pertama — item
+ * revisi: jadwal lama yang tersisa membuat kalender "terpaku" di bulan lalu).
+ * Event dari bulan lain tidak menggeser posisi awal; user bisa pindah bulan
+ * lewat panah/picker.
+ */
+internal fun calendarStart(byTanggal: Map<String, List<SiapJadwal>>, today: LocalDate = todayLocalDate()): Int =
+    today.year * 100 + today.monthNumber
+
+/**
+ * Tanggal default yang dipilih saat layar jadwal dibuka: hari ini bila ada
+ * pertemuan; kalau tidak, tanggal event TERDEKAT dalam bulan yang sedang
+ * ditampilkan (bulan hari ini) — jadi kalender terbuka konsisten dengan daftar
+ * kartu di bawahnya. Null bila bulan berjalan kosong (pesan "Tidak ada jadwal
+ * di tanggal ini." ditampilkan) atau event hanya di luar bulan berjalan.
+ */
+internal fun defaultSelectedDate(
+    byTanggal: Map<String, List<SiapJadwal>>,
+    today: LocalDate = todayLocalDate(),
+): String? {
+    val todayStr = today.toString()
+    if (byTanggal.containsKey(todayStr)) return todayStr
+    val month = today.year * 100 + today.monthNumber
+    return byTanggal.keys
+        .mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
+        .filter { it.year * 100 + it.monthNumber == month }
+        .minOrNull()
+        ?.toString()
 }
 
 /**
