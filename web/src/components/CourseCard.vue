@@ -36,16 +36,8 @@ const status = computed(() =>
         data-test="course-lecturer"
         class="mt-1 truncate text-xs text-muted-foreground"
       >{{ course.lecturer }}</p>
-      <div class="mt-2 flex items-center gap-2">
-        <template v-if="course.progress != null">
-          <div class="flex-1 min-w-0">
-            <div class="h-1.5 w-full overflow-hidden bg-muted rounded-full">
-              <div class="h-full bg-primary transition-all rounded-full" :style="{ width: course.progress + '%' }" />
-            </div>
-          </div>
-          <span data-test="course-progress" class="text-xs font-semibold text-foreground whitespace-nowrap">{{ course.progress }}%</span>
-        </template>
-        <span class="ml-auto inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-foreground transition-transform duration-150 group-hover:translate-x-0.5">
+      <div class="mt-2 flex items-center justify-end">
+        <span class="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-foreground transition-transform duration-150 group-hover:translate-x-0.5">
           Buka
           <ChevronRight class="size-4" aria-hidden="true" />
         </span>

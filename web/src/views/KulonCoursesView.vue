@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import { useKulonStore } from '../stores/kulon';
 import { useAuthStore } from '../stores/auth';
 import { useKulonSession } from '../composables/useKulonSession';
-import { groupCoursesBySemester } from '../utils/kulon';
+import { groupCoursesBySemester, semesterProgress } from '../utils/kulon';
 import CourseCard from '../components/CourseCard.vue';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -28,6 +28,9 @@ const actualSemester = computed(() => {
   const sems = new Set(activeCourses.value.map((c) => c.semester).filter((s): s is string => !!s));
   return sems.size === 1 ? [...sems][0] : null; // subtitle hanya bila seragam
 });
+// Progress semester berjalan — satu bar di bawah "Aktif" (rata-rata course
+// aktif yang terukur; null → bar disembunyikan).
+const progress = computed(() => semesterProgress(activeCourses.value));
 const pastCount = computed(() => pastCourses.value.length);
 
 function openCourse(courseId: number) {
@@ -71,6 +74,19 @@ load();
         <div class="mb-3 flex items-baseline gap-2">
           <h2 class="text-base font-bold text-foreground">Aktif</h2>
           <span v-if="actualSemester" class="text-xs text-muted-foreground">{{ actualSemester }}</span>
+        </div>
+        <div
+          v-if="progress != null"
+          class="mb-4 rounded-xl border border-border bg-card px-4 py-3"
+          data-test="semester-progress"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-xs font-semibold text-foreground">Progres Semester</span>
+            <span class="text-xs font-bold text-foreground whitespace-nowrap">{{ progress }}%</span>
+          </div>
+          <div class="mt-2 h-1.5 w-full overflow-hidden bg-muted rounded-full">
+            <div class="h-full bg-primary transition-all rounded-full" :style="{ width: progress + '%' }" />
+          </div>
         </div>
         <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
           <CourseCard v-for="c in activeCourses" :key="c.id" :course="c" @open="openCourse(c.id)" />

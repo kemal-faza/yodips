@@ -1,5 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { groupCoursesBySemester } from './kulon';
+import type { Course } from '../types';
+import { groupCoursesBySemester, semesterProgress } from './kulon';
+
+describe('semesterProgress', () => {
+  const course = (
+    id: number,
+    timelineStatus: Course['timelineStatus'] = 'inprogress',
+    progress?: number,
+  ): Course => ({
+    id, fullname: `C${id}`, shortname: `S${id}`, idnumber: '', semester: '2026/2027 Ganjil', timelineStatus, ...(progress !== undefined ? { progress } : {}),
+  });
+
+  it('averages progress over active courses that carry it (unknown skipped)', () => {
+    expect(semesterProgress([
+      course(1, 'inprogress', 50),
+      course(2, 'inprogress', 80),
+      course(3, 'inprogress'), // no data → ignored, not counted as 0
+    ])).toBe(65);
+  });
+
+  it('is null when nothing measurable (no actives, all past, or none with progress)', () => {
+    expect(semesterProgress([])).toBeNull();
+    expect(semesterProgress([course(1, 'past', 100)])).toBeNull();
+    expect(semesterProgress([course(2, 'inprogress')])).toBeNull();
+  });
+});
+
 
 describe('groupCoursesBySemester', () => {
   it('groups and sorts newest semester first', () => {

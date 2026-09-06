@@ -109,8 +109,25 @@ describe('KulonCoursesView', () => {
     expect(w.get('[data-test="expand-past"]').text()).toContain('(2 mata kuliah)');
   });
 
-  it('menampilkan empty state saat tidak ada mata kuliah', async () => {
-    const w = await mountView([]);
-    expect(w.text()).toContain('Belum ada mata kuliah yang diambil');
+  it('menampilkan satu progress bar semester di bawah "Aktif" (rata-rata course aktif)', async () => {
+    const w = await mountView([
+      { ...course(1, 'Matkul Baru', 'inprogress', '2025/2026 Genap'), progress: 50 },
+      { ...course(2, 'Matkul Baru Lagi', 'inprogress', '2025/2026 Genap'), progress: 80 },
+      { ...course(3, 'Tanpa Ukuran', 'inprogress', '2025/2026 Genap') }, // diabaikan
+      course(4, 'Lama', 'past', '2024/2025 Ganjil'),
+    ]);
+    const bar = w.find('[data-test="semester-progress"]');
+    expect(bar.exists()).toBe(true);
+    expect(bar.text()).toContain('Progres Semester');
+    expect(bar.text()).toContain('65%'); // (50+80)/2
+    // Tidak ada lagi progress bar per kartu course.
+    expect(w.findAll('[data-test="course-progress"]').length).toBe(0);
+  });
+
+  it('tidak menampilkan progress bar semester bila tidak ada yang terukur', async () => {
+    const w = await mountView([
+      { ...course(1, 'Tanpa Ukuran', 'inprogress', '2025/2026 Genap') },
+    ]);
+    expect(w.find('[data-test="semester-progress"]').exists()).toBe(false);
   });
 });
