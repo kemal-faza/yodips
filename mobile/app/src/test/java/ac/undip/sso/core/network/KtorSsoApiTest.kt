@@ -90,6 +90,24 @@ class KtorSsoApiTest {
     }
 
     @Test
+    fun `nilaiDetail encodes the # in a full detail-id (id#nim#kode) path segment`() = runBlocking {
+        val resp = api(
+            mockClient(
+                body = """{"id":"10622042#24060124120013#460149","kode":"MIK1624204","nama":"Matematika II","sks":2,"komponen":[{"nama":"Nilai UAS","bobotPct":15,"nilai":80}],"nilaiAkhir":81.1}""",
+                assertRequest = { req ->
+                    assertEquals("GET", req.method.value)
+                    assertEquals(
+                        "/api/siap/nilai/10622042%2324060124120013%23460149/detail",
+                        req.url.encodedPath,
+                    )
+                },
+            ),
+        ).nilaiDetail("10622042#24060124120013#460149")
+        assertEquals("10622042#24060124120013#460149", resp.id)
+        assertEquals("Matematika II", resp.nama)
+    }
+
+    @Test
     fun `unregisterPushDevice sends DELETE with body`() = runBlocking {
         val resp = api(
             mockClient(
