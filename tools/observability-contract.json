@@ -148,6 +148,11 @@
       "route": "POST /master_perkuliahan/mhs/absensi/process/"
     },
     {
+      "service": "siap",
+      "operation": "nilai_detail_page",
+      "route": "POST /mahasiswa/mhs/profile/get_detail_nilai"
+    },
+    {
       "service": "siap-api",
       "operation": "mintToken",
       "route": "POST /index.php/mahasiswa_sso"

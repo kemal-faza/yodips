@@ -1021,6 +1021,131 @@ describe('SiapService', () => {
     });
   });
 
+  describe('getNilaiDetail', () => {
+    it('parses the detail-nilai table from the real fixture (Statistika snapshot)', async () => {
+      mockFetchRouting([
+        {
+          match: '/mahasiswa/mhs/profile/get_detail_nilai',
+          body: fixture('detail_nilai.html'),
+        },
+      ]);
+      // Session berisi emailSso → getContextForSession TIDAK perlu scrape
+      // fallback (yg butuh fetch dashboard) — cukup store.
+      const storeWithEmail = {
+        ...STORE,
+        get: async () => ({
+          siapCookie: 'sia_app_session=TEST',
+          identity: NIM,
+          emailSso: EMAIL,
+          sessionGeneration: TEST_GEN,
+          capturedAt: Date.now(),
+        }),
+        getIfGeneration: async (_s: string, g: string) =>
+          g === TEST_GEN
+            ? {
+                siapCookie: 'sia_app_session=TEST',
+                identity: NIM,
+                emailSso: EMAIL,
+                sessionGeneration: TEST_GEN,
+                capturedAt: Date.now(),
+              }
+            : null,
+      };
+      const svcWithEmail = new SiapService(
+        storeWithEmail as any,
+        undefined,
+        new SiapUpstreamSession(storeWithEmail as any, undefined),
+      );
+      const res = await svcWithEmail.getNilaiDetail(ref('u1'), '10622041');
+      expect(res.id).toBe('10622041');
+      expect(res.kode).toBe('MIK1624203');
+      expect(res.nama).toBe('Statistika');
+      expect(res.sks).toBe(2);
+      // Real values from the fixture (verified live 2026-09-07).
+      expect(res.komponen).toContainEqual({
+        nama: 'Nilai Hasil Proyek',
+        bobotPct: 40,
+        nilai: 89.75,
+      });
+      expect(res.komponen).toContainEqual({
+        nama: 'Nilai UAS',
+        bobotPct: 15,
+        nilai: 80,
+      });
+      expect(res.nilaiAkhir).toBe(88.45);
+      expect(res.lastUpdate).toBe('30-06-2025 20:38:58');
+    });
+
+    it('POSTs to get_detail_nilai with the CI guard header + session cookie + id#nim#460110 body', async () => {
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      fetchMock.mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/mahasiswa/mhs/profile/get_detail_nilai',
+        headers: { get: () => 'text/html' },
+        text: async () => fixture('detail_nilai.html'),
+        json: async () => {
+          throw new Error('no json');
+        },
+      });
+      const storeWithEmail = {
+        ...STORE,
+        get: async () => ({
+          siapCookie: 'sia_app_session=TEST',
+          identity: NIM,
+          emailSso: EMAIL,
+          sessionGeneration: TEST_GEN,
+          capturedAt: Date.now(),
+        }),
+        getIfGeneration: async (_s: string, g: string) =>
+          g === TEST_GEN
+            ? {
+                siapCookie: 'sia_app_session=TEST',
+                identity: NIM,
+                emailSso: EMAIL,
+                sessionGeneration: TEST_GEN,
+                capturedAt: Date.now(),
+              }
+            : null,
+      };
+      const svcWithEmail = new SiapService(
+        storeWithEmail as any,
+        undefined,
+        new SiapUpstreamSession(storeWithEmail as any, undefined),
+      );
+      await svcWithEmail.getNilaiDetail(ref('u1'), '10622041');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/mahasiswa/mhs/profile/get_detail_nilai'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Cookie: 'sia_app_session=TEST',
+          }),
+          body: expect.stringContaining(
+            encodeURIComponent('10622041#24060124120013#460110'),
+          ),
+        }),
+      );
+    });
+
+    it('throws 401 on a stale session', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        url: 'https://siap.undip.ac.id/login',
+        headers: { get: () => 'text/html' },
+        text: async () => '<html>login page</html>',
+        json: async () => {
+          throw new Error('no json');
+        },
+      });
+      await expect(svc.getNilaiDetail(ref('u1'), '10622041')).rejects.toMatchObject({
+        status: 401,
+      });
+    });
+  });
+
   describe('markKehadiran', () => {
     it('POSTs the QR token to the presence process endpoint', async () => {
       const fetchMock = jest.fn();
@@ -1448,6 +1573,9 @@ describe('API-backed methods', () => {
       fetchText: jest.fn().mockResolvedValue('<html>ok</html>'),
       setScrapeIdentity: jest.fn(),
       getCookieForSession: jest.fn().mockResolvedValue('sia_app_session=TEST'),
+      requireCookieAndNimForSession: jest
+        .fn()
+        .mockResolvedValue({ cookie: 'sia_app_session=TEST', nim: NIM }),
       getContextForSession: jest.fn().mockResolvedValue({ emailSso: EMAIL, nim: NIM, token: 'T1' }),
       getContextForCurrent: jest.fn().mockResolvedValue({ emailSso: EMAIL, nim: NIM, token: 'T1' }),
     };

@@ -53,9 +53,14 @@ export interface SiapKhsSemester {
   ip: number;
   totalSks: number;
   nilai: Array<{
+    /** `id_irs` SIAP — id internal matkul utk `get_detail_nilai` (detail nilai). */
+    id?: string;
+    kode: string;
     mataKuliah: string;
     sks: number;
     nilaiHuruf: string;
+    /** Nilai akhir angka (mis. 88.45) dari `nilai_akhir_angka` API. */
+    nilaiAngka?: number;
     bobot?: number;
   }>;
 }
@@ -126,6 +131,27 @@ export interface SiapKehadiranSection {
 export interface SiapKehadiran {
   pertemuanId: string;
   sections: SiapKehadiranSection[];
+}
+
+/** Satu komponen nilai berbobot (dari `get_detail_nilai` HTML). */
+export interface SiapNilaiKomponen {
+  nama: string; // mis. "Nilai Aktivitas Partisipatif"
+  /** Bobot komponen dalam persen (mis. 10 utk "(10%)"). */
+  bobotPct: number;
+  nilai: number; // nilai komponen (0-100)
+}
+
+/** Rincian nilai per komponen untuk satu matakuliah (get_detail_nilai). */
+export interface SiapNilaiDetail {
+  id: string;
+  kode: string;
+  nama: string;
+  sks: number;
+  komponen: SiapNilaiKomponen[];
+  /** Nilai akhir angka (jumlah bobot × nilai). */
+  nilaiAkhir: number;
+  /** Stamp "last update" mentah dari halaman (dd-MM-yyyy HH:mm:ss). */
+  lastUpdate?: string;
 }
 
 /** Extract a `<b>LABEL</b>:</div><div class="col-sm-9">VALUE</div>` row. */
@@ -230,6 +256,7 @@ export function parseKhsNilai(
     if (!c[1] || c.length < 6) continue;
     nilai.push({
       mataKuliah: c[2] ?? '',
+      kode: c[1] ?? '',
       sks: Number(c[5]) || 0,
       nilaiHuruf: c[6] ?? '',
       bobot: Number(c[7]) || 0,
@@ -363,6 +390,62 @@ export function parseIrsTable(html: string): { kode: string; dosen: string }[] {
   return out;
 }
 
+/**
+ * Parse rincian nilai per komponen (`get_detail_nilai` HTML). Format:
+ * ```
+ * <strong>MIK1624203 - Statistika - 2 SKS</strong>
+ * (10%) Nilai Aktivitas Partisipatif : 94,00
+ * (40%) Nilai Hasil Proyek : 89,75
+ * ...
+ * <strong>(100%) Nilai Akhir Angka : 88,45</strong>
+ * last update: 30-06-2025 20:38:58
+ * ```
+ * Idempotent terhadap whitespace/format upstream — baris tanpa pola komponen
+ * dilewati; header/angka-akhir dibaca dari pola `<strong>`-nya.
+ */
+export function parseDetailNilaiTable(
+  html: string,
+  id: string,
+): SiapNilaiDetail {
+  const text = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const header =
+    text.match(
+      /([A-Z]{2,4}\d{4,})\s*-\s*([^-]+?)\s*-\s*(\d+)\s*SKS/,
+    ) ?? undefined;
+  const kode = header?.[1] ?? '';
+  const nama = header?.[2]?.trim() ?? '';
+  const sks = header?.[3] ? Number(header[3]) || 0 : 0;
+
+  const komponen: SiapNilaiKomponen[] = [];
+  const compRe = /\((\d{1,3})%\)\s*(.*?)\s*:\s*([0-9]+(?:[.,][0-9]+)?)/g;
+  let m: RegExpExecArray | null;
+  while ((m = compRe.exec(text)) !== null) {
+    const namaComp = m[2].trim();
+    if (/Nilai Akhir|Akhir/i.test(namaComp)) continue; // angka akhir bukan komponen
+    const nilai = Number(m[3].replace(',', '.'));
+    if (!Number.isFinite(nilai)) continue;
+    komponen.push({ nama: namaComp, bobotPct: Number(m[1]) || 0, nilai });
+  }
+
+  const akhir = text.match(/Nilai Akhir Angka\s*:\s*([0-9]+(?:[.,][0-9]+)?)/i);
+  const nilaiAkhir = akhir ? Number(akhir[1].replace(',', '.')) : 0;
+  const upd = text.match(/last update:\s*([0-9]{2}-[0-9]{2}-[0-9]{4}\s+[0-9:.]+)/i);
+
+  return {
+    id,
+    kode,
+    nama,
+    sks,
+    komponen,
+    nilaiAkhir: Number.isFinite(nilaiAkhir) ? nilaiAkhir : 0,
+    ...(upd?.[1] ? { lastUpdate: upd[1].trim() } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Official SIAP API parsers (api.siap.undip.ac.id/index.php/*) — JSON → typed.
 // Kept in the same pure module so the mapping is unit-testable without transport.
@@ -435,9 +518,15 @@ export function parseApiKhs(
   rows: Array<Record<string, unknown>>,
 ): SiapKhsSemester['nilai'] {
   return rows.map((r) => ({
+    id: String(r.id_irs ?? '') || undefined,
     mataKuliah: String(r.nama_mk ?? ''),
+    kode: String(r.kode_mk ?? ''),
     sks: Number(r.sks_mk) || 0,
     nilaiHuruf: String(r.nilai_akhir_huruf ?? ''),
+    nilaiAngka:
+      r.nilai_akhir_angka != null
+        ? Number(String(r.nilai_akhir_angka).replace(',', '.')) || undefined
+        : undefined,
     bobot: Number(r.nilai_bobot) || 0,
   }));
 }

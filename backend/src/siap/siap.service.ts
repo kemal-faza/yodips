@@ -25,6 +25,7 @@ import type {
   SiapJadwal,
   SiapKehadiran,
   SiapKhs,
+  SiapNilaiDetail,
   SiapNotifications,
   SiapProfile,
 } from './siap-parse';
@@ -38,6 +39,7 @@ import {
   parseApiKhs,
   parseApiNotifications,
   parseApiProfile,
+  parseDetailNilaiTable,
   parseIrsTable,
   parseNumber,
   pickProfileValue,
@@ -57,6 +59,7 @@ export type {
   SiapKehadiranSection,
   SiapKhs,
   SiapKhsSemester,
+  SiapNilaiDetail,
   SiapNotification,
   SiapNotifications,
   SiapProfile,
@@ -816,6 +819,36 @@ export class SiapService {
       body: `id=${encodeURIComponent(pertemuanId)}&tipe_mk=${encodeURIComponent('mata kuliah')}`,
     });
     return { pertemuanId, sections: parseAbsenTable(html) };
+  }
+
+  /**
+   * Rincian nilai per komponen untuk satu matakuliah. Endpoint web SIAP
+   * (`/mahasiswa/mhs/profile/get_detail_nilai`, cookie-path AJAX) menerima
+   * `id = <id_irs>#<nim>#<460110>`. `id_irs` berasal dari payload `v2/lihat_khs`
+   * (exposed sbg `SiapKhsSemester.nilai[].id`) — verified live 2026-09-07:
+   * `10622041` (Statistika) di `v2/lihat_khs` == id yg dipakai get_detail_nilai.
+   * `460110` konstan per prodi (belum diverifikasi berubah antar prodi — aman
+   * utk scope ini; kalau berubah, lookup diperlukan sebelum panggil).
+   */
+  async getNilaiDetail(ref: SessionRef, id: string): Promise<SiapNilaiDetail> {
+    this.requireRef(ref);
+    // NIM (bukan `sub`) adalah komponen `id` upstream. Cookie-path endpoint
+    // yang lain (kehadiran) hanya butuh cookie — di sini nim juga diperlukan,
+    // dan `identity` sesi (yg = NIM) tersedia tanpa mint token. Cukup baca
+    // sesi sekali (generation-scoped) bersama cookie; tak ada mint token
+    // tambahan (endpoint ini murni cookie-path).
+    const { cookie, nim } = await this.upstream.requireCookieAndNimForSession(ref);
+    const url = `${this.baseUrl}/mahasiswa/mhs/profile/get_detail_nilai`;
+    const html = await this.upstream.fetchText(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: cookie,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: `id=${encodeURIComponent(`${id}#${nim}#460110`)}`,
+    });
+    return parseDetailNilaiTable(html, id);
   }
 
   /**

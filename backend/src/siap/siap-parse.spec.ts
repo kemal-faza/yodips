@@ -10,6 +10,7 @@ import {
   parseApiKhs,
   parseApiNotifications,
   parseApiProfile,
+  parseDetailNilaiTable,
   parseIrsTable,
   parseKhsNilai,
   pickProfileValue,
@@ -39,6 +40,7 @@ describe('parseKhsNilai', () => {
     const rows = parseKhsNilai(html);
     expect(rows).toEqual([
       {
+        kode: 'MIK1624105',
         mataKuliah: 'Aljabar Linier',
         sks: 2,
         nilaiHuruf: 'A',
@@ -108,6 +110,53 @@ describe('parseAbsenTable', () => {
   });
 });
 
+describe('parseDetailNilaiTable', () => {
+  it('parses komponen rows + header + nilai akhir + last update', () => {
+    const html = `<div class="table-responsive">
+  <table class="table table-bordered">
+    <tbody>
+      <tr style="border-bottom: 2px solid #000;">
+        <td><strong>MIK1624203 - Statistika - 2 SKS</strong></td>
+      </tr>
+      <tr><td>(10%) Nilai Aktivitas Partisipatif : 94,00</td></tr>
+      <tr><td>(40%) Nilai Hasil Proyek : 89,75</td></tr>
+      <tr><td>(15%) Nilai UTS : 87,00</td></tr>
+      <tr><td>(15%) Nilai UAS : 80,00</td></tr>
+      <tr style="border-top: 2px solid #000;">
+        <td><strong>(100%) Nilai Akhir Angka : 88,45</strong></td>
+      </tr>
+    </tbody>
+  </table>
+  <span class="text-muted">last update: 30-06-2025 20:38:58</span>
+</div>`;
+    const out = parseDetailNilaiTable(html, '10622041');
+    expect(out.id).toBe('10622041');
+    expect(out.kode).toBe('MIK1624203');
+    expect(out.nama).toBe('Statistika');
+    expect(out.sks).toBe(2);
+    expect(out.komponen).toEqual([
+      { nama: 'Nilai Aktivitas Partisipatif', bobotPct: 10, nilai: 94 },
+      { nama: 'Nilai Hasil Proyek', bobotPct: 40, nilai: 89.75 },
+      { nama: 'Nilai UTS', bobotPct: 15, nilai: 87 },
+      { nama: 'Nilai UAS', bobotPct: 15, nilai: 80 },
+    ]);
+    expect(out.nilaiAkhir).toBe(88.45);
+    expect(out.lastUpdate).toBe('30-06-2025 20:38:58');
+  });
+
+  it('returns empty komponen for non-numeric or missing rows', () => {
+    const out = parseDetailNilaiTable(
+      '<div>(10%) Nilai Quiz : 87,50</div><strong>(100%) Nilai Akhir Angka : 88,45</strong>',
+      '1',
+    );
+    expect(out.komponen).toEqual([
+      { nama: 'Nilai Quiz', bobotPct: 10, nilai: 87.5 },
+    ]);
+    expect(out.nilaiAkhir).toBe(88.45);
+    expect(out.kode).toBe('');
+  });
+});
+
 describe('semesterLabel / currentSemesterCount', () => {
   it('derives "ta/ta+1 Ganjil|Genap" from angkatan + cumulative semester', () => {
     expect(semesterLabel('2024', 1)).toBe('2024/2025 Ganjil');
@@ -174,15 +223,41 @@ describe('parseApiJadwal', () => {
 describe('parseApiKhs', () => {
   it('maps v2/lihat_khs rows into nilai + computes ip', () => {
     const rows = [
-      { nama_mk: 'Pancasila', sks_mk: '2', nilai_akhir_huruf: 'A', nilai_bobot: '4' },
-      { nama_mk: 'Struktur Diskret', sks_mk: '4', nilai_akhir_huruf: 'A', nilai_bobot: '4' },
+      {
+        id_irs: '10622041',
+        kode_mk: 'MIK1624203',
+        nama_mk: 'Pancasila',
+        sks_mk: '2',
+        nilai_akhir_huruf: 'A',
+        nilai_akhir_angka: '88.45',
+        nilai_bobot: '4',
+      },
+      {
+        nama_mk: 'Struktur Diskret',
+        sks_mk: '4',
+        nilai_akhir_huruf: 'A',
+        nilai_bobot: '4',
+      },
     ];
     const nilai = parseApiKhs(rows as any);
     expect(nilai).toHaveLength(2);
+    expect(nilai[0].id).toBe('10622041');
+    expect(nilai[0].kode).toBe('MIK1624203');
     expect(nilai[0].mataKuliah).toBe('Pancasila');
     expect(nilai[0].sks).toBe(2);
     expect(nilai[0].nilaiHuruf).toBe('A');
+    expect(nilai[0].nilaiAngka).toBe(88.45);
     expect(nilai[0].bobot).toBe(4);
+    // Rows tanpa id_irs / nilai_akhir_angka → field opsional absen.
+    expect(nilai[1].id).toBeUndefined();
+    expect(nilai[1].nilaiAngka).toBeUndefined();
+  });
+
+  it('tolerates comma decimal in nilai_akhir_angka', () => {
+    const nilai = parseApiKhs([
+      { nama_mk: 'X', sks_mk: '2', nilai_akhir_huruf: 'A', nilai_akhir_angka: '81,5' },
+    ] as any);
+    expect(nilai[0].nilaiAngka).toBe(81.5);
   });
 });
 

@@ -94,6 +94,11 @@ export const UPSTREAM_ROUTES = [
     operation: 'qr_presence',
     route: 'POST /master_perkuliahan/mhs/absensi/process/',
   },
+  {
+    service: 'siap',
+    operation: 'nilai_detail_page',
+    route: 'POST /mahasiswa/mhs/profile/get_detail_nilai',
+  },
   { service: 'siap-api', operation: 'mintToken', route: 'POST /index.php/mahasiswa_sso' },
   { service: 'siap-api', operation: 'semester_aktif', route: 'POST /index.php/semester_aktif' },
   { service: 'siap-api', operation: 'data_mahasiswa', route: 'POST /index.php/data_mahasiswa' },

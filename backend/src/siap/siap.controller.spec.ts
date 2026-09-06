@@ -22,6 +22,7 @@ describe('SiapController', () => {
     getLecturers: jest.fn(),
     getJadwal: jest.fn(),
     getKehadiran: jest.fn(),
+    getNilaiDetail: jest.fn(),
     markKehadiran: jest.fn(),
   };
 
@@ -86,6 +87,17 @@ describe('SiapController', () => {
       controller.getKehadiran('3747941', { user } as any),
     ).resolves.toMatchObject({ pertemuanId: '3747941' });
     expect(mockSiap.getKehadiran).toHaveBeenCalledWith(REF, '3747941');
+  });
+
+  it('routes nilai/:id/detail by SessionRef and validates numeric id', async () => {
+    await expect(
+      controller.getNilaiDetail('bukan-angka', { user } as any),
+    ).rejects.toMatchObject({ status: 400 });
+    mockSiap.getNilaiDetail.mockResolvedValue({ id: '10622041', kode: 'MIK1624203' });
+    await expect(
+      controller.getNilaiDetail('10622041', { user } as any),
+    ).resolves.toMatchObject({ id: '10622041' });
+    expect(mockSiap.getNilaiDetail).toHaveBeenCalledWith(REF, '10622041');
   });
 
   it('proxies a QR token to markKehadiran when present', async () => {

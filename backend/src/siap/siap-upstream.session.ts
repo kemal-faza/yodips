@@ -60,6 +60,11 @@ const SIAP_QR_PRESENCE: UpstreamRouteContext = {
   operation: 'qr_presence',
   route: 'POST /master_perkuliahan/mhs/absensi/process/',
 };
+const SIAP_NILAI_DETAIL_PAGE: UpstreamRouteContext = {
+  service: 'siap',
+  operation: 'nilai_detail_page',
+  route: 'POST /mahasiswa/mhs/profile/get_detail_nilai',
+};
 
 function pageContext(url: string, init: RequestInit | undefined): UpstreamRouteContext {
   const pathname = new URL(url).pathname;
@@ -74,6 +79,10 @@ function pageContext(url: string, init: RequestInit | undefined): UpstreamRouteC
   // IRS semester tables (lecturer names) — cookie-path page, same CI AJAX guard.
   if (method === 'POST' && pathname === '/irs/mhs/irs/get_irs') {
     return SIAP_IRS_PAGE;
+  }
+  // Per-komponen nilai detail — cookie-path AJAX, same CI guard.
+  if (method === 'POST' && pathname === '/mahasiswa/mhs/profile/get_detail_nilai') {
+    return SIAP_NILAI_DETAIL_PAGE;
   }
   throw new TypeError('Invalid SIAP page endpoint');
 }
@@ -246,6 +255,17 @@ export class SiapUpstreamSession {
    * 401 SESSION_DEAD, never B's cookie.
    */
   async getCookieForSession(ref: SessionRef): Promise<string> {
+    const { cookie } = await this.requireCookieAndNimForSession(ref);
+    return cookie;
+  }
+
+  /** Cookie + NIM (identity sesi) utk cookie-path endpoint yg butuh nim dlm
+   *  body upstream (get_detail_nilai). Satu baca store, generation-scoped,
+   *  tanpa mint token API — setara getCookieForSession + identity sesi. */
+  async requireCookieAndNimForSession(ref: SessionRef): Promise<{
+    cookie: string;
+    nim: string;
+  }> {
     if (!isSessionRef(ref)) {
       throw new HttpException(
         { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
@@ -267,7 +287,9 @@ export class SiapUpstreamSession {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    return cookie;
+    const nim =
+      ((session as { identity?: unknown } | null)?.identity as string) ?? ref.sub;
+    return { cookie, nim };
   }
 
   /** Shared identity+token resolve (generation-scoped cache + single-flight).

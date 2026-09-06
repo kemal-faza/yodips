@@ -124,7 +124,7 @@ describe('telemetry contract and runtime', () => {
       'stale',
       'unknown',
     ]);
-    expect(UPSTREAM_ROUTES).toHaveLength(27);
+    expect(UPSTREAM_ROUTES).toHaveLength(28);
     expect(UPSTREAM_ROUTES).toEqual([
       { service: 'kulon', operation: 'session_probe', route: 'GET /my/' },
       { service: 'siap', operation: 'session_probe', route: 'GET /pages/mhs/dashboard' },
@@ -156,6 +156,11 @@ describe('telemetry contract and runtime', () => {
         service: 'siap',
         operation: 'qr_presence',
         route: 'POST /master_perkuliahan/mhs/absensi/process/',
+      },
+      {
+        service: 'siap',
+        operation: 'nilai_detail_page',
+        route: 'POST /mahasiswa/mhs/profile/get_detail_nilai',
       },
       { service: 'siap-api', operation: 'mintToken', route: 'POST /index.php/mahasiswa_sso' },
       { service: 'siap-api', operation: 'semester_aktif', route: 'POST /index.php/semester_aktif' },
