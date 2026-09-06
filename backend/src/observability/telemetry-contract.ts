@@ -86,6 +86,11 @@ export const UPSTREAM_ROUTES = [
   },
   {
     service: 'siap',
+    operation: 'irs_page',
+    route: 'POST /irs/mhs/irs/get_irs',
+  },
+  {
+    service: 'siap',
     operation: 'qr_presence',
     route: 'POST /master_perkuliahan/mhs/absensi/process/',
   },
