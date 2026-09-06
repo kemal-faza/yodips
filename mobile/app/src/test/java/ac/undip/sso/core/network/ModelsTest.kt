@@ -93,6 +93,17 @@ class ModelsTest {
     }
 
     @Test
+    fun `handoff body includes sso cookie when provided`() {
+        val withSso = handoffBody("siap123", "kulon456", "sso789")
+        lenientJson.parseToJsonElement(withSso)
+        assertTrue(withSso.contains("\"ssoCookie\":\"sso789\""))
+        assertTrue(withSso.contains("\"siapCookie\":\"siap123\""))
+        assertTrue(withSso.contains("\"kulonCookie\":\"kulon456\""))
+        // omitting sso (default) keeps the body free of the key
+        assertFalse(handoffBody("s", "k").contains("ssoCookie"))
+    }
+
+    @Test
     fun `sksKumulatif sums SKS across all semesters including current`() {
         val khs =
             SiapKhs(

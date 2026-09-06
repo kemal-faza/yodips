@@ -71,8 +71,9 @@ object Backend {
     suspend fun handoff(
         siapCookie: String?,
         kulonCookie: String?,
+        ssoCookie: String? = null,
     ): HandoffResult {
-        val body = handoffBody(siapCookie, kulonCookie)
+        val body = handoffBody(siapCookie, kulonCookie, ssoCookie)
         val client = createPlatformClient()
         return try {
             val resp: HttpResponse = client.post("$BASE_URL/api/auth/session/handoff") {

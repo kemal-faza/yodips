@@ -27,6 +27,10 @@ interface SsoApi {
     /** GET /api/siap/profile */
     suspend fun profile(): SiapProfile
 
+    /** GET /api/auth/me — status sesi upstream (complete=false saat SSO/
+     *  Kulon/SIAP tidak valid walau JWT masih hidup). */
+    suspend fun me(): MeResponse
+
     /** GET /api/siap/irs */
     suspend fun irs(): SiapIrs
 

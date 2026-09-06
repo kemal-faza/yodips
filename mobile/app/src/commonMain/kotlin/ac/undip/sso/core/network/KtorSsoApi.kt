@@ -49,6 +49,11 @@ class KtorSsoApi(
         return json.decodeFromString<SiapProfile>(handle(resp))
     }
 
+    override suspend fun me(): MeResponse {
+        val resp = client.get("$root/api/auth/me")
+        return json.decodeFromString<MeResponse>(handle(resp))
+    }
+
     override suspend fun irs(): SiapIrs {
         val resp = client.get("$root/api/siap/irs")
         return json.decodeFromString<SiapIrs>(handle(resp))

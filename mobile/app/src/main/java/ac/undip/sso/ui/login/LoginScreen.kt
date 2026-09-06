@@ -131,6 +131,12 @@ fun LoginScreen(
                 .takeIf { it.isNotBlank() }
         }
 
+    /** Raw SSO cookie header (the `ci_session_sso` guard cookie). */
+    fun captureSso(): String? =
+        capture("sso.undip.ac.id", "ci_session_sso")?.let {
+            "ci_session_sso=$it"
+        }
+
     /** Handoff runs once from the SIAP hop (phase 2 finished); guarded by phase. */
     fun doHandoff(
         view: WebView,
@@ -142,7 +148,10 @@ fun LoginScreen(
         loading = true
         slog("handoff siap=${siap.isNotBlank()} kulon=${kulon.isNotBlank()}")
         scope.launch {
-            when (val r = Backend.handoff(siap, kulon)) {
+            // Sertakan cookie SSO (`ci_session_sso`) agar sesi tersimpan backend
+            // punya hasSso → /api/auth/me `complete` bisa tercapai; tanpa ini
+            // deteksi dini sesi mati di boot selalu meminta login ulang.
+            when (val r = Backend.handoff(siap, kulon, captureSso())) {
                 is HandoffResult.Success -> {
                     slog("handoff OK")
                     Backend.authToken = r.token
