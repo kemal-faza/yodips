@@ -140,7 +140,7 @@ fun TasksScreen(
                     tasks
                         .filter { filter == null || taskBucket(it, ctx.activeCourseIds) == filter }
                         .filter { filterTasksByQuery(it, searchQuery) }
-                        .sortedBy { it.duedate }
+                        .let { sortTasksByFilter(it, filter) }
                 if (visible.isEmpty()) {
                     EmptyTasks(filter, searchQuery)
                 } else {
@@ -263,6 +263,24 @@ internal fun filterTasksByQuery(
     if (q.isEmpty()) return true
     return t.name.contains(q, ignoreCase = true) || t.course.contains(q, ignoreCase = true)
 }
+
+/**
+ * Urutan daftar tugas per tab (item revisi user):
+ * - [TaskBucket.NEED] ("Perlu dikerjakan", tab default): deadline TERDEKAT di atas —
+ *   prioritas urgensi, tugas yang harus dikerjakan lebih dulu tampil pertama.
+ * - filter `null` ("Semua"), [TaskBucket.DONE] ("Sudah dikerjakan") dan
+ *   [TaskBucket.LATE] ("Terlambat"): duedate MENURUN — tugas TERBARU di atas,
+ *   jadi status tugas terbaru terlihat tanpa scroll/search.
+ */
+internal fun sortTasksByFilter(
+    tasks: List<KulonAssignment>,
+    filter: TaskBucket?,
+): List<KulonAssignment> =
+    if (filter == TaskBucket.NEED) {
+        tasks.sortedBy { it.duedate }
+    } else {
+        tasks.sortedByDescending { it.duedate }
+    }
 
 /** Slice for one page of a sorted task list; returns (shown slice, how many remain).
  *  Kept pure so pagination behavior is unit-testable. */

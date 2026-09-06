@@ -74,7 +74,7 @@ fun AssignmentDetailScreen(
             ) {
                 HeaderCard(assignment, detail)
                 if (detail.descriptionMarkdown.isNotBlank()) {
-                    DescriptionCard(detail.descriptionMarkdown)
+                    DescriptionCard(decodeHtmlEntities(detail.descriptionMarkdown))
                 }
                 SubmissionCard(detail)
                 if (detail.files.isNotEmpty()) {
@@ -221,3 +221,27 @@ private fun FilesCard(files: List<ac.undip.sso.core.network.KulonFile>) {
 /** Format a Double grade avoiding a trailing ".0" (85.0 → "85"). */
 private fun fmtNumber(v: Double): String =
     if (v % 1.0 == 0.0) v.toLong().toString() else v.toString()
+
+/**
+ * Normalize HTML entities that survive the Kulon scrape + sanitize pipeline
+ * (instructor-authored text is HTML-escaped server-side, and turndown decodes
+ * entities only when they are well-formed — so an original `&` can reach the
+ * client as a double-encoded `&amp;amp;` and render as the literal text
+ * `&amp;`). Decode the five core XML entities; `&amp;` is decoded in a loop so
+ * a nested/double-encoded `&amp;amp;` also collapses to a single `&`.
+ */
+internal fun decodeHtmlEntities(input: String): String {
+    var out = input
+    // Loop: "&amp;amp;" → "&amp;" → "&"; bounded for pathological inputs.
+    var guard = 0
+    while (out.contains("&amp;") && guard < 8) {
+        out = out.replace("&amp;", "&")
+        guard++
+    }
+    return out
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+}
