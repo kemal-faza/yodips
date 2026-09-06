@@ -55,6 +55,11 @@ const SIAP_IRS_PAGE: UpstreamRouteContext = {
   operation: 'irs_page',
   route: 'POST /irs/mhs/irs/get_irs',
 };
+const SIAP_KHS_PAGE: UpstreamRouteContext = {
+  service: 'siap',
+  operation: 'khs_page',
+  route: 'POST /irs/mhs/irs/get_khs',
+};
 const SIAP_QR_PRESENCE: UpstreamRouteContext = {
   service: 'siap',
   operation: 'qr_presence',
@@ -79,6 +84,11 @@ function pageContext(url: string, init: RequestInit | undefined): UpstreamRouteC
   // IRS semester tables (lecturer names) — cookie-path page, same CI AJAX guard.
   if (method === 'POST' && pathname === '/irs/mhs/irs/get_irs') {
     return SIAP_IRS_PAGE;
+  }
+  // KHS semester tables — cookie-path page carrying the per-matkul detail-id
+  // icons (`get_detail_nilai` id#nim#kode) that the API rows lack.
+  if (method === 'POST' && pathname === '/irs/mhs/irs/get_khs') {
+    return SIAP_KHS_PAGE;
   }
   // Per-komponen nilai detail — cookie-path AJAX, same CI guard.
   if (method === 'POST' && pathname === '/mahasiswa/mhs/profile/get_detail_nilai') {
