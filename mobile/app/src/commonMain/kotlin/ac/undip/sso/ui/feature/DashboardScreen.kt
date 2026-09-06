@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
@@ -149,10 +150,25 @@ private fun MenuRow(items: List<MenuSpec>) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         items.forEach { spec ->
             Card(onClick = spec.onClick, modifier = Modifier.weight(1f)) {
-                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                // Rata kiri (icon lalu label) — konsisten dengan daftar item
+                // menu lain di app (sidebar/bottom-tab memakai ikon-kiri-teks);
+                // konten tengah membuat ikon & label mudah terlihat tidak sejajar.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Icon(spec.icon, contentDescription = spec.label, tint = accentForeground())
-                    Spacer(Modifier.height(4.dp))
-                    Text(spec.label, style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        spec.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }
