@@ -72,8 +72,18 @@ data class SiapAbsen(
 
 @Serializable
 data class SiapNilai(
-    /** `id_irs` SIAP — id internal matkul utk `get_detail_nilai` (detail nilai). */
+    /**
+     * `id_irs` SIAP — segmen pertama dari `detailId`. Bukan id yg cukup utk
+     * `get_detail_nilai` (lihat [detailId]).
+     */
     val id: String? = null,
+    /**
+     * Full SIAP detail-id `id_irs#nim#kode` utk `GET /api/siap/nilai/:id/detail`
+     * (nilai per komponen). Ada HANYA utk matkul yg web SIAP-nya menyediakan
+     * rincian (semester lama spt 2024/2025 Ganjil tidak punya → null dan baris
+     * KHS tidak bisa di-tap).
+     */
+    val detailId: String? = null,
     val kode: String = "",
     val mataKuliah: String = "",
     val sks: Double = 0.0,

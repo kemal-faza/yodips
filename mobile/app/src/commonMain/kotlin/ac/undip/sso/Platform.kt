@@ -17,3 +17,10 @@ internal expect val ioDispatcher: CoroutineDispatcher
 
 /** Backend base URL baked per buildType — was BuildConfig.BASE_URL. */
 expect val appBaseUrl: String
+
+/**
+ * URL-encode one path segment so values containing reserved chars (`#`, `/`)
+ * survive Navigation Compose route parsing. Android → URLEncoder; wasm → JS
+ * encodeURIComponent (kept identical for the fragment `#` → `%23`).
+ */
+internal expect fun encodeUriComponent(value: String): String

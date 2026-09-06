@@ -94,7 +94,10 @@ private fun semanticNilai(
     }
     Column {
         sem.nilai.forEach { n ->
-            val clickable = n.id != null
+            // detailId = full `id#nim#kode` dari HTML KHS web; hanya matkul yg
+            // web SIAP-nya menyediakan rincian komponen punya ini (semester
+            // lama seperti 2024/2025 Ganjil tidak → tidak bisa di-tap).
+            val clickable = n.detailId != null
             Row(
                 Modifier
                     .fillMaxWidth()

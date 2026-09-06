@@ -3,6 +3,7 @@ package ac.undip.sso.core.network
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,6 +49,17 @@ class ModelsTest {
         assertEquals("MIK1624203", n.kode)
         assertEquals("Statistika", n.mataKuliah)
         assertEquals(88.45, n.nilaiAngka!!, 0.001)
+        // detailId absen → baris KHS tidak bisa di-tap.
+        assertNull(n.detailId)
+    }
+
+    @Test
+    fun `parses SiapKhs grade detailId (full id#nim#kode from web KHS)`() {
+        val s =
+            """{"ipk":3.65,"semesters":[{"semester":"2024/2025 Genap","ip":3.6,"totalSks":20,"nilai":[{"id":"10622042","detailId":"10622042#24060124120013#460149","kode":"MIK1624204","mataKuliah":"Matematika II","sks":2,"nilaiHuruf":"AB"}]}]}"""
+        val k = lenientJson.decodeFromString<SiapKhs>(s)
+        val n = k.semesters[0].nilai[0]
+        assertEquals("10622042#24060124120013#460149", n.detailId)
     }
 
     @Test
