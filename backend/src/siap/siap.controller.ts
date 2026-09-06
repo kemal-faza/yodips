@@ -79,6 +79,17 @@ export class SiapController {
     return await this.siapService.getKehadiran(requireSessionRef(req), id);
   }
 
+  @Get('nilai/:id/detail')
+  async getNilaiDetail(@Param('id') id: string, @Req() req: AuthedRequest) {
+    if (!/^\d+$/.test(id)) {
+      throw new HttpException(
+        { message: 'ID nilai tidak valid' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return await this.siapService.getNilaiDetail(requireSessionRef(req), id);
+  }
+
   @Post('kehadiran')
   async markKehadiran(@Req() req: AuthedRequest, @Body() body: { token?: string }) {
     if (!body?.token) {
