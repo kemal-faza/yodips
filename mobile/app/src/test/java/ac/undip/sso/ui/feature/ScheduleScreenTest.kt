@@ -1,10 +1,10 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.network.SiapJadwal
+import kotlinx.datetime.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.LocalDate
 
 /**
  * Regression: a real SIAP schedule contains duplicate (hari, matakuliah, waktu)
@@ -129,8 +129,8 @@ class ScheduleScreenTest {
     fun `monthGrid Sunday-first offsets by weekday`() {
         // 2026-08-16 is a Sunday → day 16 is the first cell of its week.
         val grid16 = monthGrid(2026, 8)
-        val aug16 = LocalDate.of(2026, 8, 16)
-        assertEquals(0, (aug16.dayOfWeek.value) % 7)
+        val aug16 = LocalDate(2026, 8, 16)
+        assertEquals(0, (aug16.dayOfWeek.ordinal + 1) % 7)
         assertEquals(16, grid16[grid16.indexOf(16)])
         // Month whose day 1 is a Sunday (e.g. 2026-02-01) starts at cell 0.
         val feb = monthGrid(2026, 2)
@@ -141,5 +141,74 @@ class ScheduleScreenTest {
     fun `monthTitle uses Indonesian month name`() {
         assertEquals("Agustus 2026", monthTitle(2026, 8))
         assertEquals("Januari 2026", monthTitle(2026, 1))
+    }
+
+    @Test
+    fun `calendarStart falls back to today's month when no dated event exists`() {
+        val today = LocalDate(2026, 9, 6)
+        assertEquals(
+            today.year * 100 + today.monthNumber,
+            calendarStart(emptyMap(), today),
+        )
+    }
+
+    @Test
+    fun `calendarStart ignores past-month events and uses today's month`() {
+        // Sisa jadwal lama (Agustus 2026) TIDAK boleh memindahkan kalender dari
+        // bulan berjalan — default selalu bulan hari ini (item revisi).
+        val byTanggal =
+            eventsByTanggal(
+                listOf(
+                    datedRow("2026-08-17", "Kelas Lama"),
+                    datedRow("2026-08-18", "Kelas Lama Lain"),
+                ),
+            )
+        val today = LocalDate(2026, 9, 6)
+        assertEquals(2026 * 100 + 9, calendarStart(byTanggal, today))
+    }
+
+    @Test
+    fun `calendarStart with a today event returns today's month`() {
+        val byTanggal =
+            eventsByTanggal(
+                listOf(
+                    datedRow("2026-08-17", "Kelas Lama"),
+                    datedRow("2026-09-09", "Kelas Hari Ini"),
+                ),
+            )
+        val today = LocalDate(2026, 9, 9)
+        assertEquals(2026 * 100 + 9, calendarStart(byTanggal, today))
+    }
+
+    @Test
+    fun `calendarStart with only future events stays on today's month`() {
+        val byTanggal =
+            eventsByTanggal(
+                listOf(
+                    datedRow("2026-10-05", "Kelas Depan"),
+                ),
+            )
+        val today = LocalDate(2026, 9, 6)
+        assertEquals(2026 * 100 + 9, calendarStart(byTanggal, today))
+    }
+
+    @Test
+    fun `defaultSelectedDate prefers today when it has meetings else today's month`() {
+        val today = LocalDate(2026, 9, 6)
+        // no event at all → null
+        assertEquals(null, defaultSelectedDate(emptyMap(), today))
+        // event today → today
+        val withToday = mapOf("2026-09-06" to listOf(datedRow("2026-09-06", "Kelas")))
+        assertEquals("2026-09-06", defaultSelectedDate(withToday, today))
+        // event in the current month but not today → earliest event of the month
+        val monthOnly = mapOf("2026-09-10" to listOf(datedRow("2026-09-10", "Kelas")))
+        assertEquals("2026-09-10", defaultSelectedDate(monthOnly, today))
+        // only a past-month event → earliest event in the month view (null when outside)
+        val pastOnly = mapOf("2026-08-17" to listOf(datedRow("2026-08-17", "Kelas Lama")))
+        assertEquals(null, defaultSelectedDate(pastOnly, today))
+        // future event beyond this month → earliest future event is outside the
+        // default month view; keeping null shows the empty-state message.
+        val futureOnly = mapOf("2026-10-05" to listOf(datedRow("2026-10-05", "Kelas Depan")))
+        assertEquals(null, defaultSelectedDate(futureOnly, today))
     }
 }

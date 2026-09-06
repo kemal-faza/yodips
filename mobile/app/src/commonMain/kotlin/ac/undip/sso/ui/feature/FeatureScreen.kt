@@ -67,7 +67,14 @@ private fun CompactFeatureBar(
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.align(Alignment.Center),
+            // Biarkan tombol arrow-back (kiri) dan headerAction (kanan) selalu
+            // terlihat: teks panjang di-ellipsis di tengah, tidak menggambar
+            // penuh numpuk di atasnya. 56dp = ruang IconButton standar M3.
+            modifier =
+                Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .padding(start = 56.dp, end = 56.dp),
         )
         if (headerAction != null) {
             Box(Modifier.align(Alignment.CenterEnd).padding(end = 4.dp)) { headerAction() }
