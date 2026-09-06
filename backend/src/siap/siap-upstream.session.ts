@@ -50,6 +50,11 @@ const SIAP_NOTIFICATION_ACTION: UpstreamRouteContext = {
   operation: 'notification_action',
   route: 'POST /pages/mhs/dashboard/ajax/unread',
 };
+const SIAP_IRS_PAGE: UpstreamRouteContext = {
+  service: 'siap',
+  operation: 'irs_page',
+  route: 'POST /irs/mhs/irs/get_irs',
+};
 const SIAP_QR_PRESENCE: UpstreamRouteContext = {
   service: 'siap',
   operation: 'qr_presence',
@@ -65,6 +70,10 @@ function pageContext(url: string, init: RequestInit | undefined): UpstreamRouteC
   }
   if (method === 'POST' && pathname === '/pages/mhs/dashboard/ajax/unread') {
     return SIAP_NOTIFICATION_ACTION;
+  }
+  // IRS semester tables (lecturer names) — cookie-path page, same CI AJAX guard.
+  if (method === 'POST' && pathname === '/irs/mhs/irs/get_irs') {
+    return SIAP_IRS_PAGE;
   }
   throw new TypeError('Invalid SIAP page endpoint');
 }

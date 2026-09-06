@@ -124,7 +124,7 @@ describe('telemetry contract and runtime', () => {
       'stale',
       'unknown',
     ]);
-    expect(UPSTREAM_ROUTES).toHaveLength(26);
+    expect(UPSTREAM_ROUTES).toHaveLength(27);
     expect(UPSTREAM_ROUTES).toEqual([
       { service: 'kulon', operation: 'session_probe', route: 'GET /my/' },
       { service: 'siap', operation: 'session_probe', route: 'GET /pages/mhs/dashboard' },
@@ -146,6 +146,11 @@ describe('telemetry contract and runtime', () => {
         service: 'siap',
         operation: 'notification_action',
         route: 'POST /pages/mhs/dashboard/ajax/unread',
+      },
+      {
+        service: 'siap',
+        operation: 'irs_page',
+        route: 'POST /irs/mhs/irs/get_irs',
       },
       {
         service: 'siap',

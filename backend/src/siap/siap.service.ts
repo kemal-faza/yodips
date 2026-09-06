@@ -30,7 +30,6 @@ import type {
 } from './siap-parse';
 import {
   currentSemesterCount,
-  lecturersFromIrs,
   parseAbsenTable,
   parseApiAbsen,
   parseApiDaftarKhs,
@@ -39,6 +38,7 @@ import {
   parseApiKhs,
   parseApiNotifications,
   parseApiProfile,
+  parseIrsTable,
   parseNumber,
   pickProfileValue,
   pickProfileValueHtml,
@@ -508,6 +508,12 @@ export class SiapService {
    * 8-column table: NO, KODE, MATA KULIAH, KELAS, SKS, RUANG, STATUS, NAMA DOSEN
    * — parsed by parseIrsTable (KODE col 1 + NAMA DOSEN col 7).
    *
+   * NOTE (regression 2026-09-06): migrasi 7b40110 sempat mengarahkan method ini
+   * ke API `v2/lihat_irs` (JSON) — TAPI payload API itu TIDAK menyertakan
+   * `nama_dosen` (verified live: respons `/api/siap/irs` tanpa field dosen,
+   * `getLecturers` = []). Satu-satunya sumber nama dosen adalah halaman
+   * `get_irs` (cookie-path) — dikembalikan ke sini.
+   *
    * We iterate every semester (from the profile's angkatan + semester label, the
    * same count getKhs uses) so that approved past semesters contribute lecturers
    * too. Unapproved semesters return a "belum disetujui" placeholder which parses
@@ -518,56 +524,47 @@ export class SiapService {
     ref: SessionRef,
   ): Promise<{ kode: string; dosen: string }[]> {
     this.requireRef(ref);
-    let ctx = await this.upstream.getContextForSession(ref);
-    const fetchBatch = async <T>(
-      endpoint: string,
-      form?: Record<string, string>,
-    ) => this.apiUpstream.fetch<T>(endpoint, ctx.token, form, ctx.nim);
-    const build = async (): Promise<{ kode: string; dosen: string }[]> => {
-      const [sem, data] = await Promise.all([
-        fetchBatch<{ nm_smt?: string }>('semester_aktif'),
-        fetchBatch<Record<string, unknown>>('data_mahasiswa'),
-      ]);
-      const angkatan = parseApiProfile(data ?? {}, sem).angkatan;
-      const count = currentSemesterCount(angkatan, sem?.nm_smt ?? '');
-      const entries = new Map<string, { kode: string; dosen: string }>();
-      // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
-      // order preserved so ascending-smt dedup order is unchanged.
-      const rowsBySmt = await mapWithConcurrency(
-        Array.from({ length: count }, (_, i) => i + 1),
-        4,
-        async (smt) => {
-          const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
-          const smtWithinYear = smt % 2 === 1 ? 1 : 2;
-          const rows = await fetchBatch<Array<Record<string, unknown>>>(
-            'v2/lihat_irs',
-            {
-              ta: String(ta),
-              smt_ambil: String(smt),
-              smt: String(smtWithinYear),
-            },
-          );
-          return Array.isArray(rows) ? rows : [];
-        },
-      );
-      for (const rows of rowsBySmt) {
-        for (const { kode, dosen } of lecturersFromIrs(rows)) {
-          if (!entries.has(kode)) entries.set(kode, { kode, dosen });
-        }
+    const siapCookie = await this.requireSiapCookieForSession(ref);
+    const profile = await this.fetchProfileData(ref);
+    const count = currentSemesterCount(
+      profile.angkatan,
+      profile.semesterBerjalan,
+    );
+
+    const entries = new Map<string, string>();
+    const url = `${this.baseUrl}/irs/mhs/irs/get_irs`;
+    // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
+    // order preserved so ascending-smt dedup order is unchanged. Rejected
+    // semesters (stale/upstream) are skipped so one bad semester does not wipe
+    // out every lecturer (same resilience as the pre-API-migration version).
+    const htmlBySmt = await mapWithConcurrency(
+      Array.from({ length: count }, (_, i) => i + 1),
+      4,
+      async (smt) => {
+        const ta = Number(profile.angkatan) + Math.floor((smt - 1) / 2);
+        const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+        const body = `ta=${ta}&smt_ambil=${smt}&smt=${smtWithinYear}`;
+        const html = await this.upstream.fetchText(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            // Cookie-path page: the stored SIAP session cookie rides as an
+            // explicit header (same pattern as getKehadiran/markKehadiran).
+            Cookie: siapCookie,
+            // Same CI is_ajax_request() guard as getJadwal / getNotifications.
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body,
+        });
+        return parseIrsTable(html);
+      },
+    );
+    for (const lecturers of htmlBySmt) {
+      for (const { kode, dosen } of lecturers) {
+        if (!entries.has(kode)) entries.set(kode, dosen);
       }
-      const result = Array.from(entries.values());
-      return result;
-    };
-    try {
-      return await build();
-    } catch (e) {
-      if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
-        if (this.cache) await this.cache.del(cacheKeyForSession(ref, 'siap', 'token'));
-        ctx = await this.upstream.getContextForSession(ref);
-        return await build();
-      }
-      throw e; // original error on second failure
     }
+    return Array.from(entries, ([kode, dosen]) => ({ kode, dosen }));
   }
 
   async getLecturers(ref: SessionRef): Promise<{ kode: string; dosen: string }[]> {

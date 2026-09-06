@@ -465,13 +465,38 @@ describe('SiapService', () => {
       del: jest.fn(),
     };
 
+    /** Response shape for upstreamFetchText/Json global.fetch mocks. */
+    function htmlResp(body: string, url = 'https://siap.undip.ac.id/x') {
+      return {
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => body,
+      };
+    }
+
+    /**
+     * Service whose fetchLecturers path resolves: profile via apiMock
+     * (data_mahasiswa/semester_aktif) + get_irs via global.fetch (cookie-path).
+     * STORE supplies the SIAP session cookie. NOTE: global.fetch is left for
+     * each test to stub (get_irs HTML per test) — this helper only routes the
+     * API profile calls.
+     */
     function lecturersSvc(): SiapService {
-      cache.get.mockImplementation((key: string) =>
-        key.endsWith(':siap:profile')
-          ? Promise.resolve({ angkatan: '2024' })
-          : Promise.resolve(null),
-      );
+      apiMock.fetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+        throw new Error(`unexpected api fetch ${endpoint}`);
+      });
       return makeRealSeamService(apiMock, cache);
+    }
+
+    /** Default global.fetch stub: every page URL returns `body` (default: irs_get fixture). */
+    function stubPages(body?: string) {
+      (global.fetch as jest.Mock).mockImplementation(async (url: string) =>
+        htmlResp(body ?? fixture('irs_get.html'), String(url)),
+      );
     }
 
     beforeEach(() => {
@@ -486,6 +511,10 @@ describe('SiapService', () => {
         }),
       );
       apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      // Ensure fetchProfileData's profile is API-complete (angkatan from
+      // data_mahasiswa), so no cookie-path dashboard fallback fires.
+      (global.fetch as jest.Mock).mockReset();
+      stubPages();
     });
 
     it('serves a cached lecturer payload through getStale', async () => {
@@ -502,61 +531,60 @@ describe('SiapService', () => {
     });
 
     it('returns [] when every semester IRS has no lecturer', async () => {
-      // semester_aktif + data_mahasiswa drive angkatan/count; IRS empty across all.
-      apiMock.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif')
-          return { nm_smt: '2026/2027 Ganjil' };
-        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
-        return []; // v2/lihat_irs empty for all 5 semesters
-      });
+      // get_irs cookie-path returns empty table HTML across all semesters.
+      stubPages('<table></table>');
       expect(await lecturersSvc().getLecturers(ref('u1'))).toEqual([]);
     });
 
-    it('maps v2/lihat_irs rows to kode/dosen (deduped, joined by |)', async () => {
-      const rows = [
-        { kode_mk: 'MIK1624105', nama_dosen: 'Dosen Uji Satu' },
-        { kode_mk: 'MIK1624105', nama_dosen: 'Dosen Uji Dua' },
-        { kode_mk: 'UUW1624002', nama_dosen: 'Dosen Uji Empat' },
-      ];
-      apiMock.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif')
-          return { nm_smt: '2026/2027 Ganjil' };
-        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
-        return rows; // v2/lihat_irs per semester
-      });
+    it('scrapes NAMA DOSEN from the get_irs HTML table (cookie-path, deduped by kode)', async () => {
+      // Real fixture: 8-column table (NO, KODE, MATA KULIAH, KELAS, SKS,
+      // RUANG, STATUS, NAMA DOSEN) — the ONLY source that carries lecturers.
+      // `v2/lihat_irs` API JSON does NOT include nama_dosen (verified live
+      // 2026-09-06) — regression since the 7b40110 API migration.
       const result = await lecturersSvc().getLecturers(ref('u1'));
       const byCode = new Map(result.map((r) => [r.kode, r.dosen]));
-      expect(byCode.get('MIK1624105')).toBe('Dosen Uji Satu | Dosen Uji Dua');
+      // From irs_get.html fixture: MIK1624105 has 3 <br>-separated names.
+      expect(byCode.get('MIK1624105')).toBe(
+        'Dosen Uji Satu | Dosen Uji Dua | Dosen Uji Tiga',
+      );
       expect(byCode.get('UUW1624002')).toBe('Dosen Uji Empat');
-      // mint token once for the whole batch.
-      expect(apiMock.mintToken).toHaveBeenCalledTimes(1);
+      // Cookie-path request carries the stored session cookie + CI AJAX guard header.
+      const calls = (global.fetch as jest.Mock).mock.calls.filter(([u]) =>
+        String(u).includes('/irs/mhs/irs/get_irs'),
+      );
+      expect(calls.length).toBeGreaterThan(0);
+      const [url, init] = calls[0];
+      expect(String(url)).toBe('https://siap.undip.ac.id/irs/mhs/irs/get_irs');
+      expect(init).toMatchObject({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-Requested-With': 'XMLHttpRequest',
+          // STORE fake session cookie ('s') — the real path sends the stored
+          // SIAP cookie header (pola getKehadiran).
+          Cookie: 's',
+        }),
+      });
     });
 
-    it('sends the correct per-semester ta/smt_ambil/smt params', async () => {
-      const seen: Array<Record<string, string>> = [];
-      apiMock.fetch.mockImplementation(
-        async (
-          endpoint: string,
-          _token: string,
-          form: Record<string, string>,
-        ) => {
-          if (endpoint === 'semester_aktif')
-            return { nm_smt: '2026/2027 Ganjil' };
-          if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
-          seen.push(form);
-          return [{ kode_mk: 'MIK1624105', nama_dosen: 'D' }];
-        },
-      );
+    it('POSTs per-semester ta/smt_ambil/smt to get_irs', async () => {
+      const bodies: string[] = [];
+      (global.fetch as jest.Mock).mockImplementation(async (url: string, init?: any) => {
+        if (String(url).includes('/irs/mhs/irs/get_irs')) {
+          bodies.push(init?.body ?? '');
+        }
+        return htmlResp(fixture('irs_get.html'), String(url));
+      });
       await lecturersSvc().getLecturers(ref('u1'));
-      // Order-insensitive: worker-pool invocation order is timing-dependent.
-      expect(seen).toHaveLength(5);
-      expect(seen).toEqual(
+      // angkatan 2024 (data_mahasiswa) + semester 2026/2027 Ganjil → 5 semesters.
+      expect(bodies).toHaveLength(5);
+      expect(bodies).toEqual(
         expect.arrayContaining([
-          { ta: '2024', smt_ambil: '1', smt: '1' },
-          { ta: '2024', smt_ambil: '2', smt: '2' },
-          { ta: '2025', smt_ambil: '3', smt: '1' },
-          { ta: '2025', smt_ambil: '4', smt: '2' },
-          { ta: '2026', smt_ambil: '5', smt: '1' },
+          'ta=2024&smt_ambil=1&smt=1',
+          'ta=2024&smt_ambil=2&smt=2',
+          'ta=2025&smt_ambil=3&smt=1',
+          'ta=2025&smt_ambil=4&smt=2',
+          'ta=2026&smt_ambil=5&smt=1',
         ]),
       );
     });
@@ -574,19 +602,19 @@ describe('SiapService', () => {
       expect(apiMock.fetch).not.toHaveBeenCalled();
     });
 
-  it('writes the lecturers cache (24h) after a successful fetch', async () => {
+    it('writes the lecturers cache (24h) after a successful fetch', async () => {
       const setSpy = jest.fn();
-    const cache2 = {
-      get: jest.fn().mockResolvedValue(null),
-      getStale: jest
-        .fn()
-        .mockImplementation(
-          async (key: string, fetcher: () => Promise<unknown>) => {
-            const value = await fetcher();
-            await setSpy(key, value);
-            return { value, stale: false };
-          },
-        ),
+      const cache2 = {
+        get: jest.fn().mockResolvedValue(null),
+        getStale: jest
+          .fn()
+          .mockImplementation(
+            async (key: string, fetcher: () => Promise<unknown>) => {
+              const value = await fetcher();
+              await setSpy(key, value);
+              return { value, stale: false };
+            },
+          ),
         set: setSpy,
         del: jest.fn(),
       };
@@ -598,64 +626,36 @@ describe('SiapService', () => {
         if (endpoint === 'semester_aktif')
           return { nm_smt: '2026/2027 Ganjil' };
         if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
-        return [];
+        throw new Error(`unexpected api fetch ${endpoint}`);
       });
+      (global.fetch as jest.Mock).mockImplementation(async (url: string) =>
+        htmlResp('<table></table>', String(url)),
+      );
       const svc = makeRealSeamService(api, cache2);
       await svc.getLecturers(ref('u1'));
-      expect(setSpy.mock.calls.filter(([key]) => key === cacheKeyForSession(ref('u1'), 'siap', 'lecturers'))).toHaveLength(1);
-    });
-
-    it('writes the cache after an api-credential retry succeeds', async () => {
-      const setSpy = jest.fn();
-    const cache2 = {
-      get: jest.fn().mockResolvedValue(null),
-      getStale: jest
-        .fn()
-        .mockImplementation(
-            async (key: string, fetcher: () => Promise<unknown>) => {
-              const value = await fetcher();
-              await setSpy(key, value);
-              return { value, stale: false };
-            },
-          ),
-        set: setSpy,
-        del: jest.fn(),
-      };
-      const mint = jest
-        .fn()
-        .mockResolvedValueOnce({ token: 'T1', data: {} })
-        .mockResolvedValueOnce({ token: 'T2', data: {} });
-      const fetch = jest
-        .fn()
-        .mockRejectedValueOnce(new StaleUpstreamError('Siap', 'api-credential'))
-        .mockImplementation(async (endpoint: string) => {
-          if (endpoint === 'semester_aktif')
-            return { nm_smt: '2026/2027 Ganjil' };
-          if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
-          return [];
-        });
-      const svc = makeRealSeamService({ mintToken: mint, fetch }, cache2);
-      const result = await svc.getLecturers(ref('u1'));
-      expect(result).toEqual([]);
-       expect(setSpy.mock.calls.filter(([key]) => key === cacheKeyForSession(ref('u1'), 'siap', 'lecturers'))).toHaveLength(1);
-      expect(mint).toHaveBeenCalledTimes(2); // initial + re-mint
+      expect(
+        setSpy.mock.calls.filter(
+          ([key]) => key === cacheKeyForSession(ref('u1'), 'siap', 'lecturers'),
+        ),
+      ).toHaveLength(1);
     });
 
     it('fetches per-semester IRS with bounded concurrency (multiple in flight, peak <= 4)', async () => {
       let inFlight = 0;
       let peak = 0;
-      apiMock.fetch.mockImplementation(async (endpoint: string) => {
-        if (endpoint === 'semester_aktif')
-          return { nm_smt: '2026/2027 Ganjil' };
-        if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
-        inFlight++;
-        peak = Math.max(peak, inFlight);
-        await new Promise((r) => setTimeout(r, 5));
-        inFlight--;
-        return [];
+      const realFetch = (global.fetch as jest.Mock).getMockImplementation();
+      (global.fetch as jest.Mock).mockImplementation(async (url: string) => {
+        if (String(url).includes('/irs/mhs/irs/get_irs')) {
+          inFlight++;
+          peak = Math.max(peak, inFlight);
+          await new Promise((r) => setTimeout(r, 5));
+          inFlight--;
+          return htmlResp(fixture('irs_get.html'), String(url));
+        }
+        return realFetch!(String(url));
       });
       await lecturersSvc().getLecturers(ref('u1'));
-      expect(peak).toBeGreaterThan(1); // WAS serial (peak 1); now parallel waves
+      expect(peak).toBeGreaterThan(1); // parallel waves, not serial
       expect(peak).toBeLessThanOrEqual(4); // bounded by the pool
     });
   });
