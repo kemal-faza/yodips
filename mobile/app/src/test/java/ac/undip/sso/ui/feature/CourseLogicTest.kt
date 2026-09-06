@@ -18,7 +18,8 @@ class CourseLogicTest {
         fullname: String,
         timelineStatus: String = "past",
         semester: String? = null,
-    ) = KulonCourse(id = id, fullname = fullname, timelineStatus = timelineStatus, semester = semester)
+        progress: Double? = null,
+    ) = KulonCourse(id = id, fullname = fullname, timelineStatus = timelineStatus, semester = semester, progress = progress)
 
     // ---------- buckets ----------
 
@@ -69,9 +70,27 @@ class CourseLogicTest {
         assertEquals(-1, semesterSortKey("bogus"))
     }
 
-    // ---------- current-week detection ----------
+    // ---------- semester aggregation ----------
 
     @Test
+    fun `activeProgressPercent averages only courses that carry progress`() {
+        val cs =
+            listOf(
+                course(1, "A", timelineStatus = "inprogress", progress = 50.0),
+                course(2, "B", timelineStatus = "inprogress", progress = 80.0),
+                course(3, "C", timelineStatus = "inprogress", progress = null), // unmeasurable — skipped
+            )
+        assertEquals(65, activeProgressPercent(cs))
+    }
+
+    @Test
+    fun `activeProgressPercent is null when no active course carries progress`() {
+        assertNull(activeProgressPercent(emptyList()))
+        assertNull(activeProgressPercent(listOf(course(1, "A", timelineStatus = "past", progress = 100.0))))
+        assertNull(activeProgressPercent(listOf(course(2, "B", timelineStatus = "inprogress", progress = null))))
+    }
+
+    // ---------- current-week detection ----------    @Test
     fun `isCurrentWeekSection matches a range spanning now`() {
         val now = dateMs(2026, 8, 10) // 10 Aug 2026
         assertTrue(isCurrentWeekSection("9 February - 15 February", now = dateMs(2026, 2, 12)))

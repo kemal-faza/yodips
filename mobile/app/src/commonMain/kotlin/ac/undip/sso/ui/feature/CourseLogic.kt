@@ -4,6 +4,7 @@ import ac.undip.sso.core.network.KulonContentItem
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.core.network.KulonSection
 import ac.undip.sso.nowMs
+import kotlin.math.roundToInt
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
@@ -24,6 +25,22 @@ internal fun pastCourses(courses: List<KulonCourse>): List<KulonCourse> =
 internal fun actualSemester(active: List<KulonCourse>): String? {
     val sems = active.mapNotNull { it.semester }.toSet()
     return if (sems.size == 1) sems.first() else null
+}
+
+/**
+ * Progress agregat semester berjalan = rata-rata `progress` mata kuliah AKTIF
+ * yang datanya terukur (null diabaikan — course tanpa dateRange tidak ikut
+ * denominator). Semua course aktif satu semester, jadi rata-rata ≈ nilai yang
+ * sama di tiap kartu; dipakai untuk progress bar TUNGGAL di bawah judul
+ * "Aktif". Null bila tidak ada satu pun yang terukur (bar disembunyikan).
+ */
+internal fun activeProgressPercent(active: List<KulonCourse>): Int? {
+    val measured =
+        active
+            .filter { it.timelineStatus == "inprogress" }
+            .mapNotNull { it.progress }
+    if (measured.isEmpty()) return null
+    return (measured.sum() / measured.size).roundToInt()
 }
 
 private const val NO_SEMESTER_LABEL = "Tanpa semester"
