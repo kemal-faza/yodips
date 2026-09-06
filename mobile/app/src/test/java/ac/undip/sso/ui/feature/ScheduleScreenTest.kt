@@ -193,22 +193,21 @@ class ScheduleScreenTest {
     }
 
     @Test
-    fun `defaultSelectedDate prefers today when it has meetings else today's month`() {
+    fun `defaultSelectedDate is always today whether or not it has meetings`() {
         val today = LocalDate(2026, 9, 6)
-        // no event at all → null
-        assertEquals(null, defaultSelectedDate(emptyMap(), today))
+        // no event at all → still today (empty-state message below the calendar)
+        assertEquals("2026-09-06", defaultSelectedDate(emptyMap(), today))
         // event today → today
         val withToday = mapOf("2026-09-06" to listOf(datedRow("2026-09-06", "Kelas")))
         assertEquals("2026-09-06", defaultSelectedDate(withToday, today))
-        // event in the current month but not today → earliest event of the month
+        // event in the current month but not today → STILL today, never the event
         val monthOnly = mapOf("2026-09-10" to listOf(datedRow("2026-09-10", "Kelas")))
-        assertEquals("2026-09-10", defaultSelectedDate(monthOnly, today))
-        // only a past-month event → earliest event in the month view (null when outside)
+        assertEquals("2026-09-06", defaultSelectedDate(monthOnly, today))
+        // only a past-month event → still today
         val pastOnly = mapOf("2026-08-17" to listOf(datedRow("2026-08-17", "Kelas Lama")))
-        assertEquals(null, defaultSelectedDate(pastOnly, today))
-        // future event beyond this month → earliest future event is outside the
-        // default month view; keeping null shows the empty-state message.
+        assertEquals("2026-09-06", defaultSelectedDate(pastOnly, today))
+        // future event beyond this month → still today
         val futureOnly = mapOf("2026-10-05" to listOf(datedRow("2026-10-05", "Kelas Depan")))
-        assertEquals(null, defaultSelectedDate(futureOnly, today))
+        assertEquals("2026-09-06", defaultSelectedDate(futureOnly, today))
     }
 }

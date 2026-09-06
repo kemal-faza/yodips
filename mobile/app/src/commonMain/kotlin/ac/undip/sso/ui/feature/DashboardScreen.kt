@@ -165,7 +165,10 @@ private fun MenuRow(items: List<MenuSpec>) {
                         spec.label,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium,
-                        maxLines = 1,
+                        // Nama menu dibiarkan WRAP (maks. 2 baris) — mis. "Mata Kuliah"
+                        // tampil "Mata" / "Kuliah" saat kartu tak cukup lebar untuk satu
+                        // baris penuh, daripada dipaksa satu baris yang keluar kartu.
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
