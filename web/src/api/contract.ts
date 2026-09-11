@@ -1,8 +1,9 @@
 /**
  * Single mirror of BACKEND TRUTH for the web client: error codes, response
- * envelope, API paths and the SSO ticket algorithm. The backend
- * (`backend/src/auth/auth.service.ts`) is the source of truth — every code or
- * path used by this client must appear HERE, not inline at call sites.
+ * envelope, API paths and the SSO ticket algorithm. The canonical source is
+ * `contract/backend-contract.json` (guarded by
+ * `backend/src/common/contract-drift.spec.ts`); every code or path used by this
+ * client must appear HERE, not inline at call sites.
  */
 
 /** Error codes the backend puts on the `{ message, code }` envelope. */
@@ -15,7 +16,14 @@ export const BACKEND_ERROR_CODES = {
   INVALID_TOKEN: 'INVALID_TOKEN',
   /** Server-side session record is gone — silent refresh impossible. */
   SESSION_DEAD: 'SESSION_DEAD',
-  /** Kode pairing salah / sudah terpakai (POST /api/auth/pair/consume). */
+  /**
+   * Kode pairing salah / sudah terpakai (POST /api/auth/pair/consume).
+   * Intentionally declared but UNBRANCHED here: the web only mints and polls
+   * pairing codes; the consuming client (mobile) is the one that branches on
+   * INVALID vs EXPIRED. Kept so the pairing route's error surface stays
+   * mirrored rather than silently drifting (delete only when no consumer
+   * mirrors the route).
+   */
   INVALID_CODE: 'INVALID_CODE',
   /** Kode pairing pernah ada tapi TTL-nya lewat (beda dari INVALID sejak 2026-08-25). */
   EXPIRED_CODE: 'EXPIRED_CODE',
@@ -112,9 +120,11 @@ export function isServiceStale(url: string, code?: string): boolean {
 }
 
 /**
- * SSO bootstrap ticket: base64 of the current unix second — mirrors backend
- * `SSOTicketService`, extension `urls.generateTicket` and mobile
- * `generateSsoTicket()`. Pinned by contract.test.ts so drift breaks a test.
+ * SSO bootstrap ticket: base64 of the current unix second — the canonical
+ * algorithm declared as `ssoTicket.algorithm` in
+ * `contract/backend-contract.json`. Mirrors backend `SSOTicketService`,
+ * extension `urls.generateTicket` and mobile `generateSsoTicket()`. Pinned by
+ * contract.test.ts so drift breaks a test.
  */
 export function buildSsoTicket(nowSeconds = Math.floor(Date.now() / 1000)): string {
   return btoa(String(nowSeconds));

@@ -30,6 +30,12 @@ describe('interpretHandoff', () => {
   it('stale on KULON_STALE code', () => {
     expect(interpretHandoff({ ok: false, status: 400, code: 'KULON_STALE' })).toEqual({ action: 'stale', service: 'kulon' });
   });
+  it('stale on SIAP_STALE code → SIAP re-auth (not a generic error)', () => {
+    expect(interpretHandoff({ ok: false, status: 401, code: 'SIAP_STALE' })).toEqual({ action: 'stale', service: 'siap' });
+  });
+  it('KULON_NO_COOKIE → needsService kulon (missing cookie, not a stale session)', () => {
+    expect(interpretHandoff({ ok: false, status: 401, code: 'KULON_NO_COOKIE' })).toEqual({ action: 'needsService', service: 'kulon' });
+  });
   it('error otherwise', () => {
     expect(interpretHandoff({ ok: false, status: 500, message: 'boom' })).toEqual({ action: 'error', message: 'boom' });
   });
