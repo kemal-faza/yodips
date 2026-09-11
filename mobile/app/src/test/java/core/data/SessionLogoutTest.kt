@@ -33,7 +33,7 @@ import org.junit.Test
  *    nulled the shared token. The claim/join/release race itself (A
  *    completion, B fresh claim, A stale release cannot erase B) is pinned
  *    deterministically — no sleeps, no threads — at the actual boundary
- *    [SessionLogout] delegates to, in [SingleFlightGateTest].
+ *    [SessionLogout] delegates to, in [SessionFlightTest].
  *  - the bearer is observed at EACH server step's own moment via a LOCAL
  *    mutable bearer variable — never the process-global Backend (purity).
  */

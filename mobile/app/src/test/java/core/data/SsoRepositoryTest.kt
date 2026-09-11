@@ -388,12 +388,12 @@ private class MapPersistentCache(
 private class SingleStaleCache(
     private val value: ApiResult<*>,
 ) : DataCache {
-    override fun <T> get(
+    override suspend fun <T> get(
         key: String,
         now: Long,
     ): DataCache.Cached<ApiResult<T>>? = DataCache.Cached.Stale(value as ApiResult<T>)
 
-    override fun <T> put(
+    override suspend fun <T> put(
         key: String,
         value: ApiResult<T>,
     ) {

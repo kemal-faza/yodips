@@ -2,6 +2,8 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.nowMs
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Size of a fetched value is not re-read from the wire logic — this cache only
@@ -9,15 +11,18 @@ import ac.undip.sso.nowMs
  * `LoadableData`) don't re-hit the slow backend scrape. A fresh hit returns
  * instantly; a stale hit triggers a background refresh but still serves stale
  * data if the network fails (resilience over an empty spinner).
+ *
+ * Access is suspend-based so [InMemoryDataCache] can use a kotlinx [Mutex]
+ * instead of the old wasm-no-op `platformSynchronized` (ADR-0003).
  */
 interface DataCache {
     /** Fresh = returned with ttl; Stale = data is older than ttl (still usable). */
-    fun <T> get(
+    suspend fun <T> get(
         key: String,
         now: Long = nowMs(),
     ): Cached<ApiResult<T>>?
 
-    fun <T> put(
+    suspend fun <T> put(
         key: String,
         value: ApiResult<T>,
     )
@@ -44,17 +49,17 @@ class InMemoryDataCache(
         val fetchedAt: Long,
     )
 
-    private val lock = Any()
+    private val mutex = Mutex()
     private val store = mutableMapOf<String, Entry>()
 
-    override fun <T> get(
+    override suspend fun <T> get(
         key: String,
         now: Long,
-    ): DataCache.Cached<ApiResult<T>>? {
-        return platformSynchronized(lock) {
-            val e = store[key] ?: null
+    ): DataCache.Cached<ApiResult<T>>? =
+        mutex.withLock {
+            val e = store[key]
             if (e == null) {
-                null as DataCache.Cached<ApiResult<T>>?
+                null
             } else {
                 @Suppress("UNCHECKED_CAST")
                 val value = e.value as ApiResult<T>
@@ -65,13 +70,12 @@ class InMemoryDataCache(
                 }
             }
         }
-    }
 
-    override fun <T> put(
+    override suspend fun <T> put(
         key: String,
         value: ApiResult<T>,
     ) {
-        platformSynchronized(lock) {
+        mutex.withLock {
             store[key] = Entry(value, nowMs())
         }
     }

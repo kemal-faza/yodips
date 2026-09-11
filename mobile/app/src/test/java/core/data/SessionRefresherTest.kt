@@ -2,6 +2,7 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiHttpException
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.ErrorType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -198,6 +199,33 @@ class SessionRefresherTest {
         )
         val result = r.safe(serviceStale = true) { throw http401() }
         assertTrue(result is ApiResult.Error)
+        assertEquals(1, dialogs)
+    }
+
+    // Candidate #5: when the backend envelope carries a SERVICE_STALE_CODES
+    // code, a route that did NOT set the manual serviceStale flag is still
+    // classified as upstream-stale — the constants are read, not dead.
+    @Test
+    fun `backend stale code classifies a non-route 401 as STALE_SESSION`() = runTest {
+        var dialogs = 0
+        val r = refresher(backgroundScope, { "fresh-jwt" }, { dialogs++ })
+        val result = r.safe(serviceStale = false) {
+            throw ApiHttpException(401, "SIAP session belum ada", BackendCodes.SIAP_STALE)
+        }
+        assertTrue(result is ApiResult.Error)
+        assertEquals(ErrorType.STALE_SESSION, (result as ApiResult.Error).type)
+        assertEquals(0, dialogs)
+    }
+
+    @Test
+    fun `a non-stale backend code still maps to UNAUTHORIZED and fires the dialog`() = runTest {
+        var dialogs = 0
+        val r = refresher(backgroundScope, { "fresh-jwt" }, { dialogs++ })
+        val result = r.safe(serviceStale = false) {
+            throw ApiHttpException(401, "expired", BackendCodes.SESSION_DEAD)
+        }
+        assertTrue(result is ApiResult.Error)
+        assertEquals(ErrorType.UNAUTHORIZED, (result as ApiResult.Error).type)
         assertEquals(1, dialogs)
     }
 }

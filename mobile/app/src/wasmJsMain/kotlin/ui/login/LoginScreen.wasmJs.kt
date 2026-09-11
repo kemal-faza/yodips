@@ -3,6 +3,7 @@ package ac.undip.sso.ui.login
 import ac.undip.sso.appBaseUrl
 import ac.undip.sso.core.data.TokenStoreLike
 import ac.undip.sso.core.network.Backend
+import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.createPlatformClient
 import ac.undip.sso.core.scan.QrScanResult
 import ac.undip.sso.core.scan.QrScanner
@@ -151,9 +152,9 @@ fun LoginScreen(
                             PairErrorResponse("Gagal terhubung ke server", "NETWORK_ERROR")
                         }
                         error = when (err.code) {
-                            "INVALID_CODE" -> "Kode tidak valid atau sudah pernah dipakai."
-                            "EXPIRED_CODE" -> "Kode sudah kedaluwarsa. Minta kode baru."
-                            "SESSION_DEAD" -> "Sesi asal sudah berakhir. Login ulang di perangkat utama."
+                            BackendCodes.INVALID_CODE -> "Kode tidak valid atau sudah pernah dipakai."
+                            BackendCodes.EXPIRED_CODE -> "Kode sudah kedaluwarsa. Minta kode baru."
+                            BackendCodes.SESSION_DEAD -> "Sesi asal sudah berakhir. Login ulang di perangkat utama."
                             else -> err.message.ifBlank { "Gagal terhubung ke server" }
                         }
                     }

@@ -2,6 +2,7 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -9,7 +10,7 @@ import org.junit.Test
 
 class DataCacheTest {
     @Test
-    fun `fresh get returns Fresh within ttl`() {
+    fun `fresh get returns Fresh within ttl`() = runTest {
         val cache = InMemoryDataCache(ttlMs = 10_000)
         cache.put("k", ApiResult.Success("x"))
         val got = cache.get<String>("k", System.currentTimeMillis())
@@ -17,7 +18,7 @@ class DataCacheTest {
     }
 
     @Test
-    fun `past ttl returns Stale but keeps data`() {
+    fun `past ttl returns Stale but keeps data`() = runTest {
         val cache = InMemoryDataCache(ttlMs = 1_000)
         cache.put("k", ApiResult.Success("hello"))
         val future = System.currentTimeMillis() + 60_000
@@ -28,12 +29,12 @@ class DataCacheTest {
     }
 
     @Test
-    fun `unknown key returns null`() {
+    fun `unknown key returns null`() = runTest {
         assertNull(InMemoryDataCache().get<String>("nope"))
     }
 
     @Test
-    fun `errors are not cached`() {
+    fun `errors are not cached`() = runTest {
         val cache = InMemoryDataCache(ttlMs = 10_000)
         cache.put("k", ApiResult.Error(500, "boom", ErrorType.SERVER))
         val got = cache.get<String>("k", System.currentTimeMillis())
