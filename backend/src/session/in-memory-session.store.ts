@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CapturedSession } from './session-contract';
 import { SessionStore } from './session-store';
+import { evaluateRecord } from './session-record-policy';
 
 interface StoredRecord {
   session: CapturedSession;
@@ -10,6 +11,10 @@ interface StoredRecord {
 /**
  * In-memory SessionStore for dev/test (zero Redis dependency).
  * Mirrors RedisSessionStore semantics: TTL + sliding refresh on access.
+ *
+ * Storage-specific work only: the Map. Every lifetime/generation decision is
+ * delegated to the shared `evaluateRecord` policy core so both adapters can
+ * never drift on the rule.
  */
 @Injectable()
 export class InMemorySessionStore extends SessionStore {
@@ -19,7 +24,7 @@ export class InMemorySessionStore extends SessionStore {
 
   constructor(private readonly ttlMs: number, absoluteMs?: number) {
     super();
-    this.absoluteMs = absoluteMs && absoluteMs > 0 ? absoluteMs : undefined;
+    this.absoluteMs = absoluteMs;
   }
 
   async set(identity: string, session: CapturedSession): Promise<void> {
@@ -28,25 +33,19 @@ export class InMemorySessionStore extends SessionStore {
   }
 
   async get(identity: string): Promise<CapturedSession | null> {
-    const record = this.records.get(identity);
-    if (!record) return null;
-    if (Date.now() > record.expiresAt) {
-      this.records.delete(identity);
-      return null;
+    const record = this.records.get(identity) ?? null;
+    const decision = evaluateRecord(record, Date.now(), {
+      ttlMs: this.ttlMs,
+      absoluteMs: this.absoluteMs,
+    });
+    if (decision.kind === 'live') {
+      if (record) record.expiresAt = decision.expiresAt;
+      return decision.session;
     }
-    // Absolute lifetime: independent of the sliding TTL. A session captured
-    // longer than absoluteMs ago is dead even while the sliding TTL keeps the
-    // record alive — refresh can no longer extend a session forever.
-    if (
-      this.absoluteMs !== undefined &&
-      Date.now() - record.session.capturedAt >= this.absoluteMs
-    ) {
+    if (decision.kind === 'expired' || decision.kind === 'absolute-dead') {
       this.records.delete(identity);
-      return null;
     }
-    // Sliding TTL: refresh on access (unchanged).
-    record.expiresAt = Date.now() + this.ttlMs;
-    return record.session;
+    return null;
   }
 
   async clear(identity: string): Promise<void> {
@@ -58,26 +57,24 @@ export class InMemorySessionStore extends SessionStore {
    * between them, so no interleaving is possible on the single-threaded
    * event loop. Expiry/absolute-dead are evaluated BEFORE the generation
    * compare (dead → deleted, null either way); mismatch never slides or
-   * deletes; match slides exactly like `get()`.
+   * deletes; match slides exactly like `get()`. All of that ordering lives in
+   * `evaluateRecord`.
    */
   async getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null> {
-    const record = this.records.get(identity);
-    if (!record) return null;
-    if (Date.now() > record.expiresAt) {
-      this.records.delete(identity);
-      return null;
+    const record = this.records.get(identity) ?? null;
+    const decision = evaluateRecord(record, Date.now(), {
+      ttlMs: this.ttlMs,
+      absoluteMs: this.absoluteMs,
+      generation,
+    });
+    if (decision.kind === 'live') {
+      if (record) record.expiresAt = decision.expiresAt;
+      return decision.session;
     }
-    if (
-      this.absoluteMs !== undefined &&
-      Date.now() - record.session.capturedAt >= this.absoluteMs
-    ) {
+    if (decision.kind === 'expired' || decision.kind === 'absolute-dead') {
       this.records.delete(identity);
-      return null;
     }
-    if (record.session.sessionGeneration !== generation) return null;
-    // Match: slide like get().
-    record.expiresAt = Date.now() + this.ttlMs;
-    return record.session;
+    return null;
   }
 
   /**
@@ -86,22 +83,22 @@ export class InMemorySessionStore extends SessionStore {
    * Expired/absolute-dead records are treated as absent (deleted, true).
    */
   async clearIfGeneration(identity: string, generation: string): Promise<boolean> {
-    const record = this.records.get(identity);
-    if (!record) return true;
-    if (Date.now() > record.expiresAt) {
-      this.records.delete(identity);
-      return true;
+    const decision = evaluateRecord(this.records.get(identity) ?? null, Date.now(), {
+      ttlMs: this.ttlMs,
+      absoluteMs: this.absoluteMs,
+      generation,
+    });
+    switch (decision.kind) {
+      case 'absent':
+        return true;
+      case 'generation-mismatch':
+        return false;
+      case 'expired':
+      case 'absolute-dead':
+      case 'live':
+        this.records.delete(identity);
+        return true;
     }
-    if (
-      this.absoluteMs !== undefined &&
-      Date.now() - record.session.capturedAt >= this.absoluteMs
-    ) {
-      this.records.delete(identity);
-      return true;
-    }
-    if (record.session.sessionGeneration !== generation) return false;
-    this.records.delete(identity);
-    return true;
   }
 
   async all(): Promise<CapturedSession[]> {

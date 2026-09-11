@@ -1,9 +1,10 @@
-import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
 import { SiapService } from '../siap/siap.service';
 import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import { sessionDead } from '../session/live-session';
 import {
   cacheKeyForCurrent,
   cacheKeyForSession,
@@ -178,10 +179,7 @@ export class KulonService {
     sesskey: string;
   }> {
     if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     return this.upstream.getContextForSession(ref);
   }
@@ -326,10 +324,7 @@ export class KulonService {
 
   async getCourses(ref: SessionRef): Promise<KulonCourse[]> {
     if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     const scope: KulonScope = { kind: 'session', ref };
     return this.courseFlight.run(flightKeyForSession(ref, 'courses'), async () => {
@@ -426,10 +421,7 @@ export class KulonService {
     let result: KulonCourse[] = mergedWithProgress;
     if (this.siap && opts.withLecturers !== false) {
       if (!lecturerRef || !isSessionRef(lecturerRef)) {
-        throw new HttpException(
-          { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-          HttpStatus.UNAUTHORIZED,
-        );
+        throw sessionDead();
       }
       try {
         const byCode = new Map<string, string>();
@@ -487,10 +479,7 @@ export class KulonService {
 
   async getAssignments(ref: SessionRef): Promise<KulonAssignment[]> {
     if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     return this.assignmentsFlight.run(flightKeyForSession(ref, 'assignments'), async () => {
       const { cookie: sessionCookie, sesskey } =
@@ -553,10 +542,7 @@ export class KulonService {
    */
   async getAllAssignments(ref: SessionRef): Promise<KulonAssignment[]> {
     if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     const scope: KulonScope = { kind: 'session', ref };
     return this.allAssignmentsFlight.run(flightKeyForSession(ref, 'assignments-all'), async () => {
@@ -746,10 +732,7 @@ export class KulonService {
     cmid: number,
   ): Promise<KulonAssignmentDetail> {
     if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     // Probe first: it is the stale-session gate for the raw page fetch below.
     const { cookie: sessionCookie } = await this.requireKulonAjaxForSession(ref);
@@ -843,10 +826,7 @@ export class KulonService {
     courseId: number,
   ): Promise<KulonCourseContent> {
     if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     const { cookie, sesskey } = await this.requireKulonAjaxForSession(ref);
     return this.fetchCourseContent(cookie, sesskey, courseId, { kind: 'session', ref });

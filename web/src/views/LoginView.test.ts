@@ -723,8 +723,8 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
   });
 
   it("late normal-handoff ok resolving AFTER logout fully never navigates", async () => {
-    const logoutMod = await import("../lib/logout");
-    while (logoutMod.isLogoutInProgress()) logoutMod.endLogout();
+    const logoutMod = await import("../lib/session-lifetime");
+    while (logoutMod.sessionLifetime.isLogoutInProgress()) logoutMod.sessionLifetime.end();
     let resolveLogin!: (v: string) => void;
     const loginGate = new Promise<string>((resolve) => { resolveLogin = resolve; });
     const router = { push: vi.fn() };
@@ -739,9 +739,10 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
       .trigger("click");
     await flushPromises(); // handleExtensionLogin now awaits the gated handoff
     expect(store.loginViaExtension).toHaveBeenCalled();
-    logoutMod.beginLogout();
-    logoutMod.endLogout(); // fully resolves while the handoff is pending
-    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
+    logoutMod.sessionLifetime.end(); // fully resolves while the handoff is pending
+    expect(logoutMod.sessionLifetime.isLogoutInProgress()).toBe(false);
     resolveLogin("ok"); // late pre-logout result arrives after endLogout
     await click;
     await flushPromises();
@@ -780,8 +781,8 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
 
   it("late poll ok resolving AFTER logout fully never commits", async () => {
     vi.useFakeTimers();
-    const logoutMod = await import("../lib/logout");
-    while (logoutMod.isLogoutInProgress()) logoutMod.endLogout();
+    const logoutMod = await import("../lib/session-lifetime");
+    while (logoutMod.sessionLifetime.isLogoutInProgress()) logoutMod.sessionLifetime.end();
     let resolveRead!: (v: any) => void;
     const readGate = new Promise<any>((resolve) => { resolveRead = resolve; });
     const router = { push: vi.fn() };
@@ -804,8 +805,9 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await flushPromises();
     expect(store.readExtensionResult).toHaveBeenCalledTimes(1);
-    logoutMod.beginLogout();
-    logoutMod.endLogout(); // fully resolves while the poll read is pending
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
+    logoutMod.sessionLifetime.end(); // fully resolves while the poll read is pending
     resolveRead({ status: "ok", accessToken: "jwt-late-poll" });
     await flushPromises();
     await vi.advanceTimersByTimeAsync(4000);
@@ -834,8 +836,8 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
   });
 
   it("late bridge ok arriving AFTER logout fully never commits", async () => {
-    const logoutMod = await import("../lib/logout");
-    while (logoutMod.isLogoutInProgress()) logoutMod.endLogout();
+    const logoutMod = await import("../lib/session-lifetime");
+    while (logoutMod.sessionLifetime.isLogoutInProgress()) logoutMod.sessionLifetime.end();
     const router = { push: vi.fn() };
     const store = makeStore({
       isExtensionInstalled: vi.fn().mockResolvedValue(true),
@@ -845,8 +847,9 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
     });
     await flushPromises();
     const handler = (store.onExtensionResult as any).mock.calls[0][0];
-    logoutMod.beginLogout();
-    logoutMod.endLogout(); // fully resolves before the bridge result arrives
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
+    logoutMod.sessionLifetime.end(); // fully resolves before the bridge result arrives
     handler({ status: "ok", accessToken: "jwt-late-bridge" });
     await flushPromises();
     expect(store.finishHandoff).not.toHaveBeenCalled();
@@ -855,8 +858,8 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
   });
 
   it("late legacy login resolving AFTER logout fully never navigates", async () => {
-    const logoutMod = await import("../lib/logout");
-    while (logoutMod.isLogoutInProgress()) logoutMod.endLogout();
+    const logoutMod = await import("../lib/session-lifetime");
+    while (logoutMod.sessionLifetime.isLogoutInProgress()) logoutMod.sessionLifetime.end();
     let resolveLogin!: () => void;
     const loginGate = new Promise<void>((resolve) => { resolveLogin = resolve; });
     const router = { push: vi.fn(), replace: vi.fn() };
@@ -873,8 +876,9 @@ describe("LoginView async handoff epoch ownership (RED)", () => {
     expect(btn).toBeTruthy();
     const click = btn!.trigger("click");
     await flushPromises(); // handleLogin now awaits the gated login
-    logoutMod.beginLogout();
-    logoutMod.endLogout(); // fully resolves while legacy capture is pending
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
+    logoutMod.sessionLifetime.end(); // fully resolves while legacy capture is pending
     resolveLogin();
     await click;
     await flushPromises();

@@ -10,7 +10,7 @@ import AuroraBackground from '@/components/ui/aurora-background/AuroraBackground
 import MultiStepLoader from '@/components/ui/multi-step-loader/MultiStepLoader.vue';
 import { SSO_CAPTURE_ENABLED, isMobileUserAgent } from '../config/extension';
 import { parseFragmentAccessToken } from '../lib/handoff-token';
-import { getReauthEpoch, isLogoutInProgress } from '../lib/logout';
+import { sessionLifetime } from '../lib/session-lifetime';
 
 const store = useAuthStore();
 const inst = getCurrentInstance()!;
@@ -46,7 +46,7 @@ let flowEpoch: number | null = null;
 // setup body runs synchronously (no await can interleave), so this is the
 // current-flow epoch by construction. A logout after mount bumps the epoch and
 // orphaned bridge results are discarded via the mismatch below.
-const mountEpoch = getReauthEpoch();
+const mountEpoch = sessionLifetime.epoch();
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let pollInFlightGen: number | null = null;
 let disposed = false;
@@ -55,8 +55,8 @@ const POLL_INTERVAL_MS = 3000;
 function ownsFlow(gen: number, epoch: number): boolean {
   return !disposed
     && gen === flowGen
-    && getReauthEpoch() === epoch
-    && !isLogoutInProgress();
+    && sessionLifetime.epoch() === epoch
+    && !sessionLifetime.isLogoutInProgress();
 }
 
 /** Stop the self-healing result poll. Gen-guarded: an old flow can never clear
@@ -73,7 +73,7 @@ function stopPoll(gen?: number) {
 function scheduleNextPoll(gen: number, epoch: number) {
   if (disposed) return;
   if (gen !== flowGen) return; // superseded — newer flow owns the timer now
-  if (getReauthEpoch() !== epoch) return; // crossed logout — orphaned, never reschedule
+  if (sessionLifetime.epoch() !== epoch) return; // crossed logout — orphaned, never reschedule
   if (!extWaiting.value) return; // terminal (ok/error) — stop chaining
   if (pollTimer) return; // a tick is already scheduled — never stack timeouts
   pollTimer = setTimeout(() => {
@@ -96,7 +96,7 @@ async function pollExtensionResult(tickGen?: number, tickEpoch?: number | null) 
   if (epoch === null || epoch === undefined) return; // no flow — never read
   if (disposed) return;
   if (gen !== flowGen) return; // old flow — never read
-  if (getReauthEpoch() !== epoch) return; // crossed logout before read — never read
+  if (sessionLifetime.epoch() !== epoch) return; // crossed logout before read — never read
   if (pollInFlightGen === gen) return; // serialize this flow's reads
   // A newer flow owns an independent read. The old flow's finally is
   // identity-guarded below and cannot clear the newer flow's gate.
@@ -107,21 +107,21 @@ async function pollExtensionResult(tickGen?: number, tickEpoch?: number | null) 
     // phase/token/overlay mutation.
     if (disposed) return;
     if (gen !== flowGen) return; // superseded while awaiting — never mutate
-    if (getReauthEpoch() !== epoch) return; // logout crossed while awaiting — discard
-    if (isLogoutInProgress()) return;
+    if (sessionLifetime.epoch() !== epoch) return; // logout crossed while awaiting — discard
+    if (sessionLifetime.isLogoutInProgress()) return;
     if (!payload) {
       scheduleNextPoll(gen, epoch); // extension unavailable — keep waiting
       return;
     }
-    if (gen !== flowGen || getReauthEpoch() !== epoch || disposed) return;
+    if (gen !== flowGen || sessionLifetime.epoch() !== epoch || disposed) return;
     extPhase.value = payload.status === 'ok' ? payload.phase ?? null : null;
     if (payload.status === 'ok' && payload.accessToken) {
       stopPoll(gen);
       store.finishHandoff(payload.accessToken, epoch); // mandatory epoch at commit
-      if (gen !== flowGen || getReauthEpoch() !== epoch || disposed) return;
+      if (gen !== flowGen || sessionLifetime.epoch() !== epoch || disposed) return;
       proxy().$router?.push('/');
     } else if (payload.status === 'error') {
-      if (gen !== flowGen || getReauthEpoch() !== epoch || disposed) return;
+      if (gen !== flowGen || sessionLifetime.epoch() !== epoch || disposed) return;
       stopPoll(gen);
       extWaiting.value = false;
       extBusy.value = false;
@@ -205,19 +205,19 @@ onMounted(async () => {
     // stale extension 'ok' payload (no competing write).
     if (fragmentConsumed) return;
     const expected = flowEpoch ?? mountEpoch;
-    if (getReauthEpoch() !== expected) return; // orphaned by a fully-resolved logout
-    if (isLogoutInProgress()) return;
+    if (sessionLifetime.epoch() !== expected) return; // orphaned by a fully-resolved logout
+    if (sessionLifetime.isLogoutInProgress()) return;
     if (payload?.status === 'ok' && payload.accessToken) {
       const gen = flowGen; // current owner — bridge commits to the live flow
       stopPoll(gen);
       store.finishHandoff(payload.accessToken, expected);
-      if (disposed || getReauthEpoch() !== expected) return;
+      if (disposed || sessionLifetime.epoch() !== expected) return;
       extWaiting.value = false;
       extBusy.value = false;
       proxy().$router?.push('/');
     } else if (payload?.status === 'error') {
       const gen = flowGen;
-      if (getReauthEpoch() !== expected) return;
+      if (sessionLifetime.epoch() !== expected) return;
       stopPoll(gen);
       extWaiting.value = false;
       extBusy.value = false;
@@ -257,15 +257,15 @@ async function handleLogin() {
   // await and require it at the navigation boundary. store.login enforces the
   // same epoch at its own commit; the view additionally refuses to navigate a
   // late pre-logout success that resolved after endLogout.
-  const epoch = getReauthEpoch();
+  const epoch = sessionLifetime.epoch();
   flowEpoch = epoch;
   flowGen += 1;
   const myGen = flowGen;
   await store.login();
   if (disposed) return;
   if (myGen !== flowGen) return; // superseded by a newer flow — never mutate
-  if (getReauthEpoch() !== epoch) return; // logout crossed (possibly fully) — never navigate
-  if (isLogoutInProgress()) return;
+  if (sessionLifetime.epoch() !== epoch) return; // logout crossed (possibly fully) — never navigate
+  if (sessionLifetime.isLogoutInProgress()) return;
   if (store.isAuthenticated) {
     await proxy().$router?.push('/');
   }
@@ -277,7 +277,7 @@ async function handleExtensionLogin() {
   // every post-await overlay/navigation mutation. A late ok resolving after a
   // fully-resolved logout returns 'error' from the store (epoch guard) AND is
   // blocked here from navigating or touching overlay state.
-  const epoch = getReauthEpoch();
+  const epoch = sessionLifetime.epoch();
   flowEpoch = epoch;
   flowGen += 1;
   const myGen = flowGen;
@@ -287,13 +287,13 @@ async function handleExtensionLogin() {
     const status = await store.loginViaExtension();
     if (disposed) return;
     if (myGen !== flowGen) return; // superseded — a newer click owns the UI now
-    if (getReauthEpoch() !== epoch) {
+    if (sessionLifetime.epoch() !== epoch) {
       // Crossed a logout (flag up, or bumped-and-released): never navigate,
       // never start a poll, never claim the overlay. Only clear our own busy
       // flag when no newer flow has taken it (gen already verified above).
       return;
     }
-    if (isLogoutInProgress()) return;
+    if (sessionLifetime.isLogoutInProgress()) return;
     if (status === 'ok') {
       await proxy().$router?.push('/');
       return;

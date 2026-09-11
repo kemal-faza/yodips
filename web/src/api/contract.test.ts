@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   API,
   BACKEND_ERROR_CODES,
@@ -77,6 +79,20 @@ describe('buildSsoTicket', () => {
     // btoa("1756000000") — pinned so drift vs extension/mobile breaks THIS test.
     expect(buildSsoTicket(1_756_000_000)).toBe(btoa('1756000000'));
     expect(buildSsoTicket(1_756_000_000)).toBe('MTc1NjAwMDAwMA==');
+  });
+
+  it('agrees with the canonical ssoTicket.algorithm', () => {
+    // The canonical JSON is the single source; this asserts the declared
+    // algorithm and the implementation are the same (base64 of decimal unix
+    // seconds) at a fixed clock — so a semantic drift on either side fails.
+    const { ssoTicket } = JSON.parse(
+      readFileSync(
+        resolve(__dirname, '../../../contract/backend-contract.json'),
+        'utf8',
+      ),
+    ) as { ssoTicket: { algorithm: string } };
+    expect(ssoTicket.algorithm).toBe('base64(decimal unix seconds)');
+    expect(buildSsoTicket(1_756_000_000)).toBe(btoa('1756000000'));
   });
 });
 

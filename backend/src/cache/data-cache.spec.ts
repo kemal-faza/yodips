@@ -3,13 +3,20 @@ import { InMemoryDataCache } from './in-memory-data.cache';
 import { RedisDataCache } from './redis-data.cache';
 import { defaultStaleTtlMs, handleBackgroundError } from './data-cache';
 import {
-  SIAP_SESSION_PROBE,
   StaleUpstreamError,
   timedFetch,
 } from '../upstream/upstream-fetch';
 import Redis from 'ioredis';
 import type { TelemetryRuntime } from '../observability/telemetry';
-import type { TelemetryEventInput } from '../observability/telemetry-contract';
+import {
+  UPSTREAM_ROUTES,
+  type TelemetryEventInput,
+} from '../observability/telemetry-contract';
+
+const SIAP_SESSION_PROBE = UPSTREAM_ROUTES.find(
+  (route) =>
+    route.service === 'siap' && route.operation === 'session_probe',
+)!;
 
 jest.mock('ioredis');
 const mockClient = {
