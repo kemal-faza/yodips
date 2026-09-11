@@ -196,6 +196,31 @@ describe('auth store', () => {
     expect(localStorage.getItem('sso_token')).toBe('jwt-handoff');
   });
 
+  it('finishHandoff starts a fresh data-cache generation so no prior-session payload survives re-login', () => {
+    const genBefore = cache.getCacheGeneration();
+    const store = useAuthStore();
+    store.finishHandoff('jwt-handoff-new');
+    expect(cache.getCacheGeneration()).toBeGreaterThan(genBefore);
+  });
+
+  it('finishHandoff bumps sessionVersion so mounted views reload after a silent reauth', () => {
+    const store = useAuthStore();
+    const v0 = store.sessionVersion;
+    store.finishHandoff('jwt-handoff-new');
+    expect(store.sessionVersion).toBeGreaterThan(v0);
+  });
+
+  it('login (capture path) also starts a fresh data-cache generation', async () => {
+    (api.capture as any).mockResolvedValue({
+      accessToken: 'jwt-login-new', capturedAt: 0, hasSso: true, hasMicrosoft: true,
+      hasKulon: true, hasSiap: true,
+    });
+    const genBefore = cache.getCacheGeneration();
+    const store = useAuthStore();
+    await store.login();
+    expect(cache.getCacheGeneration()).toBeGreaterThan(genBefore);
+  });
+
   it('fetchMe returns ok and sets flags when the session is complete', async () => {
     (api.me as any).mockResolvedValue({
       sub: 'n', authenticated: true, hasSso: true, hasMicrosoft: false,
@@ -950,6 +975,16 @@ describe('reauth (auto-recover expired session)', () => {
     const store = useAuthStore();
     store.setToken('new-jwt');
     expect(store.token).toBe('new-jwt');
+  });
+
+  it('setToken (same-session silent rotation) does not remount views or wipe the cache', async () => {
+    const { useAuthStore } = await import('./auth');
+    const store = useAuthStore();
+    const versionBefore = store.sessionVersion;
+    const genBefore = cache.getCacheGeneration();
+    store.setToken('rotated-jwt');
+    expect(store.sessionVersion).toBe(versionBefore);
+    expect(cache.getCacheGeneration()).toBe(genBefore);
   });
 
   it('initTokenSync routes silent-refresh rotations through the guarded setToken', async () => {

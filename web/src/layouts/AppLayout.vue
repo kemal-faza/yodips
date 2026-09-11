@@ -103,7 +103,10 @@ const pageTitle = computed(() => {
 
       <!-- Main Content Area -->
       <main class="flex-1 p-4 md:p-6 w-full">
-        <router-view />
+        <!-- Keyed by the auth session version: after a silent reauth recovers a
+             fresh session, the mounted view remounts and re-runs its load with
+             the new token instead of keeping its stale 401 error state. -->
+        <router-view :key="auth.sessionVersion" />
       </main>
     </div>
   </div>

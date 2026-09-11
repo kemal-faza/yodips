@@ -86,6 +86,12 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     token: localStorage.getItem(TOKEN_KEY) as string | null,
+    // Bumped whenever a NEW session is established (login / handoff / silent
+    // reauth). AppLayout keys its <router-view> on this so an already-mounted
+    // view remounts and reloads after a recovered session instead of keeping
+    // its stale 401 error state until a manual page refresh. Silent refresh
+    // rotations of the SAME session (setToken) must NOT bump it.
+    sessionVersion: 0,
     user: null as User | null,
     checking: false, // "memeriksa session" / "sedang login" phase
     error: null as string | null,
@@ -115,8 +121,10 @@ export const useAuthStore = defineStore('auth', {
       try {
         const result = await capture();
         if (!ownsAttempt(attempt, legacyLoginAttempt)) return;
+        const isNewSession = this.token !== result.accessToken;
         this.token = result.accessToken;
         localStorage.setItem(TOKEN_KEY, result.accessToken);
+        if (isNewSession) this.beginSession();
         this.hasSiap = result.hasSiap ?? false;
         this.hasKulon = result.hasKulon ?? false;
         // If the session was reused, no browser window was opened.
@@ -250,8 +258,20 @@ export const useAuthStore = defineStore('auth', {
       // the handoff was sent — the flag is already down, but the token must
       // still never be written.
       if (expectedEpoch !== undefined && expectedEpoch !== sessionLifetime.epoch()) return;
+      const isNewSession = this.token !== token;
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
+      if (isNewSession) this.beginSession();
+    },
+    /** A NEW session was established (login / handoff / silent reauth): drop the
+     *  previous session's cached data (a stale payload/401 banner from before
+     *  the login must never be served again) and bump `sessionVersion` so
+     *  AppLayout remounts the mounted view, which then fetches fresh data.
+     *  Cache-only: it must NOT advance the session generation, or the handoff
+     *  caller's epoch stamp would no longer match (see ADR-0001). */
+    beginSession() {
+      clearCache();
+      this.sessionVersion += 1;
     },
     /** Update the store's JWT after a silent refresh. Called by the axios
      *  interceptor (via emitTokenRefreshed) and by individual actions that
