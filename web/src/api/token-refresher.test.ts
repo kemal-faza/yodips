@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createTokenRefresher } from './token-refresher';
+import { createSessionLifetime } from '../lib/session-lifetime';
 
 describe('createTokenRefresher (single-flight)', () => {
   it('shares ONE in-flight refresh across concurrent callers', async () => {
@@ -72,8 +73,7 @@ describe('createTokenRefresher (single-flight)', () => {
 
 describe('createTokenRefresher epoch ownership (E0 logout E1)', () => {
   it('E1 waiter never joins an E0 flight and never accepts the E0 token', async () => {
-    const { beginLogout, endLogout, isLogoutInProgress } = await import('../lib/logout');
-    while (isLogoutInProgress()) endLogout();
+    const lifetime = createSessionLifetime();
     const { createTokenRefresher } = await import('./token-refresher');
     let resolveE0!: (t: string) => void;
     let resolveE1!: (t: string) => void;
@@ -82,13 +82,12 @@ describe('createTokenRefresher epoch ownership (E0 logout E1)', () => {
       .mockImplementationOnce(() => new Promise<string>((r) => { resolveE0 = r; }))
       .mockImplementationOnce(() => new Promise<string>((r) => { resolveE1 = r; }))
       .mockResolvedValue('token-E2');
-    const refreshOnce = createTokenRefresher(rawRefresh);
+    const refreshOnce = createTokenRefresher(rawRefresh, lifetime);
 
     const pE0 = refreshOnce(); // epoch E0 flight starts
     expect(rawRefresh).toHaveBeenCalledTimes(1);
-    beginLogout();
-    endLogout(); // logout FULLY resolves while E0 is pending: epoch E1, flag down
-    expect(isLogoutInProgress()).toBe(false);
+    lifetime.advance(); // logout FULLY resolves while E0 is pending: epoch E1, flag down
+    expect(lifetime.isLogoutInProgress()).toBe(false);
     const pE1 = refreshOnce(); // E1 waiter must start its OWN flight
     expect(rawRefresh).toHaveBeenCalledTimes(2); // never joins the orphaned E0 flight
 
@@ -101,15 +100,13 @@ describe('createTokenRefresher epoch ownership (E0 logout E1)', () => {
     // Both settled -> next caller starts fresh (new flight not swallowed).
     await expect(refreshOnce()).resolves.toBe('token-E2');
     expect(rawRefresh).toHaveBeenCalledTimes(3);
-    while (isLogoutInProgress()) endLogout();
   });
 
   it('same-epoch waiters still share one flight (no regression)', async () => {
-    const { isLogoutInProgress, endLogout } = await import('../lib/logout');
-    while (isLogoutInProgress()) endLogout();
+    const lifetime = createSessionLifetime();
     const { createTokenRefresher } = await import('./token-refresher');
     const rawRefresh = vi.fn(async () => 'token-same-epoch');
-    const refreshOnce = createTokenRefresher(rawRefresh);
+    const refreshOnce = createTokenRefresher(rawRefresh, lifetime);
     const [a, b] = await Promise.all([refreshOnce(), refreshOnce()]);
     expect(rawRefresh).toHaveBeenCalledTimes(1);
     expect(a).toBe('token-same-epoch');
