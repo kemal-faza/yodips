@@ -343,10 +343,12 @@ describe('api client', () => {
     it('sibling 401 during logout rejects immediately: no refresh POST, token untouched, no reauth/refresh emission', async () => {
       localStorage.setItem('sso_token', 'keep-me');
       await vi.resetModules();
-      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+      const [{ apiClient }, { sessionLifetime }] = await Promise.all([
         import('./client'),
-        import('../lib/logout'),
+        import('../lib/session-lifetime'),
       ]);
+      const beginLogout = () => { sessionLifetime.begin(); sessionLifetime.advance(); };
+      const endLogout = () => sessionLifetime.end();
       const onRejected = responseHandlers.onRejected!;
       beginLogout(); // logout in progress
       try {
@@ -371,10 +373,12 @@ describe('api client', () => {
         () => new Promise((res) => { resolveRefresh = res; }),
       );
       await vi.resetModules();
-      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+      const [{ apiClient }, { sessionLifetime }] = await Promise.all([
         import('./client'),
-        import('../lib/logout'),
+        import('../lib/session-lifetime'),
       ]);
+      const beginLogout = () => { sessionLifetime.begin(); sessionLifetime.advance(); };
+      const endLogout = () => sessionLifetime.end();
       const onRejected = responseHandlers.onRejected!;
       const error = {
         response: { status: 401, data: { code: 'INVALID_TOKEN' } },
@@ -396,10 +400,12 @@ describe('api client', () => {
         response: { status: 401, data: { code: 'SESSION_DEAD' } },
       }); // the refresh POST itself 401s
       await vi.resetModules();
-      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+      const [{ apiClient }, { sessionLifetime }] = await Promise.all([
         import('./client'),
-        import('../lib/logout'),
+        import('../lib/session-lifetime'),
       ]);
+      const beginLogout = () => { sessionLifetime.begin(); sessionLifetime.advance(); };
+      const endLogout = () => sessionLifetime.end();
       const onRejected = responseHandlers.onRejected!;
       const error = {
         response: { status: 401, data: { code: 'SESSION_DEAD' } },
@@ -430,10 +436,12 @@ describe('api client', () => {
       // the callee's contract: flag up ⇒ bare reject.)
       localStorage.setItem('sso_token', 'keep-me');
       await vi.resetModules();
-      const [{ apiClient }, { beginLogout, endLogout }] = await Promise.all([
+      const [{ apiClient }, { sessionLifetime }] = await Promise.all([
         import('./client'),
-        import('../lib/logout'),
+        import('../lib/session-lifetime'),
       ]);
+      const beginLogout = () => { sessionLifetime.begin(); sessionLifetime.advance(); };
+      const endLogout = () => sessionLifetime.end();
       const onRejected = responseHandlers.onRejected!;
       const error = {
         response: { status: 401, data: { code: 'SESSION_DEAD' } },
@@ -566,19 +574,20 @@ describe('epoch ownership after logout fully resolves (RED: flag-down resurrecti
     await vi.resetModules();
     const [, logoutMod] = await Promise.all([
       import('./client'),
-      import('../lib/logout'),
+      import('../lib/session-lifetime'),
     ]);
     const onRejected = responseHandlers.onRejected!;
-    const epochBefore = logoutMod.getReauthEpoch();
+    const epochBefore = logoutMod.sessionLifetime.epoch();
     const error = {
       response: { status: 401, data: { code: 'INVALID_TOKEN' } },
       config: { method: 'get', url: '/api/auth/me', __reauthEpoch: epochBefore },
     };
     const pending = onRejected(error); // starts the refresh flight at epochBefore
-    logoutMod.beginLogout();
-    logoutMod.endLogout(); // logout FULLY resolves: flag down, epoch bumped
-    expect(logoutMod.isLogoutInProgress()).toBe(false);
-    expect(logoutMod.getReauthEpoch()).toBe(epochBefore + 1);
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
+    logoutMod.sessionLifetime.end(); // logout FULLY resolves: flag down, epoch bumped
+    expect(logoutMod.sessionLifetime.isLogoutInProgress()).toBe(false);
+    expect(logoutMod.sessionLifetime.epoch()).toBe(epochBefore + 1);
     resolveRefresh({ data: { accessToken: 'minted-after-logout' } });
     await expect(pending).rejects.toBeTruthy();
     expect(localStorage.getItem('sso_token')).toBe('old-jwt');
@@ -596,17 +605,18 @@ describe('epoch ownership after logout fully resolves (RED: flag-down resurrecti
     await vi.resetModules();
     const [, logoutMod] = await Promise.all([
       import('./client'),
-      import('../lib/logout'),
+      import('../lib/session-lifetime'),
     ]);
     const onRejected = responseHandlers.onRejected!;
-    const epochBefore = logoutMod.getReauthEpoch();
+    const epochBefore = logoutMod.sessionLifetime.epoch();
     const error = {
       response: { status: 401, data: { code: 'INVALID_TOKEN' } },
       config: { method: 'get', url: '/api/auth/me', __reauthEpoch: epochBefore },
     };
     const pending = onRejected(error);
-    logoutMod.beginLogout();
-    logoutMod.endLogout(); // fully resolves while refresh is in flight
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
+    logoutMod.sessionLifetime.end(); // fully resolves while refresh is in flight
     rejectRefresh({ response: { status: 401, data: { code: 'SESSION_DEAD' } } });
     await expect(pending).rejects.toBeTruthy();
     expect(localStorage.getItem('sso_token')).toBe('old-jwt');
@@ -618,13 +628,14 @@ describe('epoch ownership after logout fully resolves (RED: flag-down resurrecti
     await vi.resetModules();
     const [, logoutMod] = await Promise.all([
       import('./client'),
-      import('../lib/logout'),
+      import('../lib/session-lifetime'),
     ]);
     const onRejected = responseHandlers.onRejected!;
-    const epochBefore = logoutMod.getReauthEpoch();
-    logoutMod.beginLogout();
-    logoutMod.endLogout(); // logout fully BEFORE the sibling 401 handler runs
-    expect(logoutMod.isLogoutInProgress()).toBe(false);
+    const epochBefore = logoutMod.sessionLifetime.epoch();
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
+    logoutMod.sessionLifetime.end(); // logout fully BEFORE the sibling 401 handler runs
+    expect(logoutMod.sessionLifetime.isLogoutInProgress()).toBe(false);
     const error = {
       response: { status: 401, data: { code: 'SESSION_DEAD' } },
       config: { method: 'get', url: '/api/kulon/assignments', __reauthEpoch: epochBefore },
@@ -648,19 +659,20 @@ describe('shared refresh epoch ownership via production request stamp (E0 logout
     await vi.resetModules();
     const [, logoutMod] = await Promise.all([
       import('./client'),
-      import('../lib/logout'),
+      import('../lib/session-lifetime'),
     ]);
     const stamp = mockInstance.requestHandler!;
     expect(typeof stamp).toBe('function');
     const cfg: any = { method: 'get', url: '/api/auth/me', headers: {} };
     stamp(cfg);
-    expect(cfg.__reauthEpoch).toBe(logoutMod.getReauthEpoch());
-    logoutMod.beginLogout();
+    expect(cfg.__reauthEpoch).toBe(logoutMod.sessionLifetime.epoch());
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
     const cfg2: any = { method: 'get', url: '/api/auth/me', headers: {} };
     stamp(cfg2);
-    expect(cfg2.__reauthEpoch).toBe(logoutMod.getReauthEpoch());
+    expect(cfg2.__reauthEpoch).toBe(logoutMod.sessionLifetime.epoch());
     expect(cfg2.__reauthEpoch).not.toBe(cfg.__reauthEpoch);
-    logoutMod.endLogout();
+    logoutMod.sessionLifetime.end();
   });
 
   it('deferred E0 401 -> logout fully -> E1 401: E1 never joins/accepts the E0 flight (production stamp)', async () => {
@@ -677,7 +689,7 @@ describe('shared refresh epoch ownership via production request stamp (E0 logout
     await vi.resetModules();
     const [, logoutMod] = await Promise.all([
       import('./client'),
-      import('../lib/logout'),
+      import('../lib/session-lifetime'),
     ]);
     const onRejected = responseHandlers.onRejected!;
     const stamp = mockInstance.requestHandler!;
@@ -692,10 +704,11 @@ describe('shared refresh epoch ownership via production request stamp (E0 logout
     const pendingE0 = onRejected(errE0); // starts refresh flight R0 at E0
     expect(mockRequest).toHaveBeenCalledTimes(1);
     // Logout FULLY resolves while R0 is pending.
-    logoutMod.beginLogout();
-    logoutMod.endLogout();
-    expect(logoutMod.isLogoutInProgress()).toBe(false);
-    const epochE1 = logoutMod.getReauthEpoch();
+    logoutMod.sessionLifetime.begin();
+    logoutMod.sessionLifetime.advance();
+    logoutMod.sessionLifetime.end();
+    expect(logoutMod.sessionLifetime.isLogoutInProgress()).toBe(false);
+    const epochE1 = logoutMod.sessionLifetime.epoch();
     expect(epochE1).not.toBe(epochE0);
     // E1 request sent AFTER logout (fresh production stamp).
     const cfgE1: any = { method: 'get', url: '/api/auth/me', headers: {} };

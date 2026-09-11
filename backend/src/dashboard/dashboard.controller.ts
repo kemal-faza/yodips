@@ -1,7 +1,8 @@
-import { Controller, Get, HttpException, HttpStatus, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { isSessionRef } from '../session/session-store';
+import { sessionDead } from '../session/live-session';
 
 interface AuthedRequest {
   user?: { sub?: string; sessionGeneration?: unknown; [k: string]: unknown };
@@ -15,10 +16,7 @@ export class DashboardController {
   @Get()
   async getDashboard(@Req() req: AuthedRequest) {
     if (!isSessionRef(req.user)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     return this.dashboardService.getDashboard({ sub: req.user.sub, sessionGeneration: req.user.sessionGeneration });
   }

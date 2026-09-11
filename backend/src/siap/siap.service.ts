@@ -1,8 +1,9 @@
-import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
 import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import { sessionDead } from '../session/live-session';
 import {
   cacheKeyForCurrent,
   cacheKeyForSession,
@@ -198,10 +199,7 @@ export class SiapService {
 
   private requireRef(ref: SessionRef): void {
     if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
   }
 

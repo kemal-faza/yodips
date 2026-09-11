@@ -1,0 +1,51 @@
+{
+  "$comment": "Canonical backend contract. SINGLE SOURCE for error codes, API paths and the SSO ticket algorithm. Every client mirrors a subset; backend/src/common/contract-drift.spec.ts asserts no client invents a code and the backend constant table matches this file. Change here first, then the clients. See docs/adr/0002-contract-as-shared-data.md.",
+  "errorCodes": [
+    "KULON_NO_COOKIE",
+    "KULON_STALE",
+    "SIAP_STALE",
+    "INVALID_TOKEN",
+    "SESSION_DEAD",
+    "INVALID_CODE",
+    "EXPIRED_CODE",
+    "IDENTITY_UNRESOLVED",
+    "WEB_PUSH_CAP_REACHED"
+  ],
+  "apiPaths": {
+    "auth.me": "/api/auth/me",
+    "auth.refresh": "/api/auth/refresh",
+    "auth.login": "/api/auth/login",
+    "auth.capture": "/api/auth/sso/capture",
+    "auth.microsoftLogin": "/api/auth/microsoft/login",
+    "auth.handoff": "/api/auth/session/handoff",
+    "auth.logout": "/api/auth/logout",
+    "auth.pairRequest": "/api/auth/pair/request",
+    "auth.pairConsume": "/api/auth/pair/consume",
+    "auth.pairStatus": "/api/auth/pair/status",
+    "kulon.courses": "/api/kulon/courses",
+    "kulon.assignments": "/api/kulon/assignments",
+    "kulon.allAssignments": "/api/kulon/assignments/all",
+    "siap.profile": "/api/siap/profile",
+    "siap.irs": "/api/siap/irs",
+    "siap.khs": "/api/siap/khs",
+    "siap.lecturers": "/api/siap/lecturers",
+    "siap.jadwal": "/api/siap/jadwal",
+    "siap.absen": "/api/siap/absen",
+    "siap.notifications": "/api/siap/notifications",
+    "siap.kehadiran": "/api/siap/kehadiran",
+    "siap.nilaiDetail": "/api/siap/nilai/:id/detail",
+    "notifications.device": "/api/notifications/device",
+    "notifications.webDevice": "/api/notifications/web-device",
+    "notifications.vapidPublicKey": "/api/notifications/vapid-public-key",
+    "dashboard": "/api/dashboard"
+  },
+  "ssoTicket": {
+    "algorithm": "base64(decimal unix seconds)",
+    "mirrors": [
+      "backend SSOTicketService",
+      "web/src/api/contract.ts buildSsoTicket",
+      "extension/src/core/urls.ts generateTicket",
+      "mobile LoginFlow.generateSsoTicket"
+    ]
+  }
+}

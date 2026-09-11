@@ -1,7 +1,8 @@
-import { Body, Controller, Get, HttpException, HttpStatus, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { isSessionRef } from '../session/session-store';
+import { sessionDead } from '../session/live-session';
 import { ConsumeDto } from './dto/pair.dto';
 import { PairingService } from './pairing.service';
 
@@ -19,10 +20,7 @@ export class PairingController {
   @Post('pair/request')
   async request(@Req() req: { user?: AuthedRequest['user'] }) {
     if (!isSessionRef(req.user)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     return this.pairing.requestPairing({ sub: req.user.sub, sessionGeneration: req.user.sessionGeneration });
   }

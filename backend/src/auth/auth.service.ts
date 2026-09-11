@@ -12,6 +12,7 @@ import {
   isSessionGeneration,
 } from '../session/session-contract';
 import { SessionStore } from '../session/session-store';
+import { readLiveSession, sessionDead } from '../session/live-session';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
 import { HandoffDto } from './dto/handoff.dto';
@@ -366,18 +367,12 @@ export class AuthService {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const session = await this.sessionStore.getIfGeneration(sub, generation);
-    if (!session || !isSessionGeneration(session.sessionGeneration)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    if (session.sessionGeneration !== generation) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+    const session = await readLiveSession(this.sessionStore, {
+      sub,
+      sessionGeneration: generation,
+    });
+    if (!session) {
+      throw sessionDead();
     }
     const accessToken = await this.jwt.signAsync({
       sub,
@@ -427,10 +422,7 @@ export class AuthService {
     const cleared = await this.sessionStore.clearIfGeneration(sub, generation);
     if (!cleared) {
       // Mismatch or CAS lost to a newer live session — never cleared.
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     this.logger.log(`SSO session cleared for ${sub}`);
     return { ok: true };
@@ -438,19 +430,12 @@ export class AuthService {
 
   async me(user: { sub?: unknown; sessionGeneration?: unknown; via?: unknown }) {
     const sub = typeof user?.sub === 'string' && user.sub.length > 0 ? user.sub : null;
-    const generation = user?.sessionGeneration;
-    // Generation-qualified snapshot: guard validated A, but a B-replacement
-    // before this read must NOT surface B's cookies/validity to an A-token.
-    // A miss (no record, dead, legacy, mismatch) is unauthenticated — never a
-    // silent switch to the replacement.
-    const session =
-      sub && isSessionGeneration(generation)
-        ? await this.sessionStore.getIfGeneration(sub, generation)
-        : null;
-    const present =
-      !!session &&
-      isSessionGeneration(session.sessionGeneration) &&
-      session.sessionGeneration === generation;
+    // The one guarded read: guard validated A, but a B-replacement before this
+    // read must NOT surface B's cookies/validity to an A-token. A miss (no
+    // record, dead, legacy, mismatch) is unauthenticated — never a silent
+    // switch to the replacement.
+    const session = await readLiveSession(this.sessionStore, user);
+    const present = !!session;
     // B1: live-probe validity (Kulon/SIAP) instead of only checking cookie
     // presence. Results are cached ~60s so the boot gate & polls get accurate
     // answers without hammering upstream on every /me.

@@ -132,4 +132,38 @@ describe("App integration", () => {
     expect(localStorage.getItem("sso_token")).toBe("jwt-new");
     delete (globalThis as any).chrome;
   });
+
+  it("reloads the mounted view after a silent reauth recovers a fresh session", async () => {
+    // Regression: after a mid-use auth-401 the extension silently recovers a
+    // new JWT, but the already-mounted dashboard kept its 401 error state until
+    // a manual page refresh. The recovered session must remount/reload the view.
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, _msg: any, cb: (resp: any) => void) =>
+          cb({ status: "ok", accessToken: "jwt-new" }),
+      },
+    };
+    localStorage.setItem("sso_token", "old-token");
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const router = buildRouter(createMemoryHistory());
+    mount(App, { global: { plugins: [router, pinia] } });
+    await router.push("/");
+    await flushPromises();
+    const store = useAuthStore();
+    expect(router.currentRoute.value.name).toBe("dashboard");
+    expect(store.token).toBe("old-token");
+    expect(api.getDashboard).toHaveBeenCalledTimes(1);
+
+    (api.getDashboard as any).mockClear();
+    emitReauthRequested();
+    await flushPromises();
+    await flushPromises();
+
+    expect(store.token).toBe("jwt-new");
+    // The mounted dashboard must run its load again with the fresh token.
+    expect(api.getDashboard).toHaveBeenCalled();
+    delete (globalThis as any).chrome;
+  });
 });

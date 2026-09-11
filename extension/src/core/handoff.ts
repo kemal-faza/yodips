@@ -9,7 +9,13 @@ export type HandoffDecision =
 
 export function interpretHandoff(raw: HandoffRaw): HandoffDecision {
   if (!raw.ok) {
+    // Classify by the backend's explicit code — NOT by route/status. A stale
+    // SIAP must re-auth SIAP (keeping a valid SSO+Kulon), not dead-end as a
+    // generic error; a missing Kulon cookie is the same recovery as the
+    // hasKulon:false case below (open Kulon login).
     if (raw.code === BACKEND_CODES.KULON_STALE) return { action: 'stale', service: 'kulon' };
+    if (raw.code === BACKEND_CODES.SIAP_STALE) return { action: 'stale', service: 'siap' };
+    if (raw.code === BACKEND_CODES.KULON_NO_COOKIE) return { action: 'needsService', service: 'kulon' };
     return { action: 'error', message: raw.message ?? `Handoff gagal (${raw.status})`, code: raw.code };
   }
   if (raw.hasSso && raw.hasKulon && raw.hasSiap) {

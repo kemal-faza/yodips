@@ -23,7 +23,7 @@ function bad() { alias('https://example.test'); api.fetch('https://example.test'
       program,
       program.getTypeChecker(),
       {
-        allowedFile: path.resolve('src/upstream/upstream-fetch.ts'),
+        allowedFile: path.resolve('src/upstream/timed-transport.ts'),
         excludedSegments: [`${path.sep}playwright${path.sep}`],
       },
     );
@@ -57,7 +57,7 @@ function bad() { alias('https://example.test'); api.fetch('https://example.test'
       program,
       program.getTypeChecker(),
       {
-        allowedFile: path.resolve('src/upstream/upstream-fetch.ts'),
+        allowedFile: path.resolve('src/upstream/timed-transport.ts'),
         excludedSegments: [`${path.sep}playwright${path.sep}`],
       },
     );

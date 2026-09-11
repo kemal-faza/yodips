@@ -34,19 +34,22 @@ export interface HandoffRaw {
 }
 
 /**
- * Backend error codes (single mirror; source of truth:
- * backend/src/auth/auth.service.ts). The web client mirrors the same set in
- * `web/src/api/contract.ts`, mobile in `core/network/Contract.kt`.
+ * Backend error codes classified by the extension's handoff path (single
+ * mirror; canonical source: `contract/backend-contract.json`, guarded by
+ * `backend/src/common/contract-drift.spec.ts`). Only codes with a real branch
+ * live here: the extension never presents a JWT (it POSTs already-captured
+ * session cookies), so `INVALID_TOKEN`/`SESSION_DEAD` are unreachable and
+ * unclassifiable codes fall through to a generic handoff error. The web client
+ * mirrors its own subset in `web/src/api/contract.ts`, mobile in
+ * `core/network/Contract.kt`.
  */
 export const BACKEND_CODES = {
-  /** Upstream Kulon session expired server-side. */
+  /** Upstream Kulon session expired server-side → re-auth Kulon. */
   KULON_STALE: 'KULON_STALE',
-  /** Upstream SIAP session expired server-side. */
+  /** Handoff carried no Kulon cookie at all → send the user to Kulon login. */
+  KULON_NO_COOKIE: 'KULON_NO_COOKIE',
+  /** Upstream SIAP session expired server-side → re-auth SIAP. */
   SIAP_STALE: 'SIAP_STALE',
-  /** JWT failed validation (bad/expired token). */
-  INVALID_TOKEN: 'INVALID_TOKEN',
-  /** Server-side session record is gone — re-login required. */
-  SESSION_DEAD: 'SESSION_DEAD',
 } as const;
 
 export type BackendCode = keyof typeof BACKEND_CODES;
