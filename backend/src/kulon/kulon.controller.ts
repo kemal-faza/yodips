@@ -11,6 +11,7 @@ import {
 import { KulonService } from './kulon.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionRef, isSessionRef } from '../session/session-store';
+import { sessionDead } from '../session/live-session';
 
 interface AuthedRequest {
   user?: { sub?: string; sessionGeneration?: unknown; [k: string]: unknown };
@@ -18,10 +19,7 @@ interface AuthedRequest {
 
 function requireSessionRef(req: AuthedRequest): SessionRef {
   if (!isSessionRef(req.user)) {
-    throw new HttpException(
-      { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-      HttpStatus.UNAUTHORIZED,
-    );
+    throw sessionDead();
   }
   return { sub: req.user.sub, sessionGeneration: req.user.sessionGeneration };
 }
