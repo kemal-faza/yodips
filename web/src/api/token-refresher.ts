@@ -1,4 +1,4 @@
-import { getReauthEpoch } from '../lib/logout';
+import { sessionLifetime, type SessionLifetime } from '../lib/session-lifetime';
 
 export type RawRefresh = () => Promise<string>;
 
@@ -18,10 +18,13 @@ export type RawRefresh = () => Promise<string>;
  * Cleanup is identity-guarded so an orphaned E0 finally cannot clear the
  * newer E1 flight. Same-epoch waiters still share one flight (no regression).
  */
-export function createTokenRefresher(rawRefresh: RawRefresh): () => Promise<string> {
+export function createTokenRefresher(
+  rawRefresh: RawRefresh,
+  lifetime: SessionLifetime = sessionLifetime,
+): () => Promise<string> {
   let inflight: { epoch: number; promise: Promise<string> } | null = null;
   return function refreshOnce(): Promise<string> {
-    const cur = getReauthEpoch();
+    const cur = lifetime.epoch();
     if (inflight && inflight.epoch === cur) {
       return inflight.promise;
     }

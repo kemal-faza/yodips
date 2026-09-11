@@ -20,7 +20,7 @@ import type {
   User,
 } from '../types';
 import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
-import { getReauthEpoch, isLogoutInProgress } from '../lib/logout';
+import { sessionLifetime } from '../lib/session-lifetime';
 import { createTokenRefresher } from './token-refresher';
 import { API, isServiceStale, parseErrorEnvelope } from './contract';
 import { getCached, invalidate } from './cache';
@@ -80,7 +80,7 @@ apiClient.interceptors.request.use((config) => {
   // epoch differs from the current one belongs to a request sent before a
   // logout that has since fully resolved (flag already down) — it must never
   // refresh, write, emit, retry, or resurrect auth.
-  (config as unknown as { __reauthEpoch?: number }).__reauthEpoch = getReauthEpoch();
+  (config as unknown as { __reauthEpoch?: number }).__reauthEpoch = sessionLifetime.epoch();
   return config;
 });
 
@@ -104,13 +104,13 @@ apiClient.interceptors.response.use(
       // emit, retry, or resurrect auth. Missing stamp (unit-constructed errors,
       // refresh internals) falls back to the entry-epoch window below.
       const originEpoch = (error?.config as { __reauthEpoch?: number } | undefined)?.__reauthEpoch;
-      const epochAtEntry = getReauthEpoch();
+      const epochAtEntry = sessionLifetime.epoch();
       const originStale =
         originEpoch !== undefined && originEpoch !== epochAtEntry;
       // Logout in progress: a sibling 401 must never silent-refresh, reauth,
       // or retry — the logout owns the session teardown. Reject untouched.
       // Origin-stale covers the flag-down hole: handler runs after endLogout().
-      if (isLogoutInProgress() || originStale) {
+      if (sessionLifetime.isLogoutInProgress() || originStale) {
         return Promise.reject(error);
       }
       const alreadyRetried = (error.config as { _retried?: boolean } | undefined)?._retried;
@@ -134,11 +134,11 @@ apiClient.interceptors.response.use(
             // never when the refresh flight crossed a logout boundary that has
             // since fully resolved (epoch moved under us): the logout owns
             // the wipe and must not raise the reauth overlay.
-            const epochAfterFailure = getReauthEpoch();
+            const epochAfterFailure = sessionLifetime.epoch();
             const crossedLogout =
               epochAfterFailure !== epochAtEntry ||
               (originEpoch !== undefined && originEpoch !== epochAfterFailure);
-            if (!isLogoutInProgress() && !crossedLogout) {
+            if (!sessionLifetime.isLogoutInProgress() && !crossedLogout) {
               localStorage.removeItem(TOKEN_KEY);
               emitReauthRequested();
             }
@@ -149,11 +149,11 @@ apiClient.interceptors.response.use(
         // Logout may have started (and possibly FULLY ended) while the refresh
         // was in flight: discard the minted token — never rewrite sso_token,
         // emit token-refreshed, or retry after logout cleared it.
-        const epochAfterRefresh = getReauthEpoch();
+        const epochAfterRefresh = sessionLifetime.epoch();
         const refreshCrossedLogout =
           epochAfterRefresh !== epochAtEntry ||
           (originEpoch !== undefined && originEpoch !== epochAfterRefresh);
-        if (isLogoutInProgress() || refreshCrossedLogout) {
+        if (sessionLifetime.isLogoutInProgress() || refreshCrossedLogout) {
           return Promise.reject(error);
         }
         localStorage.setItem(TOKEN_KEY, newToken);
@@ -185,8 +185,8 @@ apiClient.interceptors.response.use(
       // fully-resolved logout) must never wipe or raise reauth — the logout
       // already owns the teardown.
       const secondStale =
-        originEpoch !== undefined && originEpoch !== getReauthEpoch();
-      if (isLogoutInProgress() || secondStale) {
+        originEpoch !== undefined && originEpoch !== sessionLifetime.epoch();
+      if (sessionLifetime.isLogoutInProgress() || secondStale) {
         return Promise.reject(error);
       }
       localStorage.removeItem(TOKEN_KEY);
@@ -204,12 +204,6 @@ export async function capture(): Promise<CaptureResult> {
 export async function me(): Promise<User> {
   const { data } = await apiClient.get<User>(API.auth.me);
   return data;
-}
-
-/** POST /api/auth/refresh with the current (possibly expired) JWT. Throws on failure. */
-export async function refreshToken(): Promise<string> {
-  const { data } = await apiClient.post<{ accessToken: string }>('API.auth.refresh');
-  return data.accessToken;
 }
 
 /** Server-side logout: revoke the session so no leaked JWT can be refreshed.

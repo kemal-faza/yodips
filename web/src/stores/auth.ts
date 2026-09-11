@@ -9,7 +9,7 @@ import {
   type ExtPollStatus,
 } from '../composables/useExtension';
 import { onTokenRefreshed } from '../lib/reauth';
-import { beginLogout, endLogout, isLogoutInProgress, getReauthEpoch } from '../lib/logout';
+import { sessionLifetime } from '../lib/session-lifetime';
 import { useKulonStore } from './kulon';
 
 const TOKEN_KEY = 'sso_token';
@@ -28,15 +28,21 @@ let fetchMeAttempt = 0;
 let extensionCheckAttempt = 0;
 let extensionLoginAttempt = 0;
 let logoutFlight: Promise<void> | null = null;
+let tokenSyncStarted = false;
 
-function clearUserScopedState(state: {
+/** Clear the user-scoped state WITHOUT touching the data cache or the session
+ *  generation. The two wipe paths differ in how those move:
+ *  - `clearSessionState()` (incomplete /me) clears the cache but keeps the
+ *    session generation, so a silent re-capture can proceed.
+ *  - `logout()` runs `sessionLifetime.wipeSession()` (advance generation +
+ *    clear cache) before calling this. */
+function resetUserState(state: {
   token: string | null;
   user: User | null;
   fotoUrl: string | null;
   hasSiap: boolean;
   hasKulon: boolean;
 }) {
-  clearCache();
   state.token = null;
   state.user = null;
   state.fotoUrl = null;
@@ -47,11 +53,7 @@ function clearUserScopedState(state: {
 }
 
 function ownsAttempt(attempt: AuthAttempt, currentId: number): boolean {
-  return (
-    attempt.id === currentId &&
-    attempt.epoch === getReauthEpoch() &&
-    !isLogoutInProgress()
-  );
+  return attempt.id === currentId && sessionLifetime.isCurrent(attempt.epoch);
 }
 
 /** Race a promise against a timeout, clearing the losing timer. When `promise`
@@ -106,7 +108,7 @@ export const useAuthStore = defineStore('auth', {
       return useExtension().onResult(handler);
     },
     async login() {
-      const attempt: AuthAttempt = { id: ++legacyLoginAttempt, epoch: getReauthEpoch() };
+      const attempt: AuthAttempt = { id: ++legacyLoginAttempt, epoch: sessionLifetime.epoch() };
       if (!ownsAttempt(attempt, legacyLoginAttempt)) return;
       this.checking = true;
       this.error = null;
@@ -140,7 +142,7 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     async fetchMe(): Promise<'ok' | 'incomplete' | 'invalid' | 'error'> {
-      const attempt: AuthAttempt = { id: ++fetchMeAttempt, epoch: getReauthEpoch() };
+      const attempt: AuthAttempt = { id: ++fetchMeAttempt, epoch: sessionLifetime.epoch() };
       if (!ownsAttempt(attempt, fetchMeAttempt)) return 'error';
       try {
         const user = await me();
@@ -174,7 +176,7 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     async isExtensionInstalled(): Promise<boolean> {
-      const attempt: AuthAttempt = { id: ++extensionCheckAttempt, epoch: getReauthEpoch() };
+      const attempt: AuthAttempt = { id: ++extensionCheckAttempt, epoch: sessionLifetime.epoch() };
       if (!ownsAttempt(attempt, extensionCheckAttempt)) return false;
       let status: Awaited<ReturnType<ReturnType<typeof useExtension>['readStatus']>>;
       try {
@@ -194,7 +196,7 @@ export const useAuthStore = defineStore('auth', {
       return false;
     },
     async loginViaExtension(): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
-      const attempt: AuthAttempt = { id: ++extensionLoginAttempt, epoch: getReauthEpoch() };
+      const attempt: AuthAttempt = { id: ++extensionLoginAttempt, epoch: sessionLifetime.epoch() };
       if (!ownsAttempt(attempt, extensionLoginAttempt)) return 'error';
       this.error = null;
       let resp: Awaited<ReturnType<ReturnType<typeof useExtension>['sendHandoff']>>;
@@ -242,12 +244,12 @@ export const useAuthStore = defineStore('auth', {
       return useExtension().readStatus();
     },
     finishHandoff(token: string, expectedEpoch?: number) {
-      if (isLogoutInProgress()) return; // never rewrite a token during logout
+      if (sessionLifetime.isLogoutInProgress()) return; // never rewrite a token during logout
       // Generation guard: when the caller stamps an origin epoch (reauth
       // handoff, status poll), a mismatch means a logout fully resolved after
       // the handoff was sent — the flag is already down, but the token must
       // still never be written.
-      if (expectedEpoch !== undefined && expectedEpoch !== getReauthEpoch()) return;
+      if (expectedEpoch !== undefined && expectedEpoch !== sessionLifetime.epoch()) return;
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
@@ -255,8 +257,8 @@ export const useAuthStore = defineStore('auth', {
      *  interceptor (via emitTokenRefreshed) and by individual actions that
      *  obtain a token from other paths. */
     setToken(token: string, expectedEpoch?: number) {
-      if (isLogoutInProgress()) return; // never rewrite a token during logout
-      if (expectedEpoch !== undefined && expectedEpoch !== getReauthEpoch()) return;
+      if (sessionLifetime.isLogoutInProgress()) return; // never rewrite a token during logout
+      if (expectedEpoch !== undefined && expectedEpoch !== sessionLifetime.epoch()) return;
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
@@ -264,7 +266,20 @@ export const useAuthStore = defineStore('auth', {
      *  session cookies. Used when the server-side session is incomplete so
      *  the still-valid browser cookies can be silently re-captured. */
     clearSessionState() {
-      clearUserScopedState(this);
+      // Cache-only wipe: invalidate cached data and in-flight fetches, but keep
+      // the session generation so an in-flight reauth poll is not cancelled
+      // (the browser cookies are still valid for a silent re-capture).
+      clearCache();
+      resetUserState(this);
+    },
+    /** Start syncing the store token with silent-refresh rotations. Call once
+     *  from app bootstrap. The refresh path no longer installs an import-time
+     *  subscription, so the store token is only ever written through the
+     *  guarded `setToken`. */
+    initTokenSync() {
+      if (tokenSyncStarted) return;
+      tokenSyncStarted = true;
+      onTokenRefreshed((token) => this.setToken(token));
     },
     /** Poll/onResult wait for an in-flight extension handoff started by
      *  attemptReauth('started'). Resolves once a fresh JWT (recovered) or an
@@ -273,10 +288,10 @@ export const useAuthStore = defineStore('auth', {
       onPhase?: (phase: 'sso' | 'kulon' | 'siap') => void,
     ): Promise<'recovered' | 'failed'> {
       // Capture the reauth epoch at start: if a logout begins while this poll
-      // is running, beginLogout() bumps the epoch and every later tick (and
+      // is running, sessionLifetime.begin() bumps the epoch and every later tick (and
       // the settle path) sees the mismatch and self-cancels — a late extension
       // 'ok'/accessToken result can never resurrect the token after logout.
-      const epochAtStart = getReauthEpoch();
+      const epochAtStart = sessionLifetime.epoch();
       return new Promise<'recovered' | 'failed'>((resolve) => {
         let settled = false;
         let timer: ReturnType<typeof setInterval> | undefined;
@@ -285,7 +300,7 @@ export const useAuthStore = defineStore('auth', {
         // NOT start a second read — it returns early so reads never overlap and
         // late resolutions cannot apply out of order.
         let inFlight = false;
-        const isInvalidated = () => getReauthEpoch() !== epochAtStart;
+        const isInvalidated = () => sessionLifetime.epoch() !== epochAtStart;
         const settle = (r: 'recovered' | 'failed') => {
           if (settled) return;
           settled = true;
@@ -294,7 +309,7 @@ export const useAuthStore = defineStore('auth', {
           // state. A stale poll (logout bumped the epoch, possibly fully
           // resolved, and a NEWER attempt now owns reauthing/phase) resolves
           // without touching the newer owner's state.
-          if (getReauthEpoch() === epochAtStart) {
+          if (sessionLifetime.epoch() === epochAtStart) {
             this.reauthing = false;
             this.reauthPhase = null;
           }
@@ -359,15 +374,15 @@ export const useAuthStore = defineStore('auth', {
     ): Promise<'recovered' | 'failed'> {
       // Never re-auth while a logout is in progress: the logout owns the
       // session teardown and must not race an extension re-capture.
-      if (isLogoutInProgress()) return 'failed';
+      if (sessionLifetime.isLogoutInProgress()) return 'failed';
       if (this.reauthAttempted) return 'failed'; // loop guard: once per event
       // Capture the epoch AFTER the entry guards: if a logout begins while the
-      // handoff below is in flight, beginLogout() bumps it — the check after
+      // handoff below is in flight, sessionLifetime.begin() bumps it — the check after
       // the await then fails EVEN IF logout has already fully ended (the flag
       // drops on endLogout, but the epoch stays bumped).
-      const epochAtStart = getReauthEpoch();
-      const invalidated = () => getReauthEpoch() !== epochAtStart;
-      const ownsReauthState = () => !invalidated() && !isLogoutInProgress();
+      const epochAtStart = sessionLifetime.epoch();
+      const invalidated = () => sessionLifetime.epoch() !== epochAtStart;
+      const ownsReauthState = () => !invalidated() && !sessionLifetime.isLogoutInProgress();
       this.reauthAttempted = true;
       this.reauthing = true;
       this.reauthPhase = null;
@@ -409,7 +424,11 @@ export const useAuthStore = defineStore('auth', {
       // (0) Flag FIRST: every sibling 401 / in-flight refresh success /
       // reauth attempt from this point on is suppressed by the shared
       // logout-in-progress state (client.ts interceptor + this store).
-      beginLogout();
+      sessionLifetime.begin();
+      // Full wipe: advance the session generation NOW (so a reauth poll / stale
+      // outcome in flight is invalidated for the whole logout) and clear the
+      // data cache. The JWT itself survives until after the server revoke below.
+      sessionLifetime.wipeSession();
       const flight = (async () => {
         try {
         // (1) Server-side revocation while this JWT still exists and can
@@ -429,12 +448,10 @@ export const useAuthStore = defineStore('auth', {
             // on logout.
           }
         }
-        // (2) Local wipe + reauth-state reset. The overlay is driven by
-        // `reauthing`; if a reauth was in progress (or the interceptor's
-        // refresh-failure emitted during the race), logout must tear it down:
-        // a logged-out user must never be left under the "Memulihkan sesi…"
-        // overlay, and the loop guard is cleared for a future login.
-        this.clearSessionState();
+        // (2) Local state reset. The data cache and session generation were
+        // already wiped at (0); this clears the JWT/user/scoped state and tears
+        // down any reauth overlay so a logged-out user is never left under it.
+        resetUserState(this);
         this.reauthing = false;
         this.reauthPhase = null;
         this.reauthAttempted = false; // a next expiry event may auto-reauth again
@@ -447,14 +464,14 @@ export const useAuthStore = defineStore('auth', {
         // logout() always releases: race the wipe against EXT_WIPE_TIMEOUT_MS
         // (withTimeout clears the losing timer). A hung extension (callback
         // never fires) resolves via timeout; messaging errors and the timeout
-        // itself are swallowed — the wipe stays best-effort. endLogout() runs
+        // itself are swallowed — the wipe stays best-effort. sessionLifetime.end() runs
         // only AFTER the wipe settles or times out, in the finally, so the
         // flag can never be released before cleanup settles nor held open by
         // a hung wipe.
         try {
           await withTimeout(useExtension().logout(), EXT_WIPE_TIMEOUT_MS, 'logout extension wipe timed out').catch(() => {});
         } finally {
-          endLogout();
+          sessionLifetime.end();
         }
       }
       })();
@@ -470,20 +487,4 @@ export const useAuthStore = defineStore('auth', {
       return flight;
     },
   },
-});
-
-// Module-level subscription to silent refresh events. Keeps the store token
-// in sync when the axios interceptor rotates the JWT via emitTokenRefreshed.
-// The unsubscribe guard handles HMR: if the module is re-evaluated, the old
-// subscription is torn down first so the callback never fires with stale refs.
-let _unsubTokenSync: (() => void) | undefined;
-if (_unsubTokenSync) {
-  _unsubTokenSync();
-}
-_unsubTokenSync = onTokenRefreshed((token) => {
-  // Discard rotations that resolve during logout — never rewrite the store
-  // token after logout cleared it.
-  if (isLogoutInProgress()) return;
-  const store = useAuthStore();
-  store.token = token;
 });

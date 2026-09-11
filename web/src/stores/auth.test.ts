@@ -8,7 +8,16 @@ function flushPromises(): Promise<void> {
 }
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from './auth';
-import { beginLogout, endLogout, isLogoutInProgress, getReauthEpoch } from '../lib/logout';
+import { sessionLifetime } from '../lib/session-lifetime';
+
+// Local shim: map the retired logout.ts API onto session-lifetime. The old
+// beginLogout() raised the gate AND bumped the epoch; begin() alone does not
+// move the generation, so the shim advances it explicitly to keep the logout
+// sequence faithful.
+const beginLogout = () => { sessionLifetime.begin(); sessionLifetime.advance(); };
+const endLogout = () => sessionLifetime.end();
+const getReauthEpoch = () => sessionLifetime.epoch();
+const isLogoutInProgress = () => sessionLifetime.isLogoutInProgress();
 import * as api from '../api/client';
 import { EXTENSION_ID } from '../config/extension';
 import * as cache from '../api/cache';
@@ -163,11 +172,14 @@ describe('auth store', () => {
   });
 
   it('logout clears the shared cache', async () => {
-    const spy = vi.spyOn(cache, 'clearCache');
+    // The production singleton captures clearCache at module init, so a spy
+    // placed inside the test cannot intercept the wipe. Assert the observable
+    // effect instead: logout advances the shared cache generation via
+    // clearCache() (its first action).
+    const genBefore = cache.getCacheGeneration();
     const store = useAuthStore();
     await store.logout();
-    expect(spy).toHaveBeenCalled();
-    spy.mockRestore();
+    expect(cache.getCacheGeneration()).toBeGreaterThan(genBefore);
   });
 
   it('logout does not throw when the extension is not installed', async () => {
@@ -938,6 +950,33 @@ describe('reauth (auto-recover expired session)', () => {
     const store = useAuthStore();
     store.setToken('new-jwt');
     expect(store.token).toBe('new-jwt');
+  });
+
+  it('initTokenSync routes silent-refresh rotations through the guarded setToken', async () => {
+    const { useAuthStore } = await import('./auth');
+    const { emitTokenRefreshed } = await import('../lib/reauth');
+    const store = useAuthStore();
+    store.initTokenSync();
+    store.initTokenSync(); // idempotent — a second call installs no extra subscription
+    emitTokenRefreshed('rotated-jwt');
+    expect(store.token).toBe('rotated-jwt');
+    expect(localStorage.getItem('sso_token')).toBe('rotated-jwt');
+  });
+
+  it('initTokenSync drops a rotation that lands during logout', async () => {
+    const { useAuthStore } = await import('./auth');
+    const { emitTokenRefreshed } = await import('../lib/reauth');
+    const store = useAuthStore();
+    store.initTokenSync();
+    store.token = 'baseline';
+    beginLogout();
+    try {
+      emitTokenRefreshed('must-not-land');
+      expect(store.token).toBe('baseline');
+      expect(localStorage.getItem('sso_token')).not.toBe('must-not-land');
+    } finally {
+      endLogout();
+    }
   });
 
   it('attemptReauth returns failed during logout (never mints)', async () => {
