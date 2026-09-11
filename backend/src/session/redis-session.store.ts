@@ -3,6 +3,7 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypt
 import Redis from 'ioredis';
 import { CapturedSession } from './session-contract';
 import { SessionStore } from './session-store';
+import { evaluateRecord } from './session-record-policy';
 
 const KEY_PREFIX = 'sso:session:';
 const ALGO = 'aes-256-gcm';
@@ -46,7 +47,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     // secret is weak. 32-byte salt + 256-bit output; same salt per key is fine
     // here because the SESSION_ENC_KEY is a deployment secret, not per-user.
     this.key = scryptSync(encKey, 'yodips-session', 32);
-    this.absoluteMs = absoluteMs && absoluteMs > 0 ? absoluteMs : undefined;
+    this.absoluteMs = absoluteMs;
   }
 
   async set(identity: string, session: CapturedSession): Promise<void> {
@@ -61,13 +62,14 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     if (!envelope) return null;
     const session = this.decrypt(envelope);
     if (!session) return null;
-    // Absolute lifetime: independent of the sliding TTL. Even though the Redis
-    // record is still alive (sliding EXPIRE on access), a session captured
-    // longer than absoluteMs ago is dead — refresh cannot extend it forever.
-    if (
-      this.absoluteMs !== undefined &&
-      Date.now() - session.capturedAt >= this.absoluteMs
-    ) {
+    // Redis enforces the sliding TTL natively (EXPIRE), so the record we hand
+    // the policy core carries no local `expiresAt`; only the absolute cap and
+    // the generation compare can still apply.
+    const decision = evaluateRecord({ session }, Date.now(), {
+      ttlMs: this.ttlMs,
+      absoluteMs: this.absoluteMs,
+    });
+    if (decision.kind === 'absolute-dead') {
       // Compare-and-delete the EXACT envelope read: never an unconditional DEL,
       // so a replacement stored between GET and cleanup (newer live session)
       // is never destroyed. A lost CAS still returns null for this stale read;
@@ -104,20 +106,28 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
       const deleted = await this.casDeleteIfEqual(key, envelope);
       return deleted === 1;
     }
-    // Absolute lifetime BEFORE the generation compare (parity with InMemory):
-    // a capturedAt-dead record is cleaned via the exact-envelope CAS. A won
+    // Shared policy: absolute-dead BEFORE the generation compare (parity with
+    // InMemory). A dead record is cleaned via the exact-envelope CAS. A won
     // CAS (or no live record) → true; a lost CAS (B-replacement landed) →
     // false so the caller maps to SESSION_DEAD and never clears B.
-    if (
-      this.absoluteMs !== undefined &&
-      Date.now() - session.capturedAt >= this.absoluteMs
-    ) {
-      const deleted = await this.casDeleteIfEqual(key, envelope);
-      return deleted === 1;
+    const decision = evaluateRecord({ session }, Date.now(), {
+      ttlMs: this.ttlMs,
+      absoluteMs: this.absoluteMs,
+      generation,
+    });
+    switch (decision.kind) {
+      case 'generation-mismatch':
+        return false;
+      case 'live':
+      case 'absolute-dead': {
+        const deleted = await this.casDeleteIfEqual(key, envelope);
+        return deleted === 1;
+      }
+      case 'absent':
+      case 'expired':
+        // Unreachable: an envelope exists and Redis owns the sliding TTL.
+        return true;
     }
-    if (session.sessionGeneration !== generation) return false;
-    const deleted = await this.casDeleteIfEqual(key, envelope);
-    return deleted === 1 ? true : false;
   }
 
   /**
@@ -138,14 +148,20 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
       await this.casDeleteIfEqual(key, envelope);
       return null;
     }
-    if (
-      this.absoluteMs !== undefined &&
-      Date.now() - session.capturedAt >= this.absoluteMs
-    ) {
+    const decision = evaluateRecord({ session }, Date.now(), {
+      ttlMs: this.ttlMs,
+      absoluteMs: this.absoluteMs,
+      generation,
+    });
+    if (decision.kind === 'absolute-dead') {
       await this.casDeleteIfEqual(key, envelope);
       return null;
     }
-    if (session.sessionGeneration !== generation) return null;
+    if (decision.kind !== 'live') {
+      // generation-mismatch never slides or deletes; absent/expired are
+      // unreachable here (an envelope exists and Redis owns the sliding TTL).
+      return null;
+    }
     const slid = await this.casExpireIfEqual(key, envelope, this.ttlSeconds());
     if (slid !== 1) return null;
     return session;
