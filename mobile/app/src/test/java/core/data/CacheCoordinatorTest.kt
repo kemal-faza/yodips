@@ -3,6 +3,9 @@ package ac.undip.sso.core.data
 import ac.undip.sso.core.network.ApiResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.builtins.serializer
 import org.junit.Assert.assertEquals
@@ -99,5 +102,33 @@ class CacheCoordinatorTest {
             ApiResult.Success("from-network")
         }
         assertEquals("from-network", (out as ApiResult.Success).data)
+    }
+
+    @Test
+    fun `duplicate stale background refreshes for a key collapse into one network call`() = runTest {
+        // Candidate #6: the shared SessionFlight claims the key for the first
+        // refresh and SKIPS the duplicate, so N stale reads schedule one POST.
+        // ttl < 0 (not 0) so every entry is DETERMINISTICALLY stale: with ttl 0
+        // a put/get in the same millisecond reports Fresh and no refresh runs.
+        val cache = InMemoryDataCache(ttlMs = -1)
+        cache.put("k", ApiResult.Success("stale-but-here"))
+        var networkCalls = 0
+        val coordinator = coordinator(cache, scope = backgroundScope)
+        coordinator.cached("k", String.serializer(), force = false) {
+            networkCalls += 1
+            delay(100)
+            ApiResult.Success("fresh")
+        }
+        coordinator.cached("k", String.serializer(), force = false) {
+            networkCalls += 1
+            delay(100)
+            ApiResult.Success("fresh")
+        }
+        // backgroundScope work is NOT drained by advanceUntilIdle in kotlinx
+        // 1.10 (it stops once no FOREGROUND events remain); runCurrent executes
+        // the one refresh that was scheduled, up to its first suspension. Both
+        // reads are issued before this, so the second is the one that must skip.
+        runCurrent()
+        assertEquals("duplicate background refresh must be skipped", 1, networkCalls)
     }
 }

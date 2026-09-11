@@ -28,8 +28,7 @@ class CacheCoordinator(
     private val scope: CoroutineScope,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val lock = Any()
-    private val refreshing = mutableSetOf<String>()
+    private val refreshFlight = SessionFlight<Unit>()
 
     /**
      * Fresh cache → serve instantly, never hitting the network.
@@ -89,19 +88,14 @@ class CacheCoordinator(
         }.getOrNull()
     }
 
-    private fun <T> refreshBackground(
+    private suspend fun <T> refreshBackground(
         key: String,
         serializer: KSerializer<T>,
         block: suspend () -> ApiResult<T>,
     ) {
-        val alreadyRefreshing = platformSynchronized(lock) {
-            if (refreshing.add(key)) {
-                false
-            } else {
-                true
-            }
-        }
-        if (alreadyRefreshing) return
+        // Same key already refreshing anywhere → skip (the running flight will
+        // warm the cache); the shared [SessionFlight] owns the race policy.
+        val claim = refreshFlight.claimOrNull(key) ?: return
         scope.launch {
             try {
                 val fresh = block()
@@ -110,9 +104,7 @@ class CacheCoordinator(
                     persist(key, serializer, fresh)
                 }
             } finally {
-platformSynchronized(lock) {
-                    refreshing.remove(key)
-                }
+                refreshFlight.release(claim, Unit)
             }
         }
     }

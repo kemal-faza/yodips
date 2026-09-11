@@ -55,6 +55,39 @@ class KtorSsoApiTest {
     }
 
     @Test
+    fun `401 captures the backend envelope code for stale classification`() = runBlocking {
+        val thrown =
+            try {
+                api(
+                    mockClient(
+                        status = HttpStatusCode.Unauthorized,
+                        body = """{"message":"SIAP session belum ada","code":"SIAP_STALE"}""",
+                    ),
+                ).profile()
+                null
+            } catch (e: ApiHttpException) {
+                e
+            }
+        assertEquals(401, thrown?.status)
+        assertEquals("SIAP_STALE", thrown?.code)
+    }
+
+    @Test
+    fun `non-JSON error body still throws with a null code`() = runBlocking {
+        val thrown =
+            try {
+                api(
+                    mockClient(status = HttpStatusCode.BadGateway, body = "<html>bad gateway</html>"),
+                ).profile()
+                null
+            } catch (e: ApiHttpException) {
+                e
+            }
+        assertEquals(502, thrown?.status)
+        assertEquals(null, thrown?.code)
+    }
+
+    @Test
     fun `markKehadiran posts json body and parses response`() = runBlocking {
         val resp = api(
             mockClient(

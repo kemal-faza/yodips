@@ -39,22 +39,21 @@ import kotlinx.coroutines.withContext
  * This mirrors the single-flight refresh pattern already used by
  * [SessionRefresher] (same codebase precedent).
  *
- * The shared gate needs no lock beyond its own [platformSynchronized]
- * sections (real JVM monitor on Android/unit tests; a no-op on wasmJs,
- * which is single-threaded): the claim-or-join happens in one
- * non-suspending atomic section, and the release happens inside the
- * creator's nested `finally` (after the NonCancellable cleanup) via
- * [SingleFlightGate.releaseIfCurrent]. `CompletableDeferred.complete` is
- * thread-safe and idempotent.
+ * The shared gate is the common [SessionFlight] primitive (ADR-0003): one
+ * kotlinx [kotlinx.coroutines.sync.Mutex] race policy, identical on JVM and
+ * wasm. The claim-or-join happens in one suspending critical section, and the
+ * release completes waiters FIRST, then clears the entry only if it is still
+ * the creator's own flight ([SessionFlight.release]) — non-suspending
+ * `CompletableDeferred.complete` is thread-safe and idempotent, and the
+ * conditional clear runs under [NonCancellable] so a cancelled creator still
+ * unblocks every waiter.
  *
  * RELEASE IDENTITY: the creator completes its deferred FIRST (releasing
- * waiters) and then clears the field ONLY if it still holds the creator's
- * own deferred (`inflight === creatorDeferred`). A newer creator that
- * claimed a fresh deferred in between (it saw a completed deferred, which
- * does not count as in-flight) is never erased — otherwise a third caller
- * would miss the newer run and start a duplicate, post-cleanup
- * (unauthenticated) sequence. The complete-then-conditional-clear pair is
- * non-suspending, so no cancellation can interleave inside it.
+ * waiters) and then clears the flight only if it still holds the creator's
+ * own deferred. A newer creator that claimed a fresh flight in between (it
+ * saw a completed deferred, which does not count as in-flight) is never
+ * erased — otherwise a third caller would miss the newer run and start a
+ * duplicate, post-cleanup (unauthenticated) sequence.
  *
  * FAILURE POLICY: ordinary network/HTTP failures (offline, 5xx, 401, timeout,
  * including a no-bearer attempt) in the two server steps are best-effort —
@@ -73,18 +72,22 @@ class SessionLogout(
     private val pushUnregister: suspend () -> Unit,
     private val localCleanup: suspend () -> Unit,
 ) {
-    private val gate = SingleFlightGate()
+    private val gate = SessionFlight<Unit>()
+
+    private companion object {
+        const val LOGOUT_IDENTITY = "session-logout"
+    }
 
     suspend fun logout() {
-        // Claim-or-join the single in-flight run at the SingleFlightGate
-        // boundary (one non-suspending critical section — the server steps
-        // below run OUTSIDE it). A deferred that is already COMPLETED does
-        // not count as in-flight (the creator finished and its
-        // non-suspending release may not have cleared the field yet): the
-        // next caller becomes a fresh creator and runs a new sequence.
-        val (deferred, isCreator) = gate.claimOrJoin()
-        if (!isCreator) {
-            deferred.await() // collapse: wait for the running logout, do not re-run
+        // Claim-or-join the single in-flight run at the SessionFlight
+        // boundary (one suspending critical section — the server steps below
+        // run OUTSIDE it). A deferred that is already COMPLETED does not count
+        // as in-flight (the creator finished and its non-suspending release may
+        // not have cleared the field yet): the next caller becomes a fresh
+        // creator and runs a new sequence.
+        val claim = gate.claim(LOGOUT_IDENTITY)
+        if (!claim.isOwner) {
+            gate.join(claim) // collapse: wait for the running logout, do not re-run
             return
         }
         try {
@@ -114,7 +117,7 @@ class SessionLogout(
             try {
                 withContext(NonCancellable) { localCleanup() }
             } finally {
-                gate.releaseIfCurrent(deferred) // complete waiters, clear field iff ours
+                gate.release(claim, Unit) // complete waiters, clear flight iff ours
             }
         }
     }

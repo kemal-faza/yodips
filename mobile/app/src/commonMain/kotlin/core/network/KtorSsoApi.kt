@@ -16,6 +16,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.isSuccess
 import io.ktor.http.contentType
 import io.ktor.client.request.request
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
@@ -40,7 +41,14 @@ class KtorSsoApi(
     private suspend fun handle(resp: HttpResponse): String {
         val text = resp.bodyAsText()
         if (!resp.status.isSuccess()) {
-            throw ApiHttpException(resp.status.value, text.take(200))
+            // Best-effort parse of the backend `{ message, code }` envelope so
+            // callers can classify by contract code (SERVICE_STALE_CODES)
+            // instead of only by the call-site route flag. Non-JSON error
+            // bodies (proxy HTML, gateway) simply yield a null code.
+            val code = runCatching {
+                json.decodeFromString<ErrorEnvelope>(text).code.ifBlank { null }
+            }.getOrNull()
+            throw ApiHttpException(resp.status.value, text.take(200), code)
         }
         return text
     }
@@ -168,3 +176,10 @@ class KtorSsoApi(
         return json.decodeFromString<LogoutResponse>(handle(resp))
     }
 }
+
+/** Backend error envelope subset used only to lift the `code` off a failure. */
+@Serializable
+private data class ErrorEnvelope(
+    val message: String = "",
+    val code: String = "",
+)
