@@ -1,5 +1,5 @@
-import { HttpException, HttpStatus } from '@nestjs/common';
 import { isSessionRef, type SessionRef } from './session-store';
+import { sessionDead } from './live-session';
 
 /**
  * Generation-scoped coordination keys (review findings 1+2).
@@ -38,10 +38,7 @@ function requireSub(sub: string): void {
 /** Fail closed: a malformed ref never yields a key (stale session, re-login). */
 function requireRef(ref: SessionRef): void {
   if (!isSessionRef(ref)) {
-    throw new HttpException(
-      { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-      HttpStatus.UNAUTHORIZED,
-    );
+    throw sessionDead();
   }
 }
 

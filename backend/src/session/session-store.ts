@@ -1,31 +1,11 @@
-import { CapturedSession, isSessionGeneration } from './session-contract';
+import { CapturedSession } from './session-contract';
 
-/**
- * Generation-qualified reference to one login session: the JWT `sub` plus the
- * exact `sessionGeneration` the token was minted against. Every
- * token-facing (JwtAuthGuard-authenticated) read of the session store MUST
- * carry BOTH halves — a `sub`-only read is a TOCTOU: the guard validates
- * generation A, the store is replaced with generation B, and the service
- * then uses B's cookies for A's request. Threading the exact generation
- * through to the adapter that retrieves cookies (via `getIfGeneration`)
- * closes that window: a replaced record is a miss (SESSION_DEAD), never a
- * silent switch to the replacement's cookies.
- */
-export interface SessionRef {
-  sub: string;
-  sessionGeneration: string;
-}
-
-/** True iff `v` is a well-formed SessionRef (non-empty sub + 32-hex generation). */
-export function isSessionRef(v: unknown): v is SessionRef {
-  if (typeof v !== 'object' || v === null) return false;
-  const r = v as { sub?: unknown; sessionGeneration?: unknown };
-  return (
-    typeof r.sub === 'string' &&
-    r.sub.length > 0 &&
-    isSessionGeneration(r.sessionGeneration)
-  );
-}
+// Backward-compatible re-export: `SessionRef`/`isSessionRef` now live in the
+// dependency-neutral contract so controllers/pairing/dashboard stop importing
+// the store port just for a validator. Kept here so existing importers (and
+// out-of-scope modules) keep working; new code imports from session-contract.
+export { isSessionRef } from './session-contract';
+export type { SessionRef } from './session-contract';
 
 /**
  * Session store interface, keyed by user identity (NIM).

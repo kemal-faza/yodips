@@ -2,6 +2,8 @@ import { HttpException, HttpStatus, Injectable, Logger, Optional } from '@nestjs
 import { SiapService } from '../siap/siap.service';
 import { KulonService } from '../kulon/kulon.service';
 import { SessionRef, isSessionRef } from '../session/session-store';
+import { sessionDead } from '../session/live-session';
+import { ERROR_CODES } from '../common/error-codes';
 import type {
   SiapIrs,
   SiapJadwal,
@@ -64,7 +66,7 @@ function isAuthenticatedFailure(e: unknown): boolean {
   return (
     typeof response === 'object' &&
     response !== null &&
-    (response as { code?: unknown }).code === 'SESSION_DEAD'
+    (response as { code?: unknown }).code === ERROR_CODES.SESSION_DEAD
   );
 }
 
@@ -79,10 +81,7 @@ export class DashboardService {
 
   async getDashboard(ref: SessionRef): Promise<DashboardPayload> {
     if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+      throw sessionDead();
     }
     const runs: Array<{ name: DashboardSliceName; p: Promise<unknown> }> = [
       { name: 'profile', p: this.siap?.getProfile(ref) ?? Promise.resolve(null) },

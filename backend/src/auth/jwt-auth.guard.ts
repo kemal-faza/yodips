@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SessionStore } from '../session/session-store';
 import { isSessionGeneration } from '../session/session-contract';
+import { readLiveSession, sessionDead } from '../session/live-session';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -40,18 +41,16 @@ export class JwtAuthGuard implements CanActivate {
     const generation = payload?.sessionGeneration;
     if (!sub || !isSessionGeneration(generation)) throw new UnauthorizedException();
     // Presence read lives OUTSIDE the verify try so SESSION_DEAD is not
-    // swallowed into a bare 401. Generation-qualified snapshot: the exact
-    // token generation must still be live — a B-replacement after mint is a
-    // miss (SESSION_DEAD), closing the guard→service TOCTOU at its source
+    // swallowed into a bare 401. The one guarded read: the exact token
+    // generation must still be live — a B-replacement after mint is a miss
+    // (SESSION_DEAD), closing the guard→service TOCTOU at its source
     // (services re-validate with the same generation before touching cookies).
-    const record = await this.sessionStore.getIfGeneration(sub, generation);
-    if (!record || !isSessionGeneration(record.sessionGeneration)) {
-      throw new UnauthorizedException({ code: 'SESSION_DEAD', message: 'Sesi berakhir. Silakan login ulang' });
-    }
-    if (record.sessionGeneration !== generation) {
-      // An old-generation token (minted before the user's last re-login) must
-      // not pass against the newer live session.
-      throw new UnauthorizedException({ code: 'SESSION_DEAD', message: 'Sesi berakhir. Silakan login ulang' });
+    const record = await readLiveSession(this.sessionStore, {
+      sub,
+      sessionGeneration: generation,
+    });
+    if (!record) {
+      throw sessionDead();
     }
     req.user = { sub, sessionGeneration: generation, ...payload };
     return true;

@@ -1,12 +1,17 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { SessionRef, SessionStore, isSessionRef } from '../session/session-store';
+import { SessionRef, SessionStore } from '../session/session-store';
 import { isSessionGeneration } from '../session/session-contract';
+import { readLiveSession, sessionDead } from '../session/live-session';
 import { generatePairingCode, hashPairingCode, normalizePairingCode } from './pairing-code';
 import { PairingStore } from './pairing-store';
 
 const DEFAULT_PAIRING_TTL_MS = 300_000; // 5 menit
+
+/** Device-specific copy for a dead/replaced session on the pairing consume path. */
+const PAIRING_DEAD_MESSAGE =
+  'Sesi di perangkat lama sudah berakhir. Login ulang di sana, lalu minta kode baru';
 
 @Injectable()
 export class PairingService {
@@ -24,18 +29,9 @@ export class PairingService {
   ): Promise<{ code: string; qrUrl: string; expiresAt: number }> {
     // Generation-qualified: the issuing JWT's exact generation is re-validated
     // against the LIVE record (TOCTOU-safe) and bound into the pairing record.
-    if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    const session = await this.sessionStore.getIfGeneration(ref.sub, ref.sessionGeneration);
-    if (!session || !isSessionGeneration(session.sessionGeneration)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+    const session = await readLiveSession(this.sessionStore, ref);
+    if (!session) {
+      throw sessionDead();
     }
     const ttlMs = Number(
       this.config.get<number>('PAIRING_TTL_MS') ?? DEFAULT_PAIRING_TTL_MS,
@@ -74,36 +70,21 @@ export class PairingService {
         HttpStatus.BAD_REQUEST,
       );
     }
-    const session = await this.sessionStore.getIfGeneration(
-      outcome.record.sub,
-      // Legacy records (pre-generation) carry no issuance binding → dead.
-      isSessionGeneration(outcome.record.sessionGeneration)
-        ? outcome.record.sessionGeneration
-        : '__legacy__',
-    );
-    if (!session || !isSessionGeneration(session.sessionGeneration)) {
-      this.logger.warn(`Pairing consumed for dead/legacy session ${outcome.record.sub}`);
-      throw new HttpException(
-        {
-          message:
-            'Sesi di perangkat lama sudah berakhir. Login ulang di sana, lalu minta kode baru',
-          code: 'SESSION_DEAD',
-        },
-        HttpStatus.CONFLICT,
-      );
-    }
-    if (session.sessionGeneration !== outcome.record.sessionGeneration) {
-      // Replacement (re-login) between request and consume: the issuing
+    const issuedGeneration = isSessionGeneration(outcome.record.sessionGeneration)
+      ? outcome.record.sessionGeneration
+      : null;
+    const session = issuedGeneration
+      ? await readLiveSession(this.sessionStore, {
+          sub: outcome.record.sub,
+          sessionGeneration: issuedGeneration,
+        })
+      : null;
+    if (!session) {
+      // Dead/absent (including a legacy record with no issuance binding) OR a
+      // replacement (re-login) between request and consume: the issuing
       // generation is no longer live. Never re-bind to the replacement.
-      this.logger.warn(`Pairing consumed for replaced generation ${outcome.record.sub}`);
-      throw new HttpException(
-        {
-          message:
-            'Sesi di perangkat lama sudah berakhir. Login ulang di sana, lalu minta kode baru',
-          code: 'SESSION_DEAD',
-        },
-        HttpStatus.CONFLICT,
-      );
+      this.logger.warn(`Pairing consumed for dead/replaced session ${outcome.record.sub}`);
+      throw sessionDead({ message: PAIRING_DEAD_MESSAGE, status: HttpStatus.CONFLICT });
     }
     // via='pair' → AuthService.me() tidak mensyaratkan ssoCookie (lihat me()).
     const accessToken = await this.jwt.signAsync({

@@ -17,12 +17,12 @@ import {
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
-import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import { SessionStore, SessionRef } from '../session/session-store';
 import {
   cacheKeyForSession,
   currentRefForSession,
 } from '../session/session-scope';
-import { isSessionGeneration } from '../session/session-contract';
+import { readLiveSession, sessionDead } from '../session/live-session';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import {
   createNoopTelemetryRuntime,
@@ -200,24 +200,9 @@ export class KulonUpstreamSession {
    * upstream fetch is attempted (no B leak, no stale-A use).
    */
   async getContextForSession(ref: SessionRef): Promise<{ cookie: string; sesskey: string }> {
-    if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    const session = await this.store.getIfGeneration(ref.sub, ref.sessionGeneration);
-    if (!session?.kulonCookie || !isSessionGeneration(session.sessionGeneration)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    if (session.sessionGeneration !== ref.sessionGeneration) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+    const session = await readLiveSession(this.store, ref);
+    if (!session?.kulonCookie) {
+      throw sessionDead();
     }
     // Generation-scoped sesskey entry: an A flight/entry is never joined or
     // reused by a B generation, even when the cookie material is identical.

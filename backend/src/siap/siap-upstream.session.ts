@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
   getTimedFetchTransportReason,
   isLoginRedirect,
@@ -13,13 +13,13 @@ import {
 } from '../upstream/upstream-fetch';
 import { DataCache } from '../cache/data-cache';
 import { CachePolicy } from '../cache/cache-policy';
-import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
+import { SessionStore, SessionRef } from '../session/session-store';
 import {
   cacheKeyForSession,
   currentRefForSession,
   flightKeyForSession,
 } from '../session/session-scope';
-import { isSessionGeneration } from '../session/session-contract';
+import { readLiveSession, sessionDead } from '../session/live-session';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { SiapApiUpstream } from './siap-api';
 import {
@@ -236,24 +236,9 @@ export class SiapUpstreamSession {
    * and no mint/fetch is attempted with B material.
    */
   async getContextForSession(ref: SessionRef): Promise<SiapSessionContext> {
-    if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    const session = await this.store.getIfGeneration(ref.sub, ref.sessionGeneration);
-    if (!session?.siapCookie || !isSessionGeneration((session as { sessionGeneration?: unknown }).sessionGeneration)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    if ((session as { sessionGeneration: string }).sessionGeneration !== ref.sessionGeneration) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+    const session = await readLiveSession(this.store, ref);
+    if (!session?.siapCookie) {
+      throw sessionDead();
     }
     return this.resolveScoped(ref, session);
   }
@@ -276,30 +261,12 @@ export class SiapUpstreamSession {
     cookie: string;
     nim: string;
   }> {
-    if (!isSessionRef(ref)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
+    const session = await readLiveSession(this.store, ref);
+    if (!session?.siapCookie) {
+      throw sessionDead();
     }
-    const session = await this.store.getIfGeneration(ref.sub, ref.sessionGeneration);
-    const cookie = (session as { siapCookie?: unknown } | null)?.siapCookie;
-    const generation = (session as { sessionGeneration?: unknown } | null)?.sessionGeneration;
-    if (typeof cookie !== 'string' || !cookie || !isSessionGeneration(generation)) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    if (generation !== ref.sessionGeneration) {
-      throw new HttpException(
-        { message: 'Sesi berakhir. Silakan login ulang', code: 'SESSION_DEAD' },
-        HttpStatus.UNAUTHORIZED,
-      );
-    }
-    const nim =
-      ((session as { identity?: unknown } | null)?.identity as string) ?? ref.sub;
-    return { cookie, nim };
+    const nim = session.identity ?? ref.sub;
+    return { cookie: session.siapCookie, nim };
   }
 
   /** Shared identity+token resolve (generation-scoped cache + single-flight).
