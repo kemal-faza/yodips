@@ -185,17 +185,25 @@ function toggleSection(sectionId: number) {
 
 function openItem(item: CourseContentItem) {
   if (item.kind === 'assign' && item.cmid) {
+    // Course-content items never carry a duedate (backend leaves it undefined),
+    // so enrich from the full assignment list by cmid; otherwise the panel would
+    // render the 0 sentinel as 1 Jan 1970. Missing entry → duedate 0 → "Tanpa deadline".
+    const full = store.assignments.find(
+      (a) => a.courseModuleId === item.cmid || a.id === item.cmid,
+    );
+    const due = full?.duedate ?? item.duedate ?? 0;
     selected.value = {
       id: item.cmid,
       name: item.name,
       module: 'assign',
       eventType: 'due',
-      duedate: item.duedate ?? 0,
-      overdue: item.duedate ? item.duedate * 1000 < Date.now() : false,
+      duedate: due,
+      overdue: due > 0 ? due * 1000 < Date.now() : false,
       course: course.value?.fullname ?? '',
       courseId: courseId.value,
-      assignmentId: item.assignmentId,
+      assignmentId: item.assignmentId ?? full?.assignmentId,
       courseModuleId: item.cmid,
+      submissionStatus: full?.submissionStatus,
     };
     panelOpen.value = true;
   } else if (item.url) {
@@ -207,7 +215,11 @@ async function load() {
   loading.value = true;
   clear();
   try {
-    await store.ensureCourses().catch(() => undefined);
+    await Promise.all([
+      store.ensureCourses().catch(() => undefined),
+      // Needed so openItem can resolve each item's real deadline (above).
+      store.ensureAssignments().catch(() => undefined),
+    ]);
     content.value = await store.ensureContent(courseId.value);
   } catch (e) {
     if (isCacheStaleError(e)) return;
