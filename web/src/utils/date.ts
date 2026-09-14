@@ -28,3 +28,16 @@ export function formatRelativeDate(duedateSec: number, nowMs?: number): string {
   const dt = new Date(duedateSec * 1000);
   return `${dt.getDate()} ${ID_MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
 }
+
+/**
+ * Absolute Indonesian datetime label: "12 Sep 2026 14:30" (24-hour, local).
+ * `0`/negative is the backend's "no deadline" sentinel → "Tanpa deadline"
+ * (guards against rendering the unix epoch as "1 Jan 1970").
+ */
+export function formatDateTime(duedateSec: number): string {
+  if (!duedateSec || duedateSec <= 0) return 'Tanpa deadline';
+  const dt = new Date(duedateSec * 1000);
+  const hh = String(dt.getHours()).padStart(2, '0');
+  const mm = String(dt.getMinutes()).padStart(2, '0');
+  return `${dt.getDate()} ${ID_MONTHS[dt.getMonth()]} ${dt.getFullYear()} ${hh}:${mm}`;
+}

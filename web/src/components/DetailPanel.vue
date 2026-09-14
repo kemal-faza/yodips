@@ -6,6 +6,7 @@ import { X } from '@lucide/vue';
 import { getAssignmentDetail } from '../api/client';
 import type { Assignment, AssignmentDetail } from '../types';
 import { assignmentDisplayStatus } from '../utils/assignment';
+import { formatDateTime } from '../utils/date';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -44,11 +45,7 @@ const status = computed(() =>
 
 const deadline = computed(() => {
   if (!props.assignment) return '';
-  return new Date(props.assignment.duedate * 1000).toLocaleDateString('id-ID', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatDateTime(props.assignment.duedate);
 });
 
 const kulonUrl = computed(() => {

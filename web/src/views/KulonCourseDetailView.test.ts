@@ -11,7 +11,7 @@ import { clearCache } from "../api/cache";
 vi.mock("../api/client", () => ({
   getCourses: vi.fn(),
   getAssignments: vi.fn(),
-  getAllAssignments: vi.fn(),
+  getAllAssignments: vi.fn().mockResolvedValue([]),
   getCourseContent: vi.fn(),
   getAssignmentDetail: vi.fn().mockResolvedValue({
     assignmentId: 1,
@@ -124,6 +124,38 @@ describe("KulonCourseDetailView", () => {
     await flushPromises();
     // DetailPanel teleports to body
     expect(document.body.textContent).toContain("Tugas A");
+  });
+
+  it("resolves the real deadline from the assignment list (not the 1970 sentinel)", async () => {
+    // Course-content items carry NO duedate (backend hardcodes it undefined);
+    // the panel must fill it from the enriched assignments list by cmid.
+    (api.getCourseContent as any).mockResolvedValue(content);
+    (api.getCourses as any).mockResolvedValue([]);
+    const d = new Date(2026, 8, 12, 14, 30); // 12 Sep 2026 14:30 local
+    (api.getAllAssignments as any).mockResolvedValue([
+      {
+        id: 12,
+        name: "Tugas A",
+        module: "assign",
+        eventType: "due",
+        duedate: Math.floor(d.getTime() / 1000),
+        overdue: false,
+        course: "KJI",
+        courseId: 9,
+        assignmentId: 5,
+        courseModuleId: 12,
+      },
+    ]);
+    const router = buildRouter(createMemoryHistory());
+    await router.push("/kulon/matakuliah/9");
+    const w = mount(KulonCourseDetailView, { global: { plugins: [router] } });
+    await flushPromises();
+    await w.find('[data-test="section-toggle-1"]').trigger("click");
+    await flushPromises();
+    await w.find('[data-test="item-assign-12"]').trigger("click");
+    await flushPromises();
+    expect(document.body.textContent).toContain("12 Sep 2026 14:30");
+    expect(document.body.textContent).not.toContain("1970");
   });
 
   it("shows a category badge for every item kind", async () => {

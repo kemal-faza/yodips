@@ -148,6 +148,20 @@ describe('DetailPanel', () => {
     expect(bodyText()).not.toMatch(/Sudah dinilai|Belum dikumpulkan/);
   });
 
+  it('shows the deadline with its time, not just the date', async () => {
+    const d = new Date(2026, 8, 12, 14, 30); // 12 Sep 2026 14:30 local
+    mountPanel({ assignment: { ...assignment, duedate: Math.floor(d.getTime() / 1000) }, open: true });
+    await flushPromises();
+    expect(bodyText()).toContain('12 Sep 2026 14:30');
+  });
+
+  it('renders "Tanpa deadline" (not 1 Jan 1970) for the 0/absent sentinel', async () => {
+    mountPanel({ assignment: { ...assignment, duedate: 0 }, open: true });
+    await flushPromises();
+    expect(bodyText()).toContain('Tanpa deadline');
+    expect(bodyText()).not.toContain('1970');
+  });
+
   it('shows retry on error', async () => {
     getAssignmentDetailMock.mockRejectedValue(new Error('network'));
     mountPanel({ assignment, open: true });
