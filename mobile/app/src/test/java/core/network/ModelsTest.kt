@@ -83,7 +83,7 @@ class ModelsTest {
         val s =
             """{"nama":"ANONIM","nim":"24060121130001","prodi":"Teknik","fakultas":"F","status":"aktif","extraField":123}"""
         val p = lenientJson.decodeFromString<SiapProfile>(s)
-        assertTrue(p.nama.startsWith("MUHAMAD"))
+        assertTrue(p.nama.startsWith("ANONIM"))
         assertEquals("F", p.fakultas) // known field parsed
         assertEquals("", p.angkatan) // absent optional field defaults
     }

@@ -25,12 +25,12 @@ describe('encryptNim', () => {
     expect(out).toMatch(/^[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/);
   });
 
-  // Known-answer vector captured from the live SIAP flow (2026-08-27):
-  // NIM 24060121130000 encrypted with key/iv "Und1pUnd1p123456" (AES/CBC/PKCS5)
-  // → the exact string below produced a successful mahasiswa_sso response.
-  it('matches the known-answer vector from the live SIAP flow', () => {
+  // Known-answer vector for the SYNTHETIC nim below, derived deterministically
+  // with the protocol's fixed key/iv "Und1pUnd1p123456" (AES/CBC/PKCS5). It
+  // pins the algorithm but carries no real identity.
+  it('matches the known-answer vector for the synthetic nim', () => {
     const nim = '24060121130000';
-    const liveVector = 'EHMx0EibAVJN4FuMOcpjRA==:VW5kMXBVbmQxcDEyMzQ1Ng====';
+    const liveVector = 'EHMx0EibAVJN4FuMOcpjRA==:VW5kMXBVbmQxcDEyMzQ1Ng==';
     expect(encryptNim(nim)).toBe(liveVector);
   });
 });
