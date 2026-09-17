@@ -1,15 +1,33 @@
-# F4 fixture hygiene (2026-09-04): exact historical suppressions for the FIVE
-# synthetic-JWT findings (generic-api-key) introduced inside the bebcd7e..HEAD
-# delta. Gitleaks attributes each finding to its INTRODUCING commit — removal
-# commits cannot clear them (verified), and history rewrite is forbidden, so
-# these five exact fingerprints are the only CI-safe suppression. The tree-side
-# fixture is swapped to AAA.BBB.CCC in this same commit. No broad regex or path
-# suppression is added — the file names exactly <commit>:<path>:<rule>:<line> per
-# known finding — and .gitleaks.toml stays byte-identical (no allowlist change).
-# One fingerprint per line, sorted; never add a 6th entry unless a NEW finding
-# is triaged.
-4d493131dc7db7945528c6e28772c2d0a32a8093:web/src/views/LoginView.test.ts:generic-api-key:134
-903feba1b44197efc0ac794700d5307cfd3c0496:web/src/router/index.test.ts:generic-api-key:102
-96c3fac50f6b7a2ae97434c8a3f4626655f8e966:web/src/views/LoginView.test.ts:generic-api-key:369
-f0d151b8bf0c4c10b80570ccc6826c8baae6ee4d:web/src/lib/handoff-token.test.ts:generic-api-key:11
-f0d151b8bf0c4c10b80570ccc6826c8baae6ee4d:web/src/router/index.test.ts:generic-api-key:143
+# Fixture hygiene: exact historical suppressions for synthetic generic-api-key
+# findings in test fixtures — fake JWTs ("eyJ..."), placeholder cache keys
+# ("abcdef0123...", "ABCDEF0123..."), the env-validation test secret
+# ("0123456789abcdef..."), and a README example ("abc123def456..."). None is a
+# real credential.
+#
+# 2026-09-17: history rewrite (PII purge via git filter-repo) changed every
+# commit SHA, invalidating the previous five F4 fingerprints (they referenced
+# commits that no longer exist). This list is regenerated from the rewritten
+# history and covers a full-history `gitleaks git` scan.
+#
+# No broad regex or path suppression is added — each line is exactly
+# <commit>:<path>:<rule>:<line>. .gitleaks.toml stays unchanged.
+# One fingerprint per line, sorted.
+176a72db59ca20cf363b8b7078e3c316d7acabed:web/src/router/index.test.ts:generic-api-key:102
+2ee1e1c5e9b21b943923a650c1f0884641588909:backend/src/config/env.validation.spec.ts:generic-api-key:96
+37aebd136e0d61aeaf784a984c3639bf95008f8b:web/src/views/LoginView.test.ts:generic-api-key:369
+4d53cde24efe281c230d357f06d26446da2dadd2:web/src/views/LoginView.test.ts:generic-api-key:134
+834c4b18a20a8325aeeb9d8b32ba6fe6a5af9221:backend/README.md:generic-api-key:5
+836fb8379f971950d0a8c1953d8f19359343f4de:web/src/lib/handoff-token.test.ts:generic-api-key:11
+836fb8379f971950d0a8c1953d8f19359343f4de:web/src/router/index.test.ts:generic-api-key:143
+8547c96c27a7e14736658768de650777e42ecefa:backend/src/cache/cache-policy.spec.ts:generic-api-key:105
+95c8898f3ce15ad7a0e0d7a64d3849439f80946f:backend/src/config/env.validation.spec.ts:generic-api-key:107
+95c8898f3ce15ad7a0e0d7a64d3849439f80946f:backend/src/config/env.validation.spec.ts:generic-api-key:26
+95c8898f3ce15ad7a0e0d7a64d3849439f80946f:backend/src/config/env.validation.spec.ts:generic-api-key:44
+95c8898f3ce15ad7a0e0d7a64d3849439f80946f:backend/src/config/env.validation.spec.ts:generic-api-key:68
+95c8898f3ce15ad7a0e0d7a64d3849439f80946f:backend/src/config/env.validation.spec.ts:generic-api-key:8
+95c8898f3ce15ad7a0e0d7a64d3849439f80946f:backend/src/config/env.validation.spec.ts:generic-api-key:85
+a4a9f57bda788e1a67a44e14b60374e1e6d868ef:backend/src/cache/cache-policy.spec.ts:generic-api-key:55
+a4a9f57bda788e1a67a44e14b60374e1e6d868ef:backend/src/cache/cache-policy.spec.ts:generic-api-key:84
+a4a9f57bda788e1a67a44e14b60374e1e6d868ef:backend/src/cache/cache-policy.spec.ts:generic-api-key:85
+a4a9f57bda788e1a67a44e14b60374e1e6d868ef:backend/src/cache/cache-policy.spec.ts:generic-api-key:86
+a4a9f57bda788e1a67a44e14b60374e1e6d868ef:backend/src/cache/cache-policy.spec.ts:generic-api-key:87
