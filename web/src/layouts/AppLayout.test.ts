@@ -18,7 +18,6 @@ vi.mock('../api/client', () => ({
   getSiapJadwal: vi.fn().mockResolvedValue([]),
   getCourses: vi.fn().mockResolvedValue([]),
   getAllAssignments: vi.fn().mockResolvedValue([]),
-  invalidateDashboardDynamicSlices: vi.fn(),
 }));
 
 function mockStores(overrides: Record<string, unknown> = {}) {

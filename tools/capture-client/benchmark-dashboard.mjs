@@ -5,7 +5,7 @@
 // Usage:
 //   node benchmark-dashboard.mjs --app-url http://localhost:5173
 //     [--cdp http://127.0.0.1:9223]
-//     [--scenario all|first-post-login|cold-reload|warm-reload|refresh|route-reuse]
+//     [--scenario all|first-post-login|cold-reload|warm-reload|route-reuse]
 //     [--output report.json]
 import { writeFileSync } from 'node:fs';
 import { chromium } from 'playwright-core';
@@ -119,7 +119,7 @@ export async function disconnectFromCDP(browser) {
 }
 
 function usage() {
-  return 'Usage: node benchmark-dashboard.mjs --app-url <spaUrl> [--cdp <url>] [--scenario all|first-post-login|cold-reload|warm-reload|refresh|route-reuse] [--dashboard-path /] [--timeout 30000] [--output report.json]';
+  return 'Usage: node benchmark-dashboard.mjs --app-url <spaUrl> [--cdp <url>] [--scenario all|first-post-login|cold-reload|warm-reload|route-reuse] [--dashboard-path /] [--timeout 30000] [--output report.json]';
 }
 
 function safeJson(value) {
@@ -246,34 +246,6 @@ async function measureDashboardLoad(context, dashboardUrl, scenario, timeoutMs, 
   }
 }
 
-async function measureRefresh(page, timeoutMs) {
-  const collector = attachSliceCollector(page);
-  const removeRoute = await installRequestMarker(page, 'dashboard-refresh');
-  const marker = collector.markStart();
-  const startedAt = Date.now();
-  try {
-    await page.locator('[data-test="dashboard-refresh"]').click({ timeout: timeoutMs });
-    const events = await collector.waitFor(marker, DYNAMIC_SLICES, timeoutMs);
-    // Give an unexpected profile/KHS request a short window to appear.
-    await delay(Math.min(500, timeoutMs));
-    const allEvents = collector.events.slice(marker);
-    const slowSliceRequests = allEvents
-      .filter((event) => event.slice === 'profile' || event.slice === 'khs')
-      .map((event) => event.slice);
-    return {
-      scenario: 'refresh',
-      dynamicSlices: summarizeSliceEvents(events),
-      slowSliceRequests,
-      refreshedOnlyDynamic: slowSliceRequests.length === 0 &&
-        DYNAMIC_SLICES.every((slice) => events.some((event) => event.slice === slice)),
-      timeToCompleteMs: Date.now() - startedAt,
-    };
-  } finally {
-    collector.detach();
-    await removeRoute();
-  }
-}
-
 async function waitForPath(page, suffix, timeoutMs) {
   await page.waitForFunction((expected) => window.location.pathname.endsWith(expected), suffix, { timeout: timeoutMs });
 }
@@ -341,16 +313,6 @@ async function runScenario(context, dashboardUrl, scenario, timeoutMs) {
       return measureDashboardLoad(context, dashboardUrl, scenario, timeoutMs, page, 'reload');
     });
   }
-  if (scenario === 'refresh') {
-    return withPage(context, async (page) => {
-      const baseline = await measureDashboardLoad(context, dashboardUrl, 'cold-reload', timeoutMs, page);
-      return {
-        scenario,
-        baseline,
-        refresh: await measureRefresh(page, timeoutMs),
-      };
-    });
-  }
   if (scenario === 'route-reuse') {
     return withPage(context, async (page) => {
       const baseline = await measureDashboardLoad(context, dashboardUrl, 'cold-reload', timeoutMs, page);
@@ -369,7 +331,7 @@ export async function runBenchmark(options) {
   const dashboardPath = normalizeDashboardPath(options.dashboardPath ?? DASHBOARD_PATH);
   if (!appBaseUrl || !dashboardPath)
     throw new Error('app URL/path must be an absolute HTTP(S) URL without credentials, query, or fragment');
-  const validScenarios = ['all', 'first-post-login', 'cold-reload', 'warm-reload', 'refresh', 'route-reuse'];
+  const validScenarios = ['all', 'first-post-login', 'cold-reload', 'warm-reload', 'route-reuse'];
   if (!validScenarios.includes(options.scenario)) throw new Error('unknown benchmark scenario');
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1_000 || options.timeoutMs > 120_000)
     throw new Error('timeout must be between 1000 and 120000 milliseconds');
@@ -380,7 +342,7 @@ export async function runBenchmark(options) {
     if (!context) throw new Error('no browser context available');
     const dashboardUrl = `${appBaseUrl}${dashboardPath === '/' ? '/' : dashboardPath}`;
     const scenarios = options.scenario === 'all'
-      ? ['first-post-login', 'cold-reload', 'warm-reload', 'refresh', 'route-reuse']
+      ? ['first-post-login', 'cold-reload', 'warm-reload', 'route-reuse']
       : [options.scenario];
     const results = [];
     for (const scenario of scenarios) {
@@ -396,7 +358,6 @@ export async function runBenchmark(options) {
         'Timers start at browser navigation/click; login, OIDC, and MFA are excluded.',
         'Cold/warm describe browser lifecycle only. They do not claim backend caches were cleared.',
         'responseBytes are counted in memory and response bodies are never written to the report.',
-        'A successful refresh must request exactly IRS, jadwal, courses, and assignments; Profile/KHS must be absent.',
         'Route-reuse checks that Dashboard→Profile and Dashboard→Kulon reuse the already-populated per-slice cache.',
       ],
     };

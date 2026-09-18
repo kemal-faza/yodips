@@ -57,15 +57,6 @@ function go(view: 'kulon') {
         :angkatan="d.siap.value.profile?.angkatan ?? ''"
         :loading="d.profileLoading.value"
       />
-      <Button
-        size="sm"
-        variant="outline"
-        data-test="dashboard-refresh"
-        :disabled="d.siapLoading.value || d.kulonLoading.value"
-        @click="d.refresh"
-      >
-        Perbarui data aktif
-      </Button>
     </div>
 
     <div

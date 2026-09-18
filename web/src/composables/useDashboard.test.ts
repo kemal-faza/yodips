@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   jadwal: vi.fn(),
   courses: vi.fn(),
   assignments: vi.fn(),
-  invalidateDynamic: vi.fn(),
 }));
 
 vi.mock('../api/client', async () => {
@@ -23,7 +22,6 @@ vi.mock('../api/client', async () => {
     getSiapJadwal: () => getCached('siap:jadwal', mocks.jadwal, opts),
     getCourses: () => getCached('kulon:courses', mocks.courses, opts),
     getAllAssignments: () => getCached('kulon:assignments', mocks.assignments, opts),
-    invalidateDashboardDynamicSlices: mocks.invalidateDynamic,
   };
 });
 
@@ -47,9 +45,6 @@ describe('useDashboard (slice-aware)', () => {
     mocks.jadwal.mockResolvedValue(jadwal);
     mocks.courses.mockResolvedValue(courses);
     mocks.assignments.mockResolvedValue(assignments);
-    mocks.invalidateDynamic.mockImplementation(() => {
-      for (const key of ['siap:irs', 'siap:jadwal', 'kulon:courses', 'kulon:assignments']) invalidate(key);
-    });
   });
 
   it('starts all six requests in parallel and commits fast slices progressively', async () => {
@@ -96,21 +91,6 @@ describe('useDashboard (slice-aware)', () => {
     expect(d.siap.value.irs).toEqual(irs);
     expect(d.kulon.value.courses).toEqual(courses);
     expect(d.siap.value.jadwal).toEqual([]);
-  });
-
-  it('refreshes only dynamic dashboard slices', async () => {
-    const d = useDashboard();
-    await d.load();
-    vi.clearAllMocks();
-    await d.refresh();
-
-    expect(mocks.invalidateDynamic).toHaveBeenCalledTimes(1);
-    expect(mocks.profile).not.toHaveBeenCalled();
-    expect(mocks.khs).not.toHaveBeenCalled();
-    expect(mocks.irs).toHaveBeenCalledTimes(1);
-    expect(mocks.jadwal).toHaveBeenCalledTimes(1);
-    expect(mocks.courses).toHaveBeenCalledTimes(1);
-    expect(mocks.assignments).toHaveBeenCalledTimes(1);
   });
 
   it('does not replace a valid value when a slice returns null', async () => {

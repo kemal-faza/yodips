@@ -18,7 +18,6 @@ vi.mock('../api/client', () => ({
   getSiapJadwal: vi.fn(() => Promise.resolve(slicePayload.current?.jadwal ?? [])),
   getCourses: vi.fn(() => Promise.resolve(slicePayload.current?.courses ?? [])),
   getAllAssignments: vi.fn(() => Promise.resolve(slicePayload.current?.assignments ?? [])),
-  invalidateDashboardDynamicSlices: vi.fn(),
 }));
 
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
@@ -87,23 +86,6 @@ describe('DashboardView (academic dashboard)', () => {
     await flushPromises();
     expect(w.text()).toContain('SIAP down');
     expect(w.text()).toContain('Pengguna'); // header fallback still renders
-  });
-
-  it('refreshes only dynamic slices from the dashboard control', async () => {
-    const router = buildRouter(createMemoryHistory());
-    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
-    await flushPromises();
-    vi.clearAllMocks();
-
-    await w.get('[data-test="dashboard-refresh"]').trigger('click');
-    await flushPromises();
-    expect(mockApi.invalidateDashboardDynamicSlices).toHaveBeenCalledTimes(1);
-    expect(mockApi.getSiapProfile).not.toHaveBeenCalled();
-    expect(mockApi.getSiapKhs).not.toHaveBeenCalled();
-    expect(mockApi.getSiapIrs).toHaveBeenCalledTimes(1);
-    expect(mockApi.getSiapJadwal).toHaveBeenCalledTimes(1);
-    expect(mockApi.getCourses).toHaveBeenCalledTimes(1);
-    expect(mockApi.getAllAssignments).toHaveBeenCalledTimes(1);
   });
 
   it('renders chart paths without NaN coordinates (numeric-x regression guard)', async () => {

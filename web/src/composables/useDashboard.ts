@@ -6,7 +6,6 @@ import {
   getSiapJadwal,
   getSiapKhs,
   getSiapProfile,
-  invalidateDashboardDynamicSlices,
 } from '../api/client';
 import { isCacheStaleError } from '../api/cache';
 import type { Assignment, Course, SiapIrs, SiapJadwal, SiapKhs, SiapProfile } from '../types';
@@ -19,7 +18,6 @@ type SliceName = 'profile' | 'khs' | 'irs' | 'jadwal' | 'courses' | 'assignments
 const ALL_SLICES: readonly SliceName[] = [
   'profile', 'khs', 'irs', 'jadwal', 'courses', 'assignments',
 ];
-const DYNAMIC_SLICES: readonly SliceName[] = ['irs', 'jadwal', 'courses', 'assignments'];
 
 function messageFor(error: unknown, fallback: string): string {
   const candidate = error as {
@@ -36,8 +34,7 @@ export function useDashboard() {
   const kulon = ref<KulonSource>({ courses: [], assignments: [] });
 
   // Keep the slow profile/KHS requests separate from the dynamic dashboard
-  // requests. This lets the schedule/stats and refresh control proceed while
-  // a slow profile endpoint is still settling.
+  // requests so each section can render as soon as its own data settles.
   const pending = reactive({ profile: 0, khs: 0, siap: 0, kulon: 0 });
   const sliceErrors = reactive<Record<SliceName, string | null>>({
     profile: null, khs: null, irs: null, jadwal: null, courses: null, assignments: null,
@@ -100,13 +97,7 @@ export function useDashboard() {
     return loadSlices(ALL_SLICES);
   }
 
-  /** Dashboard refresh: force only frequently-changing slices. */
-  function refresh(): Promise<void> {
-    invalidateDashboardDynamicSlices();
-    return loadSlices(DYNAMIC_SLICES);
-  }
-
   onMounted(() => { void load(); });
 
-  return { profileLoading, khsLoading, siapLoading, siapError, siap, kulonLoading, kulonError, kulon, load, refresh };
+  return { profileLoading, khsLoading, siapLoading, siapError, siap, kulonLoading, kulonError, kulon, load };
 }

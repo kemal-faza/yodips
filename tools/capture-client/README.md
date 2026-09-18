@@ -56,16 +56,32 @@ The scenarios are:
 - `first-post-login`: a fresh dashboard navigation using the existing authenticated browser context;
 - `cold-reload`: a fresh page navigation, which resets the SPA's in-memory cache;
 - `warm-reload`: a subsequent navigation classified as warm;
-- `refresh`: loads the dashboard, clicks `Perbarui data aktif`, and verifies that only IRS,
-  jadwal, courses, and assignments request again (Profile/KHS must be absent);
 - `route-reuse`: loads the dashboard, visits Profile and Tugas Kulon through SPA navigation,
   and verifies that the already-populated slice cache prevents duplicate API requests.
 
 The report contains per-slice response status/bytes, first/last slice completion,
-time-to-useful-content, dynamic-only refresh assertions, and route-reuse assertions.
+time-to-useful-content and route-reuse assertions. A deliberate full browser reload is
+the only refresh operation measured; there is no in-dashboard refresh control.
 The `cold`/`warm` label describes the browser lifecycle used for measurement; it does not
 claim that backend caches were cleared. Reset backend caches separately before calling a
 run truly backend-cold.
+
+## Continuous watcher
+
+To repeatedly validate the current dashboard build in an authenticated Chrome session,
+run the watcher. It executes the slice benchmark, checks that all six slices complete,
+and checks Dashboard→Profile/Kulon cache reuse on every iteration:
+
+```bash
+node tools/capture-client/watch-dashboard.mjs \
+  --app-url http://localhost:5173 \
+  --cdp http://127.0.0.1:9223 \
+  --interval 30000 \
+  --output dashboard-watch.jsonl
+```
+
+Use `--iterations 1` for a single check. The JSONL output is mode `0600` and contains
+only timings, statuses, byte counts, and pass/fail assertions.
 
 For backend call counts and slice p50/p95, collect the structured backend log for the same run and analyze it with:
 
