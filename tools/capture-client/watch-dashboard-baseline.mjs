@@ -174,7 +174,10 @@ export function startBackendCycleWatcher(options) {
 function responseBytes(response) {
   const contentLength = Number(response.headers()["content-length"]);
   if (Number.isSafeInteger(contentLength) && contentLength >= 0) return Promise.resolve(contentLength);
-  return response.body().then((body) => body.byteLength).catch(() => null);
+  // Do not await response.body() here. CDP can leave streamed/chunked bodies
+  // pending indefinitely, which would keep a one-shot capture alive after the
+  // backend cycle has completed. Unknown sizes are reported as unavailable.
+  return Promise.resolve(null);
 }
 
 function isDashboardUrl(rawUrl, origin, path) {
@@ -264,9 +267,11 @@ export function startBrowserCycleWatcher(context, options) {
     };
     const onResponse = async (response) => {
       if (stopped) return;
-      if (!isDashboardUrl(page.url(), options.appOrigin, options.dashboardPath)) return;
       const slice = classifySlicePath(response.url());
       if (!slice) return;
+      // A login flow can fetch the first Dashboard slices before the SPA
+      // updates the URL from /login to /. These endpoint paths are scoped to
+      // this app and are sufficient to identify the observed Dashboard cycle.
       start(page);
       if (!cycle || cycle.page !== page) return;
       cycle.events.push({
@@ -285,6 +290,9 @@ export function startBrowserCycleWatcher(context, options) {
     page.on("response", onResponse);
     page.on("close", onClose);
     listeners.set(page, { onNavigated, onResponse, onClose });
+    // If the watcher attaches after the SPA already reached Dashboard, begin
+    // collecting the next slice responses (for example, a warm reload).
+    start(page);
   };
   for (const page of context.pages()) attachPage(page);
   context.on("page", onPage);

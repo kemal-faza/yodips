@@ -111,6 +111,33 @@ describe("backend dashboard log watcher helpers", () => {
     assert.equal(report.upstream.count, 0);
   });
 
+  it("uses the latest read when concurrent requests report miss then fresh", () => {
+    const events = [
+      ...reads("fresh"),
+      {
+        event: "cache.read",
+        cache: "kulon.courses",
+        backend: "memory",
+        outcome: "miss",
+        durationMs: 0,
+        ts: "2026-09-18T12:00:00.500Z",
+      },
+      {
+        event: "cache.read",
+        cache: "kulon.courses",
+        backend: "memory",
+        outcome: "fresh",
+        durationMs: 0,
+        ts: "2026-09-18T12:00:00.600Z",
+      },
+    ];
+    const report = summarizeDashboardCycle(events);
+
+    assert.equal(report.classification, "warm-start");
+    assert.equal(report.complete, true);
+    assert.equal(report.missingRefreshes.length, 0);
+  });
+
   it("marks a mixed cache cycle instead of calling it cold or warm", () => {
     const report = summarizeDashboardCycle([
       ...reads("miss").slice(0, 3),

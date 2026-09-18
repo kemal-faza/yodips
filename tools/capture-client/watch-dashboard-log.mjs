@@ -106,8 +106,7 @@ export function summarizeDashboardCycle(events) {
   for (const event of events) {
     if (
       event.event === "cache.read" &&
-      PRIMARY_CACHES.includes(event.cache) &&
-      !reads[event.cache]
+      PRIMARY_CACHES.includes(event.cache)
     ) {
       reads[event.cache] = eventSummary(event);
     }

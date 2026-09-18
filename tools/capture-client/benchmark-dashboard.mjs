@@ -110,6 +110,16 @@ export async function disconnectFromCDP(browser) {
     await browser.disconnect();
     return;
   }
+  // Playwright versions used by the tools may not expose Browser.disconnect().
+  // Browser.close() closes the CDP transport for connectOverCDP without
+  // terminating the externally-owned Chrome instance.
+  if (
+    typeof browser?.close === 'function' &&
+    typeof browser?.isConnected === 'function'
+  ) {
+    await browser.close();
+    return;
+  }
   const connection = browser?._connection;
   if (connection && typeof connection.close === 'function') {
     connection.close();
