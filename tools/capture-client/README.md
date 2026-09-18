@@ -146,3 +146,44 @@ the first dashboard request settles. Repeat with `cold-reload` and
 `warm-reload` after the initial session is ready. Manual login/redirect time is
 reported separately and must not be compared with the five-second dashboard
 target. The report never stores cookies, JWTs, response bodies, or PII.
+
+## One-shot Dashboard baseline watcher
+
+When one report must line up backend cache/upstream telemetry with browser
+useful-content timing, completion timing, request count, and response bytes,
+use this one-shot watcher. Start it before performing exactly one scenario. It
+starts reading the backend log at its current EOF, observes the already-open
+authenticated Chrome passively, and exits after the cycle settles:
+
+```bash
+node tools/capture-client/watch-dashboard-baseline.mjs \
+  --log /tmp/yodips-backend.log \
+  --scenario cold-reload \
+  --app-url http://localhost:5173 \
+  --cdp http://127.0.0.1:9223 \
+  --output /tmp/yodips-cold-baseline.json
+```
+
+Use `--scenario first-post-login`, `cold-reload`, or `warm-reload` and repeat
+the command for each report. The watcher never navigates, clicks, reads
+credentials, stores cookies/JWTs, or persists response bodies. It captures the
+six Dashboard slices, cache/upstream counts, useful-content time, completion
+time, request count, and response-byte totals. `complete` is true only when
+the backend cycle and all browser metrics are present.
+
+If Chrome CDP is unavailable, backend telemetry can still be captured with:
+
+```bash
+node tools/capture-client/watch-dashboard-baseline.mjs \
+  --log /tmp/yodips-backend.log \
+  --scenario cold-reload \
+  --manual-useful \
+  --output /tmp/yodips-cold-backend-only.json
+```
+
+This mode is intentionally marked partial (`complete: false`): the report
+includes backend cache/upstream data and an optional manual useful-content
+marker, but browser response bytes and browser completion timing are unavailable.
+For the full Issue #10 acceptance data, use an authenticated Chrome launched
+with remote debugging and keep the watcher passive while you perform the
+scenario manually.
