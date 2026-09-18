@@ -9,11 +9,15 @@ import ac.undip.sso.core.network.sksKumulatif
 import ac.undip.sso.nowMs
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +30,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -147,12 +152,85 @@ internal fun AcademicStats(
             launch { irs = repo.irs() }
         }
     }
+    AcademicStatsContent(khs = khs, irs = irs, modifier = modifier)
+}
+
+@Composable
+internal fun AcademicStatsContent(
+    khs: ApiResult<SiapKhs>?,
+    irs: ApiResult<SiapIrs>?,
+    modifier: Modifier = Modifier,
+) {
     val k = (khs as? ApiResult.Success)?.data
     val i = (irs as? ApiResult.Success)?.data
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        StatCard("IPK", formatIpk(k?.ipk), Modifier.weight(1f))
-        StatCard("SKS Kumulatif", formatSks(k?.sksKumulatif), Modifier.weight(1f))
-        StatCard("SKS Semester", formatSks(i?.totalSks), Modifier.weight(1f))
+        AcademicStatCard(
+            label = "IPK",
+            value = k?.let { formatIpk(it.ipk) },
+            loading = khs == null,
+            tag = "academic-stat-ipk",
+            modifier = Modifier.weight(1f),
+        )
+        AcademicStatCard(
+            label = "SKS Kumulatif",
+            value = k?.let { formatSks(it.sksKumulatif) },
+            loading = khs == null,
+            tag = "academic-stat-cumulative-sks",
+            modifier = Modifier.weight(1f),
+        )
+        AcademicStatCard(
+            label = "SKS Semester",
+            value = i?.let { formatSks(it.totalSks) },
+            loading = irs == null,
+            tag = "academic-stat-semester-sks",
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun AcademicStatCard(
+    label: String,
+    value: String?,
+    loading: Boolean,
+    tag: String,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            if (loading) {
+                Box(
+                    Modifier
+                        .testTag("$tag-skeleton")
+                        .width(42.dp)
+                        .height(24.dp)
+                        .background(
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f),
+                            RoundedCornerShape(6.dp),
+                        ),
+                )
+            } else {
+                Text(
+                    value ?: "—",
+                    modifier = Modifier.testTag("$tag-value"),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

@@ -18,6 +18,9 @@ serializationJson = "1.9.0"
 dateTime = "0.7.1"
 coroutinesTest = "1.10.2"
 materialIconsExtended = "1.7.3"
+androidComposeUiTest = "1.10.2"
+androidTestJunit = "1.2.1"
+androidTestRunner = "1.6.2"
 retrofitVersion = "2.11.0"
 retrofitConverter = "1.0.0"
 markdownRenderer = "0.38.1"
@@ -44,6 +47,10 @@ navigation-multiplatform = { group = "org.jetbrains.androidx.navigation", name =
 
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4", version.ref = "androidComposeUiTest" }
+androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest", version.ref = "androidComposeUiTest" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidTestJunit" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidTestRunner" }
 
 # Networking (transit F1: retrofit masih dipakai; F2 mengganti dgn ktor & menghapus baris retrofit)
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofitVersion" }

@@ -41,6 +41,7 @@ android {
         targetSdk = 35
         versionCode = 12
         versionName = "0.6.2"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -169,6 +170,11 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.mock)
         }
+        androidInstrumentedTest.dependencies {
+            implementation(libs.androidx.compose.ui.test.junit4)
+            implementation(libs.androidx.test.ext.junit)
+            implementation(libs.androidx.test.runner)
+        }
         wasmJsMain.dependencies {
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.js)
@@ -193,6 +199,7 @@ dependencies {
     // Coil 3 — dipakai ProfileScreen
     implementation(libs.coil.compose)
     implementation(libs.coil.network.ktor3)   // fetcher jaringan Coil3
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
 // Firebase hanya saat config ada — CI / fresh clone tidak membawa
