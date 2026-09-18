@@ -19,6 +19,7 @@ describe('KulonController', () => {
   const REF = { sub: '24060121130000', sessionGeneration: GEN };
   const service = {
     getCourses: jest.fn(),
+    getCourseSummary: jest.fn(),
     getAssignments: jest.fn(),
     getAllAssignments: jest.fn(),
     getAssignmentDetail: jest.fn(),
@@ -46,6 +47,16 @@ describe('KulonController', () => {
     const res = await controller.getCourses(req() as any);
     expect(res[0].fullname).toBe('A');
     expect(service.getCourses).toHaveBeenCalledWith(REF);
+  });
+
+  it('routes dashboard course summary by SessionRef without using public courses', async () => {
+    service.getCourseSummary.mockResolvedValue([
+      { id: 1, fullname: 'A', shortname: 'A', idnumber: '1' },
+    ]);
+    const res = await controller.getCourseSummary(req() as any);
+    expect(res[0].fullname).toBe('A');
+    expect(service.getCourseSummary).toHaveBeenCalledWith(REF);
+    expect(service.getCourses).not.toHaveBeenCalled();
   });
 
   it('routes assignments aggregation by SessionRef', async () => {

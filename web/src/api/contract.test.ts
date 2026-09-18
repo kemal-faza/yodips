@@ -15,6 +15,7 @@ describe('API paths', () => {
     expect(API.auth.me).toBe('/api/auth/me');
     expect(API.auth.refresh).toBe('/api/auth/refresh');
     expect(API.kulon.courses).toBe('/api/kulon/courses');
+    expect(API.kulon.courseSummary).toBe('/api/kulon/courses/summary');
     expect(API.kulon.assignmentDetail(42)).toBe('/api/kulon/assignments/42/detail');
     expect(API.siap.kehadiran('37')).toBe('/api/siap/kehadiran/37');
   });

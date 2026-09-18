@@ -34,6 +34,11 @@ export class KulonController {
     return this.kulonService.getCourses(requireSessionRef(req));
   }
 
+  @Get('courses/summary')
+  async getCourseSummary(@Req() req: AuthedRequest) {
+    return this.kulonService.getCourseSummary(requireSessionRef(req));
+  }
+
   @Get('assignments/all')
   async getAllAssignments(@Req() req: AuthedRequest) {
     return this.kulonService.getAllAssignments(requireSessionRef(req));

@@ -1,7 +1,7 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import {
   getAllAssignments,
-  getCourses,
+  getDashboardCourses,
   getSiapIrs,
   getSiapJadwal,
   getSiapKhs,
@@ -84,7 +84,7 @@ export function useDashboard() {
     if (slices.includes('khs')) requests.push(runSlice('khs', 'khs', getSiapKhs, (value) => { siap.value.khs = value; }, 'Gagal memuat KHS SIAP'));
     if (slices.includes('irs')) requests.push(runSlice('siap', 'irs', getSiapIrs, (value) => { siap.value.irs = value; }, 'Gagal memuat IRS SIAP'));
     if (slices.includes('jadwal')) requests.push(runSlice('siap', 'jadwal', getSiapJadwal, (value) => { siap.value.jadwal = value; }, 'Gagal memuat jadwal SIAP'));
-    if (slices.includes('courses')) requests.push(runSlice('kulon', 'courses', getCourses, (value) => { kulon.value.courses = value; }, 'Gagal memuat mata kuliah Kulon'));
+    if (slices.includes('courses')) requests.push(runSlice('kulon', 'courses', getDashboardCourses, (value) => { kulon.value.courses = value; }, 'Gagal memuat mata kuliah Kulon'));
     if (slices.includes('assignments')) requests.push(runSlice('kulon', 'assignments', getAllAssignments, (value) => { kulon.value.assignments = value; }, 'Gagal memuat tugas Kulon'));
 
     // Each runSlice handles its own failure, so one upstream cannot block the

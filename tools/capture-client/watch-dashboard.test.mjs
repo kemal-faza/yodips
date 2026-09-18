@@ -7,7 +7,7 @@ const events = [
   { slice: "khs", path: "/api/siap/khs", status: 200, responseBytes: 11, elapsedMs: 50 },
   { slice: "irs", path: "/api/siap/irs", status: 200, responseBytes: 12, elapsedMs: 30 },
   { slice: "jadwal", path: "/api/siap/jadwal", status: 200, responseBytes: 13, elapsedMs: 20 },
-  { slice: "courses", path: "/api/kulon/courses", status: 200, responseBytes: 14, elapsedMs: 60 },
+  { slice: "courses", path: "/api/kulon/courses/summary", status: 200, responseBytes: 14, elapsedMs: 60 },
   { slice: "assignments", path: "/api/kulon/assignments/all", status: 200, responseBytes: 15, elapsedMs: 70 },
 ];
 

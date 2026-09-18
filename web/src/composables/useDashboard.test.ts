@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   irs: vi.fn(),
   jadwal: vi.fn(),
   courses: vi.fn(),
+  dashboardCourses: vi.fn(),
   assignments: vi.fn(),
 }));
 
@@ -21,6 +22,7 @@ vi.mock('../api/client', async () => {
     getSiapIrs: () => getCached('siap:irs', mocks.irs, opts),
     getSiapJadwal: () => getCached('siap:jadwal', mocks.jadwal, opts),
     getCourses: () => getCached('kulon:courses', mocks.courses, opts),
+    getDashboardCourses: () => getCached('kulon:courses:summary', mocks.dashboardCourses, opts),
     getAllAssignments: () => getCached('kulon:assignments', mocks.assignments, opts),
   };
 });
@@ -44,14 +46,15 @@ describe('useDashboard (slice-aware)', () => {
     mocks.irs.mockResolvedValue(irs);
     mocks.jadwal.mockResolvedValue(jadwal);
     mocks.courses.mockResolvedValue(courses);
+    mocks.dashboardCourses.mockResolvedValue(courses);
     mocks.assignments.mockResolvedValue(assignments);
   });
 
   it('starts all six requests in parallel and commits fast slices progressively', async () => {
     let resolveProfile!: (value: typeof profile) => void;
-    let resolveCourses!: (value: typeof courses) => void;
+    let resolveDashboardCourses!: (value: typeof courses) => void;
     mocks.profile.mockImplementation(() => new Promise((resolve) => { resolveProfile = resolve; }));
-    mocks.courses.mockImplementation(() => new Promise((resolve) => { resolveCourses = resolve; }));
+    mocks.dashboardCourses.mockImplementation(() => new Promise((resolve) => { resolveDashboardCourses = resolve; }));
 
     const d = useDashboard();
     const loading = d.load();
@@ -59,7 +62,7 @@ describe('useDashboard (slice-aware)', () => {
     expect(mocks.khs).toHaveBeenCalledTimes(1);
     expect(mocks.irs).toHaveBeenCalledTimes(1);
     expect(mocks.jadwal).toHaveBeenCalledTimes(1);
-    expect(mocks.courses).toHaveBeenCalledTimes(1);
+    expect(mocks.dashboardCourses).toHaveBeenCalledTimes(1);
     expect(mocks.assignments).toHaveBeenCalledTimes(1);
     expect(d.siapLoading.value).toBe(true);
     expect(d.profileLoading.value).toBe(true);
@@ -73,7 +76,7 @@ describe('useDashboard (slice-aware)', () => {
     expect(d.profileLoading.value).toBe(false);
     expect(d.kulonLoading.value).toBe(true); // courses is still pending
 
-    resolveCourses(courses);
+    resolveDashboardCourses(courses);
     await loading;
     expect(d.kulon.value.courses).toEqual(courses);
     expect(d.kulonLoading.value).toBe(false);
@@ -120,13 +123,15 @@ describe('useDashboard (slice-aware)', () => {
     expect(d.siapError.value).toBeNull();
   });
 
-  it('reuses dashboard results on Profile and Kulon route cache keys', async () => {
+  it('reuses dashboard results on Profile and keeps public course cache separate', async () => {
     const d = useDashboard();
     await d.load();
     const client = await import('../api/client');
     await client.getSiapProfile();
+    await client.getDashboardCourses();
     await client.getCourses();
     expect(mocks.profile).toHaveBeenCalledTimes(1);
+    expect(mocks.dashboardCourses).toHaveBeenCalledTimes(1);
     expect(mocks.courses).toHaveBeenCalledTimes(1);
     expect(d.siap.value.profile).toEqual(profile);
   });

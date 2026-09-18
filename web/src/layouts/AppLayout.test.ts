@@ -17,6 +17,7 @@ vi.mock('../api/client', () => ({
   getSiapIrs: vi.fn().mockResolvedValue({ semester: '', totalSks: 0, mataKuliah: [] }),
   getSiapJadwal: vi.fn().mockResolvedValue([]),
   getCourses: vi.fn().mockResolvedValue([]),
+  getDashboardCourses: vi.fn().mockResolvedValue([]),
   getAllAssignments: vi.fn().mockResolvedValue([]),
 }));
 

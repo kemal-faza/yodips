@@ -234,6 +234,14 @@ export async function getCourses(): Promise<Course[]> {
   }, CACHE.courses);
 }
 
+/** Dashboard-only course data without per-course progress scraping. */
+export async function getDashboardCourses(): Promise<Course[]> {
+  return getCached('kulon:courses:summary', async () => {
+    const { data } = await apiClient.get<Course[]>(API.kulon.courseSummary);
+    return data;
+  }, CACHE.courses);
+}
+
 export async function getCourseContent(courseId: number): Promise<KulonCourseContent> {
   return getCached(`kulon:content:${courseId}`, async () => {
     const { data } = await apiClient.get<KulonCourseContent>(API.kulon.courseContent(courseId));

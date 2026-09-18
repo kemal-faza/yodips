@@ -23,6 +23,7 @@
     "auth.pairConsume": "/api/auth/pair/consume",
     "auth.pairStatus": "/api/auth/pair/status",
     "kulon.courses": "/api/kulon/courses",
+    "kulon.courseSummary": "/api/kulon/courses/summary",
     "kulon.assignments": "/api/kulon/assignments",
     "kulon.allAssignments": "/api/kulon/assignments/all",
     "siap.profile": "/api/siap/profile",

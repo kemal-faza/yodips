@@ -57,7 +57,9 @@ The scenarios are:
 - `cold-reload`: a fresh page navigation, which resets the SPA's in-memory cache;
 - `warm-reload`: a subsequent navigation classified as warm;
 - `route-reuse`: loads the dashboard, visits Profile and Tugas Kulon through SPA navigation,
-  and verifies that the already-populated slice cache prevents duplicate API requests.
+  and reports which slices reuse their cache without duplicate API requests. The Dashboard
+  uses the progress-free `/api/kulon/courses/summary` slice; Tugas Kulon may request its
+  separate progress-complete `/api/kulon/courses` payload when that richer contract is needed.
 
 The report contains per-slice response status/bytes, first/last slice completion,
 time-to-useful-content and route-reuse assertions. A deliberate full browser reload is

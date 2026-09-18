@@ -90,6 +90,27 @@ describe('api client', () => {
     expect(call.url).toBe('/api/kulon/courses');
   });
 
+  it('getDashboardCourses fetches the progress-free summary route', async () => {
+    mockRequest.mockResolvedValue({ data: [] });
+    const { getDashboardCourses } = await import('./client');
+    await getDashboardCourses();
+    const call = mockRequest.mock.calls[0][0];
+    expect(call.method).toBe('get');
+    expect(call.url).toBe('/api/kulon/courses/summary');
+  });
+
+  it('getDashboardCourses uses the summary cache key and courses policy', async () => {
+    getCachedMock.mockClear();
+    mockRequest.mockResolvedValue({ data: [] });
+    const { getDashboardCourses } = await import('./client');
+    await getDashboardCourses();
+    expect(getCachedMock).toHaveBeenCalledWith(
+      'kulon:courses:summary',
+      expect.any(Function),
+      { freshTtl: 300_000, staleTtl: 1_800_000 },
+    );
+  });
+
   it('getCourses routes through getCached with the expected key + TTLs', async () => {
     getCachedMock.mockClear();
     mockRequest.mockResolvedValue({ data: [] });

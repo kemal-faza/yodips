@@ -53,6 +53,7 @@ export const API = {
   },
   kulon: {
     courses: '/api/kulon/courses',
+    courseSummary: '/api/kulon/courses/summary',
     assignments: '/api/kulon/assignments',
     allAssignments: '/api/kulon/assignments/all',
     assignmentDetail: (id: number) => `/api/kulon/assignments/${id}/detail`,

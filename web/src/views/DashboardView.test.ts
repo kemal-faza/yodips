@@ -17,6 +17,7 @@ vi.mock('../api/client', () => ({
   getSiapIrs: vi.fn(() => Promise.resolve(slicePayload.current?.irs ?? null)),
   getSiapJadwal: vi.fn(() => Promise.resolve(slicePayload.current?.jadwal ?? [])),
   getCourses: vi.fn(() => Promise.resolve(slicePayload.current?.courses ?? [])),
+  getDashboardCourses: vi.fn(() => Promise.resolve(slicePayload.current?.courses ?? [])),
   getAllAssignments: vi.fn(() => Promise.resolve(slicePayload.current?.assignments ?? [])),
 }));
 

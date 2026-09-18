@@ -40,7 +40,7 @@ describe("dashboard benchmark helpers", () => {
   it("classifies the six production dashboard slice endpoints", () => {
     assert.equal(classifySlicePath("/api/siap/profile"), "profile");
     assert.equal(
-      classifySlicePath(new URL("https://example.test/api/kulon/courses")),
+      classifySlicePath(new URL("https://example.test/api/kulon/courses/summary")),
       "courses",
     );
     assert.equal(classifySlicePath("/api/dashboard"), null);

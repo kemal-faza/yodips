@@ -19,7 +19,7 @@ const SLICE_PATHS = Object.freeze({
   khs: '/api/siap/khs',
   irs: '/api/siap/irs',
   jadwal: '/api/siap/jadwal',
-  courses: '/api/kulon/courses',
+  courses: '/api/kulon/courses/summary',
   assignments: '/api/kulon/assignments/all',
 });
 
@@ -358,7 +358,7 @@ export async function runBenchmark(options) {
         'Timers start at browser navigation/click; login, OIDC, and MFA are excluded.',
         'Cold/warm describe browser lifecycle only. They do not claim backend caches were cleared.',
         'responseBytes are counted in memory and response bodies are never written to the report.',
-        'Route-reuse checks that Dashboard→Profile and Dashboard→Kulon reuse the already-populated per-slice cache.',
+        'Route-reuse checks cache reuse where the destination consumes the same slice contract; the public Kulon Courses route may fetch its progress-complete payload separately from the Dashboard summary.',
       ],
     };
   } finally {
