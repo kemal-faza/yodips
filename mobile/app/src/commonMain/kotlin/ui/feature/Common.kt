@@ -6,6 +6,7 @@ import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.sksKumulatif
+import ac.undip.sso.nowMs
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,12 +32,17 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlin.time.ExperimentalTime
 
 import kotlinx.datetime.toLocalDateTime
 /** Weekday order used to sort schedule rows Senin-first (0) to Minggu (6). */
 internal val dayOrder = listOf("senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu")
+
+/** Hari ini menurut zona waktu perangkat (kalender + kelas mendatang). */
+internal fun todayLocalDate(): LocalDate =
+    Instant.fromEpochMilliseconds(nowMs()).toLocalDateTime(TimeZone.currentSystemDefault()).date
 
 /** Rank of a raw SIAP day string for stable weekday ordering; unknown → after minggu. */
 internal fun dayRank(hari: String): Int = dayOrder.indexOf(hari.trim().lowercase()).let { if (it < 0) dayOrder.size else it }

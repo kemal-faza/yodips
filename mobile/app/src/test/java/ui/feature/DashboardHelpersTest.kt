@@ -2,6 +2,7 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.SiapJadwal
+import kotlinx.datetime.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -18,7 +19,8 @@ class DashboardHelpersTest {
         matakuliah: String,
         waktu: String,
         ruang: String? = null,
-    ) = SiapJadwal(hari = hari, matakuliah = matakuliah, waktu = waktu, ruang = ruang)
+        tanggal: String = "",
+    ) = SiapJadwal(hari = hari, matakuliah = matakuliah, waktu = waktu, ruang = ruang, tanggal = tanggal)
 
     @Test
     fun `upcomingLessons dedupes weekly duplicate rows of the same course`() {
@@ -97,6 +99,77 @@ class DashboardHelpersTest {
             )
         val out = upcomingLessons(source, nowDayRank = 0, nowMinutes = 0)
         assertEquals(listOf("Fresh"), out.map { it.matakuliah })
+    }
+
+    // ---------- date-aware "Kelas Mendatang" (per-meeting SIAP feed) ----------
+
+    @Test
+    fun `upcomingLessons uses the nearest dated instance, not the first stale row`() {
+        // Kamis 17 Sep 2026. Minggu lalu (10 Sep) kelas daring; minggu ini (17
+        // Sep) kelas offline. Kartu harus memakai instance TERDEKAT (offline),
+        // bukan baris pertama (daring) yang dulu menang lewat distinctBy(matkul).
+        val today = LocalDate(2026, 9, 17)
+        val source =
+            listOf(
+                row("kamis", "Struktur Data", "09:40:00 s/d 12:10:00", "Daring", "2026-09-10"),
+                row("kamis", "Struktur Data", "09:40:00 s/d 12:10:00", "A301", "2026-09-17"),
+            )
+        val out = upcomingLessons(source, nowDayRank = 3, nowMinutes = 0, today = today)
+        assertEquals(listOf("Struktur Data"), out.map { it.matakuliah })
+        assertEquals("A301", out.single().ruang)
+    }
+
+    @Test
+    fun `upcomingLessons drops dated instances whose date already passed`() {
+        val today = LocalDate(2026, 9, 17)
+        val source =
+            listOf(
+                row("kamis", "Lama", "09:40:00 s/d 12:10:00", "A301", "2026-09-10"),
+                row("kamis", "Baru", "13:00:00 s/d 15:30:00", "B201", "2026-09-17"),
+            )
+        val out = upcomingLessons(source, nowDayRank = 3, nowMinutes = 0, today = today)
+        assertEquals(listOf("Baru"), out.map { it.matakuliah })
+    }
+
+    @Test
+    fun `upcomingLessons returns N meetings chronologically, same course twice`() {
+        val today = LocalDate(2026, 9, 17)
+        val source =
+            listOf(
+                row("kamis", "Kewirausahaan", "09:40:00 s/d 12:10:00", "A301", "2026-09-17"),
+                row("jumat", "Kewirausahaan", "09:40:00 s/d 11:30:00", "A301", "2026-09-18"),
+                row("senin", "Basis Data", "13:00:00 s/d 15:30:00", "B201", "2026-09-21"),
+            )
+        val out = upcomingLessons(source, nowDayRank = 3, nowMinutes = 0, today = today)
+        assertEquals(listOf("Kewirausahaan", "Kewirausahaan", "Basis Data"), out.map { it.matakuliah })
+    }
+
+    @Test
+    fun `upcomingLessons orders dated meetings by date then start time`() {
+        val today = LocalDate(2026, 9, 17)
+        val source =
+            listOf(
+                row("selasa", "C", "08:00:00 s/d 09:00:00", null, "2026-09-22"),
+                row("kamis", "A", "13:00:00 s/d 15:00:00", null, "2026-09-17"),
+                row("kamis", "B", "08:00:00 s/d 10:00:00", null, "2026-09-17"),
+            )
+        val out = upcomingLessons(source, nowDayRank = 3, nowMinutes = 0, today = today)
+        assertEquals(listOf("B", "A", "C"), out.map { it.matakuliah })
+    }
+
+    @Test
+    fun `upcomingLessons hides today's dated meeting once its slot ended`() {
+        val today = LocalDate(2026, 9, 17)
+        val source = listOf(row("kamis", "Pagi", "08:00:00 s/d 10:00:00", null, "2026-09-17"))
+        val out = upcomingLessons(source, nowDayRank = 3, nowMinutes = 11 * 60, today = today)
+        assertTrue(out.isEmpty())
+    }
+
+    @Test
+    fun `meetingDateLabel formats a dated meeting, falls back to weekday`() {
+        assertEquals("Sel, 22 Sep", meetingDateLabel(row("senin", "X", "08:00:00 s/d 09:00:00", null, "2026-09-22")))
+        assertEquals("Senin", meetingDateLabel(row("senin", "X", "08:00:00 s/d 09:00:00")))
+        assertEquals("", meetingDateLabel(row("", "X", "")))
     }
 
     @Test

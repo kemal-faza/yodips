@@ -50,14 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
-import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
-import ac.undip.sso.nowMs
-
-private fun todayLocalDate(): LocalDate =
-    Instant.fromEpochMilliseconds(nowMs()).toLocalDateTime(TimeZone.currentSystemDefault()).date
 
 /** Indonesian month names (calendar header + picker). */
 internal val MONTH_NAMES_ID =

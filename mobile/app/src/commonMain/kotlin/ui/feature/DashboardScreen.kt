@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import ac.undip.sso.nowMs
@@ -125,7 +126,13 @@ private fun DashboardContent(
                 ),
         )
 
-        LoadableData(load = { repo.jadwal() }, emptyMessage = "Belum ada jadwal", refreshTrigger = refreshTick) { jadwal ->
+        LoadableData(
+            // force saat sudah pernah pull-to-refresh, supaya "Kelas Mendatang"
+            // ikut data TERKINI (bukan cache) — bukan cuma profile yang di-force.
+            load = { repo.jadwal(force = refreshTick > 0) },
+            emptyMessage = "Belum ada jadwal",
+            refreshTrigger = refreshTick,
+        ) { jadwal ->
             UpcomingClasses(jadwal)
         }
 
@@ -234,32 +241,92 @@ internal fun minutesUntil(
 }
 
 /**
- * Upcoming-class list: time-aware. Distinct course cards ordered by the minutes
- * until their next occurrence — the ongoing class first, then the nearest upcoming
- * class, ..., wrapping across the week. A class whose slot already ended today is
- * omitted. Capped at `limit`.
+ * Upcoming-class list: time-aware AND date-aware. Returns the next actual
+ * meetings in chronological order (one card per meeting, so a course with two
+ * meetings this week shows twice), capped at [limit].
+ *
+ * `get_jadwal` is a PER-MEETING feed (`SiapJadwal.tanggal` = `tanggal_pertemuan`),
+ * NOT a weekly template: a reschedule or a switch to "daring" lives on its own
+ * dated row. Selecting by the *nearest actual date* per row is what keeps this
+ * section in sync with the calendar — the old `distinctBy(course)` kept the
+ * earliest (often last week's) instance and showed its stale room/time.
+ *
+ * - Dated rows: an instance is "past" when its date is before today, or it is
+ *   today and its slot already ended → dropped.
+ * - Undated rows (legacy/weekly fallback): the weekly heuristic ([minutesUntil])
+ *   is used, so tests/data without `tanggal` keep working.
+ * - Identical rows (same date/day/course/time/room) are collapsed — SIAP can
+ *   emit duplicates for one real meeting.
  */
 internal fun upcomingLessons(
     source: List<SiapJadwal>,
     limit: Int = 4,
     nowDayRank: Int,
     nowMinutes: Int,
+    today: LocalDate = todayLocalDate(),
 ): List<SiapJadwal> =
     source
         .asSequence()
-        .distinctBy { it.matakuliah.trim().lowercase() }
+        .distinctBy { row ->
+            listOf(row.tanggal, row.hari, row.matakuliah, row.waktu, row.ruang.orEmpty())
+                .joinToString("|")
+                .trim()
+                .lowercase()
+        }
         .mapNotNull { j ->
             val (start, end) = parseWaktu(j.waktu) ?: return@mapNotNull null
-            val rank = dayRank(j.hari)
-            val delta = (rank - nowDayRank + 7) % 7
-            // A class whose slot is today and has already finished is "past" → drop it.
-            if (delta == 0 && nowMinutes >= end) return@mapNotNull null
-            j to minutesUntil(nowDayRank, nowMinutes, rank, start, end)
+            val sortKey = minutesUntilNextMeeting(j, today, nowDayRank, nowMinutes, start, end)
+                ?: return@mapNotNull null
+            j to sortKey
         }
         .sortedBy { it.second }
         .map { it.first }
         .take(limit)
         .toList()
+
+/**
+ * Comparable "minutes until this meeting starts" sort key, or null when the
+ * instance is already over.
+ *
+ * A dated meeting uses its real date (so this week's room/time wins); an
+ * undated meeting falls back to the weekly recurrence.
+ */
+private fun minutesUntilNextMeeting(
+    j: SiapJadwal,
+    today: LocalDate,
+    nowDayRank: Int,
+    nowMinutes: Int,
+    startMin: Int,
+    endMin: Int,
+): Long? {
+    val tanggal = j.tanggal.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+    if (tanggal != null) {
+        val dayDelta = tanggal.toEpochDays() - today.toEpochDays()
+        if (dayDelta < 0) return null
+        if (dayDelta == 0L && nowMinutes >= endMin) return null
+        return dayDelta * 1440 + (startMin - nowMinutes)
+    }
+    val rank = dayRank(j.hari)
+    val delta = (rank - nowDayRank + 7) % 7
+    if (delta == 0 && nowMinutes >= endMin) return null
+    return minutesUntil(nowDayRank, nowMinutes, rank, startMin, endMin).toLong()
+}
+
+private val MONTH_SHORT =
+    arrayOf("Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des")
+
+/**
+ * Label pertemuan untuk kartu "Kelas Mendatang": tanggal nyata `"Sen, 22 Sep"`
+ * bila baris punya `tanggal`, fallback nama hari (`"Senin"`) untuk baris lama.
+ * Menampilkan tanggal membuat sesi terverifikasi vs kalender (minggu ini, bukan
+ * minggu lalu).
+ */
+internal fun meetingDateLabel(j: SiapJadwal): String {
+    val tanggal = j.tanggal.takeIf { it.isNotBlank() } ?: return capitalizeDay(j.hari)
+    val date = runCatching { LocalDate.parse(tanggal) }.getOrNull() ?: return capitalizeDay(j.hari)
+    val day = WEEKDAY_SHORT[(date.dayOfWeek.ordinal + 1) % 7]
+    return "$day, ${date.dayOfMonth} ${MONTH_SHORT[date.monthNumber - 1]}"
+}
 
 @Composable
 private fun UpcomingClasses(source: List<SiapJadwal>) {
@@ -289,13 +356,13 @@ private fun UpcomingClasses(source: List<SiapJadwal>) {
                     Column(Modifier.weight(1f)) {
                         Text(j.matakuliah, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1)
                         Text(
-                            "${capitalizeDay(j.hari)} · ${j.waktu}${j.ruang?.let { " · $it" }.orEmpty()}",
+                            "${meetingDateLabel(j)} · ${j.waktu}${j.ruang?.let { " · $it" }.orEmpty()}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     Text(
-                        if (j.hari.isBlank()) "—" else capitalizeDay(j.hari).take(3),
+                        meetingDateLabel(j).ifBlank { "—" }.substringBefore(','),
                         style = MaterialTheme.typography.labelMedium,
                         color = accentForeground(),
                     )
