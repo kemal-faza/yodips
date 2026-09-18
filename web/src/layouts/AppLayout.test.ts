@@ -12,6 +12,13 @@ vi.mock('../stores/theme', () => ({ useThemeStore: vi.fn() }));
 vi.mock('../api/client', () => ({
   getNotifications: vi.fn().mockResolvedValue({ count: 0, items: [] }),
   markNotificationRead: vi.fn(),
+  getSiapProfile: vi.fn().mockResolvedValue({ nama: 'Test', nim: 'M12345' }),
+  getSiapKhs: vi.fn().mockResolvedValue({ ipk: 0, semesters: [] }),
+  getSiapIrs: vi.fn().mockResolvedValue({ semester: '', totalSks: 0, mataKuliah: [] }),
+  getSiapJadwal: vi.fn().mockResolvedValue([]),
+  getCourses: vi.fn().mockResolvedValue([]),
+  getAllAssignments: vi.fn().mockResolvedValue([]),
+  invalidateDashboardDynamicSlices: vi.fn(),
 }));
 
 function mockStores(overrides: Record<string, unknown> = {}) {

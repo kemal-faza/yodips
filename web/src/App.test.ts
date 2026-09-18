@@ -34,9 +34,7 @@ vi.mock("./api/client", () => ({
     .fn()
     .mockResolvedValue({ semester: "", totalSks: 0, mataKuliah: [] }),
   getSiapKhs: vi.fn().mockResolvedValue({ ipk: 0, semesters: [] }),
-  getDashboard: vi
-    .fn()
-    .mockResolvedValue({ profile: null, khs: null, irs: null, jadwal: [], courses: [], assignments: [], errors: {} }),
+  getSiapJadwal: vi.fn().mockResolvedValue([]),
 }));
 
 describe("App integration", () => {
@@ -154,16 +152,16 @@ describe("App integration", () => {
     const store = useAuthStore();
     expect(router.currentRoute.value.name).toBe("dashboard");
     expect(store.token).toBe("old-token");
-    expect(api.getDashboard).toHaveBeenCalledTimes(1);
+    expect(api.getSiapProfile).toHaveBeenCalledTimes(1);
 
-    (api.getDashboard as any).mockClear();
+    (api.getSiapProfile as any).mockClear();
     emitReauthRequested();
     await flushPromises();
     await flushPromises();
 
     expect(store.token).toBe("jwt-new");
     // The mounted dashboard must run its load again with the fresh token.
-    expect(api.getDashboard).toHaveBeenCalled();
+    expect(api.getSiapProfile).toHaveBeenCalled();
     delete (globalThis as any).chrome;
   });
 });

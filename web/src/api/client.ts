@@ -43,6 +43,22 @@ const CACHE = {
   notifications: { freshTtl: 60_000, staleTtl: 5 * 60_000 },
 } as const;
 
+/**
+ * Dashboard refresh is intentionally route-scoped. Profile/KHS are slow,
+ * semester-scale slices and remain reusable; only the frequently changing
+ * dashboard slices are invalidated.
+ */
+export const DASHBOARD_DYNAMIC_CACHE_KEYS = [
+  'siap:irs',
+  'siap:jadwal',
+  'kulon:courses',
+  'kulon:assignments',
+] as const;
+
+export function invalidateDashboardDynamicSlices(): void {
+  for (const key of DASHBOARD_DYNAMIC_CACHE_KEYS) invalidate(key);
+}
+
 export interface DashboardSliceError { status: number; message: string; }
 export interface DashboardPayload {
   profile: SiapProfile | null;
@@ -338,6 +354,8 @@ export async function postKehadiranToken(token: string): Promise<KehadiranResult
   return data;
 }
 
+/** @deprecated The web dashboard uses the slice getters above so each route
+ * can retain its own freshness and refresh policy. Kept for older consumers. */
 export async function getDashboard(): Promise<DashboardPayload> {
   return getCached('dashboard', async () => {
     const { data } = await apiClient.get<DashboardPayload>(API.dashboard);

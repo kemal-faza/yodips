@@ -49,16 +49,27 @@ function go(view: 'kulon') {
 
 <template>
   <div class="space-y-8 overflow-x-clip">
-    <DashboardHeader
-      :name="d.siap.value.profile?.nama ?? 'Pengguna'"
-      :prodi="d.siap.value.profile?.prodi ?? ''"
-      :nim="d.siap.value.profile?.nim ?? ''"
-      :angkatan="d.siap.value.profile?.angkatan ?? ''"
-      :loading="d.siapLoading.value"
-    />
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <DashboardHeader
+        :name="d.siap.value.profile?.nama ?? 'Pengguna'"
+        :prodi="d.siap.value.profile?.prodi ?? ''"
+        :nim="d.siap.value.profile?.nim ?? ''"
+        :angkatan="d.siap.value.profile?.angkatan ?? ''"
+        :loading="d.profileLoading.value"
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        data-test="dashboard-refresh"
+        :disabled="d.siapLoading.value || d.kulonLoading.value"
+        @click="d.refresh"
+      >
+        Perbarui data aktif
+      </Button>
+    </div>
 
     <div
-      v-if="!d.siapLoading.value && !d.siapError.value && d.siap.value.profile == null"
+      v-if="!d.profileLoading.value && !d.siapError.value && d.siap.value.profile == null"
       class="rounded-xl border border-border bg-card p-6 text-center text-muted-foreground"
       data-test="siap-empty"
     >

@@ -92,6 +92,22 @@ describe('cache layer', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('invalidating an in-flight key orphans the old result', async () => {
+    let resolveOld!: (value: string) => void;
+    const oldFetcher = vi.fn(() => new Promise<string>((resolve) => { resolveOld = resolve; }));
+    const old = getCached('k', oldFetcher, { freshTtl: FRESH, staleTtl: STALE });
+    void old.catch(() => {});
+
+    invalidate('k');
+    const freshFetcher = vi.fn().mockResolvedValue('new');
+    const fresh = getCached('k', freshFetcher, { freshTtl: FRESH, staleTtl: STALE });
+    resolveOld('old');
+
+    await expect(old).rejects.toBeInstanceOf(CacheStaleError);
+    await expect(fresh).resolves.toBe('new');
+    expect(freshFetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('clearCache empties all entries', async () => {
     const fetcher = vi.fn().mockResolvedValue('v1');
     await getCached('k', fetcher, { freshTtl: FRESH, staleTtl: STALE });

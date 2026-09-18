@@ -8,10 +8,20 @@ import * as api from '../api/client';
 import { clearCache } from '../api/cache';
 import { useAuthStore } from '../stores/auth';
 
-vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
-vi.mock('../api/client', () => ({ getDashboard: vi.fn() }));
+const slicePayload = vi.hoisted(() => ({ current: null as any }));
 
-const mockApi = api as unknown as { getDashboard: ReturnType<typeof vi.fn> };
+vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
+vi.mock('../api/client', () => ({
+  getSiapProfile: vi.fn(() => Promise.resolve(slicePayload.current?.profile ?? null)),
+  getSiapKhs: vi.fn(() => Promise.resolve(slicePayload.current?.khs ?? null)),
+  getSiapIrs: vi.fn(() => Promise.resolve(slicePayload.current?.irs ?? null)),
+  getSiapJadwal: vi.fn(() => Promise.resolve(slicePayload.current?.jadwal ?? [])),
+  getCourses: vi.fn(() => Promise.resolve(slicePayload.current?.courses ?? [])),
+  getAllAssignments: vi.fn(() => Promise.resolve(slicePayload.current?.assignments ?? [])),
+  invalidateDashboardDynamicSlices: vi.fn(),
+}));
+
+const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 const stubs = {
   ChartIpTrend: true,
@@ -20,8 +30,7 @@ const stubs = {
   MorphingText: true,
 };
 
-// Single complete /api/dashboard payload (all 7 keys) — mirrors the old
-// per-getter aggregate (profile + khs + irs + jadwal + courses + assignments).
+// Shared fixture for the independent dashboard slices.
 const payload = {
   profile: { nama: 'Anindita Rahmawati', nim: '24010122130001', prodi: 'S1 Informatika', fakultas: 'FSM', angkatan: '2022', ipk: 3.71, sksLulus: 108, status: 'AKTIF' },
   khs: { ipk: 3.71, semesters: [{ semester: 'Gasal 22/23', ip: 3.52, totalSks: 20, nilai: [] }] },
@@ -33,7 +42,11 @@ const payload = {
 };
 
 function healthyApi() {
-  mockApi.getDashboard.mockResolvedValue(payload);
+  slicePayload.current = payload;
+}
+
+function setPayload(next: any) {
+  slicePayload.current = next;
 }
 
 function mockStore() {
@@ -67,12 +80,30 @@ describe('DashboardView (academic dashboard)', () => {
   it('shows a SIAP error banner while keeping Kulon visible', async () => {
     // profile: null mirrors the old getSiapProfile rejection — the header
     // falls back to 'Pengguna' while the Kulon slices stay populated.
-    mockApi.getDashboard.mockResolvedValue({ ...payload, profile: null, errors: { profile: { status: 401, message: 'SIAP down' } } });
+    setPayload({ ...payload, profile: null });
+    mockApi.getSiapProfile.mockRejectedValueOnce({ response: { data: { message: 'SIAP down' } } });
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();
     expect(w.text()).toContain('SIAP down');
     expect(w.text()).toContain('Pengguna'); // header fallback still renders
+  });
+
+  it('refreshes only dynamic slices from the dashboard control', async () => {
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
+    await flushPromises();
+    vi.clearAllMocks();
+
+    await w.get('[data-test="dashboard-refresh"]').trigger('click');
+    await flushPromises();
+    expect(mockApi.invalidateDashboardDynamicSlices).toHaveBeenCalledTimes(1);
+    expect(mockApi.getSiapProfile).not.toHaveBeenCalled();
+    expect(mockApi.getSiapKhs).not.toHaveBeenCalled();
+    expect(mockApi.getSiapIrs).toHaveBeenCalledTimes(1);
+    expect(mockApi.getSiapJadwal).toHaveBeenCalledTimes(1);
+    expect(mockApi.getCourses).toHaveBeenCalledTimes(1);
+    expect(mockApi.getAllAssignments).toHaveBeenCalledTimes(1);
   });
 
   it('renders chart paths without NaN coordinates (numeric-x regression guard)', async () => {
@@ -85,7 +116,7 @@ describe('DashboardView (academic dashboard)', () => {
   });
 
   it('prefers KHS-computed IPK over the fragile profile IPK', async () => {
-    mockApi.getDashboard.mockResolvedValue({
+    setPayload({
       ...payload,
       profile: { nama: 'Aplin Nasution', nim: 'x', prodi: 'S1', fakultas: 'FSM', angkatan: '2024', ipk: 1, sksLulus: 108, status: 'AKTIF' },
       khs: { ipk: 3.78, semesters: [] },
@@ -99,7 +130,7 @@ describe('DashboardView (academic dashboard)', () => {
 
   it('shows only "Perlu Dikerjakan" tasks with the new label', async () => {
     const base = { id: 0, name: '', module: 'assign', eventType: '', duedate: 0, overdue: false, course: '', courseId: 0, submissionStatus: 'not_submitted' as const };
-    mockApi.getDashboard.mockResolvedValue({
+    setPayload({
       ...payload,
       courses: [
         { id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' },
@@ -135,7 +166,7 @@ describe('DashboardView (academic dashboard)', () => {
 
   it('renders the empty state when no assignment matches the "need" predicate', async () => {
     const base = { id: 0, name: '', module: 'assign', eventType: '', duedate: 0, overdue: false, course: '', courseId: 0, submissionStatus: 'not_submitted' as const };
-    mockApi.getDashboard.mockResolvedValue({
+    setPayload({
       ...payload,
       courses: [
         { id: 1, fullname: 'Kecerdasan Buatan', shortname: 'PAIK6402', idnumber: '', semester: 'Ganjil 2025/2026', timelineStatus: 'inprogress' },
