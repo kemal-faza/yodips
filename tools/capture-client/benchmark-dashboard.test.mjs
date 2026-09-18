@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  disconnectFromCDP,
   normalizeDashboardPath,
   percentile,
   validateHttpUrl,
@@ -12,7 +13,10 @@ describe("dashboard benchmark helpers", () => {
       validateHttpUrl("http://localhost:5173/"),
       "http://localhost:5173",
     );
-    assert.equal(validateHttpUrl("https://example.test/app?token=secret"), null);
+    assert.equal(
+      validateHttpUrl("https://example.test/app?token=secret"),
+      null,
+    );
     assert.equal(validateHttpUrl("https://user:pass@example.test"), null);
     assert.equal(validateHttpUrl("https://example.test/#token"), null);
     assert.equal(validateHttpUrl("file:///tmp/app"), null);
@@ -29,5 +33,22 @@ describe("dashboard benchmark helpers", () => {
     assert.equal(percentile([20, 10, 30, 40], 0.5), 20);
     assert.equal(percentile([20, 10, 30, 40], 0.95), 40);
     assert.equal(percentile([], 0.5), null);
+  });
+
+  it("detaches from an externally-owned CDP browser without calling close", async () => {
+    let detached = false;
+    let closed = false;
+    await disconnectFromCDP({
+      close: () => {
+        closed = true;
+      },
+      _connection: {
+        close: () => {
+          detached = true;
+        },
+      },
+    });
+    assert.equal(detached, true);
+    assert.equal(closed, false);
   });
 });

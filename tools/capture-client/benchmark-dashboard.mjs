@@ -58,6 +58,22 @@ export function percentile(values, p) {
   return sorted[Math.max(1, Math.ceil(sorted.length * p)) - 1];
 }
 
+/** Detach Playwright from an externally-owned browser without closing Chrome. */
+export async function disconnectFromCDP(browser) {
+  if (typeof browser?.disconnect === "function") {
+    await browser.disconnect();
+    return;
+  }
+  const connection = browser?._connection;
+  if (connection && typeof connection.close === "function") {
+    connection.close();
+    return;
+  }
+  throw new Error(
+    "Playwright runtime cannot detach from the CDP browser safely",
+  );
+}
+
 function usage() {
   return "Usage: node benchmark-dashboard.mjs --app-url <spaUrl> [--cdp <url>] [--scenario all|first-post-login|cold-reload|warm-reload] [--dashboard-path /] [--output report.json]";
 }
@@ -161,7 +177,10 @@ async function measureScenario(
       responsePromise,
       new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
     ]);
-    const dashboardSettled = await waitForDashboardSettled(page, Math.min(timeoutMs, 2_000));
+    const dashboardSettled = await waitForDashboardSettled(
+      page,
+      Math.min(timeoutMs, 2_000),
+    );
     return {
       scenario,
       cacheState,
@@ -283,7 +302,7 @@ export async function runBenchmark(options) {
       ],
     };
   } finally {
-    await browser.disconnect();
+    await disconnectFromCDP(browser);
   }
 }
 

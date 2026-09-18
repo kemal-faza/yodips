@@ -66,3 +66,25 @@ npm --prefix tools run analyze:observability -- /path/to/backend.log > dashboard
 ```
 
 Compare the three scenario reports and telemetry reports manually. Do not commit either report when it contains user data, cookies, JWTs, response bodies, or other PII.
+
+## Manual-login baseline
+
+The login flow may require a real user, MFA, or an extension handoff. Use the
+manual watcher when automation should not touch the browser:
+
+```bash
+touch /tmp/yodips-backend.log
+node tools/capture-client/manual-dashboard-baseline.mjs \
+  --log /tmp/yodips-backend.log \
+  --scenario first-post-login \
+  --output /tmp/yodips-first-post-login.json
+```
+
+Start the watcher before logging in. Complete the login manually, then press
+Enter when useful Dashboard content is visible. The watcher reads only new
+structured telemetry lines, reports the dashboard request, slice timings,
+upstream call counts, and a separate manual wall-clock marker, then exits after
+the first dashboard request settles. Repeat with `cold-reload` and
+`warm-reload` after the initial session is ready. Manual login/redirect time is
+reported separately and must not be compared with the five-second dashboard
+target. The report never stores cookies, JWTs, response bodies, or PII.
