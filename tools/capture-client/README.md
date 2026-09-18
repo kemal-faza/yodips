@@ -62,7 +62,7 @@ The report contains time-to-useful-content, dashboard response status/bytes, and
 For backend call counts and slice p50/p95, collect the structured backend log for the same run and analyze it with:
 
 ```bash
-npm --prefix tools run analyze:observability -- /path/to/backend.log > dashboard-telemetry-report.json
+npm --silent --prefix tools run analyze:observability -- /path/to/backend.log > dashboard-telemetry-report.json
 ```
 
 Compare the three scenario reports and telemetry reports manually. Do not commit either report when it contains user data, cookies, JWTs, response bodies, or other PII.
