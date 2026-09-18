@@ -68,20 +68,22 @@ run truly backend-cold.
 
 ## Continuous watcher
 
-To repeatedly validate the current dashboard build in an authenticated Chrome session,
-run the watcher. It executes the slice benchmark, checks that all six slices complete,
-and checks Dashboard→Profile/Kulon cache reuse on every iteration:
+To validate manual cold and warm starts, run the passive watcher after opening an
+authenticated Chrome session. It does not navigate or click anything. Perform one
+cold start, then one or more warm starts yourself; the first observed dashboard load
+is labelled `cold-start` and later loads `warm-start`:
 
 ```bash
 node tools/capture-client/watch-dashboard.mjs \
   --app-url http://localhost:5173 \
   --cdp http://127.0.0.1:9223 \
-  --interval 30000 \
   --output dashboard-watch.jsonl
 ```
 
-Use `--iterations 1` for a single check. The JSONL output is mode `0600` and contains
-only timings, statuses, byte counts, and pass/fail assertions.
+The watcher prints one JSON line after each dashboard load settles (all six slices or
+the `--settle` timeout). The JSONL output is mode `0600` and contains only timings,
+statuses, byte counts, and missing-slice information. Press Ctrl-C when the manual
+checks are complete.
 
 For backend call counts and slice p50/p95, collect the structured backend log for the same run and analyze it with:
 
