@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import type { NextFunction, Request, Response } from 'express';
 import { trustProxyPolicyForHops } from './trust-proxy';
+import { responseCompression } from './response-compression';
 
 /**
  * Apply HTTP bootstrap configuration.
@@ -31,6 +32,7 @@ export function configureHttp(
   // behind the trusted proxy — no custom guard, no manual header parsing.
   adapter.set('trust proxy', trustProxyPolicyForHops(trustProxyHops));
   app.use(helmet());
+  app.use(responseCompression({ threshold: 1024 }));
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.use((req: Request, res: Response, next: NextFunction) => {
     const path = req.path.replace(/\/+$/, '') || '/';

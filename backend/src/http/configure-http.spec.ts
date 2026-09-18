@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { ConfigService } from '@nestjs/config';
 import { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import http from 'node:http';
 import request from 'supertest';
 import { AppModule } from '../app.module';
 import { configureHttp } from './configure-http';
@@ -18,6 +19,17 @@ describe('configureHttp', () => {
     app = await NestFactory.create(AppModule, { logger: false });
     const hops = app.get(ConfigService).get<number>('TRUST_PROXY_HOPS', 0) as number;
     configureHttp(app, hops);
+    const express = (app as any).getHttpAdapter().getInstance();
+    express.get('/api/__test/large', (_req: any, res: any) => {
+      res.json({ payload: 'dashboard-like payload '.repeat(400) });
+    });
+    express.get('/api/__test/no-transform', (_req: any, res: any) => {
+      res.setHeader('Cache-Control', 'private, no-store, no-transform');
+      res.json({ payload: 'do not transform '.repeat(400) });
+    });
+    express.get('/api/auth/__test/large', (_req: any, res: any) => {
+      res.json({ payload: 'private auth payload '.repeat(400) });
+    });
     await app.init();
   }
 
@@ -42,6 +54,105 @@ describe('configureHttp', () => {
 
     const root = await request(app.getHttpServer()).get('/');
     expect(root.headers['cache-control']).toBeUndefined();
+  });
+
+  it('compresses large JSON with Brotli while preserving API cache policy', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/__test/large')
+      .set('Accept-Encoding', 'br')
+      .set('Origin', 'https://allowed.example')
+      .buffer(true);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-encoding']).toBe('br');
+    expect(response.headers.vary).toContain('Accept-Encoding');
+    expect(response.headers.vary).toContain('Origin');
+    expect(response.headers['access-control-allow-origin']).toBe('https://allowed.example');
+    expect(response.headers['cache-control']).toBe('private');
+    expect(response.headers.etag).toBeUndefined();
+    expect(response.body).toEqual(
+      expect.objectContaining({ payload: expect.stringContaining('dashboard-like payload') }),
+    );
+  });
+
+  it('falls back to gzip when Brotli is not accepted', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/__test/large')
+      .set('Accept-Encoding', 'gzip')
+      .buffer(true);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-encoding']).toBe('gzip');
+    expect(response.headers.vary).toContain('Accept-Encoding');
+    expect(response.body).toEqual(
+      expect.objectContaining({ payload: expect.stringContaining('dashboard-like payload') }),
+    );
+  });
+
+  it('honors Accept-Encoding quality weights', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/__test/large')
+      .set('Accept-Encoding', 'br;q=0.1, gzip;q=0.9')
+      .buffer(true);
+
+    expect(response.headers['content-encoding']).toBe('gzip');
+  });
+
+  it('does not compress responses below the configured threshold', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/')
+      .set('Accept-Encoding', 'br, gzip');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-encoding']).toBeUndefined();
+    expect(response.text).toBe('Hello World!');
+  });
+
+  it('honors no-transform while preserving the existing cache-control header', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/__test/no-transform')
+      .set('Accept-Encoding', 'br, gzip');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-encoding']).toBeUndefined();
+    expect(response.headers['cache-control']).toBe('private, no-store, no-transform');
+  });
+
+  it('keeps large auth responses private and no-store when compressed', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/auth/__test/large')
+      .set('Accept-Encoding', 'br');
+
+    expect(response.headers['content-encoding']).toBe('br');
+    expect(response.headers['cache-control']).toBe('private, no-store');
+  });
+
+  it('transfers fewer bytes when compression is negotiated', async () => {
+    const server = app.getHttpServer();
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as { port: number }).port;
+    const read = (acceptEncoding: string) =>
+      new Promise<{ headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+        const request = http.get(
+          { port, path: '/api/__test/large', headers: { 'Accept-Encoding': acceptEncoding } },
+          (response) => {
+            const chunks: Buffer[] = [];
+            response.on('data', (chunk: Buffer) => chunks.push(chunk));
+            response.on('end', () => resolve({ headers: response.headers, body: Buffer.concat(chunks) }));
+          },
+        );
+        request.on('error', reject);
+      });
+
+    try {
+      const identity = await read('identity');
+      const compressed = await read('br');
+      expect(identity.headers['content-encoding']).toBeUndefined();
+      expect(compressed.headers['content-encoding']).toBe('br');
+      expect(compressed.body.length).toBeLessThan(identity.body.length);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 
   it('marks exact API auth paths and descendants private without storage', async () => {
