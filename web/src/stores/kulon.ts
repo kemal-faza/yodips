@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { getAllAssignments, getCourses, getCourseContent } from '../api/client';
+import { getAllAssignments, getCourses, getCourseList, getCourseContent } from '../api/client';
 import { getCached, isCacheStaleError } from '../api/cache';
 import type { Assignment, Course, KulonCourseContent } from '../types';
 
@@ -42,6 +42,14 @@ export const useKulonStore = defineStore('kulon', {
           freshTtl: 5 * 60_000,
           staleTtl: 30 * 60_000,
         });
+      } catch (e) {
+        if (isCacheStaleError(e)) return;
+        throw e;
+      }
+    },
+    async ensureCourseList(): Promise<void> {
+      try {
+        this.courses = await getCourseList();
       } catch (e) {
         if (isCacheStaleError(e)) return;
         throw e;

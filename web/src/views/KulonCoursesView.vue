@@ -39,7 +39,7 @@ function openCourse(courseId: number) {
 async function load() {
   loading.value = true;
   clear();
-  try { await store.ensureCourses(); }
+  try { await store.ensureCourseList(); }
   catch (e) { error.value = extract(e); }
   finally { loading.value = false; }
 }

@@ -98,8 +98,10 @@ class KtorSsoApi(
         return json.decodeFromString<KulonAssignmentDetail>(handle(resp))
     }
 
-    override suspend fun courses(): List<KulonCourse> {
-        val resp = client.get("$root/api/kulon/courses")
+    override suspend fun courses(list: Boolean): List<KulonCourse> {
+        val resp = client.get("$root/api/kulon/courses") {
+            if (list) parameter("view", "list")
+        }
         return json.decodeFromString<List<KulonCourse>>(handle(resp))
     }
 

@@ -75,7 +75,7 @@ private class FakeApi : SsoApi {
     override suspend fun assignmentDetail(assignmentId: Long, cmid: Long): KulonAssignmentDetail =
         throw UnsupportedOperationException()
 
-    override suspend fun courses(): List<KulonCourse> = throw UnsupportedOperationException()
+    override suspend fun courses(list: Boolean): List<KulonCourse> = throw UnsupportedOperationException()
 
     var courseContentStub: suspend (Long) -> KulonCourseContent = { throw UnsupportedOperationException("courseContent not stubbed") }
 

@@ -19,6 +19,7 @@ describe('KulonController', () => {
   const REF = { sub: '24060121130000', sessionGeneration: GEN };
   const service = {
     getCourses: jest.fn(),
+    getCourseList: jest.fn(),
     getCourseSummary: jest.fn(),
     getAssignments: jest.fn(),
     getAllAssignments: jest.fn(),
@@ -47,6 +48,16 @@ describe('KulonController', () => {
     const res = await controller.getCourses(req() as any);
     expect(res[0].fullname).toBe('A');
     expect(service.getCourses).toHaveBeenCalledWith(REF);
+  });
+
+  it('routes the explicit list view to the lightweight service path', async () => {
+    service.getCourseList.mockResolvedValue([
+      { id: 1, fullname: 'A', shortname: 'A', idnumber: '1' },
+    ]);
+    const res = await controller.getCourses(req() as any, 'list');
+    expect(res[0].fullname).toBe('A');
+    expect(service.getCourseList).toHaveBeenCalledWith(REF);
+    expect(service.getCourses).not.toHaveBeenCalled();
   });
 
   it('routes dashboard course summary by SessionRef without using public courses', async () => {

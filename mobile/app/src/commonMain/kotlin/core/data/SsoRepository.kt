@@ -139,6 +139,12 @@ class SsoRepository(
             refresher.safe(serviceStale = true) { api.courses() }
         }
 
+    /** Lightweight course list for task filtering; omits progress/lecturer work. */
+    suspend fun courseList(force: Boolean = false): ApiResult<List<KulonCourse>> =
+        cached("courses:list", ListSerializer(KulonCourse.serializer()), force) {
+            refresher.safe(serviceStale = true) { api.courses(list = true) }
+        }
+
     /** Konten course (sections + items) — di-cache per course, back/forth tanpa refetch. */
     suspend fun courseContent(courseId: Long, force: Boolean = false): ApiResult<KulonCourseContent> =
         cached("course-content-$courseId", KulonCourseContent.serializer(), force) {

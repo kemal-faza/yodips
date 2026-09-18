@@ -81,7 +81,7 @@ async function load() {
   loading.value = true;
   clear();
   try {
-    await Promise.all([store.ensureAssignments(), store.ensureCourses()]);
+    await Promise.all([store.ensureAssignments(), store.ensureCourseList()]);
   } catch (e) {
     error.value = extract(e);
   } finally {

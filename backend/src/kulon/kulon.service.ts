@@ -173,6 +173,7 @@ export class KulonService {
    * to DataCache.
    */
   private readonly courseFlight = createKeyedSingleFlight<KulonCourse[]>();
+  private readonly courseListFlight = createKeyedSingleFlight<KulonCourse[]>();
   private readonly assignmentsFlight =
     createKeyedSingleFlight<KulonAssignment[]>();
   private readonly allAssignmentsFlight =
@@ -360,6 +361,41 @@ export class KulonService {
         withProgress: true,
       }, ref);
     });
+  }
+
+  /** Lightweight course list for list navigation. Omits lecturer and progress
+   * fan-out; callers that need those fields keep using getCourses(). */
+  async getCourseList(ref: SessionRef): Promise<KulonCourse[]> {
+    if (!isSessionRef(ref)) {
+      throw sessionDead();
+    }
+    const scope: KulonScope = { kind: 'session', ref };
+    return this.courseListFlight.run(flightKeyForSession(ref, 'course-list'), async () => {
+      const { cookie: sessionCookie, sesskey } =
+        await this.requireKulonAjaxForSession(ref);
+      return this.fetchCourseListForScope(sessionCookie, sesskey, scope);
+    });
+  }
+
+  /** Lightweight course list for callers that already own the upstream session. */
+  private async fetchCourseListForScope(
+    sessionCookie: string,
+    sesskey: string,
+    scope: KulonScope,
+  ): Promise<KulonCourse[]> {
+    const load = () =>
+      this.fetchCourses(sessionCookie, sesskey, scope, {
+        withLecturers: false,
+        withProgress: false,
+        skipCacheRead: true,
+      });
+    if (!this.cache) return load();
+    const { value } = await this.cache.getStale<KulonCourse[]>(
+      kulonCacheKey(scope, 'courses', 'list'),
+      load,
+      swrWindow('KULON_COURSES'),
+    );
+    return value;
   }
 
   /**
@@ -678,10 +714,21 @@ export class KulonService {
     const scope = normalizeKulonScope(scopeInput);
     // Lecturer merge AND per-course progress scrape skipped on internal calls
     // to keep poll cycles lean — the assignments output carries neither.
-    const courses = await this.fetchCourses(sessionCookie, sesskey, scope, {
-      withLecturers: false,
-      withProgress: false,
-    });
+    const courses = await this.courseListFlight.run(
+      scope
+        ? scope.kind === 'session'
+          ? flightKeyForSession(scope.ref, 'course-list')
+          : flightKeyForCurrent(scope.sub, 'course-list')
+        : `kulon:course-list:${sesskey}`,
+      () =>
+        scope
+          ? this.fetchCourseListForScope(sessionCookie, sesskey, scope)
+          : this.fetchCourses(sessionCookie, sesskey, scope, {
+              withLecturers: false,
+              withProgress: false,
+              skipCacheRead: true,
+            }),
+    );
     const results: KulonAssignment[][] = [];
     const CONCURRENCY = 4;
     const queue = [...courses];

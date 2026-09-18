@@ -733,7 +733,7 @@ describe('KulonService', () => {
       'c1',
       'sk1',
       { kind: 'session', ref: ref('u1') },
-      { withLecturers: false, withProgress: false },
+      { withLecturers: false, withProgress: false, skipCacheRead: true },
     );
     spy.mockRestore();
   });
@@ -778,22 +778,15 @@ describe('KulonService', () => {
     const cached = [
       { id: 1, fullname: 'X', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress', progress: 50 },
     ];
-    // getAllAssignments checks its OWN `assignments:all` cache first via getStale
-    // — that must MISS (run the fetcher) so the flow reaches fetchCourses, whose
-    // internal `courses` cache.get hit (cached) is what this test exercises. The
-    // getStale mock invokes the fetcher (miss path) so the assignments aggregation
-    // runs and lands on the internal fetchCourses cache.get below.
-    const getSpy = jest
-      .fn()
-      .mockImplementation(async (key: string) =>
-        key.endsWith(':assignments:all') ? null : cached,
-      );
-    const getStaleSpy = jest.fn(
-      async (_key: string, fetcher: () => unknown) => ({
-        value: await fetcher(),
-        stale: false,
-      }),
-    );
+    // getAllAssignments checks its own `assignments:all` cache first via getStale.
+    // The lightweight list cache then supplies the courses without timeline work.
+    const getStaleSpy = jest.fn(async (key: string, fetcher: () => unknown) => ({
+      value:
+        key === cacheKeyForSession(ref('u1'), 'kulon', 'courses', 'list')
+          ? cached
+          : await fetcher(),
+      stale: false,
+    }));
     const setSpy = jest.fn();
     const upstreamMock = {
       getContext: jest.fn().mockResolvedValue({ cookie: 'c1', sesskey: 'sk1' }),
@@ -803,7 +796,7 @@ describe('KulonService', () => {
     };
     const svc = new KulonService(
       undefined as any,
-      { get: getSpy, getStale: getStaleSpy, set: setSpy, del: jest.fn() } as any,
+      { get: jest.fn(), getStale: getStaleSpy, set: setSpy, del: jest.fn() } as any,
       undefined,
       upstreamMock as any,
     );
@@ -818,8 +811,13 @@ describe('KulonService', () => {
       expect.any(Function),
       swrWindow('KULON_ASSIGNMENTS_ALL'),
     );
-    // fetchCourses' internal read still uses cache.get and hit the cached courses
-    expect(getSpy).toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'));
+    // Assignment aggregation reuses the lightweight list cache, never the full
+    // progress/lecturer payload.
+    expect(getStaleSpy).toHaveBeenCalledWith(
+      cacheKeyForSession(ref('u1'), 'kulon', 'courses', 'list'),
+      expect.any(Function),
+      swrWindow('KULON_COURSES'),
+    );
     expect(upstreamMock.ajax).not.toHaveBeenCalled();
     expect(setSpy).not.toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.anything());
     expect(out).toEqual([]);

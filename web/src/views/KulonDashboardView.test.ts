@@ -12,6 +12,7 @@ vi.mock('../api/client', () => ({
   getAllAssignments: vi.fn(),
   getAssignments: vi.fn(),
   getCourses: vi.fn(),
+  getCourseList: vi.fn(),
   getCourseContent: vi.fn(),
   getAssignmentDetail: vi.fn().mockResolvedValue({
     assignmentId: 1, name: 'T1', descriptionHtml: '<p>x</p>', files: [],
@@ -45,7 +46,7 @@ function mockStore() {
 }
 
 async function mountView() {
-  (api.getCourses as any).mockResolvedValue(COURSES);
+  (api.getCourseList as any).mockResolvedValue(COURSES);
   const router = buildRouter(createMemoryHistory());
   await router.push('/kulon/dashboard');
   const w = mount(KulonDashboardView, { global: { plugins: [router] } });

@@ -51,6 +51,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 /**
  * Aktif course ids (`timelineStatus == "inprogress"`), populated from
@@ -69,33 +71,25 @@ fun TasksScreen(
 ) {
     var ctx by remember { mutableStateOf(CourseCtx()) }
     FeatureScreen("Tugas") {
-        suspend fun loadCtx(force: Boolean) {
-            when (val r = repo.courses(force)) {
+        suspend fun loadData(force: Boolean): ApiResult<List<KulonAssignment>> = coroutineScope {
+            val courses = async { repo.courseList(force) }
+            val assignments = async { repo.assignments(force) }
+            when (val r = courses.await()) {
                 is ApiResult.Success -> {
-                    ctx =
-                        CourseCtx(
-                            activeCourseIds =
-                                r.data
-                                    .filter { it.timelineStatus == "inprogress" }
-                                    .map { it.id }
-                                    .toSet(),
-                        )
+                    ctx = CourseCtx(
+                        activeCourseIds = r.data
+                            .filter { it.timelineStatus == "inprogress" }
+                            .map { it.id }
+                            .toSet(),
+                    )
                 }
-
-                is ApiResult.Error -> {
-                    Unit
-                }
+                is ApiResult.Error -> Unit
             }
+            assignments.await()
         }
         RefreshableLoadableData(
-            load = {
-                loadCtx(false)
-                repo.assignments()
-            },
-            onRefresh = {
-                loadCtx(true)
-                repo.assignments(force = true)
-            },
+            load = { loadData(false) },
+            onRefresh = { loadData(true) },
             emptyMessage = "Tidak ada tugas saat ini.",
         ) { tasks ->
             var filter by remember { mutableStateOf<TaskBucket?>(TaskBucket.NEED) }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getAssignments, getCourses, capture } from './client';
+import { getAssignments, getCourses, getCourseList, capture } from './client';
 import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
 
 const { getCachedMock } = vi.hoisted(() => ({ getCachedMock: vi.fn() }));
@@ -119,6 +119,23 @@ describe('api client', () => {
     expect(courses).toEqual([]); // mocked network returns []
     expect(getCachedMock).toHaveBeenCalledWith(
       'kulon:courses',
+      expect.any(Function),
+      { freshTtl: 300_000, staleTtl: 1_800_000 },
+    );
+  });
+
+  it('getCourseList uses the list cache key and explicit lightweight view', async () => {
+    getCachedMock.mockClear();
+    mockRequest.mockResolvedValue({ data: [] });
+    const { getCourseList } = await import('./client');
+    await getCourseList();
+    expect(mockRequest.mock.calls[0][0]).toMatchObject({
+      method: 'get',
+      url: '/api/kulon/courses',
+      params: { view: 'list' },
+    });
+    expect(getCachedMock).toHaveBeenCalledWith(
+      'kulon:courses:list',
       expect.any(Function),
       { freshTtl: 300_000, staleTtl: 1_800_000 },
     );

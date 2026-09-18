@@ -271,7 +271,8 @@ describe('KulonService SWR course refresh', () => {
         });
       }
 
-      expect(cache.set).toHaveBeenCalledTimes(1);
+      const expectedWrites = testCase.key.includes(':assignments:all') ? 2 : 1;
+      expect(cache.set).toHaveBeenCalledTimes(expectedWrites);
       expect(cache.set).toHaveBeenCalledWith(testCase.key, expect.anything());
     }
   });

@@ -49,8 +49,8 @@ interface SsoApi {
     /** GET /api/kulon/assignments/:id/detail?cmid= */
     suspend fun assignmentDetail(assignmentId: Long, cmid: Long): KulonAssignmentDetail
 
-    /** GET /api/kulon/courses */
-    suspend fun courses(): List<KulonCourse>
+    /** GET /api/kulon/courses; list=true omits progress/lecturer fan-out. */
+    suspend fun courses(list: Boolean = false): List<KulonCourse>
 
     /** GET /api/kulon/courses/:id/content */
     suspend fun courseContent(courseId: Long): KulonCourseContent

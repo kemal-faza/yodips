@@ -229,6 +229,22 @@ class KtorSsoApiTest {
     }
 
     @Test
+    fun `courses list sends the lightweight view query`() = runBlocking {
+        val list = api(
+            mockClient(
+                body = """[{"id":7,"fullname":"Matematika","shortname":"M1","timelineStatus":"inprogress"}]""",
+                assertRequest = { req ->
+                    assertEquals("GET", req.method.value)
+                    assertEquals("/api/kulon/courses", req.url.encodedPath)
+                    assertEquals("list", req.url.parameters["view"])
+                },
+            ),
+        ).courses(list = true)
+        assertEquals(1, list.size)
+        assertEquals(7L, list[0].id)
+    }
+
+    @Test
     fun `assignmentDetail requests cmid query and parses nested submission`() = runBlocking {
         val d = api(
             mockClient(

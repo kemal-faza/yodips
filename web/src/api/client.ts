@@ -227,11 +227,17 @@ export async function getAllAssignments(): Promise<Assignment[]> {
   }, CACHE.assignments);
 }
 
-export async function getCourses(): Promise<Course[]> {
-  return getCached('kulon:courses', async () => {
-    const { data } = await apiClient.get<Course[]>(API.kulon.courses);
+export async function getCourses(options: { list?: boolean } = {}): Promise<Course[]> {
+  const list = options.list === true;
+  return getCached(list ? 'kulon:courses:list' : 'kulon:courses', async () => {
+    const { data } = await apiClient.get<Course[]>(API.kulon.courses, list ? { params: { view: 'list' } } : undefined);
     return data;
   }, CACHE.courses);
+}
+
+/** Lightweight list payload: no per-course progress or lecturer fan-out. */
+export function getCourseList(): Promise<Course[]> {
+  return getCourses({ list: true });
 }
 
 /** Dashboard-only course data without per-course progress scraping. */

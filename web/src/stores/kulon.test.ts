@@ -7,6 +7,7 @@ import { clearCache, CacheStaleError } from '../api/cache';
 vi.mock('../api/client', () => ({
   getAllAssignments: vi.fn(), getAssignments: vi.fn(),
   getCourses: vi.fn(),
+  getCourseList: vi.fn(),
   getCourseContent: vi.fn(),
 }));
 
@@ -31,6 +32,14 @@ describe('KulonStore', () => {
     (api.getCourses as any).mockResolvedValue([{ id: 2 }]);
     await store.ensureCourses();
     expect(api.getCourses).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches the lightweight course list for list navigation', async () => {
+    const store = useKulonStore();
+    (api.getCourseList as any).mockResolvedValue([{ id: 3 }]);
+    await store.ensureCourseList();
+    expect(api.getCourseList).toHaveBeenCalledTimes(1);
+    expect(store.courses).toEqual([{ id: 3 }]);
   });
 
   it('fetches course content once (cache layer dedups)', async () => {

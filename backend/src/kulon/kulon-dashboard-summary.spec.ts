@@ -43,6 +43,61 @@ function makeCache() {
 }
 
 describe('KulonService dashboard course summary', () => {
+  it('provides a list payload without progress or lecturer fan-out', async () => {
+    const cache = makeCache();
+    const upstream = makeUpstream();
+    const siap = {
+      getLecturers: jest.fn().mockResolvedValue([{ kode: 'M1', dosen: 'Dr. X' }]),
+    };
+    const service = new KulonService(NO_STORE, cache, siap as any, upstream);
+    const courses: KulonCourse[] = [
+      {
+        id: 1,
+        fullname: 'Course A',
+        shortname: 'M1',
+        idnumber: '',
+        semester: '2026/2027 Ganjil',
+        timelineStatus: 'inprogress',
+      },
+    ];
+    jest.spyOn(service, 'fetchTimelineCourses').mockResolvedValue(courses as any);
+    const progress = jest.spyOn(service as any, 'fetchCourseContent');
+
+    await expect(service.getCourseList(ref())).resolves.toEqual(courses);
+
+    expect(progress).not.toHaveBeenCalled();
+    expect(siap.getLecturers).not.toHaveBeenCalled();
+    expect(cache.getStale).toHaveBeenCalledWith(
+      cacheKeyForSession(ref(), 'kulon', 'courses', 'list'),
+      expect.any(Function),
+      swrWindow('KULON_COURSES'),
+    );
+  });
+
+  it('reuses the list cache when assignments aggregate courses', async () => {
+    const cache = makeCache();
+    const listKey = cacheKeyForSession(ref(), 'kulon', 'courses', 'list');
+    (cache.getStale as jest.Mock).mockResolvedValue({
+      value: [{ id: 7, fullname: 'Course A', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress' }],
+      stale: false,
+    });
+    const upstream = makeUpstream();
+    const service = new KulonService(NO_STORE, cache, undefined, upstream);
+    const listFetch = jest.spyOn(service as any, 'fetchTimelineBase');
+    jest.spyOn(service as any, 'fetchAssignmentIndex').mockResolvedValue([]);
+    jest.spyOn(service as any, 'fetchQuizIndex').mockResolvedValue([]);
+
+    await expect((service as any).fetchAllAssignments('cookie', 'sesskey', { kind: 'session', ref: ref() })).resolves.toEqual([]);
+
+    expect(listFetch).not.toHaveBeenCalled();
+    expect(cache.getStale).toHaveBeenCalledWith(
+      listKey,
+      expect.any(Function),
+      swrWindow('KULON_COURSES'),
+    );
+    expect(cache.set).not.toHaveBeenCalled();
+  });
+
   it('returns lecturer-ready course fields without scraping course progress', async () => {
     const cache = makeCache();
     const upstream = makeUpstream();

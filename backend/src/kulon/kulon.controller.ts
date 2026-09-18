@@ -30,8 +30,11 @@ export class KulonController {
   constructor(private readonly kulonService: KulonService) {}
 
   @Get('courses')
-  async getCourses(@Req() req: AuthedRequest) {
-    return this.kulonService.getCourses(requireSessionRef(req));
+  async getCourses(@Req() req: AuthedRequest, @Query('view') view?: string) {
+    const ref = requireSessionRef(req);
+    return view === 'list'
+      ? this.kulonService.getCourseList(ref)
+      : this.kulonService.getCourses(ref);
   }
 
   @Get('courses/summary')
