@@ -47,29 +47,71 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
 
 /**
- * JS normalizer injected into the SSO login page on finish (see CHECKPOINT Path A
- * spike): the in-app WebView fails to paint the official SSO login card (it loads
- * off-screen at y≈-295 and under a fixed full-screen `.bg-image` blur; the
- * EnjoyHint onboarding overlay also covers it). This shim — validated live via
- * CDP: input paints and is hit-testable — fixes the layout so the user can log in:
- *  - hide the decorative fixed `.bg-image` cover,
- *  - pin the login `.card` to a visible fixed position (white, on top),
- *  - remove the EnjoyHint onboarding overlay + mark it done in localStorage.
+ * JS normalizer injected into the SSO login page on finish (see CHECKPOINT
+ * Path A spike): the in-app WebView fails to paint the official SSO login card
+ * (it loads off-screen at y≈-295 and under a fixed full-screen `.bg-image`
+ * blur; the EnjoyHint onboarding overlay also covers it).
+ *
+ * The shim used to pin `div.card` at a FIXED `top:150px` with a hard `380px`
+ * width and `body{overflow:auto}`. A fixed element does not scroll with the
+ * page, so once the campus page grew taller (or the viewport is narrower than
+ * 380px) the LOGIN button fell below the screen and could not be reached —
+ * "halaman login tidak bisa discroll, tombol tersembunyi".
+ *
+ * This version makes the card a full-viewport, internally-scrollable panel:
+ *  - hide the decorative fixed `.bg-image`,
+ *  - neutralise the page's fixed/overflow layout so scrolling works,
+ *  - render the login card full-height/width with `overflow-y:auto` (its own
+ *    scrollbar), so any amount of content stays reachable,
+ *  - add permanent bottom scroll slack (45% of the layout height) so the LOGIN
+ *    button can always be scrolled above the soft keyboard. Computed in JS and
+ *    applied inline with `!important`: CSS `vh` resolves to 0 inside this
+ *    embedded WebView, and the page's Bootstrap padding utilities otherwise
+ *    win over a stylesheet rule.
+ *  - remove the EnjoyHint onboarding overlay + mark it done in localStorage,
+ *  - fall back to tagging the login form's parent when the `div.card` selector
+ *    no longer matches the campus markup,
+ *  - re-apply every 500ms for ~5s to survive late/async rendering.
  * Idempotent; safe to run on every SSO page finish.
  */
 private const val SSO_LAYOUT_SHIM =
     """
 (function(){
-  var st=document.getElementById('undip-fix');
-  if(!st){st=document.createElement('style');st.id='undip-fix';document.head.appendChild(st);}
-  st.textContent=
-    'div.bg-image{display:none!important}'+
-    'body{overflow:auto!important}'+
-    'div.card{position:fixed!important;top:150px!important;left:50%!important;margin-left:-190px!important;width:380px!important;z-index:2147483647!important;background:#ffffff!important;box-shadow:0 6px 24px rgba(0,0,0,.25)!important;border-radius:12px!important;padding:24px!important;transform:none!important}'+
-    'div.card .card-body,div.card .card-content,div.card form{margin:0!important;padding:0!important;background:transparent!important}'+
-    '.enjoyhint_skip_btn,.enjoyhint_next_btn,.enjoyhint_close_btn,#enjoyhint{display:none!important}';
-  document.querySelectorAll('#enjoyhint,[class*="enjoyhint"]').forEach(function(e){e.remove();});
-  try{localStorage.setItem('intro_tour_login', JSON.stringify({intro_tour_login_isDone:true}));}catch(e){}
+  function card(){
+    return document.querySelector('div.card')||document.querySelector('.undip-login-card');
+  }
+  function size(){
+    var c=card();
+    if(!c){return;}
+    var slack=Math.round((window.innerHeight||0)*0.45);
+    c.style.setProperty('padding-bottom',(48+slack)+'px','important');
+  }
+  function apply(){
+    var st=document.getElementById('undip-fix');
+    if(!st){st=document.createElement('style');st.id='undip-fix';document.head.appendChild(st);}
+    st.textContent=
+      'html,body{height:auto!important;min-height:100%!important;overflow-x:hidden!important;overflow-y:auto!important;position:static!important;}'+
+      'div.bg-image{display:none!important;}'+
+      'div.card,.undip-login-card{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;'+
+        'width:100%!important;max-width:100vw!important;height:auto!important;margin:0!important;'+
+        'overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'+
+        'z-index:2147483647!important;background:#ffffff!important;box-shadow:0 6px 24px rgba(0,0,0,.25)!important;'+
+        'border-radius:0!important;padding:24px 20px 48px!important;box-sizing:border-box!important;}'+
+      'div.card .card-body,div.card .card-content,div.card form{margin:0!important;padding:0!important;background:transparent!important;}'+
+      '.enjoyhint_skip_btn,.enjoyhint_next_btn,.enjoyhint_close_btn,#enjoyhint{display:none!important;}';
+    if(!document.querySelector('div.card')){
+      var form=document.querySelector('form[action*="auth_v2"],form');
+      var host=form&&form.closest?form.closest('div'):null;
+      if(host){host.classList.add('undip-login-card');}
+    }
+    document.querySelectorAll('#enjoyhint,[class*="enjoyhint"]').forEach(function(e){e.remove();});
+    try{localStorage.setItem('intro_tour_login', JSON.stringify({intro_tour_login_isDone:true}));}catch(e){}
+    size();
+  }
+  apply();
+  window.addEventListener('resize',size);
+  var n=0;
+  var t=setInterval(function(){apply();if(++n>=10){clearInterval(t);}},500);
 })();
 """
 
