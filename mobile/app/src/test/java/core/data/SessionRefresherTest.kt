@@ -228,4 +228,48 @@ class SessionRefresherTest {
         assertEquals(ErrorType.UNAUTHORIZED, (result as ApiResult.Error).type)
         assertEquals(1, dialogs)
     }
+
+    // ---------- ensureFresh(): refresh proaktif sebelum token kedaluwarsa ----------
+
+    private fun jwt(exp: Long): String {
+        fun b64(json: String) = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(json.toByteArray())
+        return "${b64("{\"alg\":\"HS256\"}")}.${b64("{\"exp\":$exp}")}.sig"
+    }
+
+    @Test
+    fun `ensureFresh rotates a token that is within the leeway`() = runTest {
+        var calls = 0
+        val r = refresher(backgroundScope, { calls += 1; "fresh-jwt" }, {})
+        val result = r.ensureFresh(token = jwt(1_000_000 + 60), nowEpochSeconds = 1_000_000, leewaySeconds = 300)
+        assertEquals(SessionRefresher.RefreshResult.SUCCESS, result)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `ensureFresh no-ops when the token is still far from expiry`() = runTest {
+        var calls = 0
+        val r = refresher(backgroundScope, { calls += 1; "fresh-jwt" }, {})
+        val result = r.ensureFresh(token = jwt(1_000_000 + 10_000), nowEpochSeconds = 1_000_000, leewaySeconds = 300)
+        assertEquals(SessionRefresher.RefreshResult.SUCCESS, result)
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `ensureFresh no-ops without a readable token`() = runTest {
+        var calls = 0
+        val r = refresher(backgroundScope, { calls += 1; "fresh-jwt" }, {})
+        assertEquals(SessionRefresher.RefreshResult.SUCCESS, r.ensureFresh(token = null, nowEpochSeconds = 0))
+        assertEquals(SessionRefresher.RefreshResult.SUCCESS, r.ensureFresh(token = "", nowEpochSeconds = 0))
+        assertEquals(SessionRefresher.RefreshResult.SUCCESS, r.ensureFresh(token = "not-a-jwt", nowEpochSeconds = 0))
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `ensureFresh surfaces DEAD_SESSION without firing the dialog`() = runTest {
+        var dialogs = 0
+        val r = refresher(backgroundScope, { throw http401() }, { dialogs++ })
+        val result = r.ensureFresh(token = jwt(1_000_000), nowEpochSeconds = 1_000_000, leewaySeconds = 300)
+        assertEquals(SessionRefresher.RefreshResult.DEAD_SESSION, result)
+        assertEquals(0, dialogs)
+    }
 }

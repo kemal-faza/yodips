@@ -214,6 +214,59 @@ class SsoRepositoryTest {
         assertEquals(0, notified)
     }
 
+    // ---------- sessionStatus(): boot gate silent-refresh (no false re-login) ----------
+
+    @Test
+    fun `sessionStatus silently refreshes an expired JWT then succeeds`() {
+        var meCalls = 0
+        val api =
+            FakeApi().apply {
+                meStub = {
+                    meCalls += 1
+                    if (meCalls == 1) throw ApiHttpException(401, "Unauthorized")
+                    MeResponse(authenticated = true, hasKulon = true, hasSiap = true, complete = true)
+                }
+            }
+        var refreshes = 0
+        val repo = SsoRepository(api, refreshToken = { refreshes += 1; "fresh-jwt" })
+        val r = runBlocking { repo.sessionStatus() }
+        assertTrue(r is ApiResult.Success)
+        assertEquals(1, refreshes)
+        assertEquals(2, meCalls)
+    }
+
+    @Test
+    fun `sessionStatus fires the dialog only when refresh itself is dead`() {
+        var notified = 0
+        val api = FakeApi().apply { meStub = { throw ApiHttpException(401, "Unauthorized") } }
+        val repo =
+            SsoRepository(
+                api,
+                onSessionExpired = { notified++ },
+                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
+            )
+        val r = runBlocking { repo.sessionStatus() }
+        assertTrue(r is ApiResult.Error)
+        assertEquals(ErrorType.UNAUTHORIZED, (r as ApiResult.Error).type)
+        assertEquals(1, notified)
+    }
+
+    @Test
+    fun `sessionStatus does not show the dialog when the refresh network fails`() {
+        var notified = 0
+        val api = FakeApi().apply { meStub = { throw ApiHttpException(401, "Unauthorized") } }
+        val repo =
+            SsoRepository(
+                api,
+                onSessionExpired = { notified++ },
+                refreshToken = { throw IOException("offline") },
+            )
+        val r = runBlocking { repo.sessionStatus() }
+        assertTrue(r is ApiResult.Error)
+        assertEquals(ErrorType.NETWORK, (r as ApiResult.Error).type)
+        assertEquals(0, notified)
+    }
+
     @Test
     fun `stale cache serves stale data immediately (stale-while-revalidate)`() {
         val cachedProfile = SiapProfile(nama = "CACHED", nim = "0000")

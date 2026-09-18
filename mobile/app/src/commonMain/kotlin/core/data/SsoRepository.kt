@@ -85,10 +85,20 @@ class SsoRepository(
 
     /** GET /api/auth/me — status sesi upstream (dipakai deteksi dini saat boot:
      *  `complete=false` → tampilkan dialog login ulang tanpa menunggu aksi
-     *  pengguna). Tidak retryable — 401 berarti JWT mati, dialog via
-     *  onSessionExpired; network error dibiarkan (offline ≠ sesi mati). */
+     *  pengguna). RETRYABLE: 401 berarti JWT bisa saja hanya kedaluwarsa walau
+     *  sesi backend masih hidup → coba silent refresh dulu (rotasi diam-diam),
+     *  baru dialog bila refresh sendiri 401 (SESSION_DEAD). Network error
+     *  dibiarkan (offline ≠ sesi mati). */
     suspend fun sessionStatus(): ApiResult<MeResponse> =
-        refresher.safe(retryable = false, serviceStale = false) { api.me() }
+        refresher.safe(retryable = true, serviceStale = false) { api.me() }
+
+    /**
+     * Refresh proaktif JWT (lihat [SessionRefresher.ensureFresh]) — dipanggil
+     * saat app start & kembali ke foreground supaya sesi aktif tidak pernah
+     * menyentuh 401 hanya karena token "patut dirotasi".
+     */
+    suspend fun ensureFreshSession(): SessionRefresher.RefreshResult =
+        refresher.ensureFresh()
 
     suspend fun irs(force: Boolean = false): ApiResult<SiapIrs> =
         cached("irs", SiapIrs.serializer(), force) {

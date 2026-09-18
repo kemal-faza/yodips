@@ -29,6 +29,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +54,7 @@ fun AppRoot(
     // on logout and the persisted session survives a process restart.
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     // Android 13+: POST_NOTIFICATIONS harus diminta runtime. Setelah login,
     // bukan saat splash — user baru peduli notifikasi setelah masuk app.
@@ -92,6 +96,20 @@ fun AppRoot(
                 tokenStore = tokenStore,
             )
         }
+
+    // Auto-refresh token: setiap app dibuka atau kembali ke foreground, JWT yang
+    // tinggal dekat kedaluwarsa dirotasi DIAM-DIAM sebelum request apa pun —
+    // supaya "keluar app sebentar lalu disuruh login ulang" tidak terjadi untuk
+    // sesi yang backend-nya masih hidup. Refresh saat refresh sendiri 401
+    // (SESSION_DEAD) tidak memunculkan dialog di sini; boot check `/me` di
+    // bawah yang memutuskan (dan `bootRepo` melihat hasil refresh yang sama).
+    LaunchedEffect(hasToken, lifecycleOwner) {
+        if (!hasToken) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            bootRepo.ensureFreshSession()
+        }
+    }
+
     LaunchedEffect(hasToken) {
         if (!hasToken) return@LaunchedEffect
         // Jeda kecil: biarkan AppShell/notifikasi-permission memulai lebih dulu;
@@ -102,8 +120,8 @@ fun AppRoot(
             }
 
             is ApiResult.Error -> {
-                // UNAUTHORIZED sudah memicu dialog lewat refresher (retryable=false,
-                // serviceStale=false). Jangan tambah notifikasi ganda di sini.
+                // DEAD_SESSION sudah memicu dialog lewat refresher (retryable);
+                // jangan tambah notifikasi ganda di sini.
                 if (r.type == ErrorType.UNAUTHORIZED) {
                     SessionExpiredEvents.notifySessionExpired()
                 }

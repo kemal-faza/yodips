@@ -5,6 +5,8 @@ import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.isServiceStaleCode
+import ac.undip.sso.core.network.jwtExpiryEpochSeconds
+import ac.undip.sso.nowMs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -19,6 +21,13 @@ fun typeForHttp(code: Int): ErrorType =
         in 400..499 -> ErrorType.UPSTREAM
         else -> ErrorType.SERVER
     }
+
+/**
+ * Refresh proaktif bila JWT tinggal ≤ 5 menit lagi. Cukup lega untuk JWT 12h
+ * (hampir tak pernah menembak) sekaligus menutup JWT ber-TTL pendek: setiap
+ * app dibuka/foreground lagi token dirotasi sebelum sempat 401.
+ */
+const val DEFAULT_REFRESH_LEEWAY_SECONDS: Long = 300L
 
 /**
  * Session refresh + error taxonomy, extracted from SsoRepository so the
@@ -70,6 +79,27 @@ class SessionRefresher(
                 throw e
             }
         }.await()
+    }
+
+    /**
+     * Refresh PROAKTIF: rotasi JWT sebelum kedaluwarsa supaya kembali ke app
+     * setelah didiamkan tidak memunculkan 401 — dan dialog "Sesi Berakhir" —
+     * untuk sesi yang sebenarnya masih hidup (backend `/auth/refresh` sengaja
+     * menerima token yang sudah expired, lihat `ignoreExpiration`).
+     *
+     * No-op (SUCCESS) bila tidak ada token, token bukan JWT yang bisa dibaca,
+     * atau `exp` masih lebih jauh dari [leewaySeconds]. Tidak memicu dialog
+     * sendiri; `DEAD_SESSION` dibiarkan ditangani pemanggil (boot gate / 401).
+     */
+    suspend fun ensureFresh(
+        token: String? = Backend.authToken,
+        nowEpochSeconds: Long = nowMs() / 1000,
+        leewaySeconds: Long = DEFAULT_REFRESH_LEEWAY_SECONDS,
+    ): RefreshResult {
+        if (token.isNullOrBlank()) return RefreshResult.SUCCESS
+        val exp = jwtExpiryEpochSeconds(token) ?: return RefreshResult.SUCCESS
+        if (exp - nowEpochSeconds > leewaySeconds) return RefreshResult.SUCCESS
+        return tryRefresh()
     }
 
     private suspend fun performRefresh(): RefreshResult {
