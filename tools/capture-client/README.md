@@ -95,6 +95,36 @@ npm --silent --prefix tools run analyze:observability -- /path/to/backend.log > 
 
 Compare the three scenario reports and telemetry reports manually. Do not commit either report when it contains user data, cookies, JWTs, response bodies, or other PII.
 
+## Backend-log watcher for the current six-slice Dashboard
+
+`manual-dashboard-baseline.mjs` watches only the deprecated aggregate
+`/api/dashboard` telemetry. For the current Dashboard, use the structured
+backend-log watcher instead. It starts at the current end of the log, so old
+events are not included, and it never reads response bodies, cookies, JWTs,
+identifiers, or credentials:
+
+```bash
+node tools/capture-client/watch-dashboard-log.mjs \
+  --log /tmp/yodips-backend.log \
+  --output /tmp/yodips-dashboard-log-watch.jsonl
+```
+
+Start it before performing a manual cold reload, then warm reloads, and press
+Ctrl-C when finished. It emits one mode-`0600` JSONL report per observed cycle.
+The report tracks `siap.profile`, `siap.khs`, `siap.irs`, `siap.jadwal`,
+`kulon.courses`, and `kulon.assignments_all`, and classifies each cycle as
+`cold-start`, `warm-start`, or `mixed-start`. It includes cache completion,
+upstream request counts by operation/outcome, and `courseContentCount`; the
+last value should be zero for the Dashboard summary route because it avoids
+per-course progress scraping. Backend telemetry normalizes both public and
+summary courses to `kulon.courses`, so `courseContentCount` is the safe way to
+verify that the Dashboard path did not trigger progress scraping.
+
+Optional controls are `--timeout` (default 120000 ms per cycle) and `--settle`
+(default 500 ms after all required slice events). A cycle with mixed fresh and
+missing slices is reported as `mixed-start`, not treated as a valid cold or
+warm benchmark.
+
 ## Manual-login baseline
 
 The login flow may require a real user, MFA, or an extension handoff. Use the
