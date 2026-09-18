@@ -37,7 +37,7 @@ fragment only when `VITE_LOGIN_MODE=handoff` (dev/test fallback), consumes it
 once, and removes it from the address bar/history immediately. Treat the JWT
 like a password: anyone who obtains it can act as you until it expires.
 
-## Dashboard cold/warm benchmark
+## Dashboard slice-aware benchmark
 
 This benchmark measures browser-side dashboard loading in an already authenticated Chrome. It connects over CDP, creates and closes only its own page, and disconnects without closing Chrome. It never prints or stores cookies, JWTs, response bodies, or upstream data.
 
@@ -55,9 +55,17 @@ The scenarios are:
 
 - `first-post-login`: a fresh dashboard navigation using the existing authenticated browser context;
 - `cold-reload`: a fresh page navigation, which resets the SPA's in-memory cache;
-- `warm-reload`: a subsequent navigation classified as warm.
+- `warm-reload`: a subsequent navigation classified as warm;
+- `refresh`: loads the dashboard, clicks `Perbarui data aktif`, and verifies that only IRS,
+  jadwal, courses, and assignments request again (Profile/KHS must be absent);
+- `route-reuse`: loads the dashboard, visits Profile and Tugas Kulon through SPA navigation,
+  and verifies that the already-populated slice cache prevents duplicate API requests.
 
-The report contains time-to-useful-content, dashboard response status/bytes, and time-to-complete. The `cold`/`warm` header describes the browser lifecycle used for measurement; it does not claim that backend caches were cleared. Reset backend caches separately before calling a run truly backend-cold.
+The report contains per-slice response status/bytes, first/last slice completion,
+time-to-useful-content, dynamic-only refresh assertions, and route-reuse assertions.
+The `cold`/`warm` label describes the browser lifecycle used for measurement; it does not
+claim that backend caches were cleared. Reset backend caches separately before calling a
+run truly backend-cold.
 
 For backend call counts and slice p50/p95, collect the structured backend log for the same run and analyze it with:
 
