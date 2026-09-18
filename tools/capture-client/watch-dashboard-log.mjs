@@ -80,8 +80,21 @@ function orderedObject(values) {
   );
 }
 
+function deduplicateAdjacentEvents(events) {
+  const unique = [];
+  let previous = null;
+  for (const event of events) {
+    const fingerprint = JSON.stringify(event);
+    if (fingerprint === previous) continue;
+    unique.push(event);
+    previous = fingerprint;
+  }
+  return unique;
+}
+
 /** Summarize one six-slice cache cycle without retaining identifiers or bodies. */
 export function summarizeDashboardCycle(events) {
+  events = deduplicateAdjacentEvents(events);
   const reads = {};
   const refreshes = {};
   const upstreamByOperation = {};

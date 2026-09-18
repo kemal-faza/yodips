@@ -80,6 +80,27 @@ describe("backend dashboard log watcher helpers", () => {
     assert.equal(JSON.stringify(report).includes("24060121130000"), false);
   });
 
+  it("does not double-count identical adjacent log events", () => {
+    const event = {
+      event: "upstream.request",
+      service: "kulon",
+      operation: "quiz_index",
+      route: "GET /mod/quiz/index.php",
+      outcome: "ok",
+      status: 200,
+      durationMs: 12,
+      ts: "2026-09-18T12:00:02.000Z",
+    };
+    const report = summarizeDashboardCycle([
+      ...reads("fresh"),
+      event,
+      { ...event },
+    ]);
+
+    assert.equal(report.upstream.count, 1);
+    assert.equal(report.upstream.byOperation.quiz_index, 1);
+  });
+
   it("recognizes a warm cycle without requiring refresh events", () => {
     const report = summarizeDashboardCycle(reads("fresh"));
 
