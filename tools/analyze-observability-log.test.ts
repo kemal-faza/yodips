@@ -207,6 +207,14 @@ describe("observability event parser", () => {
     assert.equal(report.upstream["siap.profile_page.GET /pages/mhs/dashboard"].durationMs.p50, 9);
   });
 
+  it("parses Nest logger prefixes with ANSI color resets", () => {
+    const event = JSON.stringify(dashboardRequest({ durationMs: 15 }));
+    assert.deepEqual(
+      parseEventLine(`\u001b[95m[Nest] 123 - DEBUG [NestTelemetrySink] \u001b[39m${event}\u001b[39m`),
+      { kind: "event", event: dashboardRequest({ durationMs: 15 }) },
+    );
+  });
+
   it("chooses a valid candidate even when an invalid candidate is to its right", () => {
     const valid = upstream({ durationMs: 11 });
     const invalidSchema = { ...upstream(), outcome: "not-an-outcome" };

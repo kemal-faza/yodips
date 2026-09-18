@@ -15,6 +15,7 @@ type JsonRecord = Record<string, unknown>;
 export const MAX_LINE_LENGTH = 64 * 1024;
 export const MAX_INPUT_BYTES = 10 * 1024 * 1024;
 const INPUT_CHUNK_BYTES = 64 * 1024;
+const ANSI_CSI_PATTERN = /\u001B\[[0-?]*[ -\/]*[@-~]/g;
 
 export type LineResult =
   | { kind: "event"; event: SafeEvent }
@@ -140,7 +141,10 @@ function oversizedLine(line: string): boolean {
 export function parseEventLine(line: string): LineResult {
   if (typeof line !== "string") return { kind: "malformed" };
   if (oversizedLine(line)) return { kind: "malformed" };
-  const trimmed = line.trim();
+  // Nest's development logger wraps structured telemetry in a human-readable
+  // prefix and may append ANSI color reset sequences. Strip only CSI control
+  // sequences; the balanced-object scan below still validates the payload.
+  const trimmed = line.replace(ANSI_CSI_PATTERN, "").trim();
   if (!trimmed.endsWith("}")) {
     if (!trimmed.startsWith("{")) return { kind: "ignored" };
     return parseLeadingObject(trimmed);
