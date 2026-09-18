@@ -10,8 +10,10 @@ import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -154,15 +156,20 @@ private fun nowMinutes(): Pair<Int, Int> {
 
 @Composable
 private fun MenuRow(items: List<MenuSpec>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    // Tinggi seragam: Row diukur setinggi kartu tertinggi (kartu "Mata Kuliah"
+    // wrap 2 baris), lalu tiap kartu fillMaxHeight — sehingga IRS/KHS tidak lebih
+    // pendek dari kartu yang labelnya 2 baris. Konten tetap ikon-kiri + label.
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Max),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         items.forEach { spec ->
-            Card(onClick = spec.onClick, modifier = Modifier.weight(1f)) {
-                // Rata kiri (icon lalu label) — konsisten dengan daftar item
-                // menu lain di app (sidebar/bottom-tab memakai ikon-kiri-teks);
-                // konten tengah membuat ikon & label mudah terlihat tidak sejajar.
+            Card(onClick = spec.onClick, modifier = Modifier.weight(1f).fillMaxHeight()) {
                 Row(
                     Modifier
-                        .fillMaxWidth()
+                        .fillMaxSize()
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -354,9 +361,9 @@ private fun UpcomingClasses(source: List<SiapJadwal>) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(j.matakuliah, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Text(cleanCourseName(j.matakuliah), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1)
                         Text(
-                            "${meetingDateLabel(j)} · ${j.waktu}${j.ruang?.let { " · $it" }.orEmpty()}",
+                            "${meetingDateLabel(j)} · ${j.waktu}${cleanRoomName(j.ruang)?.let { " · $it" }.orEmpty()}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

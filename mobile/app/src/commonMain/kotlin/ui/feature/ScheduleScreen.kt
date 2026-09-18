@@ -445,7 +445,7 @@ internal fun ScheduleCard(
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
-                    j.matakuliah,
+                    cleanCourseName(j.matakuliah),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -468,8 +468,9 @@ internal fun ScheduleCard(
                 fontWeight = FontWeight.Medium,
             )
             Spacer(Modifier.height(2.dp))
-            if (!j.ruang.isNullOrBlank()) {
-                Text(j.ruang, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val room = cleanRoomName(j.ruang)
+            if (room != null) {
+                Text(room, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (!lecturer.isNullOrBlank()) {
                 Text(lecturer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

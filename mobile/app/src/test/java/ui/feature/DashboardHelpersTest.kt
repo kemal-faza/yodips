@@ -195,6 +195,26 @@ class DashboardHelpersTest {
     }
 
     @Test
+    fun `cleanRoomName strips the parenthesised program suffix`() {
+        assertEquals("A301", cleanRoomName("A301 (S1-TEKNIK INFORMATIKA)"))
+        assertEquals("A303", cleanRoomName("A303 ()"))
+        assertEquals("RUANG UJI A", cleanRoomName("RUANG UJI A"))
+        assertEquals("A301", cleanRoomName("  A301  (S1-TEKNIK INFORMATIKA) "))
+        assertNull(cleanRoomName(null))
+        assertNull(cleanRoomName("   "))
+        assertNull(cleanRoomName("(S1-TEKNIK INFORMATIKA)"))
+    }
+
+    @Test
+    fun `cleanCourseName strips the merged-class marker`() {
+        assertEquals("Kewirausahaan", cleanCourseName("Kewirausahaan (GABUNGAN)"))
+        assertEquals("Komputasi Tersebar dan Pararel", cleanCourseName("Komputasi Tersebar dan Pararel (GABUNGAN)"))
+        assertEquals("Basis Data", cleanCourseName("Basis Data"))
+        assertEquals("Basis Data", cleanCourseName("  Basis Data  "))
+        assertEquals("", cleanCourseName("(GABUNGAN)"))
+    }
+
+    @Test
     fun `capitalizeDay uppercases weekday, keeps blank blank`() {
         assertEquals("Jumat", capitalizeDay("jumat"))
         assertEquals("Kamis", capitalizeDay("kamis"))

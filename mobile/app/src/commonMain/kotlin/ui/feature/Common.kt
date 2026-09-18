@@ -63,6 +63,19 @@ internal fun epochToDate(epochSec: Long): String {
     return "$dd $bulan ${d.year} $hh:$mm"
 }
 
+/** Buang keterangan dalam tanda kurung (mis. `"(GABUNGAN)"`, `"(S1-TEKNIK INFORMATIKA)"`). */
+private fun stripParenthetical(raw: String): String = raw.replace(Regex("""\s*\([^)]*\)"""), "").trim()
+
+/**
+ * Nama ruang siap tampil: buang keterangan dalam tanda kurung yang dikirim SIAP
+ * (mis. `"A301 (S1-TEKNIK INFORMATIKA)"` → `"A301"`, `"A303 ()"` → `"A303"`).
+ * Blank/null → null supaya pemanggil bisa melewati barisnya.
+ */
+internal fun cleanRoomName(raw: String?): String? = raw?.let(::stripParenthetical)?.takeIf { it.isNotEmpty() }
+
+/** Nama matkul SIAP tanpa penanda kelas, mis. `"Kewirausahaan (GABUNGAN)"` → `"Kewirausahaan"`. */
+internal fun cleanCourseName(raw: String): String = stripParenthetical(raw)
+
 internal fun formatIpk(value: Double?): String = if (value == null) "—" else {
     val whole = value.toLong()
     val frac = ((value - whole) * 100 + 0.5).toInt().coerceIn(0, 99)

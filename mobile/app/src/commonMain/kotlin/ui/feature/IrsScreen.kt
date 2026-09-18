@@ -63,7 +63,7 @@ internal fun irsJadwal(mk: SiapIrsMataKuliah, jadwalByNama: Map<String, SiapJadw
     val joined = jadwalByNama[mk.nama.trim().lowercase()]
     return SiapJadwal(
         kode = joined?.kode ?: mk.kode,
-        matakuliah = mk.nama,
+        matakuliah = cleanCourseName(mk.nama),
         ruang = joined?.ruang ?: mk.ruang,
         waktu = joined?.waktu ?: mk.jadwal.orEmpty(),
         sks = mk.sks,

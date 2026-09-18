@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -67,6 +68,8 @@ private fun CompactFeatureBar(
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            // Judul halaman rata tengah layar (bukan rata kiri).
+            textAlign = TextAlign.Center,
             // Biarkan tombol arrow-back (kiri) dan headerAction (kanan) selalu
             // terlihat: teks panjang di-ellipsis di tengah, tidak menggambar
             // penuh numpuk di atasnya. 56dp = ruang IconButton standar M3.
