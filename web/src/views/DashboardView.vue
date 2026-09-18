@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import DashboardHeader from '../components/DashboardHeader.vue';
 import DashboardStats from '../components/DashboardStats.vue';
-import AcademicCharts from '../components/AcademicCharts.vue';
+import AcademicChartsAsync from '../components/AcademicChartsAsync.vue';
 import ScheduleSection from '../components/ScheduleSection.vue';
 import DeadlineSection from '../components/DeadlineSection.vue';
 
@@ -96,7 +96,7 @@ function go(view: 'kulon') {
       :has-kulon="!d.kulonError.value && d.kulon.value.assignments.length > 0"
     />
 
-    <AcademicCharts
+    <AcademicChartsAsync
       :ip-trend-rows="ipRows"
       :grade-rows="gradeRows"
       :sks-rows="sksRows"

@@ -77,6 +77,24 @@ describe('DashboardView (academic dashboard)', () => {
     expect(w.text()).not.toContain('Layanan');
   });
 
+  it('keeps core dashboard content visible while charts are loading', async () => {
+    const router = buildRouter(createMemoryHistory());
+    const w = mount(DashboardView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ...stubs,
+          AcademicChartsAsync: { template: '<section data-test="academic-charts-loading" />' },
+        },
+      },
+    });
+    await flushPromises();
+    expect(w.find('[data-test="greeting"]').text()).toContain('Anindita Rahmawati');
+    expect(w.find('[data-test="schedule-section"]').exists()).toBe(true);
+    expect(w.find('[data-test="deadline-section"]').exists()).toBe(true);
+    expect(w.find('[data-test="academic-charts-loading"]').exists()).toBe(true);
+  });
+
   it('shows a SIAP error banner while keeping Kulon visible', async () => {
     // profile: null mirrors the old getSiapProfile rejection — the header
     // falls back to 'Pengguna' while the Kulon slices stay populated.
