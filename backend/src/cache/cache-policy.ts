@@ -37,7 +37,7 @@ export type CacheClassification = {
 
 const SUBJECT = '[A-Za-z0-9._~-]+(?::[A-Za-z0-9._~-]+)*';
 const rows = [
-  [`${SUBJECT}:kulon:courses`, 'kulon.courses', 'KULON_COURSES', true],
+  [`${SUBJECT}:kulon:courses(?::summary)?`, 'kulon.courses', 'KULON_COURSES', true],
   [`${SUBJECT}:kulon:assignments:all`, 'kulon.assignments_all', 'KULON_ASSIGNMENTS_ALL', true],
   [`${SUBJECT}:kulon:assignment-detail:[0-9]+`, 'kulon.assignment_detail', 'KULON_ASSIGNMENT_DETAIL', true],
   [`${SUBJECT}:kulon:course-content:[0-9]+`, 'kulon.course_content', 'KULON_COURSE_CONTENT', true],

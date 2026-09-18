@@ -78,6 +78,10 @@ describe('classifyCacheKey', () => {
       { label: 'kulon.courses', policyKey: 'KULON_COURSES', swr: true },
     ],
     [
+      '123:kulon:courses:summary',
+      { label: 'kulon.courses', policyKey: 'KULON_COURSES', swr: true },
+    ],
+    [
       '123:kulon:assignments:all',
       {
         label: 'kulon.assignments_all',

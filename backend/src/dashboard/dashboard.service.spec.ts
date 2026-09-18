@@ -47,6 +47,7 @@ function makeService(overrides: Record<string, jest.Mock>): DashboardService {
       getJadwal: jest.fn().mockResolvedValue([]),
     },
     kulon: {
+      getCourseSummary: jest.fn().mockResolvedValue([COURSE]),
       getCourses: jest.fn().mockResolvedValue([COURSE]),
       getAllAssignments: jest.fn().mockResolvedValue([ASSIGN]),
     },
@@ -55,6 +56,8 @@ function makeService(overrides: Record<string, jest.Mock>): DashboardService {
   if (overrides.getKhs) deps.siap.getKhs = overrides.getKhs;
   if (overrides.getIrs) deps.siap.getIrs = overrides.getIrs;
   if (overrides.getJadwal) deps.siap.getJadwal = overrides.getJadwal;
+  if (overrides.getCourseSummary)
+    deps.kulon.getCourseSummary = overrides.getCourseSummary;
   if (overrides.getCourses) deps.kulon.getCourses = overrides.getCourses;
   if (overrides.getAllAssignments)
     deps.kulon.getAllAssignments = overrides.getAllAssignments;
@@ -84,6 +87,18 @@ describe('DashboardService', () => {
     expect(out.jadwal).toEqual([]);
   });
 
+  it('uses the progress-free course summary path instead of public courses', async () => {
+    const getCourseSummary = jest.fn().mockResolvedValue([COURSE]);
+    const getCourses = jest.fn().mockRejectedValue(new Error('public path must not run'));
+    const svc = makeService({ getCourseSummary, getCourses });
+
+    await expect(svc.getDashboard(ref('u1'))).resolves.toEqual(
+      expect.objectContaining({ courses: [COURSE] }),
+    );
+    expect(getCourseSummary).toHaveBeenCalledWith(ref('u1'));
+    expect(getCourses).not.toHaveBeenCalled();
+  });
+
   it('rethrows a 401 StaleUpstreamError instead of degrading an authenticated slice', async () => {
     const stale = new StaleUpstreamError('SIAP', 'login-redirect');
     const svc = makeService({
@@ -98,7 +113,7 @@ describe('DashboardService', () => {
       HttpStatus.UNAUTHORIZED,
     );
     const svc = makeService({
-      getCourses: jest.fn().mockRejectedValue(dead),
+      getCourseSummary: jest.fn().mockRejectedValue(dead),
     });
     await expect(svc.getDashboard(ref('u1'))).rejects.toBe(dead);
   });
@@ -118,7 +133,7 @@ describe('DashboardService', () => {
 
   it('maps a plain non-HTTP Error to 500 with a generic message (no detail leak)', async () => {
     const svc = makeService({
-      getCourses: jest
+      getCourseSummary: jest
         .fn()
         .mockRejectedValue(new Error('internal secret') as never),
     });
@@ -147,11 +162,11 @@ describe('DashboardService', () => {
   });
 
   it('passes the exact SessionRef to every domain method (none drops generation)', async () => {
-    const getCourses = jest.fn().mockResolvedValue([COURSE]);
+    const getCourseSummary = jest.fn().mockResolvedValue([COURSE]);
     const getAllAssignments = jest.fn().mockResolvedValue([ASSIGN]);
-    const svc = makeService({ getCourses, getAllAssignments });
+    const svc = makeService({ getCourseSummary, getAllAssignments });
     await svc.getDashboard(ref('u1'));
-    expect(getCourses).toHaveBeenCalledWith(ref('u1'));
+    expect(getCourseSummary).toHaveBeenCalledWith(ref('u1'));
     expect(getAllAssignments).toHaveBeenCalledWith(ref('u1'));
   });
 
@@ -165,6 +180,7 @@ describe('DashboardService', () => {
         getJadwal: jest.fn().mockResolvedValue([]),
       },
       kulon: {
+        getCourseSummary: jest.fn().mockResolvedValue([COURSE]),
         getCourses: jest.fn().mockResolvedValue([COURSE]),
         getAllAssignments: jest.fn().mockResolvedValue([ASSIGN]),
       },

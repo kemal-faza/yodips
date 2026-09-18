@@ -175,7 +175,7 @@ export class DashboardService {
         name: 'courses',
         p: this.timedSlice(
           'courses',
-          () => this.kulon?.getCourses(ref) ?? Promise.resolve([]),
+          () => this.kulon?.getCourseSummary(ref) ?? Promise.resolve([]),
         ),
       },
       {

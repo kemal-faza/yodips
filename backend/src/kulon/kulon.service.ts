@@ -1,5 +1,6 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createKeyedSingleFlight } from '../common/single-flight';
+import { mapWithConcurrency } from '../common/map-with-concurrency';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
 import { SiapService } from '../siap/siap.service';
@@ -58,6 +59,14 @@ const kulonPageCompatibilityErrors = new WeakSet<object>();
 type KulonScope =
   | { kind: 'session'; ref: SessionRef }
   | { kind: 'current'; sub: string };
+
+type TimelineCourses = {
+  all: Omit<KulonCourse, 'timelineStatus'>[];
+  inprogress: Omit<KulonCourse, 'timelineStatus'>[];
+  hidden: Omit<KulonCourse, 'timelineStatus'>[];
+};
+
+const COURSE_PROGRESS_CONCURRENCY = 4;
 
 function normalizeKulonScope(scope?: KulonScope | string): KulonScope | undefined {
   if (typeof scope === 'string') return { kind: 'current', sub: scope };
@@ -168,6 +177,9 @@ export class KulonService {
     createKeyedSingleFlight<KulonAssignment[]>();
   private readonly allAssignmentsFlight =
     createKeyedSingleFlight<KulonAssignment[]>();
+  /** One timeline base flight per authenticated generation/current session. */
+  private readonly timelineFlight =
+    createKeyedSingleFlight<TimelineCourses>();
 
   /**
    * Cookie + sesskey pair every token-facing entry point starts from.
@@ -350,6 +362,49 @@ export class KulonService {
     });
   }
 
+  /**
+   * Dashboard-only course data. It preserves the fields needed to correlate
+   * assignments and display active courses/lecturers, but deliberately omits
+   * the per-course `/course/view.php` progress scrape. Public `getCourses`
+   * remains the progress-complete contract used by the Courses screen.
+   */
+  async getCourseSummary(ref: SessionRef): Promise<KulonCourse[]> {
+    if (!isSessionRef(ref)) {
+      throw sessionDead();
+    }
+    const scope: KulonScope = { kind: 'session', ref };
+    return this.courseFlight.run(flightKeyForSession(ref, 'course-summary'), async () => {
+      const { cookie: sessionCookie, sesskey } =
+        await this.requireKulonAjaxForSession(ref);
+      if (this.cache) {
+        const { value } = await this.cache.getStale<KulonCourse[]>(
+          kulonCacheKey(scope, 'courses', 'summary'),
+          () =>
+            this.fetchCourses(
+              sessionCookie,
+              sesskey,
+              scope,
+              {
+                withLecturers: true,
+                withProgress: false,
+                skipCacheRead: true,
+              },
+              ref,
+            ),
+          swrWindow('KULON_COURSES'),
+        );
+        return value;
+      }
+      return this.fetchCourses(
+        sessionCookie,
+        sesskey,
+        scope,
+        { withLecturers: true, withProgress: false },
+        ref,
+      );
+    });
+  }
+
   /** Course aggregation without session resolution (caller owns the session). */
   private async fetchCourses(
     sessionCookie: string,
@@ -372,11 +427,8 @@ export class KulonService {
     // current semester. Kulon course names/ID numbers carry no reliable
     // semester marker (verified live 2026-08-06), so name-parsing stays
     // display-only.
-    const [visible, inprogress, hidden] = await Promise.all([
-      this.fetchTimelineCourses(sessionCookie, sesskey, 'all'),
-      this.fetchTimelineCourses(sessionCookie, sesskey, 'inprogress'),
-      this.fetchTimelineCourses(sessionCookie, sesskey, 'hidden'),
-    ]);
+    const timeline = await this.fetchTimelineBase(sessionCookie, sesskey, scope);
+    const { all: visible, inprogress, hidden } = timeline;
     const inprogressIds = new Set(inprogress.map((c) => c.id));
     // Merge visible + "removed from view" (hidden) courses, dedupe by id.
     // Visible entries take priority, so semester/fullname reflects the live course.
@@ -394,16 +446,27 @@ export class KulonService {
     // not carry progress, so per-course fetches would be pure wasted upstream work.
     let mergedWithProgress: KulonCourse[] = merged;
     if (opts.withProgress !== false) {
-      const settled = await Promise.allSettled(
-        merged.map(async (c) => ({
-          id: c.id,
-          progress: parseSectionProgress(
-            (await this.fetchCourseContent(sessionCookie, sesskey, c.id, scope))
-              .sections,
-            undefined,
-            { isPast: c.timelineStatus === 'past' },
-          ),
-        })),
+      const settled = await mapWithConcurrency(
+        merged,
+        COURSE_PROGRESS_CONCURRENCY,
+        async (c) => {
+          try {
+            return {
+              status: 'fulfilled' as const,
+              value: {
+                id: c.id,
+                progress: parseSectionProgress(
+                  (await this.fetchCourseContent(sessionCookie, sesskey, c.id, scope))
+                    .sections,
+                  undefined,
+                  { isPast: c.timelineStatus === 'past' },
+                ),
+              },
+            };
+          } catch (reason) {
+            return { status: 'rejected' as const, reason };
+          }
+        },
       );
       const progressById = new Map<number, number>();
       for (const r of settled) {
@@ -475,6 +538,26 @@ export class KulonService {
       idnumber: c.idnumber ?? '',
       semester: parseSemester(c.fullname ?? '', c.idnumber ?? ''),
     }));
+  }
+
+  private async fetchTimelineBase(
+    sessionCookie: string,
+    sesskey: string,
+    scope?: KulonScope,
+  ): Promise<TimelineCourses> {
+    const load = () =>
+      Promise.all([
+        this.fetchTimelineCourses(sessionCookie, sesskey, 'all'),
+        this.fetchTimelineCourses(sessionCookie, sesskey, 'inprogress'),
+        this.fetchTimelineCourses(sessionCookie, sesskey, 'hidden'),
+      ]).then(([all, inprogress, hidden]) => ({ all, inprogress, hidden }));
+
+    if (!scope) return load();
+    const key =
+      scope.kind === 'session'
+        ? flightKeyForSession(scope.ref, 'timeline-courses')
+        : flightKeyForCurrent(scope.sub, 'timeline-courses');
+    return this.timelineFlight.run(key, load);
   }
 
   async getAssignments(ref: SessionRef): Promise<KulonAssignment[]> {
