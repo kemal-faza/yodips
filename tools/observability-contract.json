@@ -46,6 +46,27 @@
     "stale",
     "unknown"
   ],
+  "dashboardRoutes": [
+    "GET /api/dashboard"
+  ],
+  "dashboardOutcomes": [
+    "ok",
+    "error"
+  ],
+  "dashboardCacheStates": [
+    "cold",
+    "warm",
+    "mixed",
+    "unknown"
+  ],
+  "dashboardSlices": [
+    "profile",
+    "khs",
+    "irs",
+    "jadwal",
+    "courses",
+    "assignments"
+  ],
   "upstreamRoutes": [
     {
       "service": "kulon",

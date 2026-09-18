@@ -55,6 +55,31 @@ const upstream = (overrides: Record<string, unknown> = {}): Record<string, unkno
   ...overrides,
 });
 
+const dashboardRequest = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  v: 1,
+  ts,
+  event: "dashboard.request",
+  route: "GET /api/dashboard",
+  outcome: "ok",
+  status: 200,
+  durationMs: 120,
+  responseBytes: 4096,
+  cacheState: "warm",
+  ...overrides,
+});
+
+const dashboardSlice = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  v: 1,
+  ts,
+  event: "dashboard.slice",
+  route: "GET /api/dashboard",
+  slice: "jadwal",
+  outcome: "ok",
+  status: 200,
+  durationMs: 30,
+  ...overrides,
+});
+
 function runCli(args: string[], input?: string) {
   const cli = join(__dirname, "analyze-observability-log.js");
   return spawnSync(process.execPath, [cli, ...args], {
@@ -230,6 +255,41 @@ describe("observability event parser", () => {
     assert.deepEqual(parseEventLine(JSON.stringify({ v: 1, ts, event: "unknown" })), { kind: "malformed" });
     assert.deepEqual(parseEventLine("prefix {not-json}"), { kind: "malformed" });
     assert.deepEqual(parseEventLine("{broken"), { kind: "malformed" });
+  });
+
+  it("aggregates dashboard requests and per-slice timing without adding a dashboard section when absent", () => {
+    const withoutDashboard = aggregateEvents([upstream()]);
+    assert.equal(withoutDashboard.dashboard, undefined);
+
+    const dashboardError = dashboardRequest({ outcome: "error", status: 502, durationMs: 200 });
+    delete dashboardError.responseBytes;
+    const report = aggregateEvents([
+      dashboardRequest({ durationMs: 80, responseBytes: 2048, cacheState: "cold" }),
+      dashboardRequest({ durationMs: 120, responseBytes: 4096, cacheState: "warm" }),
+      dashboardError,
+      dashboardSlice({ slice: "jadwal", durationMs: 10 }),
+      dashboardSlice({ slice: "jadwal", durationMs: 50 }),
+      dashboardSlice({ slice: "courses", durationMs: 25, outcome: "error", status: 502 }),
+    ]);
+
+    assert.deepEqual(report.dashboard, {
+      requests: {
+        outcomes: { error: 1, ok: 2 },
+        cacheStates: { cold: 1, mixed: 0, unknown: 0, warm: 2 },
+        durationMs: { p50: 120, p95: 200 },
+        responseBytes: { p50: 2048, p95: 4096 },
+      },
+      slices: {
+        courses: {
+          outcomes: { error: 1, ok: 0 },
+          durationMs: { p50: 25, p95: 25 },
+        },
+        jadwal: {
+          outcomes: { error: 0, ok: 2 },
+          durationMs: { p50: 10, p95: 50 },
+        },
+      },
+    });
   });
 });
 

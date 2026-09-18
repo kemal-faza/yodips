@@ -31,11 +31,27 @@ type UpstreamAggregate = {
   durationMs: { p50: number | null; p95: number | null };
 };
 
+type TimingAggregate = {
+  outcomes: Record<string, number>;
+  durationMs: { p50: number | null; p95: number | null };
+};
+
+type DashboardRequestAggregate = TimingAggregate & {
+  cacheStates: Record<string, number>;
+  responseBytes: { p50: number | null; p95: number | null };
+};
+
+export type DashboardAggregate = {
+  requests: DashboardRequestAggregate;
+  slices: Record<string, TimingAggregate>;
+};
+
 export type AnalysisReport = {
   schemaVersion: number;
   lines: { events: number; ignoredLines: number; malformedEvents: number };
   cache: Record<string, CacheAggregate>;
   upstream: Record<string, UpstreamAggregate>;
+  dashboard?: DashboardAggregate;
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -163,6 +179,35 @@ function incrementCounter(counters: Record<string, number>, key: string): void {
   counters[key] = next;
 }
 
+function emptyTimingAggregate(): TimingAggregate {
+  return { outcomes: {}, durationMs: { p50: null, p95: null } };
+}
+
+function ensureTimingAggregate(
+  groups: Record<string, TimingAggregate>,
+  key: string,
+  outcomes: readonly string[],
+): TimingAggregate {
+  const current = groups[key];
+  if (current) return current;
+  const created = emptyTimingAggregate();
+  created.outcomes = zeroCounts(outcomes);
+  groups[key] = created;
+  return created;
+}
+
+function emptyDashboardAggregate(contract: Contract): DashboardAggregate {
+  return {
+    requests: {
+      ...emptyTimingAggregate(),
+      outcomes: zeroCounts(contract.dashboardOutcomes),
+      cacheStates: zeroCounts(contract.dashboardCacheStates),
+      responseBytes: { p50: null, p95: null },
+    },
+    slices: {},
+  };
+}
+
 function routeKey(route: { service: string; operation: string; route: string }): string {
   return `${route.service}.${route.operation}.${route.route}`;
 }
@@ -209,6 +254,10 @@ export function aggregateEvents(events: readonly unknown[]): AnalysisReport {
   const contract = getContract();
   const report = createReport(contract);
   const durations = new Map<string, number[]>();
+  const dashboardDurations: number[] = [];
+  const dashboardResponseBytes: number[] = [];
+  const dashboardSliceDurations = new Map<string, number[]>();
+  let dashboard: DashboardAggregate | undefined;
 
   for (const candidate of events) {
     const event = validateEvent(candidate);
@@ -234,6 +283,23 @@ export function aggregateEvents(events: readonly unknown[]): AnalysisReport {
       const sample = durations.get(key) ?? [];
       sample.push(event.durationMs as number);
       durations.set(key, sample);
+      continue;
+    }
+    if (event.event === "dashboard.request") {
+      dashboard ??= emptyDashboardAggregate(contract);
+      incrementCounter(dashboard.requests.outcomes, String(event.outcome));
+      incrementCounter(dashboard.requests.cacheStates, String(event.cacheState));
+      dashboardDurations.push(event.durationMs as number);
+      if (has(event, "responseBytes")) dashboardResponseBytes.push(event.responseBytes as number);
+      continue;
+    }
+    if (event.event === "dashboard.slice") {
+      dashboard ??= emptyDashboardAggregate(contract);
+      const slice = ensureTimingAggregate(dashboard.slices, String(event.slice), contract.dashboardOutcomes);
+      incrementCounter(slice.outcomes, String(event.outcome));
+      const samples = dashboardSliceDurations.get(String(event.slice)) ?? [];
+      samples.push(event.durationMs as number);
+      dashboardSliceDurations.set(String(event.slice), samples);
     }
   }
 
@@ -243,6 +309,23 @@ export function aggregateEvents(events: readonly unknown[]): AnalysisReport {
       p95: nearestRank(values, 0.95),
     };
   }
+  if (dashboard) {
+    dashboard.requests.durationMs = {
+      p50: nearestRank(dashboardDurations, 0.5),
+      p95: nearestRank(dashboardDurations, 0.95),
+    };
+    dashboard.requests.responseBytes = {
+      p50: nearestRank(dashboardResponseBytes, 0.5),
+      p95: nearestRank(dashboardResponseBytes, 0.95),
+    };
+    for (const [slice, values] of dashboardSliceDurations) {
+      dashboard.slices[slice].durationMs = {
+        p50: nearestRank(values, 0.5),
+        p95: nearestRank(values, 0.95),
+      };
+    }
+  }
+  if (dashboard) report.dashboard = dashboard;
   return report;
 }
 
@@ -270,6 +353,7 @@ export function analyzeText(text: string): AnalysisReport {
   const aggregate = aggregateEvents(events);
   report.cache = aggregate.cache;
   report.upstream = aggregate.upstream;
+  if (aggregate.dashboard) report.dashboard = aggregate.dashboard;
   return report;
 }
 

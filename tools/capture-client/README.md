@@ -36,3 +36,33 @@ the tool exits with an error before any session is created. The SPA reads the
 fragment only when `VITE_LOGIN_MODE=handoff` (dev/test fallback), consumes it
 once, and removes it from the address bar/history immediately. Treat the JWT
 like a password: anyone who obtains it can act as you until it expires.
+
+## Dashboard cold/warm benchmark
+
+This benchmark measures browser-side dashboard loading in an already authenticated Chrome. It connects over CDP, creates and closes only its own page, and disconnects without closing Chrome. It never prints or stores cookies, JWTs, response bodies, or upstream data.
+
+Start the web app and backend, log in normally (or complete the extension handoff), then start Chrome with remote debugging enabled. Run:
+
+```bash
+node tools/capture-client/benchmark-dashboard.mjs \
+  --app-url http://localhost:5173 \
+  --cdp http://127.0.0.1:9223 \
+  --scenario all \
+  --output dashboard-benchmark.json
+```
+
+The scenarios are:
+
+- `first-post-login`: a fresh dashboard navigation using the existing authenticated browser context;
+- `cold-reload`: a fresh page navigation, which resets the SPA's in-memory cache;
+- `warm-reload`: a subsequent navigation classified as warm.
+
+The report contains time-to-useful-content, dashboard response status/bytes, and time-to-complete. The `cold`/`warm` header describes the browser lifecycle used for measurement; it does not claim that backend caches were cleared. Reset backend caches separately before calling a run truly backend-cold.
+
+For backend call counts and slice p50/p95, collect the structured backend log for the same run and analyze it with:
+
+```bash
+npm --prefix tools run analyze:observability -- /path/to/backend.log > dashboard-telemetry-report.json
+```
+
+Compare the three scenario reports and telemetry reports manually. Do not commit either report when it contains user data, cookies, JWTs, response bodies, or other PII.

@@ -3,8 +3,14 @@ import { join } from "node:path";
 
 type JsonRecord = Record<string, unknown>;
 
-const EVENT_NAMES = ["cache.read", "cache.refresh", "upstream.request"] as const;
-const NUMERIC_FIELDS = ["durationMs", "ageMs", "freshTtlMs", "staleTtlMs"] as const;
+const EVENT_NAMES = [
+  "cache.read",
+  "cache.refresh",
+  "upstream.request",
+  "dashboard.request",
+  "dashboard.slice",
+] as const;
+const NUMERIC_FIELDS = ["durationMs", "ageMs", "freshTtlMs", "staleTtlMs", "responseBytes"] as const;
 
 type EventShape = {
   outcomes: string[];
@@ -19,9 +25,12 @@ type StatusRules = {
   forbiddenFor: string[];
 };
 
+type StatusRange = { minimum: number; maximum: number };
+
 type ValidationRules = {
   numeric: { minimum: number; maximum: number };
   upstreamStatus: StatusRules;
+  dashboardStatus: StatusRange;
   authProbe: { cache: string; backend: string; outcomes: string[]; forbidden: string[] };
   hardExpireReason: string;
   upstreamReasonGroups: Record<string, string[]>;
@@ -37,10 +46,15 @@ export type Contract = {
   upstreamServices: string[];
   upstreamOutcomes: string[];
   upstreamReasons: string[];
+  dashboardRoutes: string[];
+  dashboardOutcomes: string[];
+  dashboardCacheStates: string[];
+  dashboardSlices: string[];
   upstreamRoutes: Array<{ service: string; operation: string; route: string }>;
   eventShapes: Record<string, Record<string, EventShape>>;
   numeric: { minimum: number; maximum: number };
   upstreamStatus: StatusRules;
+  dashboardStatus: StatusRange;
   authProbe: { cache: string; backend: string; outcomes: string[]; forbidden: string[] };
   hardExpireReason: string;
   upstreamReasonGroups: Record<string, string[]>;
@@ -124,6 +138,10 @@ function loadContractCatalog(root: JsonRecord) {
   const upstreamServices = stringArray(root.upstreamServices);
   const upstreamOutcomes = stringArray(root.upstreamOutcomes);
   const upstreamReasons = stringArray(root.upstreamReasons);
+  const dashboardRoutes = stringArray(root.dashboardRoutes);
+  const dashboardOutcomes = stringArray(root.dashboardOutcomes);
+  const dashboardCacheStates = stringArray(root.dashboardCacheStates);
+  const dashboardSlices = stringArray(root.dashboardSlices);
 
   if (
     !Number.isSafeInteger(schemaVersion) ||
@@ -135,6 +153,10 @@ function loadContractCatalog(root: JsonRecord) {
     upstreamServices.length === 0 ||
     upstreamOutcomes.length === 0 ||
     upstreamReasons.length === 0
+    || dashboardRoutes.length === 0
+    || dashboardOutcomes.length === 0
+    || dashboardCacheStates.length === 0
+    || dashboardSlices.length === 0
   ) {
     throw new Error("Invalid observability contract");
   }
@@ -149,6 +171,10 @@ function loadContractCatalog(root: JsonRecord) {
     upstreamServices,
     upstreamOutcomes,
     upstreamReasons,
+    dashboardRoutes,
+    dashboardOutcomes,
+    dashboardCacheStates,
+    dashboardSlices,
   };
 }
 
@@ -203,12 +229,17 @@ function loadEventShapes(value: unknown): Contract["eventShapes"] {
 
 function validateOutcomeCoverage(
   eventShapes: Contract["eventShapes"],
-  catalog: Pick<Contract, "cacheReadOutcomes" | "cacheRefreshOutcomes" | "upstreamOutcomes">,
+  catalog: Pick<
+    Contract,
+    "cacheReadOutcomes" | "cacheRefreshOutcomes" | "upstreamOutcomes" | "dashboardOutcomes"
+  >,
 ): void {
   const catalogs = [
     ["cache.read", catalog.cacheReadOutcomes],
     ["cache.refresh", catalog.cacheRefreshOutcomes],
     ["upstream.request", catalog.upstreamOutcomes],
+    ["dashboard.request", catalog.dashboardOutcomes],
+    ["dashboard.slice", catalog.dashboardOutcomes],
   ] as const;
   for (const [eventName, outcomes] of catalogs) {
     const catalogOutcomes = new Set(outcomes);
@@ -258,6 +289,24 @@ function loadStatusRules(value: unknown, upstreamOutcomes: readonly string[]): S
     result.requiredFor.some((outcome) => result.forbiddenFor.includes(outcome)) ||
     result.requiredFor.some((outcome) => !knownOutcomes.has(outcome)) ||
     result.forbiddenFor.some((outcome) => !knownOutcomes.has(outcome))
+  ) {
+    throw new Error("Invalid observability contract");
+  }
+  return result;
+}
+
+function loadStatusRange(value: unknown): StatusRange {
+  const root = requiredRecord(value);
+  const result = {
+    minimum: requiredNumber(root.minimum),
+    maximum: requiredNumber(root.maximum),
+  };
+  if (
+    !Number.isSafeInteger(result.minimum) ||
+    !Number.isSafeInteger(result.maximum) ||
+    result.minimum < 100 ||
+    result.maximum > 599 ||
+    result.maximum < result.minimum
   ) {
     throw new Error("Invalid observability contract");
   }
@@ -316,6 +365,7 @@ function loadValidationRules(
   return {
     numeric: loadNumericRules(root.numeric),
     upstreamStatus: loadStatusRules(root.upstreamStatus, upstreamOutcomes),
+    dashboardStatus: loadStatusRange(root.dashboardStatus),
     authProbe: loadAuthProbe(cacheRead.authProbe),
     hardExpireReason,
     upstreamReasonGroups: loadReasonGroups(root.upstreamReasons, eventShapes, upstreamReasons),
@@ -414,15 +464,28 @@ function validField(value: JsonRecord, field: string, eventName: string, contrac
     case "service":
       return typeof value.service === "string" && contract.upstreamServices.includes(value.service);
     case "operation":
+      return eventName === "upstream.request" && routeMatches(value, contract);
     case "route":
-      return routeMatches(value, contract);
+      return eventName.startsWith("dashboard.")
+        ? typeof value.route === "string" && contract.dashboardRoutes.includes(value.route)
+        : routeMatches(value, contract);
+    case "slice":
+      return typeof value.slice === "string" && contract.dashboardSlices.includes(value.slice);
+    case "cacheState":
+      return typeof value.cacheState === "string" && contract.dashboardCacheStates.includes(value.cacheState);
     case "reason":
       return validReason(value, eventName, contract);
     case "status":
       return (
         isSafeNumber(value.status, contract) &&
-        value.status >= contract.upstreamStatus.minimum &&
-        value.status <= contract.upstreamStatus.maximum
+        value.status >=
+          (eventName.startsWith("dashboard.")
+            ? contract.dashboardStatus.minimum
+            : contract.upstreamStatus.minimum) &&
+        value.status <=
+          (eventName.startsWith("dashboard.")
+            ? contract.dashboardStatus.maximum
+            : contract.upstreamStatus.maximum)
       );
     default:
       return false;
