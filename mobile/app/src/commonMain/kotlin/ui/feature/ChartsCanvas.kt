@@ -174,10 +174,11 @@ private fun AreaLineChart(
                 },
         ) {
             Canvas(Modifier.fillMaxSize()) {
-                for (g in 0..4) {
-                    val gy = plotTop + plotH * g / 4f
+                // Sumbu-y normal: nilai max di ATAS (g=0) turun ke 0 di bawah (g=AXIS_TICKS).
+                for (g in 0..AXIS_TICKS) {
+                    val gy = plotTop + plotH * g / AXIS_TICKS
                     drawLine(gridColor, Offset(plotLeft, gy), Offset(plotRight, gy), strokeWidth = 1f)
-                    drawAxisText(textMeasurer, fmtValue(yMin + (yMax - yMin) * g / 4f), plotLeft - 6f, gy + 4f, labelStyle, alignRight = true)
+                    drawAxisText(textMeasurer, fmtValue(yMax - (yMax - yMin) * g / AXIS_TICKS), plotLeft - 6f, gy + 4f, labelStyle, alignRight = true)
                 }
 
                 if (fill && n > 1) {
@@ -267,7 +268,7 @@ private fun GradeChartCard(khs: SiapKhs) {
                 val plotTop = with(density) { 8.dp.toPx() }
                 val plotW = plotRight - plotLeft
                 val plotH = plotBottom - plotTop
-                val maxTotal = rows.maxOfOrNull { it.second.values.sum() }?.coerceAtLeast(1) ?: 1
+                val axisMax = niceAxisMax(rows.maxOfOrNull { it.second.values.sum() } ?: 0)
                 val slot = plotW / n
                 val barW = slot * 0.55f
                 val barCenter: (Int) -> Float = { i -> plotLeft + slot * i + slot / 2 }
@@ -291,10 +292,11 @@ private fun GradeChartCard(khs: SiapKhs) {
                         },
                 ) {
                     Canvas(Modifier.fillMaxSize()) {
-                        for (g in 0..4) {
-                            val gy = plotTop + plotH * g / 4f
+                        // Sumbu-y normal & rata: puncak [axisMax] di ATAS (g=0), 0 di bawah.
+                        for (g in 0..AXIS_TICKS) {
+                            val gy = plotTop + plotH * g / AXIS_TICKS
                             drawLine(gridColor, Offset(plotLeft, gy), Offset(plotRight, gy), strokeWidth = 1f)
-                            drawAxisText(textMeasurer, "${g * maxTotal / 4}", plotLeft - 6f, gy + 4f, labelStyle, alignRight = true)
+                            drawAxisText(textMeasurer, "${(AXIS_TICKS - g) * axisMax / AXIS_TICKS}", plotLeft - 6f, gy + 4f, labelStyle, alignRight = true)
                         }
 
                         rows.forEachIndexed { i, (_, counts) ->
@@ -302,7 +304,7 @@ private fun GradeChartCard(khs: SiapKhs) {
                             val cx = barCenter(i)
                             counts.entries.sortedBy { GRADE_KEYS.indexOf(it.key) }.forEach { (k, c) ->
                                 if (c > 0) {
-                                    val bh = plotH * (c / maxTotal.toFloat())
+                                    val bh = plotH * (c / axisMax.toFloat())
                                     val bo = plotTop + plotH - bh - acc
                                     drawRect(GRADE_COLORS[k] ?: Color(0xFF888888), Offset(cx, bo), Size(barW, bh))
                                     acc += bh
@@ -331,13 +333,14 @@ private fun GradeChartCard(khs: SiapKhs) {
                         }
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    GRADE_KEYS.forEach { k ->
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 3.dp)) {
-                            Box(Modifier.size(8.dp).background(GRADE_COLORS[k] ?: Color(0xFF888888), CircleShape))
-                            Text(" $k", style = MaterialTheme.typography.labelSmall)
-                        }
+            }
+            // Legenda DI BAWAH chart (sebelumnya menumpuk di atas plot).
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                GRADE_KEYS.forEach { k ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 3.dp)) {
+                        Box(Modifier.size(8.dp).background(GRADE_COLORS[k] ?: Color(0xFF888888), CircleShape))
+                        Text(" $k", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }

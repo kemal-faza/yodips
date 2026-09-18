@@ -122,6 +122,25 @@ internal fun barIndex(
         else -> ((x - plotLeft) / slot).toInt().coerceIn(0, n - 1)
 }
 
+/** Jumlah segmen sumbu-y — 5 gridline (index 0..4). */
+internal const val AXIS_TICKS = 4
+
+/**
+ * Puncak sumbu-y "bulat" untuk chart batang bertumpuk: dibulatkan ke atas ke
+ * kelipatan [ticks] supaya label grid jatuh di bilangan bulat & berjarak sama
+ * (mis. max data 9 → 12 dengan grid 12/9/6/3/0, bukan 0/2/4/6/9), dan batang
+ * tetap diskalakan relatif ke puncak itu.
+ */
+internal fun niceAxisMax(maxValue: Int, ticks: Int = AXIS_TICKS): Int {
+    if (maxValue <= 0) return ticks
+    val step = (maxValue + ticks - 1) / ticks
+    return step * ticks
+}
+
+/** Nilai label grid dari ATAS (index 0) ke BAWAH (index [ticks]) — max di atas, 0 di bawah. */
+internal fun axisTickValues(axisMax: Int, ticks: Int = AXIS_TICKS): List<Int> =
+    (0..ticks).map { (ticks - it) * axisMax / ticks }
+
 /** Common-safe axis label formatter (no String.format). */
 internal fun fmtValue(v: Float): String {
     if (kotlin.math.abs(v - kotlin.math.round(v)) < 0.05f) return v.roundToInt().toString()

@@ -95,6 +95,25 @@ class ChartsDataTest {
         assertEquals(0, barIndex(50f, 100f, 66.67f, 3)) // clamp to first bar
     }
 
+    // ---- y-axis scale (label bulat + max di atas, 0 di bawah) ----
+
+    @Test
+    fun `niceAxisMax rounds up to a multiple of the tick count`() {
+        assertEquals(12, niceAxisMax(9))
+        assertEquals(8, niceAxisMax(8))
+        assertEquals(8, niceAxisMax(5))
+        assertEquals(4, niceAxisMax(1))
+        assertEquals(4, niceAxisMax(0))
+        assertEquals(20, niceAxisMax(17))
+    }
+
+    @Test
+    fun `axisTickValues descend evenly from max to zero`() {
+        assertEquals(listOf(12, 9, 6, 3, 0), axisTickValues(12))
+        assertEquals(listOf(8, 6, 4, 2, 0), axisTickValues(8))
+        assertEquals(listOf(4, 3, 2, 1, 0), axisTickValues(4))
+    }
+
     @Test
     fun `line tooltip mirrors web semester header and labeled value`() {
         val tooltip = lineTooltipModel(semester = 2, value = 3.65f, label = "IP Semester")
