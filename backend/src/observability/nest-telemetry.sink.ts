@@ -6,6 +6,10 @@ import {
   CACHE_REFRESH_OUTCOMES,
   CACHE_READ_OUTCOMES,
   CacheReadOutcome,
+  DASHBOARD_CACHE_STATES,
+  DASHBOARD_OUTCOMES,
+  DASHBOARD_ROUTES,
+  DASHBOARD_SLICES,
   TELEMETRY_EVENT_SHAPES,
   TELEMETRY_SCHEMA_VERSION,
   TELEMETRY_VALIDATION_RULES,
@@ -40,11 +44,19 @@ function isSafeInteger(value: unknown): value is number {
   );
 }
 
-function isOneOf<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
-  return typeof value === 'string' && (values as readonly string[]).includes(value);
+function isOneOf<T extends readonly string[]>(
+  values: T,
+  value: unknown,
+): value is T[number] {
+  return (
+    typeof value === 'string' && (values as readonly string[]).includes(value)
+  );
 }
 
-function hasForbiddenField(value: Record<string, unknown>, fields: readonly string[]): boolean {
+function hasForbiddenField(
+  value: Record<string, unknown>,
+  fields: readonly string[],
+): boolean {
   return fields.some((field) => has(value, field));
 }
 
@@ -72,13 +84,17 @@ function buildPlainCacheRead(
   value: Record<string, unknown>,
   ts: string,
   outcome: CacheReadOutcome,
-  forbiddenFields: readonly string[] = TELEMETRY_EVENT_SHAPES['cache.read'].plain.forbidden,
+  forbiddenFields: readonly string[] = TELEMETRY_EVENT_SHAPES['cache.read']
+    .plain.forbidden,
 ): SafeSerializedEvent | undefined {
   if (hasForbiddenField(value, forbiddenFields)) return undefined;
   return cacheReadEnvelope(value, ts, outcome);
 }
 
-function buildStaleMissCacheRead(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
+function buildStaleMissCacheRead(
+  value: Record<string, unknown>,
+  ts: string,
+): SafeSerializedEvent | undefined {
   if (!ttlFields(value) || has(value, 'ageMs')) return undefined;
   return {
     ...cacheReadEnvelope(value, ts, 'miss'),
@@ -92,7 +108,8 @@ function buildExistingCacheRead(
   ts: string,
   outcome: CacheReadOutcome,
 ): SafeSerializedEvent | undefined {
-  if (!has(value, 'ageMs') || !ttlFields(value) || !isSafeInteger(value.ageMs)) return undefined;
+  if (!has(value, 'ageMs') || !ttlFields(value) || !isSafeInteger(value.ageMs))
+    return undefined;
   return {
     ...cacheReadEnvelope(value, ts, outcome),
     ageMs: value.ageMs,
@@ -101,7 +118,10 @@ function buildExistingCacheRead(
   };
 }
 
-function buildCacheRead(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
+function buildCacheRead(
+  value: Record<string, unknown>,
+  ts: string,
+): SafeSerializedEvent | undefined {
   if (
     !isOneOf(CACHE_LABELS, value.cache) ||
     !isOneOf(CACHE_BACKENDS, value.backend) ||
@@ -114,7 +134,11 @@ function buildCacheRead(value: Record<string, unknown>, ts: string): SafeSeriali
   const outcome = value.outcome as CacheReadOutcome;
   const authProbe = TELEMETRY_VALIDATION_RULES.cacheRead.authProbe;
   if (value.cache === authProbe.cache) {
-    if (value.backend !== authProbe.backend || !isOneOf(authProbe.outcomes, outcome)) return undefined;
+    if (
+      value.backend !== authProbe.backend ||
+      !isOneOf(authProbe.outcomes, outcome)
+    )
+      return undefined;
     return buildPlainCacheRead(value, ts, outcome, authProbe.forbidden);
   }
   if (outcome === 'hit') return buildPlainCacheRead(value, ts, outcome);
@@ -126,7 +150,10 @@ function buildCacheRead(value: Record<string, unknown>, ts: string): SafeSeriali
   return buildExistingCacheRead(value, ts, outcome);
 }
 
-function buildCacheRefresh(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
+function buildCacheRefresh(
+  value: Record<string, unknown>,
+  ts: string,
+): SafeSerializedEvent | undefined {
   if (
     !isOneOf(CACHE_LABELS, value.cache) ||
     !isOneOf(CACHE_BACKENDS, value.backend) ||
@@ -135,7 +162,8 @@ function buildCacheRefresh(value: Record<string, unknown>, ts: string): SafeSeri
   ) {
     return undefined;
   }
-  if (value.cache === TELEMETRY_VALIDATION_RULES.cacheRead.authProbe.cache) return undefined;
+  if (value.cache === TELEMETRY_VALIDATION_RULES.cacheRead.authProbe.cache)
+    return undefined;
 
   const outcome = value.outcome;
   const base = {
@@ -153,11 +181,15 @@ function buildCacheRefresh(value: Record<string, unknown>, ts: string): SafeSeri
     return has(value, 'durationMs') || has(value, 'reason') ? undefined : base;
   }
   if (!isSafeInteger(value.durationMs)) return undefined;
-  if (outcome === 'ok') return has(value, 'reason') ? undefined : { ...base, durationMs: value.durationMs };
+  if (outcome === 'ok')
+    return has(value, 'reason')
+      ? undefined
+      : { ...base, durationMs: value.durationMs };
   if (!isOneOf(CACHE_REFRESH_REASONS, value.reason)) return undefined;
   if (
     outcome === 'hard_expire' &&
-    value.reason !== TELEMETRY_VALIDATION_RULES.cacheRefresh.hardExpire.requiredReason
+    value.reason !==
+      TELEMETRY_VALIDATION_RULES.cacheRefresh.hardExpire.requiredReason
   ) {
     return undefined;
   }
@@ -166,7 +198,9 @@ function buildCacheRefresh(value: Record<string, unknown>, ts: string): SafeSeri
 
 type UpstreamResponseOutcome = Exclude<UpstreamOutcome, 'network_error'>;
 
-function findUpstreamRoute(value: Record<string, unknown>): UpstreamRoute | undefined {
+function findUpstreamRoute(
+  value: Record<string, unknown>,
+): UpstreamRoute | undefined {
   return UPSTREAM_ROUTES.find(
     (candidate) =>
       candidate.service === value.service &&
@@ -220,26 +254,53 @@ function buildUpstreamResponse(
 ): SafeSerializedEvent | undefined {
   if (!isValidUpstreamStatus(value.status)) return undefined;
   if (outcome === 'ok') {
-    return has(value, 'reason') ? undefined : { ...base, status: value.status, durationMs: value.durationMs };
+    return has(value, 'reason')
+      ? undefined
+      : { ...base, status: value.status, durationMs: value.durationMs };
   }
   if (outcome === 'http_error') {
     return isOneOf(UPSTREAM_HTTP_ERROR_REASONS, value.reason)
-      ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
+      ? {
+          ...base,
+          status: value.status,
+          durationMs: value.durationMs,
+          reason: value.reason,
+        }
       : undefined;
   }
   if (outcome === 'parse_error') {
-    return isOneOf(UPSTREAM_REASONS, value.reason) && isOneOf(UPSTREAM_PARSE_ERROR_REASONS, value.reason)
-      ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
+    return isOneOf(UPSTREAM_REASONS, value.reason) &&
+      isOneOf(UPSTREAM_PARSE_ERROR_REASONS, value.reason)
+      ? {
+          ...base,
+          status: value.status,
+          durationMs: value.durationMs,
+          reason: value.reason,
+        }
       : undefined;
   }
-  return isOneOf(UPSTREAM_REASONS, value.reason) && isOneOf(UPSTREAM_STALE_REASONS, value.reason)
-    ? { ...base, status: value.status, durationMs: value.durationMs, reason: value.reason }
+  return isOneOf(UPSTREAM_REASONS, value.reason) &&
+    isOneOf(UPSTREAM_STALE_REASONS, value.reason)
+    ? {
+        ...base,
+        status: value.status,
+        durationMs: value.durationMs,
+        reason: value.reason,
+      }
     : undefined;
 }
 
-function buildUpstream(value: Record<string, unknown>, ts: string): SafeSerializedEvent | undefined {
+function buildUpstream(
+  value: Record<string, unknown>,
+  ts: string,
+): SafeSerializedEvent | undefined {
   const route = findUpstreamRoute(value);
-  if (!route || value.event !== 'upstream.request' || !isSafeInteger(value.durationMs)) return undefined;
+  if (
+    !route ||
+    value.event !== 'upstream.request' ||
+    !isSafeInteger(value.durationMs)
+  )
+    return undefined;
   if (!isOneOf(UPSTREAM_OUTCOMES, value.outcome)) return undefined;
 
   const outcome = value.outcome;
@@ -247,6 +308,88 @@ function buildUpstream(value: Record<string, unknown>, ts: string): SafeSerializ
   return outcome === 'network_error'
     ? buildUpstreamNetworkError(value, base)
     : buildUpstreamResponse(value, base, outcome);
+}
+
+function buildDashboard(
+  value: Record<string, unknown>,
+  ts: string,
+): SafeSerializedEvent | undefined {
+  const allowed = new Set([
+    'event',
+    'route',
+    'outcome',
+    'status',
+    'durationMs',
+    'responseBytes',
+    'cacheState',
+  ]);
+  if (
+    value.event !== 'dashboard.request' ||
+    Object.keys(value).some((key) => !allowed.has(key)) ||
+    !isOneOf(DASHBOARD_ROUTES, value.route) ||
+    !isOneOf(DASHBOARD_OUTCOMES, value.outcome) ||
+    !isOneOf(DASHBOARD_CACHE_STATES, value.cacheState) ||
+    !isSafeInteger(value.status) ||
+    value.status < TELEMETRY_VALIDATION_RULES.dashboardStatus.minimum ||
+    value.status > TELEMETRY_VALIDATION_RULES.dashboardStatus.maximum ||
+    !isSafeInteger(value.durationMs)
+  ) {
+    return undefined;
+  }
+
+  const base: SafeSerializedEvent = {
+    v: TELEMETRY_SCHEMA_VERSION,
+    ts,
+    event: 'dashboard.request',
+    route: value.route,
+    outcome: value.outcome,
+    status: value.status,
+    durationMs: value.durationMs,
+    cacheState: value.cacheState,
+  };
+  if (value.outcome === 'ok') {
+    return isSafeInteger(value.responseBytes)
+      ? { ...base, responseBytes: value.responseBytes }
+      : undefined;
+  }
+  return has(value, 'responseBytes') ? undefined : base;
+}
+
+function buildDashboardSlice(
+  value: Record<string, unknown>,
+  ts: string,
+): SafeSerializedEvent | undefined {
+  const allowed = new Set([
+    'event',
+    'route',
+    'slice',
+    'outcome',
+    'status',
+    'durationMs',
+  ]);
+  if (
+    value.event !== 'dashboard.slice' ||
+    Object.keys(value).some((key) => !allowed.has(key)) ||
+    !isOneOf(DASHBOARD_ROUTES, value.route) ||
+    !isOneOf(DASHBOARD_SLICES, value.slice) ||
+    !isOneOf(DASHBOARD_OUTCOMES, value.outcome) ||
+    !isSafeInteger(value.status) ||
+    value.status < TELEMETRY_VALIDATION_RULES.dashboardStatus.minimum ||
+    value.status > TELEMETRY_VALIDATION_RULES.dashboardStatus.maximum ||
+    !isSafeInteger(value.durationMs)
+  ) {
+    return undefined;
+  }
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    ts,
+    event: 'dashboard.slice',
+    route: value.route,
+    slice: value.slice,
+    outcome: value.outcome,
+    status: value.status,
+    durationMs: value.durationMs,
+  };
 }
 
 export function serializeTelemetryEvent(
@@ -261,20 +404,30 @@ export function serializeTelemetryEvent(
   if (event.event === 'cache.read') return buildCacheRead(event, ts);
   if (event.event === 'cache.refresh') return buildCacheRefresh(event, ts);
   if (event.event === 'upstream.request') return buildUpstream(event, ts);
+  if (event.event === 'dashboard.request') return buildDashboard(event, ts);
+  if (event.event === 'dashboard.slice') return buildDashboardSlice(event, ts);
   return undefined;
 }
 
 function levelFor(event: SafeSerializedEvent): LoggerLevel {
-  if (event.event === 'cache.read') return event.outcome === 'stale' ? 'warn' : 'debug';
+  if (event.event === 'cache.read')
+    return event.outcome === 'stale' ? 'warn' : 'debug';
   if (event.event === 'cache.refresh') {
     if (event.outcome === 'hard_expire') return 'warn';
     if (event.outcome === 'error') {
-      return event.reason === 'unexpected' || event.reason === 'unknown' ? 'error' : 'warn';
+      return event.reason === 'unexpected' || event.reason === 'unknown'
+        ? 'error'
+        : 'warn';
     }
     return 'debug';
   }
+  if (event.event === 'dashboard.request')
+    return event.outcome === 'ok' ? 'debug' : 'warn';
+  if (event.event === 'dashboard.slice')
+    return event.outcome === 'ok' ? 'debug' : 'warn';
   if (event.outcome === 'ok') return 'debug';
-  if (event.outcome === 'parse_error' && event.reason === 'unknown') return 'error';
+  if (event.outcome === 'parse_error' && event.reason === 'unknown')
+    return 'error';
   return 'warn';
 }
 

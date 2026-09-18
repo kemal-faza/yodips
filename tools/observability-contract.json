@@ -18,36 +18,11 @@
     "auth.probe",
     "unknown"
   ],
-  "cacheBackends": [
-    "memory",
-    "redis"
-  ],
-  "cacheReadOutcomes": [
-    "fresh",
-    "stale",
-    "hit",
-    "miss",
-    "expired"
-  ],
-  "cacheRefreshOutcomes": [
-    "started",
-    "ok",
-    "error",
-    "hard_expire"
-  ],
-  "cacheRefreshReasons": [
-    "dead-session",
-    "transient",
-    "unexpected",
-    "unknown"
-  ],
-  "upstreamServices": [
-    "kulon",
-    "siap",
-    "siap-api",
-    "sso",
-    "microsoft"
-  ],
+  "cacheBackends": ["memory", "redis"],
+  "cacheReadOutcomes": ["fresh", "stale", "hit", "miss", "expired"],
+  "cacheRefreshOutcomes": ["started", "ok", "error", "hard_expire"],
+  "cacheRefreshReasons": ["dead-session", "transient", "unexpected", "unknown"],
+  "upstreamServices": ["kulon", "siap", "siap-api", "sso", "microsoft"],
   "upstreamOutcomes": [
     "ok",
     "http_error",
@@ -221,26 +196,12 @@
   "eventShapes": {
     "cache.read": {
       "plain": {
-        "outcomes": [
-          "hit",
-          "miss"
-        ],
-        "required": [
-          "cache",
-          "backend",
-          "outcome",
-          "durationMs"
-        ],
-        "forbidden": [
-          "ageMs",
-          "freshTtlMs",
-          "staleTtlMs"
-        ]
+        "outcomes": ["hit", "miss"],
+        "required": ["cache", "backend", "outcome", "durationMs"],
+        "forbidden": ["ageMs", "freshTtlMs", "staleTtlMs"]
       },
       "staleMiss": {
-        "outcomes": [
-          "miss"
-        ],
+        "outcomes": ["miss"],
         "required": [
           "cache",
           "backend",
@@ -249,16 +210,10 @@
           "staleTtlMs",
           "durationMs"
         ],
-        "forbidden": [
-          "ageMs"
-        ]
+        "forbidden": ["ageMs"]
       },
       "existing": {
-        "outcomes": [
-          "fresh",
-          "stale",
-          "expired"
-        ],
+        "outcomes": ["fresh", "stale", "expired"],
         "required": [
           "cache",
           "backend",
@@ -273,25 +228,12 @@
     },
     "cache.refresh": {
       "started": {
-        "outcomes": [
-          "started"
-        ],
-        "required": [
-          "cache",
-          "backend",
-          "outcome",
-          "freshTtlMs",
-          "staleTtlMs"
-        ],
-        "forbidden": [
-          "durationMs",
-          "reason"
-        ]
+        "outcomes": ["started"],
+        "required": ["cache", "backend", "outcome", "freshTtlMs", "staleTtlMs"],
+        "forbidden": ["durationMs", "reason"]
       },
       "ok": {
-        "outcomes": [
-          "ok"
-        ],
+        "outcomes": ["ok"],
         "required": [
           "cache",
           "backend",
@@ -300,15 +242,10 @@
           "staleTtlMs",
           "durationMs"
         ],
-        "forbidden": [
-          "reason"
-        ]
+        "forbidden": ["reason"]
       },
       "terminal": {
-        "outcomes": [
-          "error",
-          "hard_expire"
-        ],
+        "outcomes": ["error", "hard_expire"],
         "required": [
           "cache",
           "backend",
@@ -323,9 +260,7 @@
     },
     "upstream.request": {
       "ok": {
-        "outcomes": [
-          "ok"
-        ],
+        "outcomes": ["ok"],
         "required": [
           "service",
           "operation",
@@ -334,14 +269,10 @@
           "status",
           "durationMs"
         ],
-        "forbidden": [
-          "reason"
-        ]
+        "forbidden": ["reason"]
       },
       "httpError": {
-        "outcomes": [
-          "http_error"
-        ],
+        "outcomes": ["http_error"],
         "required": [
           "service",
           "operation",
@@ -354,9 +285,7 @@
         "forbidden": []
       },
       "networkError": {
-        "outcomes": [
-          "network_error"
-        ],
+        "outcomes": ["network_error"],
         "required": [
           "service",
           "operation",
@@ -365,14 +294,10 @@
           "durationMs",
           "reason"
         ],
-        "forbidden": [
-          "status"
-        ]
+        "forbidden": ["status"]
       },
       "parseError": {
-        "outcomes": [
-          "parse_error"
-        ],
+        "outcomes": ["parse_error"],
         "required": [
           "service",
           "operation",
@@ -385,9 +310,7 @@
         "forbidden": []
       },
       "stale": {
-        "outcomes": [
-          "stale"
-        ],
+        "outcomes": ["stale"],
         "required": [
           "service",
           "operation",
@@ -397,6 +320,32 @@
           "durationMs",
           "reason"
         ],
+        "forbidden": []
+      }
+    },
+    "dashboard.request": {
+      "ok": {
+        "outcomes": ["ok"],
+        "required": [
+          "route",
+          "outcome",
+          "status",
+          "durationMs",
+          "responseBytes",
+          "cacheState"
+        ],
+        "forbidden": []
+      },
+      "error": {
+        "outcomes": ["error"],
+        "required": ["route", "outcome", "status", "durationMs", "cacheState"],
+        "forbidden": ["responseBytes"]
+      }
+    },
+    "dashboard.slice": {
+      "all": {
+        "outcomes": ["ok", "error"],
+        "required": ["route", "slice", "outcome", "status", "durationMs"],
         "forbidden": []
       }
     }
@@ -410,29 +359,19 @@
     "upstreamStatus": {
       "minimum": 100,
       "maximum": 599,
-      "requiredFor": [
-        "ok",
-        "http_error",
-        "parse_error",
-        "stale"
-      ],
-      "forbiddenFor": [
-        "network_error"
-      ]
+      "requiredFor": ["ok", "http_error", "parse_error", "stale"],
+      "forbiddenFor": ["network_error"]
+    },
+    "dashboardStatus": {
+      "minimum": 100,
+      "maximum": 599
     },
     "cacheRead": {
       "authProbe": {
         "cache": "auth.probe",
         "backend": "memory",
-        "outcomes": [
-          "hit",
-          "miss"
-        ],
-        "forbidden": [
-          "ageMs",
-          "freshTtlMs",
-          "staleTtlMs"
-        ]
+        "outcomes": ["hit", "miss"],
+        "forbidden": ["ageMs", "freshTtlMs", "staleTtlMs"]
       }
     },
     "cacheRefresh": {
@@ -441,13 +380,8 @@
       }
     },
     "upstreamReasons": {
-      "httpError": [
-        "http-not-ok"
-      ],
-      "networkError": [
-        "fetch-threw",
-        "redirect-loop"
-      ],
+      "httpError": ["http-not-ok"],
+      "networkError": ["fetch-threw", "redirect-loop"],
       "parseError": [
         "html-content-type",
         "malformed-json",

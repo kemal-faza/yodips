@@ -14,6 +14,7 @@ import {
   UPSTREAM_REASONS,
   UPSTREAM_ROUTES,
   UPSTREAM_SERVICES,
+  type TelemetryEventInput,
 } from './telemetry-contract';
 import {
   createNoopTelemetryRuntime,
@@ -25,6 +26,70 @@ import {
 import { serializeTelemetryEvent } from './nest-telemetry.sink';
 
 describe('telemetry contract and runtime', () => {
+  it('serializes a dashboard request observation without caller data', () => {
+    const event: TelemetryEventInput = {
+      event: 'dashboard.request',
+      route: 'GET /api/dashboard',
+      outcome: 'ok',
+      status: 200,
+      durationMs: 125,
+      responseBytes: 4096,
+      cacheState: 'warm',
+    };
+
+    expect(serializeTelemetryEvent(event, 1_725_148_800_000)).toEqual({
+      v: 1,
+      ts: '2024-09-01T00:00:00.000Z',
+      event: 'dashboard.request',
+      route: 'GET /api/dashboard',
+      outcome: 'ok',
+      status: 200,
+      durationMs: 125,
+      responseBytes: 4096,
+      cacheState: 'warm',
+    });
+  });
+
+  it('serializes a dashboard slice observation with a fixed slice name', () => {
+    expect(
+      serializeTelemetryEvent(
+        {
+          event: 'dashboard.slice',
+          route: 'GET /api/dashboard',
+          slice: 'jadwal',
+          outcome: 'ok',
+          status: 200,
+          durationMs: 12,
+        },
+        1_725_148_800_000,
+      ),
+    ).toEqual({
+      v: 1,
+      ts: '2024-09-01T00:00:00.000Z',
+      event: 'dashboard.slice',
+      route: 'GET /api/dashboard',
+      slice: 'jadwal',
+      outcome: 'ok',
+      status: 200,
+      durationMs: 12,
+    });
+  });
+
+  it('rejects dashboard observations with unbounded or unknown fields', () => {
+    expect(
+      serializeTelemetryEvent({
+        event: 'dashboard.request',
+        route: 'GET /api/dashboard',
+        outcome: 'ok',
+        status: 200,
+        durationMs: 125,
+        responseBytes: 4096,
+        cacheState: 'warm',
+        nim: '24060121130000',
+      } as never),
+    ).toBeUndefined();
+  });
+
   it('records the versioned recording-runtime example without exposing caller secrets', () => {
     const events: unknown[] = [];
     const wall = 1_725_148_800_000;
@@ -92,15 +157,32 @@ describe('telemetry contract and runtime', () => {
       'unknown',
     ]);
     expect([...CACHE_BACKENDS]).toEqual(['memory', 'redis']);
-    expect([...CACHE_READ_OUTCOMES]).toEqual(['fresh', 'stale', 'hit', 'miss', 'expired']);
-    expect([...CACHE_REFRESH_OUTCOMES]).toEqual(['started', 'ok', 'error', 'hard_expire']);
+    expect([...CACHE_READ_OUTCOMES]).toEqual([
+      'fresh',
+      'stale',
+      'hit',
+      'miss',
+      'expired',
+    ]);
+    expect([...CACHE_REFRESH_OUTCOMES]).toEqual([
+      'started',
+      'ok',
+      'error',
+      'hard_expire',
+    ]);
     expect([...CACHE_REFRESH_REASONS]).toEqual([
       'dead-session',
       'transient',
       'unexpected',
       'unknown',
     ]);
-    expect([...UPSTREAM_SERVICES]).toEqual(['kulon', 'siap', 'siap-api', 'sso', 'microsoft']);
+    expect([...UPSTREAM_SERVICES]).toEqual([
+      'kulon',
+      'siap',
+      'siap-api',
+      'sso',
+      'microsoft',
+    ]);
     expect([...UPSTREAM_OUTCOMES]).toEqual([
       'ok',
       'http_error',
@@ -127,16 +209,48 @@ describe('telemetry contract and runtime', () => {
     expect(UPSTREAM_ROUTES).toHaveLength(29);
     expect(UPSTREAM_ROUTES).toEqual([
       { service: 'kulon', operation: 'session_probe', route: 'GET /my/' },
-      { service: 'siap', operation: 'session_probe', route: 'GET /pages/mhs/dashboard' },
+      {
+        service: 'siap',
+        operation: 'session_probe',
+        route: 'GET /pages/mhs/dashboard',
+      },
       { service: 'kulon', operation: 'session_identity', route: 'GET /my/' },
-      { service: 'kulon', operation: 'profile_identity', route: 'GET /user/profile.php' },
-      { service: 'kulon', operation: 'assignments_index', route: 'GET /mod/assign/index.php' },
-      { service: 'kulon', operation: 'quiz_index', route: 'GET /mod/quiz/index.php' },
-      { service: 'kulon', operation: 'assignment_detail', route: 'GET /mod/assign/view.php' },
-      { service: 'kulon', operation: 'course_content', route: 'GET /course/view.php' },
+      {
+        service: 'kulon',
+        operation: 'profile_identity',
+        route: 'GET /user/profile.php',
+      },
+      {
+        service: 'kulon',
+        operation: 'assignments_index',
+        route: 'GET /mod/assign/index.php',
+      },
+      {
+        service: 'kulon',
+        operation: 'quiz_index',
+        route: 'GET /mod/quiz/index.php',
+      },
+      {
+        service: 'kulon',
+        operation: 'assignment_detail',
+        route: 'GET /mod/assign/view.php',
+      },
+      {
+        service: 'kulon',
+        operation: 'course_content',
+        route: 'GET /course/view.php',
+      },
       { service: 'kulon', operation: 'sesskey', route: 'GET /my/' },
-      { service: 'kulon', operation: 'ajax', route: 'POST /lib/ajax/service.php' },
-      { service: 'siap', operation: 'profile_page', route: 'GET /pages/mhs/dashboard' },
+      {
+        service: 'kulon',
+        operation: 'ajax',
+        route: 'POST /lib/ajax/service.php',
+      },
+      {
+        service: 'siap',
+        operation: 'profile_page',
+        route: 'GET /pages/mhs/dashboard',
+      },
       {
         service: 'siap',
         operation: 'attendance_page',
@@ -167,25 +281,76 @@ describe('telemetry contract and runtime', () => {
         operation: 'nilai_detail_page',
         route: 'POST /mahasiswa/mhs/profile/get_detail_nilai',
       },
-      { service: 'siap-api', operation: 'mintToken', route: 'POST /index.php/mahasiswa_sso' },
-      { service: 'siap-api', operation: 'semester_aktif', route: 'POST /index.php/semester_aktif' },
-      { service: 'siap-api', operation: 'data_mahasiswa', route: 'POST /index.php/data_mahasiswa' },
-      { service: 'siap-api', operation: 'v2/lihat_irs', route: 'POST /index.php/v2/lihat_irs' },
-      { service: 'siap-api', operation: 'v2/daftar_khs', route: 'POST /index.php/v2/daftar_khs' },
-      { service: 'siap-api', operation: 'v2/lihat_khs', route: 'POST /index.php/v2/lihat_khs' },
-      { service: 'siap-api', operation: 'jadwal', route: 'POST /index.php/jadwal' },
-      { service: 'siap-api', operation: 'absen', route: 'POST /index.php/absen' },
-      { service: 'siap-api', operation: 'pengumuman', route: 'POST /index.php/pengumuman' },
-      { service: 'sso', operation: 'login_page', route: 'GET /auth/user/login' },
-      { service: 'sso', operation: 'session_exchange', route: 'POST /sso/auth_v2' },
-      { service: 'microsoft', operation: 'token_exchange', route: 'POST /oauth2/v2.0/token' },
+      {
+        service: 'siap-api',
+        operation: 'mintToken',
+        route: 'POST /index.php/mahasiswa_sso',
+      },
+      {
+        service: 'siap-api',
+        operation: 'semester_aktif',
+        route: 'POST /index.php/semester_aktif',
+      },
+      {
+        service: 'siap-api',
+        operation: 'data_mahasiswa',
+        route: 'POST /index.php/data_mahasiswa',
+      },
+      {
+        service: 'siap-api',
+        operation: 'v2/lihat_irs',
+        route: 'POST /index.php/v2/lihat_irs',
+      },
+      {
+        service: 'siap-api',
+        operation: 'v2/daftar_khs',
+        route: 'POST /index.php/v2/daftar_khs',
+      },
+      {
+        service: 'siap-api',
+        operation: 'v2/lihat_khs',
+        route: 'POST /index.php/v2/lihat_khs',
+      },
+      {
+        service: 'siap-api',
+        operation: 'jadwal',
+        route: 'POST /index.php/jadwal',
+      },
+      {
+        service: 'siap-api',
+        operation: 'absen',
+        route: 'POST /index.php/absen',
+      },
+      {
+        service: 'siap-api',
+        operation: 'pengumuman',
+        route: 'POST /index.php/pengumuman',
+      },
+      {
+        service: 'sso',
+        operation: 'login_page',
+        route: 'GET /auth/user/login',
+      },
+      {
+        service: 'sso',
+        operation: 'session_exchange',
+        route: 'POST /sso/auth_v2',
+      },
+      {
+        service: 'microsoft',
+        operation: 'token_exchange',
+        route: 'POST /oauth2/v2.0/token',
+      },
     ]);
   });
 
   it('matches the checked standalone contract fixture', () => {
     expect(TELEMETRY_VALIDATION_RULES).toBeDefined();
     const fixture = JSON.parse(
-      readFileSync(resolve(__dirname, '../../../tools/observability-contract.json'), 'utf8'),
+      readFileSync(
+        resolve(__dirname, '../../../tools/observability-contract.json'),
+        'utf8',
+      ),
     ) as Record<string, unknown>;
 
     expect(fixture).toEqual({
@@ -216,20 +381,32 @@ describe('telemetry contract and runtime', () => {
     expect(safeAgeMs(100, Number.NaN)).toBe(0);
     expect(safeAgeMs(Number.POSITIVE_INFINITY, 100)).toBe(0);
     expect(safeAgeMs(100, Number.NEGATIVE_INFINITY)).toBe(0);
-    expect(safeAgeMs(Number.MAX_SAFE_INTEGER + 1, 0)).toBe(Number.MAX_SAFE_INTEGER);
-    expect(safeAgeMs(Number.MAX_VALUE, -Number.MAX_VALUE)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(safeAgeMs(Number.MAX_SAFE_INTEGER + 1, 0)).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+    expect(safeAgeMs(Number.MAX_VALUE, -Number.MAX_VALUE)).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
   });
 
   it('provides production clocks and swallows sink failures', () => {
     const runtime = createNoopTelemetryRuntime();
     expect(runtime.wallNowMs).toBe(Date.now);
     expect(runtime.monotonicNowNs).toBe(process.hrtime.bigint);
-    expect(() => recordTelemetry(runtime, { event: 'invalid' } as never)).not.toThrow();
+    expect(() =>
+      recordTelemetry(runtime, { event: 'invalid' } as never),
+    ).not.toThrow();
 
     const throwingRuntime: TelemetryRuntime = {
       ...runtime,
-      sink: { record: () => { throw new Error('must not escape'); } },
+      sink: {
+        record: () => {
+          throw new Error('must not escape');
+        },
+      },
     };
-    expect(() => recordTelemetry(throwingRuntime, { event: 'invalid' } as never)).not.toThrow();
+    expect(() =>
+      recordTelemetry(throwingRuntime, { event: 'invalid' } as never),
+    ).not.toThrow();
   });
 });
