@@ -83,6 +83,11 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699  # v4
+        with:
+          # Default action memasang "tools platform-tools"; paket `tools` sudah
+          # dihapus dari SDK repo → sdkmanager exit 1 ("Failed to find package
+          # 'tools'"). Sebut paket yang benar-benar dibutuhkan (compileSdk 35).
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
       - name: Restore keystore + keystore.properties dari secrets
         run: |
           set -euo pipefail
