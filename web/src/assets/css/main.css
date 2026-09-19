@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap');
 
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -177,9 +176,13 @@
    their own — they must be wrapped in hsl(). Hex tokens (--primary, --danger)
    are already full colors and must NOT be wrapped. */
 @theme inline {
+  /* Geist (variable) di-self-host lewat @fontsource-variable/geist, di-import
+     di main.ts — bukan @import Google Fonts, yang diblokir CSP produksi
+     (`style-src` SPA tidak memuat fonts.googleapis.com). Subset latin saja
+     yang terunduh berkat unicode-range; sisanya jatuh ke system stack. */
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+    "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-heading: var(--font-sans);
   --color-chart-5: hsl(var(--chart-5));
   --color-chart-4: hsl(var(--chart-4));

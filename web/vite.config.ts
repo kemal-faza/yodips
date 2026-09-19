@@ -46,6 +46,11 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Workbox generateSW default-nya hanya **/*.{js,css,html} — tanpa ini
+        // woff2 Geist yang di-self-host tidak ikut precache dan offline jatuh
+        // ke system stack (font-display: swap menyembunyikannya, tapi tetap
+        // kehilangan konsistensi tipografi).
+        globPatterns: ["**/*.{js,css,html,woff2}"],
         // Match the precached Vite entry exactly; '/' is not a precache key.
         navigateFallback: "index.html",
         // Halaman navigasi /api/* tidak pernah difallback ke shell SPA.

@@ -6,6 +6,10 @@ import router from './router';
 import { useThemeStore } from './stores/theme';
 import { useAuthStore } from './stores/auth';
 import { startSwUpdater } from './lib/sw-update';
+// Geist di-self-host (subset latin + unicode-range); family dipakai oleh
+// --font-sans di main.css. Di-import di sini — bukan @import Google Fonts —
+// supaya Vite yang meng-emit woff2-nya dan CSP `font-src 'self'` tetap cukup.
+import '@fontsource-variable/geist';
 import './assets/css/main.css';
 
 const pinia = createPinia();

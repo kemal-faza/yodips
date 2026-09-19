@@ -13,6 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
     "@lucide/vue": "^1.31.0",
     "@unovis/ts": "^1.7.0",
     "@unovis/vue": "^1.7.0",
