@@ -48,8 +48,13 @@ function go(view: 'kulon') {
 </script>
 
 <template>
-  <div class="space-y-8 overflow-x-clip">
-    <div class="flex flex-wrap items-start justify-between gap-3">
+  <!-- `overflow-x-clip` ada di BARIS GREETING, bukan di root. Overflow horizontal
+       berasal dari MorphingText (teks absolute + nowrap yang lebih lebar dari
+       container-nya) sehingga harus ditahan di baris itu. Kalau dipasang di
+       root, `overflow-x: clip` ikut memotong box-shadow setiap panel yang
+       menempel di tepinya — bayangan jadi terpotong lurus di kiri-kanan. -->
+  <div class="space-y-8">
+    <div class="flex flex-wrap items-start justify-between gap-3 overflow-x-clip">
       <DashboardHeader
         :name="d.siap.value.profile?.nama ?? 'Pengguna'"
         :prodi="d.siap.value.profile?.prodi ?? ''"

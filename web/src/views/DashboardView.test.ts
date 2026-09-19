@@ -184,12 +184,18 @@ describe('DashboardView (academic dashboard)', () => {
     expect(section.findAll('.assignment-card').length).toBe(0);
   });
 
-  it('clips horizontal overflow and renders the full name in the greeting', async () => {
+  it('clips horizontal overflow at the greeting row, not at the panel root', async () => {
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();
     const root = w.find('div.space-y-8');
-    expect(root.classes()).toContain('overflow-x-clip');
+    // `overflow-x: clip` memotong box-shadow di tepinya. Kalau dipasang di root,
+    // bayangan setiap panel ikut terpotong lurus di kiri-kanan — jadi clip-nya
+    // ada di baris greeting, sumber overflow MorphingText.
+    expect(root.classes()).not.toContain('overflow-x-clip');
+    const clipper = w.find('.overflow-x-clip');
+    expect(clipper.exists()).toBe(true);
+    expect(clipper.element.parentElement).toBe(root.element);
     const greeting = w.find('[data-test="greeting"]');
     expect(greeting.exists()).toBe(true);
     expect(greeting.text()).toContain('Anindita Rahmawati');
