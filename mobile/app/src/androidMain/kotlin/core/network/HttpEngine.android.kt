@@ -1,5 +1,6 @@
 package ac.undip.sso.core.network
 
+import ac.undip.sso.BuildConfig
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.okhttp.OkHttp
@@ -16,6 +17,7 @@ internal actual fun createPlatformClient(
     }
     engine {
         config {
+            if (BuildConfig.DEBUG) addInterceptor(MobilePerfInterceptor())
             certificatePinner(
                 CertificatePinner.Builder()
                     .add(
