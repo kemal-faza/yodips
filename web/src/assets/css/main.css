@@ -124,6 +124,24 @@
   box-shadow: var(--elevation-sticky);
 }
 
+/* ===== Transisi tema (View Transitions API) ===== */
+/* Toggle dark mode lewat `document.startViewTransition` (stores/theme.ts):
+   snapshot tema baru dibuka dengan wipe kiri → kanan di atas snapshot lama.
+   Cross-fade bawaan dimatikan supaya yang terlihat hanya wipe-nya. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+  ::view-transition-old(root) {
+    z-index: 1;
+  }
+  ::view-transition-new(root) {
+    z-index: 2;
+  }
+}
+
 /* ===== Animations ===== */
 
 /* Aurora background — animates the layered gradient's background-position so

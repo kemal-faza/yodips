@@ -17,6 +17,43 @@ function apply(dark: boolean) {
 }
 
 /**
+ * Wipe tema butuh View Transitions API (belum ada di semua browser) dan harus
+ * dihormati saat pengguna meminta reduced motion — dua-duanya jatuh ke
+ * ganti-tema instan tanpa animasi.
+ */
+function canWipe(): boolean {
+  return (
+    typeof document.startViewTransition === 'function' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches !== true
+  );
+}
+
+/**
+ * Terapkan tema sebagai wipe kiri → kanan. Snapshot "baru" (tema tujuan)
+ * ditumpuk di atas snapshot lama lalu dibuka lewat clip-path, jadi perpindahan
+ * temanya terbaca sebagai gerakan, bukan kedipan. Ganti kelasnya sendiri
+ * dilakukan di dalam callback supaya View Transitions menangkap before/after
+ * yang benar.
+ */
+function applyWithWipe(dark: boolean) {
+  const transition = document.startViewTransition(() => apply(dark));
+  transition.ready
+    .then(() => {
+      document.documentElement.animate(
+        { clipPath: ['inset(0 100% 0 0)', 'inset(0 0 0 0)'] },
+        {
+          duration: 420,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          pseudoElement: '::view-transition-new(root)',
+        },
+      );
+    })
+    .catch(() => {
+      // Snapshot dibatalkan (mis. tab di background) — tema sudah terpasang.
+    });
+}
+
+/**
  * Dark-mode theme state. Default = saved preference, else the OS
  * prefers-color-scheme. `init()` syncs it onto <html> at boot (the index.html
  * FOUC guard already applied the class pre-paint); `toggle()` flips, persists
@@ -34,7 +71,8 @@ export const useThemeStore = defineStore('theme', {
     toggle() {
       this.dark = !this.dark;
       localStorage.setItem(STORAGE_KEY, this.dark ? 'dark' : 'light');
-      apply(this.dark);
+      if (canWipe()) applyWithWipe(this.dark);
+      else apply(this.dark);
     },
   },
 });
