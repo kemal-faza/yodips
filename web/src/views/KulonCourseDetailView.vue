@@ -284,7 +284,7 @@ load();
     </Alert>
 
     <!-- Content Empty -->
-    <div v-else-if="!content" class="py-16 text-center text-muted-foreground bg-card rounded-xl border border-border p-6">
+    <div v-else-if="!content" class="py-16 text-center text-muted-foreground bg-card rounded-xl p-6 surface-raised">
       Mata kuliah tidak ditemukan.
     </div>
 
@@ -293,7 +293,7 @@ load();
       <section
         v-for="s in content.sections"
         :key="s.id"
-        class="rounded-xl border border-border bg-card overflow-hidden transition-colors"
+        class="rounded-xl bg-card overflow-hidden transition-colors surface-raised"
       >
         <!-- Section Toggle Header -->
         <button

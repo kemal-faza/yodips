@@ -44,7 +44,7 @@ const pageTitle = computed(() => {
     <div class="flex flex-1 flex-col min-w-0">
       <!-- Slim Sticky Header -->
       <header
-        class="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-border bg-card/85 px-4 backdrop-blur-md md:px-6 shadow-xs"
+        class="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-border bg-card px-4 md:px-6 surface-sticky"
         data-test="app-header"
       >
         <div class="flex items-center gap-3">

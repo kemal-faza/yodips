@@ -111,9 +111,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="rounded-xl border border-border bg-card p-6 space-y-4" data-test="pairing-card">
+  <section class="rounded-xl bg-card p-6 space-y-4 surface-raised" data-test="pairing-card">
     <div>
-      <h2 class="text-base font-bold text-foreground">Hubungkan Perangkat Lain</h2>
+      <h2 class="text-lg font-bold tracking-tight text-foreground">Hubungkan Perangkat Lain</h2>
       <p class="mt-1 text-sm text-muted-foreground">
         Buka YoDips di iPhone atau iPad, pindai kode ini, atau ketik kodenya di form login.
       </p>

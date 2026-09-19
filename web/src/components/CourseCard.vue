@@ -17,7 +17,7 @@ const status = computed(() =>
 
 <template>
   <Card
-    class="group cursor-pointer overflow-hidden border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-primary/40"
+    class="group cursor-pointer overflow-hidden bg-card transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:surface-lifted"
     role="button"
     tabindex="0"
     data-test="course-card"

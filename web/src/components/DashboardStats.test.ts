@@ -20,8 +20,8 @@ describe('DashboardStats', () => {
   });
   it('shows the need count as the main task number', () => {
     const w = mount(DashboardStats, { props: { ...base, need: 2 } });
-    const main = w.findAll('span.text-3xl')[3];
-    expect(main?.text()).toBe('2');
+    // Tile "Statistik Tugas" adalah hero: satu-satunya nilai berukuran text-4xl.
+    expect(w.find('span.text-4xl').text()).toBe('2');
   });
   it('renders dashes when Kulon unavailable', () => {
     const w = mount(DashboardStats, { props: { ...base, hasKulon: false } });

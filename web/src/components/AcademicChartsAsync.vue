@@ -46,7 +46,7 @@ onMounted(load);
     <div
       v-for="slot in 2"
       :key="slot"
-      class="h-80 rounded-xl border border-border bg-card p-5 motion-safe:animate-pulse"
+      class="h-80 rounded-xl bg-card p-5 motion-safe:animate-pulse surface-raised"
       aria-hidden="true"
     />
     <span class="sr-only">Memuat grafik akademik…</span>

@@ -23,7 +23,7 @@ const chartTab = ref<'ipTrend' | 'gradeDist'>('ipTrend');
       <CardContent class="p-5">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 class="text-base font-bold text-foreground">
+            <h2 class="text-lg font-bold tracking-tight text-foreground">
               {{ chartTab === 'ipTrend' ? 'Tren Indeks Prestasi (IP)' : 'Distribusi Nilai Huruf' }}
             </h2>
             <p class="mt-0.5 text-xs text-muted-foreground">
@@ -44,7 +44,7 @@ const chartTab = ref<'ipTrend' | 'gradeDist'>('ipTrend');
       <CardContent class="p-5">
         <div class="mb-4 flex items-center justify-between">
           <div>
-            <h2 class="text-base font-bold text-foreground">Akumulasi SKS Kumulatif</h2>
+            <h2 class="text-lg font-bold tracking-tight text-foreground">Akumulasi SKS Kumulatif</h2>
             <p class="mt-0.5 text-xs text-muted-foreground">Pertumbuhan SKS menuju target kelulusan 144 SKS</p>
           </div>
           <span class="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-bold text-muted-foreground">Target: 144 SKS</span>

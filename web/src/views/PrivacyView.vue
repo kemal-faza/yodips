@@ -49,7 +49,7 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
 
       <ol class="space-y-8">
         <!-- 1. Data yang dikumpulkan -->
-        <li class="rounded-xl border border-border bg-card p-6">
+        <li class="rounded-xl bg-card p-6 surface-raised">
           <h2 class="font-heading text-lg font-bold">
             <span class="mr-2 text-primary">1.</span>Data yang dikumpulkan
           </h2>
@@ -76,7 +76,7 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
           </ul>
         </li>
         <!-- 2. Tujuan -->
-        <li class="rounded-xl border border-border bg-card p-6">
+        <li class="rounded-xl bg-card p-6 surface-raised">
           <h2 class="font-heading text-lg font-bold">
             <span class="mr-2 text-primary">2.</span>Tujuan penggunaan
           </h2>
@@ -89,7 +89,7 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
         </li>
 
         <!-- 3. Kemana data dikirim -->
-        <li class="rounded-xl border border-border bg-card p-6">
+        <li class="rounded-xl bg-card p-6 surface-raised">
           <h2 class="font-heading text-lg font-bold">
             <span class="mr-2 text-primary">3.</span>Kemana data dikirim
           </h2>
@@ -102,7 +102,7 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
         </li>
 
         <!-- 4. Kredensial tidak disimpan -->
-        <li class="rounded-xl border border-border bg-card p-6">
+        <li class="rounded-xl bg-card p-6 surface-raised">
           <h2 class="font-heading text-lg font-bold">
             <span class="mr-2 text-primary">4.</span>Kredensial tidak disimpan
             backend
@@ -126,7 +126,7 @@ const homeLabel = computed(() => (auth.isAuthenticated ? 'Kembali ke Beranda' : 
         </li>
 
         <!-- 5. Kontak -->
-        <li class="rounded-xl border border-border bg-card p-6">
+        <li class="rounded-xl bg-card p-6 surface-raised">
           <h2 class="font-heading text-lg font-bold">
             <span class="mr-2 text-primary">5.</span>Kontak &amp; hak Anda
           </h2>

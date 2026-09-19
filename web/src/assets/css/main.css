@@ -1,4 +1,3 @@
-
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap');
 
 @import "tailwindcss";
@@ -21,24 +20,24 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: 0 0% 97%;
-  --foreground: 0 0% 3.9%;
+  --background: 193 16% 96%;
+  --foreground: 193 22% 3.9%;
   --card: 0 0% 100%;
-  --card-foreground: 0 0% 3.9%;
+  --card-foreground: 193 22% 3.9%;
   --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 3.9%;
+  --popover-foreground: 193 22% 3.9%;
   --primary: #01637e;
   --primary-foreground: #ffffff;
-  --secondary: 0 0% 95%;
-  --secondary-foreground: 0 0% 9%;
-  --muted: 0 0% 95%;
-  --muted-foreground: 0 0% 45.1%;
-  --accent: 0 0% 95%;
-  --accent-foreground: 0 0% 9%;
+  --secondary: 193 14% 93%;
+  --secondary-foreground: 193 22% 9%;
+  --muted: 193 14% 93%;
+  --muted-foreground: 193 10% 45.1%;
+  --accent: 193 14% 93%;
+  --accent-foreground: 193 22% 9%;
   --destructive: 0 84.2% 60.2%;
-  --border: 0 0% 89.8%;
-  --input: 0 0% 89.8%;
-  --ring: 0 0% 3.9%;
+  --border: 193 12% 89.8%;
+  --input: 193 12% 89.8%;
+  --ring: 193 22% 3.9%;
   --danger: #dc2626;
   --danger-foreground: #c02626;
   --chart-1: 12 76% 61%;
@@ -51,24 +50,24 @@
 
 .dark {
   color-scheme: dark;
-  --background: 0 0% 7%;
-  --foreground: 0 0% 98%;
-  --card: 0 0% 12%;
-  --card-foreground: 0 0% 98%;
-  --popover: 0 0% 14%;
-  --popover-foreground: 0 0% 98%;
+  --background: 193 20% 7%;
+  --foreground: 193 16% 98%;
+  --card: 193 14% 12%;
+  --card-foreground: 193 16% 98%;
+  --popover: 193 14% 14%;
+  --popover-foreground: 193 16% 98%;
   --primary: #01637e;
   --primary-foreground: #ffffff;
-  --secondary: 0 0% 15.5%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 0 0% 15.5%;
-  --muted-foreground: 0 0% 63.9%;
-  --accent: 0 0% 15.5%;
-  --accent-foreground: 0 0% 98%;
+  --secondary: 193 12% 15.5%;
+  --secondary-foreground: 193 16% 98%;
+  --muted: 193 12% 15.5%;
+  --muted-foreground: 193 10% 63.9%;
+  --accent: 193 12% 15.5%;
+  --accent-foreground: 193 16% 98%;
   --destructive: 0 62.8% 30.6%;
-  --border: 0 0% 18%;
-  --input: 0 0% 18%;
-  --ring: 0 0% 83.1%;
+  --border: 193 12% 18%;
+  --input: 193 12% 18%;
+  --ring: 193 12% 83.1%;
   --danger: #f87171;
   --danger-foreground: #f87171;
   --chart-1: 220 70% 50%;
@@ -77,6 +76,53 @@
   --chart-4: 280 65% 60%;
   --chart-5: 340 75% 55%;
   --radius: 0.5rem;
+}
+
+/* ===== Elevation ===== */
+/* Satu model cahaya untuk seluruh aplikasi (cahaya dari atas, bayangan jatuh
+   ke bawah). Semua lapisan memakai spread 0: spread negatif menyusutkan
+   bayangan di kiri-kanan, sehingga panel hanya terlihat punya bayangan
+   atas-bawah dan sisi tegaknya jadi polos.
+   Dipakai via @utility: `surface-raised` (panel diam), `surface-lifted`
+   (panel terangkat / hover), `surface-sticky` (chrome yang menempel di atas
+   konten yang men-scroll — arahnya ke bawah, bukan ring).
+   Light menaikkan elevasi dengan bayangan; dark tidak bisa mengandalkan itu
+   sendirian, jadi tiap tingkat juga membawa hairline yang lebih terang dan
+   highlight inset 1px di tepi atas (cahaya dari atas mengenai bibir panel). */
+:root {
+  --elevation-surface:
+    0 0 0 1px oklch(0 0 0 / 0.06),
+    0 1px 2px 0 oklch(0 0 0 / 0.05),
+    0 4px 12px 0 oklch(0 0 0 / 0.07);
+  --elevation-lift:
+    0 0 0 1px oklch(0 0 0 / 0.09),
+    0 2px 5px 0 oklch(0 0 0 / 0.07),
+    0 10px 28px 0 oklch(0 0 0 / 0.13);
+  --elevation-sticky: 0 1px 0 0 oklch(0 0 0 / 0.03), 0 4px 14px 0 oklch(0 0 0 / 0.08);
+}
+
+.dark {
+  --elevation-surface:
+    0 0 0 1px oklch(1 0 0 / 0.07),
+    0 2px 8px 0 oklch(0 0 0 / 0.45),
+    inset 0 1px 0 0 oklch(1 0 0 / 0.03);
+  --elevation-lift:
+    0 0 0 1px oklch(1 0 0 / 0.16),
+    0 6px 22px 0 oklch(0 0 0 / 0.6),
+    inset 0 1px 0 0 oklch(1 0 0 / 0.09);
+  --elevation-sticky: 0 1px 0 0 oklch(1 0 0 / 0.05), 0 4px 14px 0 oklch(0 0 0 / 0.45);
+}
+
+@utility surface-raised {
+  box-shadow: var(--elevation-surface);
+}
+
+@utility surface-lifted {
+  box-shadow: var(--elevation-lift);
+}
+
+@utility surface-sticky {
+  box-shadow: var(--elevation-sticky);
 }
 
 /* ===== Animations ===== */
@@ -248,12 +294,12 @@
 }
 
 [data-test="description"] a {
-  color: hsl(var(--primary));
+  color: var(--primary);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 [data-test="description"] a:hover {
-  color: hsl(var(--primary));
+  color: var(--primary);
   opacity: 0.85;
 }
 

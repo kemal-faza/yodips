@@ -61,7 +61,7 @@ function go(view: 'kulon') {
 
     <div
       v-if="!d.profileLoading.value && !d.siapError.value && d.siap.value.profile == null"
-      class="rounded-xl border border-border bg-card p-6 text-center text-muted-foreground"
+      class="rounded-xl bg-card p-6 text-center text-muted-foreground surface-raised"
       data-test="siap-empty"
     >
       Belum ada session SIAP — silakan login ulang via SSO.

@@ -32,7 +32,7 @@ const topFour = computed(() =>
   <section class="space-y-4 pt-2" data-test="deadline-section">
     <div class="flex items-center justify-between">
       <div>
-        <h2 class="text-base font-bold text-foreground">Tugas dengan Deadline Terdekat</h2>
+        <h2 class="text-lg font-bold tracking-tight text-foreground">Tugas dengan Deadline Terdekat</h2>
         <p class="mt-0.5 text-xs text-muted-foreground">Tugas 'Perlu Dikerjakan' diurutkan berdasarkan tenggat tercepat</p>
       </div>
       <Button variant="ghost" size="sm" class="text-xs font-bold uppercase tracking-wider text-foreground" data-test="view-all-tasks" @click="emit('view-all')">
@@ -43,10 +43,10 @@ const topFour = computed(() =>
     <div v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Skeleton v-for="i in 4" :key="i" class="h-24 rounded-lg" />
     </div>
-    <div v-else-if="!hasKulon" class="rounded-lg border border-border bg-card p-6 text-center text-sm text-muted-foreground">
+    <div v-else-if="!hasKulon" class="rounded-lg bg-card p-6 text-center text-sm text-muted-foreground surface-raised">
       Belum ada session Kulon — silakan login ulang via SSO.
     </div>
-    <div v-else-if="topFour.length === 0" class="rounded-lg border border-border bg-card p-6 text-center text-sm text-muted-foreground">
+    <div v-else-if="topFour.length === 0" class="rounded-lg bg-card p-6 text-center text-sm text-muted-foreground surface-raised">
       Tidak ada tugas yang perlu dikerjakan.
     </div>
     <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2">

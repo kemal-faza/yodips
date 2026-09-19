@@ -64,7 +64,7 @@ load();
       <Button class="mt-2 cursor-pointer" @click="load">Coba lagi</Button>
     </Alert>
 
-    <div v-else-if="store.courses.length === 0" class="flex flex-col items-center justify-center py-16 text-center bg-card rounded-xl border border-border px-6">
+    <div v-else-if="store.courses.length === 0" class="flex flex-col items-center justify-center py-16 text-center bg-card rounded-xl px-6 surface-raised">
       <p class="font-semibold text-foreground text-sm">Belum ada mata kuliah yang diambil</p>
       <p class="text-xs text-muted-foreground mt-1">Data akan muncul setelah semester aktif dimulai.</p>
     </div>
@@ -72,12 +72,12 @@ load();
     <template v-else>
       <section>
         <div class="mb-3 flex items-baseline gap-2">
-          <h2 class="text-base font-bold text-foreground">Aktif</h2>
+          <h2 class="text-lg font-bold tracking-tight text-foreground">Aktif</h2>
           <span v-if="actualSemester" class="text-xs text-muted-foreground">{{ actualSemester }}</span>
         </div>
         <div
           v-if="progress != null"
-          class="mb-4 rounded-xl border border-border bg-card px-4 py-3"
+          class="mb-4 rounded-xl bg-card px-4 py-3 surface-raised"
           data-test="semester-progress"
         >
           <div class="flex items-center justify-between gap-3">
@@ -97,7 +97,7 @@ load();
       <section v-if="pastGroups.length > 0">
         <button
           type="button"
-          class="flex w-full items-center justify-between rounded-xl border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50 cursor-pointer"
+          class="flex w-full items-center justify-between rounded-xl bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50 cursor-pointer surface-raised"
           data-test="expand-past"
           :aria-expanded="pastExpanded"
           @click="pastExpanded = !pastExpanded"
