@@ -25,3 +25,5 @@ memory/
 # Firebase config (M0, per-project) — never commit
 mobile/app/google-services.json
 CONTEXT.md
+
+.commandcode/
