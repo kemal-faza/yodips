@@ -6,6 +6,8 @@ import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
+import ac.undip.sso.ui.common.SkeletonBlock
+import ac.undip.sso.ui.common.SkeletonGroup
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -91,6 +93,7 @@ fun TasksScreen(
             load = { loadData(false) },
             onRefresh = { loadData(true) },
             emptyMessage = "Tidak ada tugas saat ini.",
+            loading = { TasksSkeleton() },
         ) { tasks ->
             var filter by remember { mutableStateOf<TaskBucket?>(TaskBucket.NEED) }
             var showCount by remember { mutableStateOf(TASK_PAGE_SIZE) }
@@ -154,6 +157,34 @@ fun TasksScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Bentuk layar Tugas selama muat pertama: kolom pencarian, baris chip filter,
+ * lalu kartu tugas. Daftar tugas bisa memakan belasan detik pada muat pertama
+ * (fan-out Kulon), jadi halaman menahan bentuknya alih-alih kosong + spinner.
+ */
+@Composable
+private fun TasksSkeleton() {
+    SkeletonGroup {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SkeletonBlock(Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(3) {
+                    SkeletonBlock(Modifier.width(96.dp).height(32.dp), shape = RoundedCornerShape(50))
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            repeat(4) {
+                SkeletonBlock(Modifier.fillMaxWidth().height(92.dp), shape = RoundedCornerShape(12.dp))
             }
         }
     }

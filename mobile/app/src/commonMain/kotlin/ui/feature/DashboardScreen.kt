@@ -7,6 +7,8 @@ import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
+import ac.undip.sso.ui.common.SkeletonBlock
+import ac.undip.sso.ui.common.SkeletonGroup
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
@@ -68,8 +71,45 @@ fun DashboardScreen(
             repo.profile(force = true)
         },
         emptyMessage = "Belum ada data",
+        loading = { DashboardSkeleton() },
     ) { profile ->
         DashboardContent(profile, repo, onOpenIrs, onOpenKhs, onOpenNotifications, onOpenCourses, refreshTick)
+    }
+}
+
+/**
+ * Bentuk halaman Dashboard selama muat pertama: sapaan, tiga kartu statistik,
+ * tiga kartu menu, lalu daftar kelas. Menahan tinggi tiap bagian supaya data
+ * yang datang tidak menggeser layout (dulu: satu spinner di tengah layar).
+ */
+@Composable
+private fun DashboardSkeleton() {
+    SkeletonGroup {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = DashboardContentBottomPadding.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SkeletonBlock(Modifier.fillMaxWidth(0.62f).height(30.dp))
+                SkeletonBlock(Modifier.fillMaxWidth(0.48f).height(16.dp))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                repeat(3) {
+                    SkeletonBlock(Modifier.weight(1f).height(74.dp), shape = RoundedCornerShape(12.dp))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                repeat(3) {
+                    SkeletonBlock(Modifier.weight(1f).height(58.dp), shape = RoundedCornerShape(12.dp))
+                }
+            }
+            SkeletonBlock(Modifier.fillMaxWidth(0.42f).height(20.dp))
+            repeat(3) {
+                SkeletonBlock(Modifier.fillMaxWidth().height(62.dp), shape = RoundedCornerShape(12.dp))
+            }
+        }
     }
 }
 

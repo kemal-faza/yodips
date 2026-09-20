@@ -6,6 +6,8 @@ import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.ui.common.RefreshableLoadableData
+import ac.undip.sso.ui.common.SkeletonBlock
+import ac.undip.sso.ui.common.SkeletonGroup
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -148,6 +150,7 @@ fun ScheduleScreen(repo: SsoRepository) {
                 repo.jadwal(force = true)
             },
             emptyMessage = "Belum ada jadwal.",
+            loading = { ScheduleSkeleton() },
         ) { jadwal ->
             val byTanggal = eventsByTanggal(jadwal)
             // Kalender dibuka di bulan HARI INI; default pilihan = HARI INI selalu
@@ -183,6 +186,24 @@ fun ScheduleScreen(repo: SsoRepository) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Bentuk layar Jadwal selama muat pertama: satu kartu kalender + dua kartu pertemuan. */
+@Composable
+private fun ScheduleSkeleton() {
+    SkeletonGroup {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SkeletonBlock(Modifier.fillMaxWidth().height(352.dp), shape = RoundedCornerShape(12.dp))
+            repeat(2) {
+                SkeletonBlock(Modifier.fillMaxWidth().height(112.dp), shape = RoundedCornerShape(12.dp))
             }
         }
     }

@@ -3,23 +3,34 @@ package ac.undip.sso.ui.common
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.nowMs
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -28,7 +39,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -37,6 +50,10 @@ import kotlinx.coroutines.launch
  * Content) for every data screen. Screens pass their repository call as [load]
  * and render [content]; a failed source renders an inline error with retry
  * instead of blocking the whole screen (§ per-source resilience).
+ *
+ * The loading branch renders [loading] (a skeleton by default) instead of a
+ * centered spinner: a cold load can take many seconds, and a skeleton keeps the
+ * page's shape so the arrival of data does not re-lay-out the whole screen.
  */
 @Composable
 fun <T> LoadableData(
@@ -44,6 +61,7 @@ fun <T> LoadableData(
     modifier: Modifier = Modifier,
     emptyMessage: String = "Belum ada data",
     refreshTrigger: Int = 0,
+    loading: @Composable () -> Unit = { ListSkeleton() },
     content: @Composable (T) -> Unit,
 ) {
     var attempt by remember { mutableIntStateOf(0) }
@@ -52,11 +70,7 @@ fun <T> LoadableData(
         result = load()
     }
     when (val r = result) {
-        null -> {
-            Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        }
+        null -> loading()
 
         is ApiResult.Success<*> -> {
             @Suppress("UNCHECKED_CAST")
@@ -102,6 +116,7 @@ fun <T> RefreshableLoadableData(
     modifier: Modifier = Modifier,
     emptyMessage: String = "Belum ada data",
     minRefreshIntervalMs: Long = REFRESH_COOLDOWN_MS,
+    loading: @Composable () -> Unit = { ListSkeleton() },
     content: @Composable (T) -> Unit,
 ) {
     var attempt by remember { mutableIntStateOf(0) }
@@ -131,11 +146,7 @@ fun <T> RefreshableLoadableData(
         modifier = modifier.fillMaxSize(),
     ) {
         when (val r = result) {
-            null -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            }
+            null -> loading()
 
             is ApiResult.Success<*> -> {
                 @Suppress("UNCHECKED_CAST")
@@ -156,6 +167,63 @@ fun <T> RefreshableLoadableData(
 
 /** Minimum gap between two pull-to-refresh network calls (anti-spam). */
 const val REFRESH_COOLDOWN_MS = 15_000L
+
+// ===== Skeletons =====
+// Blok abu-abu berdenyut yang menahan bentuk halaman selama muat pertama.
+// SkeletonGroup menghitung SATU denyut untuk seluruh grup (bukan satu animasi
+// per blok); SkeletonBlock hanya menggambar.
+
+/** Alpha blok skeleton; [SkeletonGroup] mengganti nilainya tiap frame. */
+private val LocalSkeletonAlpha = compositionLocalOf { 0.18f }
+
+/**
+ * Bungkus sekumpulan [SkeletonBlock] dengan satu denyut halus bersama. Tanpa
+ * grup, blok tetap tergambar (alpha statis) — skeleton tidak pernah menghilang.
+ */
+@Composable
+fun SkeletonGroup(content: @Composable () -> Unit) {
+    val transition = rememberInfiniteTransition(label = "skeleton")
+    val alpha by
+        transition.animateFloat(
+            initialValue = 0.11f,
+            targetValue = 0.22f,
+            animationSpec = infiniteRepeatable(tween(durationMillis = 900, easing = LinearEasing), RepeatMode.Reverse),
+            label = "skeletonAlpha",
+        )
+    CompositionLocalProvider(LocalSkeletonAlpha provides alpha) { content() }
+}
+
+@Composable
+fun SkeletonBlock(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(8.dp),
+) {
+    Box(modifier.background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = LocalSkeletonAlpha.current), shape))
+}
+
+/** Placeholder satu layar daftar: beberapa kartu setinggi [rowHeight]. */
+@Composable
+fun ListSkeleton(
+    rows: Int = 4,
+    modifier: Modifier = Modifier,
+    rowHeight: Dp = 88.dp,
+) {
+    SkeletonGroup {
+        Column(
+            modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            repeat(rows) {
+                SkeletonBlock(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(rowHeight),
+                    shape = RoundedCornerShape(12.dp),
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun EmptyState(
