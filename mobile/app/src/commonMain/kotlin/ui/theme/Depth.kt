@@ -1,9 +1,7 @@
 package ac.undip.sso.ui.theme
 
-import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Card
@@ -14,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -23,8 +20,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 /**
@@ -61,29 +64,6 @@ data class AppElevation(
     }
 }
 
-/** Warna tepi: cincin luar, kilau bibir atas, bibir bawah yang menggelap. */
-private class DepthPalette(
-    val ring: Color,
-    val rim: Color,
-    val lip: Color,
-)
-
-@Composable
-private fun depthPalette(): DepthPalette =
-    if (isDarkTheme()) {
-        DepthPalette(
-            ring = Color.White.copy(alpha = 0.14f),
-            rim = Color.White.copy(alpha = 0.20f),
-            lip = Color.Black.copy(alpha = 0.32f),
-        )
-    } else {
-        DepthPalette(
-            ring = Color.Black.copy(alpha = 0.06f),
-            rim = Color.White.copy(alpha = 0.90f),
-            lip = Color.Black.copy(alpha = 0.06f),
-        )
-    }
-
 /**
  * Warna permukaan yang terangkat. Aturannya satu dan berlaku di kedua tema:
  * objek yang terangkat menangkap lebih banyak cahaya, jadi permukaannya harus
@@ -118,84 +98,46 @@ fun Modifier.appDepth(
     val effective = if (pressed) level.pressed() else level
     val dark = isDarkTheme()
     // Di tema gelap bayangan hitam nyaris tidak terbaca di atas latar gelap,
-    // jadi jaraknya ditambah; sisi terangnya dipikul `appBevel` dan bayangan
-    // kontaknya digambar sendiri (lihat di bawah).
+    // jadi jaraknya ditambah dan bayangannya digambar sendiri (lihat di bawah).
     val ambient = if (dark) effective.ambient * 1.6f else effective.ambient
     return this
         .shadow(effective.contact, shape, clip = false)
         .shadow(ambient, shape, clip = false)
         .drawBehind {
             if (!dark) return@drawBehind
-            // Bayangan kontak versi tema gelap: bayangan OS hanya menggelapkan
-            // latar sekitar 0.3 alpha, yang di atas #121212 cuma berubah ~5 lum
-            // dan praktis tak terlihat. Digambar sendiri (bawah + kedua sisi)
-            // supaya objeknya benar-benar "menempel" dan tidak ada sisi yang polos.
-            val bottom = 12.dp.toPx()
-            val side = 8.dp.toPx()
-            val below = Color.Black.copy(alpha = 0.5f)
-            val flank = Color.Black.copy(alpha = 0.35f)
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(below, Color.Transparent),
-                    startY = size.height,
-                    endY = size.height + bottom,
-                ),
-                topLeft = Offset(0f, size.height),
-                size = Size(size.width, bottom),
-            )
-            drawRect(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(flank, Color.Transparent),
-                    startX = -side,
-                    endX = 0f,
-                ),
-                topLeft = Offset(-side, 0f),
-                size = Size(side, size.height),
-            )
-            drawRect(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(Color.Transparent, flank),
-                    startX = size.width,
-                    endX = size.width + side,
-                ),
-                topLeft = Offset(size.width, 0f),
-                size = Size(side, size.height),
-            )
+            // Bayangan versi tema gelap, digambar dengan lapisan-lapisan bentuk
+            // yang sama dengan objeknya (bukan persegi) supaya tidak ada batas
+            // kotak yang terlihat di sekitar kartu bulat/sudut membulat.
+            val path = shape.toPath(size, layoutDirection, this)
+            val haze = 16.dp.toPx()
+            val steps = 10
+            val perLayer = 0.5f / steps
+            // Cahaya dari atas: seluruh kabut digeser turun, jadi sisi bawah
+            // dapat bayangan paling tebal dan sisi atas paling tipis.
+            translate(top = 3.dp.toPx()) {
+                for (layer in steps downTo 1) {
+                    // `Stroke` menggambar terpusat di garis bentuk, jadi separuh
+                    // ke dalam (tertutup objeknya) dan separuh ke luar. Lapisan
+                    // terluar paling tipis karena tidak ditumpuk lapisan lain.
+                    drawPath(
+                        path = path,
+                        color = Color.Black.copy(alpha = perLayer),
+                        style = Stroke(width = haze * 2f * layer / steps),
+                    )
+                }
+            }
         }
 }
 
-/**
- * Tepi objek: cincin tipis + kilau bibir atas + bibir bawah menggelap.
- * Dipasang SETELAH background supaya tergambar di atasnya, tapi sebelum isi
- * supaya teks tidak tertimpa. Pemanggil yang bentuknya membulat harus sudah
- * memakai `clip(shape)` lebih dulu agar kilaunya tidak menyembul di sudut.
- * [ring] dimatikan untuk elemen selebar layar, yang tepi kiri-kanannya tidak
- * akan pernah terlihat.
- */
-@Composable
-fun Modifier.appBevel(
-    shape: Shape = RectangleShape,
-    ring: Boolean = true,
-): Modifier {
-    val palette = depthPalette()
-    return this
-        .then(if (ring) Modifier.border(1.dp, palette.ring, shape) else Modifier)
-        .drawBehind { drawBevel(palette) }
-}
-
-private fun DrawScope.drawBevel(palette: DepthPalette) {
-    val rimHeight = 2.dp.toPx()
-    val lipHeight = 3.dp.toPx()
-    drawRect(
-        brush = Brush.verticalGradient(listOf(palette.rim, Color.Transparent)),
-        topLeft = Offset.Zero,
-        size = Size(size.width, rimHeight),
-    )
-    drawRect(
-        brush = Brush.verticalGradient(listOf(Color.Transparent, palette.lip)),
-        topLeft = Offset(0f, size.height - lipHeight),
-        size = Size(size.width, lipHeight),
-    )
+/** Bentuk apa pun (persegi, membulat, lingkaran) → [Path] agar bisa digambar berlapis. */
+private fun Shape.toPath(
+    size: Size,
+    layoutDirection: LayoutDirection,
+    density: Density,
+): Path = when (val outline = createOutline(size, layoutDirection, density)) {
+    is Outline.Rectangle -> Path().apply { addRect(outline.rect) }
+    is Outline.Rounded -> Path().apply { addRoundRect(outline.roundRect) }
+    is Outline.Generic -> outline.path
 }
 
 /**
@@ -228,9 +170,9 @@ fun Modifier.appCastAbove(height: Dp = 12.dp): Modifier {
 }
 
 /**
- * Kartu standar aplikasi: kartu Material 3 dengan bayangan berlapis dan tepi
- * bercahaya. `Card` mentah tidak punya bayangan sama sekali (elevasi M3 default
- * 0), jadi semua permukaan kartu memakai ini supaya kedalamannya konsisten.
+ * Kartu standar aplikasi: kartu Material 3 dengan bayangan berlapis. `Card`
+ * mentah tidak punya bayangan sama sekali (elevasi M3 default 0), jadi semua
+ * permukaan kartu memakai ini supaya kedalamannya konsisten.
  */
 @Composable
 fun AppCard(
@@ -243,33 +185,24 @@ fun AppCard(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    Box(modifier = modifier.appDepth(level, shape, pressed = isPressed)) {
-        if (onClick != null) {
-            Card(
-                onClick = onClick,
-                modifier = Modifier.fillMaxWidth(),
-                shape = shape,
-                colors = colors,
-                elevation = CardDefaults.cardElevation(0.dp),
-                interactionSource = interactionSource,
-                content = content,
-            )
-        } else {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = shape,
-                colors = colors,
-                elevation = CardDefaults.cardElevation(0.dp),
-                content = content,
-            )
-        }
-        // Overlay tepi digambar setelah kartu, jadi cincin dan kilaunya tidak
-        // tertimpa warna container kartu.
-        Box(
-            Modifier
-                .matchParentSize()
-                .clip(shape)
-                .appBevel(shape),
+    val depth = modifier.fillMaxWidth().appDepth(level, shape, pressed = isPressed)
+    if (onClick != null) {
+        Card(
+            onClick = onClick,
+            modifier = depth,
+            shape = shape,
+            colors = colors,
+            elevation = CardDefaults.cardElevation(0.dp),
+            interactionSource = interactionSource,
+            content = content,
+        )
+    } else {
+        Card(
+            modifier = depth,
+            shape = shape,
+            colors = colors,
+            elevation = CardDefaults.cardElevation(0.dp),
+            content = content,
         )
     }
 }

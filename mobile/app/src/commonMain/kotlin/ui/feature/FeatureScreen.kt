@@ -1,7 +1,6 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.ui.theme.AppElevation
-import ac.undip.sso.ui.theme.appBevel
 import ac.undip.sso.ui.theme.appDepth
 import ac.undip.sso.ui.theme.raisedSurfaceColor
 import androidx.compose.foundation.background
@@ -62,7 +61,6 @@ private fun CompactFeatureBar(
             // memberi tahu bahwa konten lewat di belakangnya.
             .appDepth(AppElevation.Lifted)
             .background(raisedSurfaceColor())
-            .appBevel(ring = false)
             .heightIn(min = 52.dp),
     ) {
         if (onBack != null) {
