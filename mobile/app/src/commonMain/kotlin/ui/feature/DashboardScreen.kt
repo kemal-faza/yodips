@@ -395,7 +395,7 @@ private fun UpcomingClasses(source: List<SiapJadwal>) {
             return@Column
         }
         lessons.forEach { j ->
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Card {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(cleanCourseName(j.matakuliah), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1)
