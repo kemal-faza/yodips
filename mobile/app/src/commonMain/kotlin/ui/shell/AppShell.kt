@@ -388,7 +388,10 @@ fun ShellBottomBar(
                     Box(
                         modifier =
                             Modifier
-                                .appDepth(AppElevation.Floating, CircleShape)
+                                // Tanpa kabut: bayangan FAB jatuh ke bottom bar
+                                // yang lebih terang, jadi bayangan platform saja
+                                // sudah terbaca — sama seperti di tema terang.
+                                .appDepth(AppElevation.Floating, CircleShape, haze = false)
                                 .size(78.dp)
                                 .clip(CircleShape)
                                 // Bola teal: bibir atas menangkap cahaya, bawahnya

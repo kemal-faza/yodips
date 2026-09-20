@@ -116,12 +116,18 @@ fun appCardColors(container: Color = raisedSurfaceColor()): CardColors =
  * Bayangan berlapis untuk permukaan apa pun. Dipasang SEBELUM background —
  * bayangan digambar di belakang isi. `clip` sengaja `false` supaya isi yang
  * memang keluar dari batas (mis. FAB di bottom bar) tidak terpotong.
+ *
+ * @param haze kabut kontak tambahan yang hanya dipakai di tema gelap. Matikan
+ *   untuk objek yang cukup dengan bayangan platform saja: objek yang bayangannya
+ *   jatuh ke permukaan LEBIH TERANG (FAB di atas bottom bar) sudah terbaca tanpa
+ *   tambahan, dan kabut justru mengubah karakternya jadi halo yang menyebar.
  */
 @Composable
 fun Modifier.appDepth(
     level: AppElevation,
     shape: Shape = RectangleShape,
     pressed: Boolean = false,
+    haze: Boolean = true,
 ): Modifier {
     if (level == AppElevation.Flat) return this
     val effective = if (pressed) level.pressed() else level
@@ -133,7 +139,7 @@ fun Modifier.appDepth(
     val platform = this
         .shadow(effective.contact, shape, clip = false)
         .shadow(effective.ambient, shape, clip = false)
-    if (!isDarkTheme()) return platform
+    if (!isDarkTheme() || !haze) return platform
     // Kabut tambahan khusus tema gelap: "bayangan kontak" yang rapat di tepi
     // objek, karena bayangan platform di atas latar hampir hitam hampir tak
     // terlihat. Kedalaman tetap dipikul tangga luminansi permukaan (lihat
