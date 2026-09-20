@@ -37,8 +37,7 @@ import androidx.compose.ui.unit.dp
  * Setiap permukaan terangkat memakai DUA lapisan bayangan — kontak (rapat,
  * membuat objek terlihat menempel di permukaannya) dan ambien (lebar, memberi
  * jarak). Satu lapisan selalu terbaca datar: objeknya entah menempel tanpa
- * jarak, atau mengambang tanpa kontak. Ditambah [appBevel], tepinya terbaca
- * sebagai sisi objek bervolume, bukan potongan warna.
+ * jarak, atau mengambang tanpa kontak.
  */
 data class AppElevation(
     /** Bayangan kontak, rapat ke tepi objek. */
