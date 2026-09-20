@@ -454,6 +454,9 @@ internal fun ScheduleCard(
     lecturer: String?,
     absen: SiapAbsen? = null,
     kode: String? = null,
+    /** Tampilkan nama hari di baris waktu. Wajib di layar tanpa konteks tanggal
+     *  (IRS), tidak perlu di kalender Jadwal yang sudah mengelompok per tanggal. */
+    showDay: Boolean = false,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -476,7 +479,12 @@ internal fun ScheduleCard(
                 Text(kode, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(
-                formatWaktu(j.waktu),
+                // Hari + jam dalam satu baris: kartu IRS tidak punya konteks
+                // tanggal, jadi hari adalah informasi wajib di sana.
+                buildList {
+                    if (showDay) capitalizeDay(j.hari).takeIf { it.isNotBlank() }?.let { add(it) }
+                    add(formatWaktu(j.waktu))
+                }.joinToString(" · "),
                 style = MaterialTheme.typography.bodyMedium,
                 color = accentForeground(),
                 fontWeight = FontWeight.Medium,

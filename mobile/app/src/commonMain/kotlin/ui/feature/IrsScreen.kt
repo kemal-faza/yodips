@@ -63,6 +63,9 @@ internal fun irsJadwal(mk: SiapIrsMataKuliah, jadwalByNama: Map<String, SiapJadw
     val joined = jadwalByNama[mk.nama.trim().lowercase()]
     return SiapJadwal(
         kode = joined?.kode ?: mk.kode,
+        // Hari ikut di-join: kartu IRS tidak dikelompokkan per tanggal, jadi
+        // tanpa `hari` user tidak tahu kuliahnya jatuh di hari apa.
+        hari = joined?.hari.orEmpty(),
         matakuliah = cleanCourseName(mk.nama),
         ruang = joined?.ruang ?: mk.ruang,
         waktu = joined?.waktu ?: mk.jadwal.orEmpty(),
@@ -204,6 +207,7 @@ fun IrsScreen(
                             lecturer = lecturerByKode[mk.kode] ?: mk.dosen,
                             absen = absenByKode[mk.kode] ?: absenByNama[mk.nama.trim().lowercase()],
                             kode = mk.kode,
+                            showDay = true,
                         )
                     }
                 }

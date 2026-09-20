@@ -1,6 +1,7 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.network.SiapIrsMataKuliah
+import ac.undip.sso.core.network.SiapJadwal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -89,5 +90,39 @@ class IrsScreenTest {
                 ),
             )
         assertEquals(2, out.size)
+    }
+
+    // ---------- irsJadwal (join jadwal/dosen) ----------
+
+    @Test
+    fun `irsJadwal carries the weekday from the joined schedule row`() {
+        // Kartu IRS tidak dikelompokkan per tanggal: tanpa `hari` user tidak tahu
+        // kuliahnya jatuh di hari apa (temuan review desain).
+        val joined =
+            SiapJadwal(
+                kode = "MIK1624503",
+                hari = "senin",
+                matakuliah = "Sistem Informasi",
+                ruang = "A301 (S1-TEKNIK INFORMATIKA)",
+                waktu = "07:00:00 s/d 09:30:00",
+                sks = 3.0,
+            )
+        val out = irsJadwal(mk("MIK1624503", "Sistem Informasi"), mapOf("sistem informasi" to joined))
+
+        assertEquals("senin", out.hari)
+        assertEquals("MIK1624503", out.kode)
+        assertEquals("07:00:00 s/d 09:30:00", out.waktu)
+        // ruang disimpan apa adanya; keterangan kurung dibersihkan saat render
+        // (cleanRoomName di ScheduleCard).
+        assertEquals("A301 (S1-TEKNIK INFORMATIKA)", out.ruang)
+        assertEquals("A301", cleanRoomName(out.ruang))
+    }
+
+    @Test
+    fun `irsJadwal leaves weekday empty when no schedule row matches`() {
+        val out = irsJadwal(mk("MIK1624503", "Sistem Informasi"), emptyMap())
+
+        assertEquals("", out.hari)
+        assertEquals("MIK1624503", out.kode)
     }
 }
