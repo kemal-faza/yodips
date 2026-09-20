@@ -23,6 +23,8 @@ One sign-in for all of your Undip accounts. SSO, Kulon, and SIAP share a single 
 - [Deployment](#deployment)
 - [Releasing](#releasing)
 - [Security notes](#security-notes)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Use it without building
 
@@ -74,7 +76,7 @@ cd extension && npm install && npm run dev
 
 Mobile (Kotlin): open `mobile/` in Android Studio, or `cd mobile && ./gradlew :app:testDebugUnitTest && ./gradlew assembleDebug`.
 
-Verified test counts as of 2026-08-24: backend **331**, web **318**, extension **118**, mobile **139**.
+Every subproject carries its own test suite and CI runs all of them on every push. Run the ones covering what you changed; [`CONTRIBUTING.md`](CONTRIBUTING.md) documents the commands and the testing gotchas worth knowing before you write a spec.
 
 ### Environment
 
@@ -141,3 +143,15 @@ Production runs the backend on Heroku and the web app on Vercel. A push to `main
 ## Security notes
 
 Your password never reaches the backend. Identity is always derived from the verified Kulon session, never from anything a client claims. JWTs carry server-side session references, not raw cookies. CORS allowlist, helmet, global ValidationPipe, OIDC `state` CSRF protection, and gitleaks/semgrep/npm-audit/trivy gates run in CI. Sessions are encrypted at rest when Redis backs them.
+
+Found a vulnerability? Report it privately — see [`SECURITY.md`](SECURITY.md). Please don't open a public issue for anything exploitable.
+
+## Contributing
+
+Bug reports, feature requests, and pull requests are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) has the setup steps, the per-subproject test commands, the gotchas that cost real time, and the conventions a PR is expected to follow. Everyone participating is asked to follow the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE) © Kemal Faza
+
+YoDips is an independent student project and is not affiliated with or endorsed by Universitas Diponegoro.
