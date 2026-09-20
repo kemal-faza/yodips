@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
@@ -874,9 +874,17 @@ export class SiapService {
    */
   async getNilaiDetail(ref: SessionRef, id: string): Promise<SiapNilaiDetail> {
     this.requireRef(ref);
-    // Cookie-path endpoint (murni cookie; tanpa mint token API). `nim` tidak
-    // lagi dipakai menyusun body — `id` sudah memuat nim di segmen kedua.
-    const { cookie } = await this.upstream.requireCookieAndNimForSession(ref);
+    // Cookie-path endpoint (murni cookie; tanpa mint token API).
+    const { cookie, nim } = await this.upstream.requireCookieAndNimForSession(ref);
+    // Id memuat NIM di segmen kedua (`<id_irs>#<nim>#<kode>`), dan SIAP menjawab
+    // untuk NIM apa pun yang dikirim. Kepemilikan ditegakkan DI SINI: id harus
+    // menunjuk record milik pemanggil, bukan sekadar lolos validasi bentuk.
+    if (id.split('#')[1] !== nim) {
+      throw new HttpException(
+        { message: 'ID nilai bukan milik sesi ini' },
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const url = `${this.baseUrl}/mahasiswa/mhs/profile/get_detail_nilai`;
     const html = await this.upstream.fetchText(
       url,

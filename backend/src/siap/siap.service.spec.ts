@@ -23,7 +23,10 @@ function fixture(name: string): string {
  * The session store fake returns a cookie value irrelevant to those tests.
  */
 function makeAuthedSiapSvc(cache?: any): SiapService {
-  const record = { siapCookie: 'sia_app_session=TEST', sessionGeneration: TEST_GEN, capturedAt: Date.now() };
+  // `identity` disertakan supaya record-nya mencerminkan sesi nyata: setiap
+  // sesi tersimpan selalu membawa NIM (dipakai endpoint cookie-path untuk
+  // menegakkan kepemilikan, mis. getNilaiDetail).
+  const record = { siapCookie: 'sia_app_session=TEST', identity: NIM, sessionGeneration: TEST_GEN, capturedAt: Date.now() };
   const store = {
     get: async () => record,
     getIfGeneration: async (_s: string, g: string) => (g === TEST_GEN ? record : null),
@@ -1056,8 +1059,9 @@ describe('SiapService', () => {
         undefined,
         new SiapUpstreamSession(storeWithEmail as any, undefined),
       );
-      const res = await svcWithEmail.getNilaiDetail(ref('u1'), '10622041');
-      expect(res.id).toBe('10622041');
+      const fullId = '10622041#24060121130000#460110';
+      const res = await svcWithEmail.getNilaiDetail(ref('u1'), fullId);
+      expect(res.id).toBe(fullId);
       expect(res.kode).toBe('MIK1624203');
       expect(res.nama).toBe('Statistika');
       expect(res.sks).toBe(2);
@@ -1143,7 +1147,9 @@ describe('SiapService', () => {
           throw new Error('no json');
         },
       });
-      await expect(svc.getNilaiDetail(ref('u1'), '10622041')).rejects.toMatchObject({
+      await expect(
+        svc.getNilaiDetail(ref('u1'), '10622041#24060121130000#460110'),
+      ).rejects.toMatchObject({
         status: 401,
       });
     });
@@ -1187,11 +1193,26 @@ describe('SiapService', () => {
         new SiapUpstreamSession(storeWithEmail as any, undefined),
       );
       await expect(
-        svcWithEmail.getNilaiDetail(ref('u1'), '10622042'),
+        svcWithEmail.getNilaiDetail(ref('u1'), '10622042#24060121130000#460110'),
       ).rejects.toMatchObject({
         status: 502, // upstream 5xx → BAD_GATEWAY (bukan 401 re-login)
         message: expect.stringContaining('belum tersedia di SIAP'),
       });
+    });
+
+    it('rejects a detail-id whose embedded NIM is not the caller (no cross-student read)', async () => {
+      // The id embeds the NIM it addresses, and SIAP answers for whatever NIM is
+      // presented. A caller must not be able to ask for someone else's record.
+      const fetchMock = jest.fn();
+      (global.fetch as jest.Mock) = fetchMock;
+      await expect(
+        svc.getNilaiDetail(ref('u1'), '10622041#24060121999999#460110'),
+      ).rejects.toMatchObject({
+        status: 403,
+        message: 'ID nilai bukan milik sesi ini',
+      });
+      // Rejected before any upstream call is made.
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 
