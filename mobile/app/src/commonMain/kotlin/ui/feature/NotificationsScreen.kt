@@ -2,16 +2,19 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.push.NotificationHistoryStore
 import ac.undip.sso.core.push.StoredNotification
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,21 +35,24 @@ import androidx.compose.runtime.rememberCoroutineScope
 
 /**
  * Daftar notifikasi push yang pernah diterima perangkat (disimpan lokal).
- * Menampilkan title/body + waktu terima; baru bisa dibersihkan via tombol
- * "Bersihkan" di header. Layar sub (punya tombol kembali).
+ * Menampilkan title/body + waktu terima; dibersihkan lewat tombol "Bersihkan"
+ * di header (selalu dengan konfirmasi — riwayat tidak bisa dikembalikan).
+ * Kartu yang punya `target` bisa di-tap untuk membuka tab terkait.
  */
 @Composable
 fun NotificationsScreen(
     history: NotificationHistoryStore,
     onBack: () -> Unit,
+    onOpenTarget: (String) -> Unit = {},
 ) {
     var items by remember { mutableStateOf<List<StoredNotification>>(emptyList()) }
+    var confirmClear by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { items = history.all() }
 
     FeatureScreen("Notifikasi", onBack = onBack, headerAction = {
         if (items.isNotEmpty()) {
-            TextButton(onClick = { scope.launch { history.clear(); items = emptyList() } }) {
+            TextButton(onClick = { confirmClear = true }) {
                 Text("Bersihkan")
             }
         }
@@ -58,7 +64,7 @@ fun NotificationsScreen(
                         Icons.Outlined.Notifications,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.padding(bottom = 8.dp),
+                        modifier = Modifier.size(56.dp),
                     )
                     Text(
                         "Belum ada notifikasi.",
@@ -74,16 +80,50 @@ fun NotificationsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(items, key = { it.id }) { n ->
-                    NotificationCard(n)
+                    NotificationCard(n, onOpen = { onOpenTarget(n.target) })
                 }
             }
         }
     }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Hapus semua notifikasi?") },
+            text = { Text("Riwayat notifikasi di perangkat ini akan dihapus dan tidak bisa dikembalikan.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    scope.launch {
+                        history.clear()
+                        items = emptyList()
+                    }
+                }) {
+                    Text("Hapus")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) {
+                    Text("Batal")
+                }
+            },
+        )
+    }
 }
 
 @Composable
-private fun NotificationCard(n: StoredNotification) {
-    Card(Modifier.fillMaxWidth()) {
+private fun NotificationCard(
+    n: StoredNotification,
+    onOpen: () -> Unit,
+) {
+    // Hanya notifikasi bertarget yang bisa dibuka; sisanya tetap kartu statis.
+    val openable = n.target.isNotBlank()
+    Card(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .then(if (openable) Modifier.clickable(onClickLabel = "Buka") { onOpen() } else Modifier),
+    ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
                 n.title,

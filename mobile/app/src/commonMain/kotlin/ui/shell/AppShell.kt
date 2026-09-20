@@ -203,7 +203,17 @@ fun AppShell(
             composable("notifications") {
                 val history = notificationHistory
                 if (history != null) {
-                    NotificationsScreen(history = history, onBack = { navController.popBackStack() })
+                    NotificationsScreen(
+                        history = history,
+                        onBack = { navController.popBackStack() },
+                        onOpenTarget = { target ->
+                            when (target) {
+                                PushTargets.TASKS -> navigate(navController, Tab.Tasks.route)
+                                PushTargets.SCHEDULE -> navigate(navController, Tab.Schedule.route)
+                                else -> Unit
+                            }
+                        },
+                    )
                 }
             }
             composable("courses") {
