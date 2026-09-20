@@ -38,6 +38,13 @@ function makeStore(overrides: Record<string, any> = {}) {
   return store;
 }
 
+// Persetujuan legal wajib dicentang sebelum tombol login aktif. Hampir semua
+// test di file ini menguji perilaku SETELAH persetujuan, jadi di-seed di sini;
+// gate-nya sendiri diuji di describe "consent gate".
+beforeEach(() => {
+  localStorage.setItem("yodips_terms_accepted", "2026-09-20");
+});
+
 describe("LoginView", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -999,5 +1006,71 @@ describe("LoginView poll serialization (RED)", () => {
     await flushPromises();
     w.unmount();
     vi.useRealTimers();
+  });
+});
+
+describe("LoginView consent gate", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    cfg.ssoCaptureEnabled = true;
+    cfg.mobile = false;
+    // Override the file-level seed: this describe tests the UNCONSENTED state.
+    localStorage.removeItem("yodips_terms_accepted");
+  });
+
+  it("keeps the login button disabled until the terms are accepted", async () => {
+    const store = makeStore();
+    const w = mount(LoginView);
+    await flushPromises();
+
+    const box = w.find('input[type="checkbox"]');
+    expect(box.exists()).toBe(true);
+    expect(w.html()).toContain("Syarat Layanan");
+    expect((box.element as HTMLInputElement).checked).toBe(false);
+    expect(w.find("button").attributes("disabled")).toBeDefined();
+
+    await box.setValue(true);
+    expect((w.find("button").element as HTMLButtonElement).disabled).toBe(false);
+
+    // Once enabled, a click reaches the store.
+    await w.find("button").trigger("click");
+    await flushPromises();
+    expect(store.login).toHaveBeenCalled();
+  });
+
+  it("does not call store.login when the button is clicked while unconsented", async () => {
+    const store = makeStore();
+    const w = mount(LoginView);
+    await flushPromises();
+
+    await w.find("button").trigger("click");
+    await flushPromises();
+    expect(store.login).not.toHaveBeenCalled();
+  });
+
+  it("remembers acceptance across mounts (legal version is stored)", async () => {
+    const store = makeStore();
+    const w = mount(LoginView);
+    await flushPromises();
+    await w.find('input[type="checkbox"]').setValue(true);
+    expect(localStorage.getItem("yodips_terms_accepted")).toBe("2026-09-20");
+
+    w.unmount();
+    makeStore();
+    const second = mount(LoginView);
+    await flushPromises();
+    expect((second.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true);
+    expect((second.find("button").element as HTMLButtonElement).disabled).toBe(false);
+    expect(store.login).not.toHaveBeenCalled();
+  });
+
+  it("ignores an acceptance recorded for an older version of the terms", async () => {
+    localStorage.setItem("yodips_terms_accepted", "2026-01-01");
+    makeStore();
+    const w = mount(LoginView);
+    await flushPromises();
+    expect((w.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false);
+    expect(w.find("button").attributes("disabled")).toBeDefined();
   });
 });

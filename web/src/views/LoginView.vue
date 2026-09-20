@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
+import { getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,17 @@ const store = useAuthStore();
 const inst = getCurrentInstance()!;
 const proxy = () => inst.proxy as any;
 const ext = useExtension();
+
+// Persetujuan eksplisit (Syarat Layanan + Kebijakan Privasi) sebelum login.
+// Disimpan per-browser bersama versinya: menaikkan TERMS_VERSION di sini
+// memaksa pengguna menyetujui ulang setelah teks legalnya berubah.
+const TERMS_VERSION = '2026-09-20';
+const CONSENT_KEY = 'yodips_terms_accepted';
+const consentAccepted = ref(localStorage.getItem(CONSENT_KEY) === TERMS_VERSION);
+watch(consentAccepted, (accepted) => {
+  if (accepted) localStorage.setItem(CONSENT_KEY, TERMS_VERSION);
+  else localStorage.removeItem(CONSENT_KEY);
+});
 
 const extInstalled = ref(false);
 const extChecking = ref(true);
@@ -353,6 +364,20 @@ async function handleExtensionDone() {
       </template>
 
       <template v-else>
+        <label class="mt-4 flex items-start gap-2 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+          <input
+            v-model="consentAccepted"
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 shrink-0 accent-[var(--primary)]"
+          />
+          <span>
+            Saya sudah membaca dan menyetujui
+            <a href="/terms" class="font-medium text-primary hover:underline">Syarat Layanan</a>
+            dan
+            <a href="/privacy" class="font-medium text-primary hover:underline">Kebijakan Privasi</a>.
+            YoDips bukan layanan resmi Undip.
+          </span>
+        </label>
         <Alert
           v-if="proxy().$route?.query?.reason === 'incomplete'"
           class="mt-4 border-warn/40 bg-warn/10 p-3"
@@ -372,7 +397,7 @@ async function handleExtensionDone() {
         <InteractiveHoverButton
           v-else-if="!extInstalled && ssoCaptureEnabled"
           class="mt-6 h-11 w-full"
-          :disabled="store.checking"
+          :disabled="store.checking || !consentAccepted"
           :text="store.checking ? 'Memeriksa session…' : 'Login via SSO'"
           @click="handleLogin"
         />
@@ -387,7 +412,7 @@ async function handleExtensionDone() {
         <InteractiveHoverButton
           v-if="extInstalled && !extWaiting"
           class="mt-6 h-11 w-full"
-          :disabled="extBusy"
+          :disabled="extBusy || !consentAccepted"
           :text="extBusy ? 'Menghubungkan…' : 'Login via Extension'"
           @click="handleExtensionLogin"
         />
@@ -432,10 +457,7 @@ async function handleExtensionDone() {
       </CardContent>
     </Card>
     <p class="mt-4 text-center text-xs text-muted-foreground">
-      Dengan melanjutkan, kamu menyetujui
-      <a href="/privacy" class="font-medium text-primary hover:underline">
-        Kebijakan Privasi
-      </a>.
+      Kamu perlu mencentang persetujuan di atas sebelum bisa login.
     </p>
   </AuroraBackground>
 </template>

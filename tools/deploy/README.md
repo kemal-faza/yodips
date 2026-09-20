@@ -123,3 +123,38 @@ podman run -d --name undip-sso-backend -p 127.0.0.1:3000:3000 --env-file .env \
 - Redis localhost + password (VPS) / add-on (Heroku).
 - `CDP_URL` dummy loopback → jalur capture deprecated nonaktif.
 - Arahkan klien: web `VITE_API_BASE_URL`, extension `serverUrl`, mobile `BASE_URL`.
+
+## Data deletion request (hak penghapusan di Kebijakan Privasi)
+
+Kebijakan Privasi menjanjikan penghapusan data atas permintaan lewat
+`kemalfaza26@gmail.com`, dan belum ada endpoint self-service untuk itu. Jadi
+permintaan dilayani manual: **verifikasi dulu pemohon memegang NIM tersebut**
+(minta jawab dari email SSO yang terdaftar), lalu hapus SEMUA state milik NIM
+itu di Redis produksi. `heroku redis:cli` sudah terpasang pada add-on ini.
+
+```bash
+NIM=<nim-pemohon>
+# 1. Sesi (cookie) — hilang sendiri dalam <=7 hari, tapi hapus sekarang
+redis-cli -u "$REDIS_URL" DEL "sso:session:$NIM"
+# 2. Cache data akademik + profil (NIK, alamat, nilai, jadwal, ...)
+redis-cli -u "$REDIS_URL" --scan --pattern "sso:cache:$NIM:*" | xargs -r redis-cli -u "$REDIS_URL" DEL
+# 3. State notifikasi (snapshot, dedup, relogin, token perangkat)
+redis-cli -u "$REDIS_URL" DEL "notif:tokens:$NIM" "notif:web:$NIM" "notif:relogin:$NIM"
+redis-cli -u "$REDIS_URL" --scan --pattern "notif:snap:$NIM:*" | xargs -r redis-cli -u "$REDIS_URL" DEL
+redis-cli -u "$REDIS_URL" --scan --pattern "notif:sent:$NIM:*" | xargs -r redis-cli -u "$REDIS_URL" DEL
+redis-cli -u "$REDIS_URL" SREM notif:subs "$NIM"
+redis-cli -u "$REDIS_URL" SREM notif:subs:web "$NIM"
+```
+
+Catatan:
+
+- **Sesi InMemory tidak perlu dibersihkan** — hilang saat dyno restart.
+- **Kode pairing** (`pair:<hash>`, `pair-used:<hash>`) dan snapshot punya TTL
+  sendiri (300s/600s/14 hari) sehingga tidak perlu dihapus manual.
+- Setelah menghapus, **beri tahu pemohon** bahwa datanya sudah dihapus, dan
+  catat tanggalnya. Pengguna masih bisa login lagi kapan saja (layanan ini tidak
+  punya konsep "tutup akun"); kalau mereka ingin permanen, mereka cukup tidak
+  login lagi.
+- Kalau volume permintaan naik, ini saatnya membuat endpoint self-service
+  (mis. `DELETE /api/auth/me` yang memanggil langkah yang sama) alih-alih
+  melakukannya manual.

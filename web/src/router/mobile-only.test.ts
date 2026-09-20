@@ -65,4 +65,14 @@ describe('guard UA-mobile → /app/ (pasca-F6)', () => {
     expect(replace).not.toHaveBeenCalled();
     expect(router.currentRoute.value.path).toBe('/privacy');
   });
+
+  it('mobile UA: /terms tetap dilayani SPA (halaman publik)', async () => {
+    isMobileMock.mockReturnValue(true);
+    const replace = stubReplace();
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/terms');
+    await router.isReady();
+    expect(replace).not.toHaveBeenCalled();
+    expect(router.currentRoute.value.path).toBe('/terms');
+  });
 });
