@@ -54,13 +54,6 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlinx.datetime.LocalDate
 
-/** Indonesian month names (calendar header + picker). */
-internal val MONTH_NAMES_ID =
-    listOf(
-        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-        "Juli", "Agustus", "September", "Oktober", "November", "Desember",
-    )
-
 /** `2026-08` → "Agustus 2026". */
 internal fun monthTitle(year: Int, month: Int): String = "${MONTH_NAMES_ID[month - 1]} $year"
 
@@ -250,7 +243,7 @@ private fun KomoCalendarCard(
     val onSurface = MaterialTheme.colorScheme.onSurface
     val primary = MaterialTheme.colorScheme.primary
     val surfaceVariant = MaterialTheme.colorScheme.surfaceVariant
-    val monthChip = "$year ${MONTH_NAMES_ID[monthOfYear - 1]}"
+    val monthChip = monthTitle(year, monthOfYear)
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),

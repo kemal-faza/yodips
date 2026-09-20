@@ -102,7 +102,7 @@ private fun ProfileContent(
                 "Kependudukan",
                 listOf(
                     PInfo("Tempat lahir", p.tempatLahir.orEmpty()),
-                    PInfo("Tanggal lahir", p.tanggalLahir.orEmpty()),
+                    PInfo("Tanggal lahir", formatIsoDateId(p.tanggalLahir.orEmpty())),
                     PInfo("NIK", p.nik.orEmpty()),
                     PInfo("Nama Ibu", p.namaIbu.orEmpty(), masked = true),
                     PInfo("Kode kewarganegaraan", p.kodeKewarganegaraan.orEmpty()),

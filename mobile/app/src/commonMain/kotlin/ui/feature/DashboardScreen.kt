@@ -359,9 +359,6 @@ private fun minutesUntilNextMeeting(
     return minutesUntil(nowDayRank, nowMinutes, rank, startMin, endMin).toLong()
 }
 
-private val MONTH_SHORT =
-    arrayOf("Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des")
-
 /**
  * Label pertemuan untuk kartu "Kelas Mendatang": tanggal nyata `"Sen, 22 Sep"`
  * bila baris punya `tanggal`, fallback nama hari (`"Senin"`) untuk baris lama.
@@ -372,7 +369,7 @@ internal fun meetingDateLabel(j: SiapJadwal): String {
     val tanggal = j.tanggal.takeIf { it.isNotBlank() } ?: return capitalizeDay(j.hari)
     val date = runCatching { LocalDate.parse(tanggal) }.getOrNull() ?: return capitalizeDay(j.hari)
     val day = WEEKDAY_SHORT[(date.dayOfWeek.ordinal + 1) % 7]
-    return "$day, ${date.dayOfMonth} ${MONTH_SHORT[date.monthNumber - 1]}"
+    return "$day, ${date.dayOfMonth} ${MONTH_SHORT_ID[date.monthNumber - 1]}"
 }
 
 @Composable
@@ -403,7 +400,7 @@ private fun UpcomingClasses(source: List<SiapJadwal>) {
                     Column(Modifier.weight(1f)) {
                         Text(cleanCourseName(j.matakuliah), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1)
                         Text(
-                            "${meetingDateLabel(j)} · ${j.waktu}${cleanRoomName(j.ruang)?.let { " · $it" }.orEmpty()}",
+                            "${meetingDateLabel(j)} · ${formatWaktu(j.waktu)}${cleanRoomName(j.ruang)?.let { " · $it" }.orEmpty()}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

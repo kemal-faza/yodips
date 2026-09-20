@@ -89,6 +89,30 @@ internal fun formatIpk(value: Double?): String = if (value == null) "—" else {
 
 internal fun formatSks(value: Double?): String = if (value == null) "—" else ((if (value % 1.0 == 0.0) value.toInt() else value).toString())
 
+/** Indonesian month names (calendar header + picker). */
+internal val MONTH_NAMES_ID =
+    listOf(
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+    )
+
+/** Singkatan bulan Indonesia untuk label tanggal ringkas (`22 Sep`). */
+internal val MONTH_SHORT_ID =
+    arrayOf("Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des")
+
+/**
+ * `2006-05-26` → `26 Mei 2006`. Nilai yang tidak berpola tanggal ISO
+ * dikembalikan apa adanya, jadi format SIAP lain tidak pernah hilang.
+ */
+internal fun formatIsoDateId(raw: String): String {
+    val m = Regex("""^(\d{4})-(\d{2})-(\d{2})""").find(raw.trim()) ?: return raw
+    val year = m.groupValues[1]
+    val month = m.groupValues[2].toIntOrNull() ?: return raw
+    val day = m.groupValues[3].toIntOrNull() ?: return raw
+    if (month !in 1..12 || day !in 1..31) return raw
+    return "${day} ${MONTH_SHORT_ID[month - 1]} $year"
+}
+
 @Composable
 internal fun StatCard(
     label: String,

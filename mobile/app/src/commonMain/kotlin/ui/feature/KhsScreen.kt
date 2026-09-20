@@ -49,7 +49,7 @@ fun KhsScreen(
                             Column {
                                 Text("IPK Kumulatif", style = MaterialTheme.typography.labelLarge)
                                 Spacer(Modifier.height(2.dp))
-                                Text(khs.ipk.toString(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                                Text(formatIpk(khs.ipk), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -64,11 +64,11 @@ fun KhsScreen(
                                     fontWeight = FontWeight.SemiBold,
                                     color = accentForeground(),
                                 )
-                                Text("IP ${sem.ip}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Text("IP ${formatIpk(sem.ip)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             }
                             if (sem.totalSks > 0) {
                                 Text(
-                                    "SKS ${sem.totalSks}",
+                                    "SKS ${formatSks(sem.totalSks)}",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -113,7 +113,7 @@ private fun semanticNilai(
                     maxLines = 2,
                 )
                 Text(
-                    "${n.nilaiHuruf} · SKS ${n.sks}",
+                    "${n.nilaiHuruf} · SKS ${formatSks(n.sks)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
