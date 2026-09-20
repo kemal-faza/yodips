@@ -175,7 +175,6 @@ private fun SectionCard(
         onClick = onToggle,
         level = AppElevation.Lifted,
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Row(

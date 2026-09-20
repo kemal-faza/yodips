@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardColors
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -71,8 +72,8 @@ private class DepthPalette(
 private fun depthPalette(): DepthPalette =
     if (isDarkTheme()) {
         DepthPalette(
-            ring = Color.White.copy(alpha = 0.10f),
-            rim = Color.White.copy(alpha = 0.16f),
+            ring = Color.White.copy(alpha = 0.14f),
+            rim = Color.White.copy(alpha = 0.20f),
             lip = Color.Black.copy(alpha = 0.32f),
         )
     } else {
@@ -82,6 +83,25 @@ private fun depthPalette(): DepthPalette =
             lip = Color.Black.copy(alpha = 0.06f),
         )
     }
+
+/**
+ * Warna permukaan yang terangkat. Aturannya satu dan berlaku di kedua tema:
+ * objek yang terangkat menangkap lebih banyak cahaya, jadi permukaannya harus
+ * LEBIH TERANG daripada halaman di belakangnya.
+ *
+ * Tema terang: putih di atas halaman abu-abu (#F7F7F7). Tema gelap: abu
+ * terang di atas halaman hampir hitam (#121212) — di tema gelap inilah satu-
+ * satunya pemisah yang benar-benar terbaca, karena bayangan hitam di atas latar
+ * gelap nyaris tidak punya ruang untuk menggelap.
+ */
+@Composable
+fun raisedSurfaceColor(): Color =
+    if (isDarkTheme()) MaterialTheme.colorScheme.surfaceContainerHigh else Color.White
+
+/** [CardColors] untuk permukaan terangkat; dipakai [AppCard] dan permukaan lain. */
+@Composable
+fun appCardColors(container: Color = raisedSurfaceColor()): CardColors =
+    CardDefaults.cardColors(containerColor = container)
 
 /**
  * Bayangan berlapis untuk permukaan apa pun. Dipasang SEBELUM background —
@@ -96,12 +116,52 @@ fun Modifier.appDepth(
 ): Modifier {
     if (level == AppElevation.Flat) return this
     val effective = if (pressed) level.pressed() else level
-    // Di tema gelap bayangan hitam hampir tidak terbaca di atas latar gelap,
-    // jadi jaraknya ditambah; sisi terangnya dipikul `appBevel`.
-    val ambient = if (isDarkTheme()) effective.ambient * 1.3f else effective.ambient
+    val dark = isDarkTheme()
+    // Di tema gelap bayangan hitam nyaris tidak terbaca di atas latar gelap,
+    // jadi jaraknya ditambah; sisi terangnya dipikul `appBevel` dan bayangan
+    // kontaknya digambar sendiri (lihat di bawah).
+    val ambient = if (dark) effective.ambient * 1.6f else effective.ambient
     return this
         .shadow(effective.contact, shape, clip = false)
         .shadow(ambient, shape, clip = false)
+        .drawBehind {
+            if (!dark) return@drawBehind
+            // Bayangan kontak versi tema gelap: bayangan OS hanya menggelapkan
+            // latar sekitar 0.3 alpha, yang di atas #121212 cuma berubah ~5 lum
+            // dan praktis tak terlihat. Digambar sendiri (bawah + kedua sisi)
+            // supaya objeknya benar-benar "menempel" dan tidak ada sisi yang polos.
+            val bottom = 12.dp.toPx()
+            val side = 8.dp.toPx()
+            val below = Color.Black.copy(alpha = 0.5f)
+            val flank = Color.Black.copy(alpha = 0.35f)
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(below, Color.Transparent),
+                    startY = size.height,
+                    endY = size.height + bottom,
+                ),
+                topLeft = Offset(0f, size.height),
+                size = Size(size.width, bottom),
+            )
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(flank, Color.Transparent),
+                    startX = -side,
+                    endX = 0f,
+                ),
+                topLeft = Offset(-side, 0f),
+                size = Size(side, size.height),
+            )
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Transparent, flank),
+                    startX = size.width,
+                    endX = size.width + side,
+                ),
+                topLeft = Offset(size.width, 0f),
+                size = Size(side, size.height),
+            )
+        }
 }
 
 /**
@@ -177,7 +237,7 @@ fun AppCard(
     modifier: Modifier = Modifier,
     level: AppElevation = AppElevation.Raised,
     shape: Shape = CardDefaults.shape,
-    colors: CardColors = CardDefaults.cardColors(),
+    colors: CardColors = appCardColors(),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {

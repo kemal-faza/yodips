@@ -11,6 +11,7 @@ import ac.undip.sso.ui.common.SkeletonGroup
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
+import ac.undip.sso.ui.theme.appCardColors
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -240,7 +241,7 @@ private fun TaskCard(
             if (bucket == TaskBucket.LATE) {
                 CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             } else {
-                CardDefaults.cardColors()
+                appCardColors()
             },
         onClick = onClick,
     ) {

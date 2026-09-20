@@ -29,6 +29,7 @@ import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
 import ac.undip.sso.ui.theme.appCastAbove
 import ac.undip.sso.ui.theme.appDepth
+import ac.undip.sso.ui.theme.raisedSurfaceColor
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -360,7 +361,7 @@ fun ShellBottomBar(
             Modifier
                 .appCastAbove()
                 .appDepth(AppElevation.Lifted),
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = raisedSurfaceColor(),
     ) {
         Row(
             modifier =
@@ -396,7 +397,7 @@ fun ShellBottomBar(
                                     Brush.verticalGradient(listOf(lerp(Primary, Color.White, 0.22f), Primary)),
                                     CircleShape,
                                 )
-                                .border(6.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                                .border(6.dp, raisedSurfaceColor(), CircleShape)
                                 .clickable { throttled(tab.route) },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -427,7 +428,9 @@ fun ShellBottomBar(
                         NavigationBarItemDefaults.colors(
                             selectedIconColor = accentForeground(),
                             selectedTextColor = accentForeground(),
-                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant,
+                            // Indikator tab aktif: sebelumnya `surfaceVariant`, yang
+                            // nyaris sama dengan warna bar-nya sendiri di kedua tema.
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
                         ),
                 )
             }
