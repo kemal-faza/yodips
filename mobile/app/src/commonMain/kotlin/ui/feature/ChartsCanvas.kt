@@ -132,6 +132,9 @@ private fun AreaLineChart(
     val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
     val lineColor = MaterialTheme.colorScheme.primary
     val errorColor = MaterialTheme.colorScheme.error
+    // Label sumbu memakai token tema: warna abu hardcoded sebelumnya hanya
+    // lolos kontras di mode terang (2,1:1 di atas kartu gelap).
+    val axisTextColor = MaterialTheme.colorScheme.onSurfaceVariant
     var hoverIndex by remember { mutableStateOf<Int?>(null) }
     val density = LocalDensity.current
     val tooltipBg = MaterialTheme.colorScheme.background
@@ -178,7 +181,7 @@ private fun AreaLineChart(
                 for (g in 0..AXIS_TICKS) {
                     val gy = plotTop + plotH * g / AXIS_TICKS
                     drawLine(gridColor, Offset(plotLeft, gy), Offset(plotRight, gy), strokeWidth = 1f)
-                    drawAxisText(textMeasurer, fmtValue(yMax - (yMax - yMin) * g / AXIS_TICKS), plotLeft - 6f, gy + 4f, labelStyle, alignRight = true)
+                    drawAxisText(textMeasurer, fmtValue(yMax - (yMax - yMin) * g / AXIS_TICKS), plotLeft - 6f, gy, labelStyle, axisTextColor, alignRight = true, centerVertically = true)
                 }
 
                 if (fill && n > 1) {
@@ -219,7 +222,7 @@ private fun AreaLineChart(
                 }
 
                 (0 until n).forEach { i ->
-                    drawAxisText(textMeasurer, "${i + 1}", xAt(i), plotBottom + 18f, labelStyle, alignCenter = true)
+                    drawAxisText(textMeasurer, "${i + 1}", xAt(i), plotBottom + 18f, labelStyle, axisTextColor, alignCenter = true)
                 }
 
                 val hi = hoverIndex
@@ -254,6 +257,7 @@ private fun GradeChartCard(khs: SiapKhs) {
         } else {
             var hoverIndex by remember { mutableStateOf<Int?>(null) }
             val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+            val axisTextColor = MaterialTheme.colorScheme.onSurfaceVariant
             val density = LocalDensity.current
             val tooltipBg = MaterialTheme.colorScheme.background
             val tooltipFg = MaterialTheme.colorScheme.onBackground
@@ -296,23 +300,29 @@ private fun GradeChartCard(khs: SiapKhs) {
                         for (g in 0..AXIS_TICKS) {
                             val gy = plotTop + plotH * g / AXIS_TICKS
                             drawLine(gridColor, Offset(plotLeft, gy), Offset(plotRight, gy), strokeWidth = 1f)
-                            drawAxisText(textMeasurer, "${(AXIS_TICKS - g) * axisMax / AXIS_TICKS}", plotLeft - 6f, gy + 4f, labelStyle, alignRight = true)
+                            drawAxisText(textMeasurer, "${(AXIS_TICKS - g) * axisMax / AXIS_TICKS}", plotLeft - 6f, gy, labelStyle, axisTextColor, alignRight = true, centerVertically = true)
                         }
 
                         rows.forEachIndexed { i, (_, counts) ->
                             var acc = 0f
                             val cx = barCenter(i)
+                            // cx = titik tengah SLOT, jadi balok digambar mulai
+                            // cx - barW/2: sejajar dengan label sumbu-x, garis
+                            // crosshair, dan hit-test barIndex (yang memakai
+                            // batas slot). Dulu balok mulai TEPI di cx sehingga
+                            // tampak 21dp lebih kanan dari labelnya.
+                            val bx = cx - barW / 2f
                             counts.entries.sortedBy { GRADE_KEYS.indexOf(it.key) }.forEach { (k, c) ->
                                 if (c > 0) {
                                     val bh = plotH * (c / axisMax.toFloat())
                                     val bo = plotTop + plotH - bh - acc
-                                    drawRect(GRADE_COLORS[k] ?: Color(0xFF888888), Offset(cx, bo), Size(barW, bh))
+                                    drawRect(GRADE_COLORS[k] ?: Color(0xFF888888), Offset(bx, bo), Size(barW, bh))
                                     acc += bh
                                 }
                             }
                         }
                         (0 until n).forEach { i ->
-                            drawAxisText(textMeasurer, "${i + 1}", barCenter(i), plotBottom + 18f, labelStyle, alignCenter = true)
+                            drawAxisText(textMeasurer, "${i + 1}", barCenter(i), plotBottom + 18f, labelStyle, axisTextColor, alignCenter = true)
                         }
 
                         val hi = hoverIndex
@@ -356,19 +366,25 @@ private fun DrawScope.drawAxisText(
     x: Float,
     y: Float,
     style: TextStyle,
-    color: Color = Color(0xFF616161),
+    color: Color,
     alignRight: Boolean = false,
     alignCenter: Boolean = false,
+    centerVertically: Boolean = false,
 ) {
     val layout = textMeasurer.measure(text, style = style)
     val w = layout.size.width.toFloat()
+    val h = layout.size.height.toFloat()
     val left =
         when {
             alignRight -> x - w
             alignCenter -> x - w / 2f
             else -> x
         }
-    drawText(layout, topLeft = Offset(left, y), color = color)
+    // Label sumbu-y dipusatkan pada garis grid-nya. Sebelumnya digeser manual
+    // `gy + 4f`, sehingga label "0" di baris bawah bertabrakan dengan label x
+    // pertama pada grafik garis (x tick pertama jatuh tepat di plotLeft).
+    val top = if (centerVertically) y - h / 2f else y
+    drawText(layout, topLeft = Offset(left, top), color = color)
 }
 
 /**
