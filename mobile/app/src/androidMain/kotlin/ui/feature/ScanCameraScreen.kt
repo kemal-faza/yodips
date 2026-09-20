@@ -241,7 +241,13 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         when {
             !permissionGranted -> {
                 Column(Modifier.fillMaxSize()) {
-                    PermissionPrompt { permissionLauncher.launch(Manifest.permission.CAMERA) }
+                    // weight(1f), BUKAN fillMaxSize: prompt yang mengisi seluruh
+                    // tinggi kolom menyisakan 0dp untuk tombol galeri di bawahnya
+                    // (tombol jadi sliver ~10dp yang isinya terpotong habis).
+                    PermissionPrompt(
+                        onRequest = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                        modifier = Modifier.weight(1f),
+                    )
                     GalleryButton(
                         busy = galleryBusy,
                         onClick = pickGallery,
@@ -284,17 +290,20 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                         )
                     }
                 }
-                // Centered result popup over the still-running camera.
-                outcome?.let { o ->
-                    ScanResultDialog(
-                        outcome = o,
-                        onReset = {
-                            outcome = null
-                            processing.set(false)
-                        },
-                    )
-                }
             }
+        }
+
+        // Hasil absen (kamera MAUPUN galeri) — wajib di LUAR cabang izin: absen
+        // dari galeri tidak butuh izin kamera, dan tanpa ini user yang memilih
+        // foto QR tanpa memberi izin tidak melihat hasil apa pun (diam saja).
+        outcome?.let { o ->
+            ScanResultDialog(
+                outcome = o,
+                onReset = {
+                    outcome = null
+                    processing.set(false)
+                },
+            )
         }
     }
 }
@@ -458,9 +467,12 @@ private fun ScanResultDialog(
 }
 
 @Composable
-private fun PermissionPrompt(onRequest: () -> Unit) {
+private fun PermissionPrompt(
+    onRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(
-        Modifier.fillMaxSize().padding(32.dp),
+        modifier.padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
