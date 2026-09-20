@@ -9,6 +9,7 @@ import ac.undip.sso.ui.theme.accentForeground
 import ac.undip.sso.ui.theme.appMarkdownDocStyle
 import ac.undip.sso.ui.theme.rememberMarkdownColors
 import ac.undip.sso.ui.theme.rememberMarkdownTheme
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,11 +17,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -201,8 +208,19 @@ private fun FilesCard(files: List<ac.undip.sso.core.network.KulonFile>) {
             )
             Spacer(Modifier.height(8.dp))
             files.forEach { f ->
+                val url = f.url.takeIf { it.isNotBlank() }
                 Row(
-                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                        .then(
+                            if (url != null) {
+                                Modifier.clickable(onClickLabel = "Buka lampiran") { uriHandler.openUri(url) }
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -211,8 +229,16 @@ private fun FilesCard(files: List<ac.undip.sso.core.network.KulonFile>) {
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
+                    if (url != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = null,
+                            tint = accentForeground(),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
-                Spacer(Modifier.height(4.dp))
             }
         }
     }
