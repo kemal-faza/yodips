@@ -42,11 +42,15 @@ import kotlin.math.sqrt
  * terbaca datar: objeknya entah menempel tanpa jarak, atau mengambang tanpa
  * kontak.
  *
- * Tema gelap memakai kabut yang digambar sendiri ([shade]/[drop]), meniru resep
- * `main.css` milik web: di sana bayangan tema gelap memakai alpha ~6x lebih
- * pekat daripada tema terang (`0 6px 22px rgba(0,0,0,.6)` vs `0 10px 28px
- * rgba(0,0,0,.13)`) — di atas latar hampir hitam, bayangan tipis tidak punya
- * cukup ruang untuk terbaca.
+ * Tema gelap memakai aturan yang berbeda, karena bayangan di sana alat yang
+ * salah: bayangan tidak bisa lebih gelap daripada latar yang sudah hampir
+ * hitam, jadi kedalaman dipikul TANGGA LUMINANSI permukaan (canvas #121212 →
+ * kartu lebih terang). Bayangan tema gelap ([shade]/[drop]/[shadeAlpha])
+ * dikecilkan jadi bayangan kontak yang rapat dan tipis saja — bukan blob gelap.
+ *
+ * Rujukan: Material (dark theme pakai permukaan abu gelap, bukan hitam, supaya
+ * elevasi terbaca) dan panduan dark-mode yang menyarankan naik 5–8% luminansi
+ * per tingkat elevasi alih-alih drop shadow.
  */
 data class AppElevation(
     /** Bayangan kontak OS (tema terang), rapat ke tepi objek. */
@@ -57,6 +61,8 @@ data class AppElevation(
     val shade: Dp,
     /** Pergeseran kabut ke bawah; cahaya datang dari atas. */
     val drop: Dp,
+    /** Alpha kabut tema gelap tepat di tepi objek. */
+    val shadeAlpha: Float,
 ) {
     /** Objek yang ditekan turun mendekati permukaan: bayangannya mengecil. */
     fun pressed(): AppElevation = AppElevation(
@@ -64,21 +70,21 @@ data class AppElevation(
         ambient = ambient * 0.4f,
         shade = shade * 0.7f,
         drop = drop * 0.4f,
+        shadeAlpha = shadeAlpha * 0.6f,
     )
 
     companion object {
         /** Menempel di permukaan, tanpa bayangan. Untuk isian, bukan objek. */
-        val Flat = AppElevation(0.dp, 0.dp, 0.dp, 0.dp)
+        val Flat = AppElevation(0.dp, 0.dp, 0.dp, 0.dp, 0f)
 
-        /** Objek diam: kartu konten, kartu statistik. Web: `0 2px 8px rgba(0,0,0,.45)`. */
-        val Raised = AppElevation(1.dp, 5.dp, shade = 9.dp, drop = 2.dp)
+        /** Objek diam: kartu konten, kartu statistik. */
+        val Raised = AppElevation(1.dp, 5.dp, shade = 4.dp, drop = 1.dp, shadeAlpha = 0.30f)
 
-        /** Setingkat lebih atas: kartu menu yang bisa ditekan, pill, kalender.
-         *  Web: `0 6px 22px rgba(0,0,0,.6)`. */
-        val Lifted = AppElevation(2.dp, 12.dp, shade = 20.dp, drop = 6.dp)
+        /** Setingkat lebih atas: kartu menu yang bisa ditekan, pill, kalender. */
+        val Lifted = AppElevation(2.dp, 12.dp, shade = 6.dp, drop = 2.dp, shadeAlpha = 0.35f)
 
         /** Mengambang di atas segalanya: FAB, dialog, chrome yang menempel. */
-        val Floating = AppElevation(4.dp, 24.dp, shade = 28.dp, drop = 8.dp)
+        val Floating = AppElevation(4.dp, 24.dp, shade = 10.dp, drop = 3.dp, shadeAlpha = 0.40f)
     }
 }
 
@@ -115,15 +121,17 @@ fun Modifier.appDepth(
     if (level == AppElevation.Flat) return this
     val effective = if (pressed) level.pressed() else level
     if (isDarkTheme()) {
-        // Tema gelap: bayangan OS tidak bisa diatur alpha-nya (maksimum ~0.3)
-        // dan di atas latar hampir hitam nyaris tak terbaca. Kabutnya digambar
-        // sendiri mengikuti bentuk objek, dengan alpha tepi setara resep web
-        // (`rgba(0,0,0,.6)`) dan profil yang lebih pekat di dekat tepi.
+        // Tema gelap: bayangan TIDAK dipakai untuk membangun kedalaman — di atas
+        // latar hampir hitam bayangan tidak punya ruang untuk menggelap, dan
+        // kalau dipaksa jadi blob hitam yang justru mengotori layar. Kedalaman
+        // dipikul tangga luminansi permukaan (lihat `raisedSurfaceColor`).
+        // Bayangan yang tersisa hanya "bayangan kontak": rapat dan tipis, untuk
+        // objek yang memang menempel/terangkat di atas permukaan lain.
         // `drawWithCache`: bentuk dan jarak dihitung sekali per ukuran, bukan
         // tiap frame saat daftar di-scroll.
         return this.drawWithCache {
             val path = shape.toPath(size, layoutDirection, this)
-            val colour = Color.Black.copy(alpha = 1f - (1f - EdgeAlpha).pow(1f / Layers))
+            val colour = Color.Black.copy(alpha = 1f - (1f - effective.shadeAlpha).pow(1f / Layers))
             val spread = effective.shade.toPx()
             val drop = effective.drop.toPx()
             onDrawBehind {
@@ -150,11 +158,8 @@ fun Modifier.appDepth(
         .shadow(effective.ambient, shape, clip = false)
 }
 
-/** Alpha bayangan tepat di tepi objek pada tema gelap — `rgba(0,0,0,.6)` milik web. */
-private const val EdgeAlpha = 0.6f
-
 /** Jumlah lapisan kabut tema gelap; makin banyak, gradasinya makin mulus. */
-private const val Layers = 12
+private const val Layers = 8
 
 /** Bentuk apa pun (persegi, membulat, lingkaran) → [Path] agar bisa digambar berlapis. */
 private fun Shape.toPath(
