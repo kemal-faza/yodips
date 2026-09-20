@@ -4,6 +4,8 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapNilaiDetail
 import ac.undip.sso.core.network.SiapNilaiKomponen
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -56,8 +57,9 @@ private fun NilaiDetailContent(detail: SiapNilaiDetail) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // Ringkasan header: kode matkul + nilai akhir menonjol.
-        Card(
+        AppCard(
             Modifier.fillMaxWidth(),
+            level = AppElevation.Lifted,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         ) {
             Row(
@@ -95,7 +97,7 @@ private fun NilaiDetailContent(detail: SiapNilaiDetail) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
-            Card(Modifier.fillMaxWidth()) {
+            AppCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                     detail.komponen.forEachIndexed { index, komponen ->
                         KomponenRow(komponen)

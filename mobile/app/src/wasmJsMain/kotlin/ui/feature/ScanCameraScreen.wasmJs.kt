@@ -5,6 +5,8 @@ import ac.undip.sso.core.scan.CameraRegion
 import ac.undip.sso.core.scan.QrScanResult
 import ac.undip.sso.core.scan.QrScanner
 import ac.undip.sso.ui.navigation.LocalAppNavigation
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -153,7 +155,8 @@ internal actual fun ScanScreen(repo: SsoRepository) {
 
                 outcome != null -> {
                     val o = outcome!!
-                    Card(
+                    AppCard(
+                        level = AppElevation.Floating,
                         modifier = Modifier.fillMaxWidth().padding(16.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = if (o.success)

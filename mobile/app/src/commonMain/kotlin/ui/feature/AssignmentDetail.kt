@@ -5,6 +5,8 @@ import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonAssignmentDetail
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
 import ac.undip.sso.ui.theme.appMarkdownDocStyle
 import ac.undip.sso.ui.theme.rememberMarkdownColors
@@ -26,7 +28,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -103,8 +104,9 @@ private fun HeaderCard(
     assignment: KulonAssignment,
     detail: KulonAssignmentDetail,
 ) {
-    Card(
+    AppCard(
         Modifier.fillMaxWidth(),
+        level = AppElevation.Lifted,
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
@@ -129,7 +131,7 @@ private fun HeaderCard(
 
 @Composable
 private fun DescriptionCard(descriptionMarkdown: String) {
-    Card(Modifier.fillMaxWidth()) {
+    AppCard(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
                 "Deskripsi",
@@ -152,7 +154,7 @@ private fun DescriptionCard(descriptionMarkdown: String) {
 @Composable
 private fun SubmissionCard(detail: KulonAssignmentDetail) {
     val s = detail.submission
-    Card(Modifier.fillMaxWidth()) {
+    AppCard(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
                 "Submission",
@@ -198,7 +200,7 @@ private fun SubmissionCard(detail: KulonAssignmentDetail) {
 @Composable
 private fun FilesCard(files: List<ac.undip.sso.core.network.KulonFile>) {
     val uriHandler = LocalUriHandler.current
-    Card(Modifier.fillMaxWidth()) {
+    AppCard(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
                 "File",

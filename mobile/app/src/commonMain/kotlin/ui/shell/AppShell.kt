@@ -23,9 +23,12 @@ import ac.undip.sso.ui.feature.ScheduleScreen
 import ac.undip.sso.ui.feature.TasksScreen
 import ac.undip.sso.ui.navigation.AppNavigation
 import ac.undip.sso.ui.navigation.LocalAppNavigation
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.Primary
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
+import ac.undip.sso.ui.theme.appCastAbove
+import ac.undip.sso.ui.theme.appDepth
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -70,6 +73,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -347,6 +353,13 @@ fun ShellBottomBar(
         }
     }
     NavigationBar(
+        // Bar bawah mengambang di atas halaman yang men-scroll: bayangan yang
+        // jatuh ke bawah saja tidak terlihat di dasar layar, jadi ditambah
+        // gradien yang naik ke atas konten.
+        modifier =
+            Modifier
+                .appCastAbove()
+                .appDepth(AppElevation.Lifted),
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Row(
@@ -374,9 +387,15 @@ fun ShellBottomBar(
                     Box(
                         modifier =
                             Modifier
+                                .appDepth(AppElevation.Floating, CircleShape)
                                 .size(78.dp)
                                 .clip(CircleShape)
-                                .background(Primary)
+                                // Bola teal: bibir atas menangkap cahaya, bawahnya
+                                // menggelap, jadi bentuknya terbaca sebagai volume.
+                                .background(
+                                    Brush.verticalGradient(listOf(lerp(Primary, Color.White, 0.22f), Primary)),
+                                    CircleShape,
+                                )
                                 .border(6.dp, MaterialTheme.colorScheme.surface, CircleShape)
                                 .clickable { throttled(tab.route) },
                         contentAlignment = Alignment.Center,

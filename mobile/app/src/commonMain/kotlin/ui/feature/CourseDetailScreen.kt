@@ -6,6 +6,8 @@ import ac.undip.sso.core.network.KulonContentItem
 import ac.undip.sso.core.network.KulonCourseContent
 import ac.undip.sso.core.network.KulonSection
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,7 +32,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -170,8 +171,9 @@ private fun SectionCard(
     onToggle: () -> Unit,
     onOpenItem: (KulonContentItem) -> Unit,
 ) {
-    Card(
+    AppCard(
         onClick = onToggle,
+        level = AppElevation.Lifted,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
@@ -238,8 +240,9 @@ private fun ItemRow(
     item: KulonContentItem,
     onClick: () -> Unit,
 ) {
-    Card(
+    AppCard(
         onClick = onClick,
+        level = AppElevation.Lifted,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp),

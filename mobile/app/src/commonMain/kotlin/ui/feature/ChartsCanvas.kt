@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.AppCard
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -88,7 +89,7 @@ private fun ChartCard(
     subtitle: String,
     content: @Composable () -> Unit,
 ) {
-    androidx.compose.material3.Card {
+    AppCard {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             if (subtitle.isNotBlank()) {

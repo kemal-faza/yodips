@@ -3,6 +3,8 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.KulonCourse
 import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,7 +23,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -132,7 +133,7 @@ private fun CoursesContent(
 
 @Composable
 private fun SemesterProgressBar(percent: Int) {
-    Card(
+    AppCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
@@ -170,8 +171,9 @@ private fun CourseCard(
     active: Boolean,
     onClick: () -> Unit,
 ) {
-    Card(
+    AppCard(
         onClick = onClick,
+        level = AppElevation.Lifted,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -226,8 +228,9 @@ private fun PastToggle(
     count: Int,
     onClick: () -> Unit,
 ) {
-    Card(
+    AppCard(
         onClick = onClick,
+        level = AppElevation.Lifted,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {

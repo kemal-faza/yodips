@@ -8,6 +8,8 @@ import ac.undip.sso.core.network.SiapIrsMataKuliah
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.REFRESH_COOLDOWN_MS
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,7 +20,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -128,7 +129,10 @@ fun IrsScreen(
                 // Semester — derived from the profile (the IRS payload itself carries no label).
                 LoadableData(load = { repo.profile() }, emptyMessage = "", refreshTrigger = refreshTick) { profile ->
                     val ordinal = semesterOrdinal(profile.angkatan, profile.semesterBerjalan)
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                    AppCard(
+                        level = AppElevation.Lifted,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    ) {
                         Column(Modifier.fillMaxWidth().padding(16.dp)) {
                             Text(
                                 if (ordinal != null) "Semester $ordinal" else "Semester",
@@ -190,7 +194,7 @@ fun IrsScreen(
                     refreshTrigger = refreshTick,
                 ) { irs ->
                     val mks = dedupeIrsMk(irs.mataKuliah)
-                    Card(Modifier.fillMaxWidth()) {
+                    AppCard(Modifier.fillMaxWidth()) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("${mks.size} mata kuliah", style = MaterialTheme.typography.bodyMedium)
                             Text(

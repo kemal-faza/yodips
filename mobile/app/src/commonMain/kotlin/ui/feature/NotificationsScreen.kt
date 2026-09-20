@@ -2,6 +2,8 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.push.NotificationHistoryStore
 import ac.undip.sso.core.push.StoredNotification
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -118,7 +119,8 @@ private fun NotificationCard(
 ) {
     // Hanya notifikasi bertarget yang bisa dibuka; sisanya tetap kartu statis.
     val openable = n.target.isNotBlank()
-    Card(
+    AppCard(
+        level = AppElevation.Lifted,
         modifier =
             Modifier
                 .fillMaxWidth()

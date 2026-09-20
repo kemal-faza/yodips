@@ -4,6 +4,8 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.background
@@ -24,7 +26,6 @@ import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -133,7 +134,7 @@ private fun ProfileContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // Identity header: initials, current semester, academic status.
-        Card {
+        AppCard(level = AppElevation.Lifted) {
             Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Avatar(p)
                 Spacer(Modifier.height(12.dp))
@@ -222,7 +223,7 @@ private fun FieldGroup(
     onToggleMask: (() -> Unit)? = null,
 ) {
     val hasMasked = group.rows.any { it.masked }
-    Card {
+    AppCard {
         Column(Modifier.padding(16.dp)) {
             Text(
                 group.name,

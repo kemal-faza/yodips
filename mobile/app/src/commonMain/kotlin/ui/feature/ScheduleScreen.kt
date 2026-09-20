@@ -8,6 +8,8 @@ import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.common.SkeletonBlock
 import ac.undip.sso.ui.common.SkeletonGroup
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,7 +28,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -244,11 +245,11 @@ private fun KomoCalendarCard(
     val primary = MaterialTheme.colorScheme.primary
     val surfaceVariant = MaterialTheme.colorScheme.surfaceVariant
     val monthChip = monthTitle(year, monthOfYear)
-    Card(
+    AppCard(
+        level = AppElevation.Lifted,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = CardDefaults.outlinedCardBorder(),
     ) {
         Column(Modifier.padding(10.dp)) {
             // Header: previous arrow · month chip (opens picker) · next arrow
@@ -399,7 +400,8 @@ private fun MonthPickerDialog(
 ) {
     var pickYear by remember { mutableIntStateOf(year) }
     Dialog(onDismissRequest = onDismiss) {
-        Card(
+        AppCard(
+            level = AppElevation.Floating,
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         ) {
@@ -458,7 +460,7 @@ internal fun ScheduleCard(
      *  (IRS), tidak perlu di kalender Jadwal yang sudah mengelompok per tanggal. */
     showDay: Boolean = false,
 ) {
-    Card(Modifier.fillMaxWidth()) {
+    AppCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(

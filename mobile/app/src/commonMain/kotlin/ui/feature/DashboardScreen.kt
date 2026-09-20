@@ -9,6 +9,8 @@ import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.common.SkeletonBlock
 import ac.undip.sso.ui.common.SkeletonGroup
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -28,8 +30,6 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -206,7 +206,11 @@ private fun MenuRow(items: List<MenuSpec>) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items.forEach { spec ->
-            Card(onClick = spec.onClick, modifier = Modifier.weight(1f).fillMaxHeight()) {
+            AppCard(
+                onClick = spec.onClick,
+                level = AppElevation.Lifted,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+            ) {
                 Row(
                     Modifier
                         .fillMaxSize()
@@ -395,7 +399,7 @@ private fun UpcomingClasses(source: List<SiapJadwal>) {
             return@Column
         }
         lessons.forEach { j ->
-            Card {
+            AppCard {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(cleanCourseName(j.matakuliah), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1)

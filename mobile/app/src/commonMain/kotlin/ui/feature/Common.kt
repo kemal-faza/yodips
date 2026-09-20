@@ -7,6 +7,7 @@ import ac.undip.sso.core.network.SiapIrs
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.core.network.sksKumulatif
 import ac.undip.sso.nowMs
+import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
@@ -18,7 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -118,7 +118,7 @@ internal fun StatCard(
     value: String,
     modifier: Modifier = Modifier,
 ) {
-    Card(
+    AppCard(
         modifier = modifier,
     ) {
         Column(Modifier.padding(12.dp)) {
@@ -218,7 +218,7 @@ private fun AcademicStatCard(
     tag: String,
     modifier: Modifier = Modifier,
 ) {
-    Card(
+    AppCard(
         modifier = modifier,
     ) {
         Column(Modifier.padding(12.dp)) {

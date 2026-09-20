@@ -3,6 +3,8 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapNilai
 import ac.undip.sso.ui.common.RefreshableLoadableData
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -41,8 +42,9 @@ fun KhsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
-                    Card(
+                    AppCard(
                         Modifier.fillMaxWidth(),
+                        level = AppElevation.Lifted,
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                     ) {
                         Row(Modifier.padding(16.dp)) {
@@ -55,7 +57,7 @@ fun KhsScreen(
                     }
                 }
                 items(khs.semesters, key = { it.semester }) { sem ->
-                    Card(Modifier.fillMaxWidth()) {
+                    AppCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(

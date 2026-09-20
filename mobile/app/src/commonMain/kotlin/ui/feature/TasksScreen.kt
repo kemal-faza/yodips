@@ -8,6 +8,8 @@ import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.common.SkeletonBlock
 import ac.undip.sso.ui.common.SkeletonGroup
+import ac.undip.sso.ui.theme.AppCard
+import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -31,7 +33,6 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -232,7 +233,8 @@ private fun TaskCard(
     showBucket: Boolean = true,
     onClick: () -> Unit = {},
 ) {
-    Card(
+    AppCard(
+        level = AppElevation.Lifted,
         modifier = Modifier.fillMaxWidth(),
         colors =
             if (bucket == TaskBucket.LATE) {
