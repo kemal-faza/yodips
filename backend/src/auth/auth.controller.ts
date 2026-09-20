@@ -1,7 +1,6 @@
 import { Body, Controller, Get, HttpException, HttpStatus, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { LoginDto } from './dto/login.dto';
 import { HandoffDto } from './dto/handoff.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
@@ -9,15 +8,10 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto.identity, dto.password);
-  }
-
-  // captureSsoSession IS the login mechanism (it generates the JWT in the
-  // response), so it must NOT require a JWT. DoS (repeated browser launches)
-  // is mitigated by the aggressive @Throttle below (5/min).
+  // captureSsoSession IS a login mechanism (it generates the JWT in the
+  // response), so it must NOT require a JWT. Blocked in production by the
+  // service (dev/test fallback only); the @Throttle below still bounds the
+  // development case, where every call can launch a browser on the server.
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('sso/capture')
   captureSsoSession() {

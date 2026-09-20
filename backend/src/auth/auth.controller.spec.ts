@@ -6,7 +6,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 
 describe('AuthController', () => {
   let controller: AuthController;
-  const authService = { login: jest.fn(), me: jest.fn(), getMicrosoftAuthUrl: jest.fn(), handleMicrosoftCallback: jest.fn(), captureSsoSession: jest.fn(), refresh: jest.fn(), logout: jest.fn() };
+  const authService = { me: jest.fn(), getMicrosoftAuthUrl: jest.fn(), handleMicrosoftCallback: jest.fn(), captureSsoSession: jest.fn(), refresh: jest.fn(), logout: jest.fn() };
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
@@ -17,19 +17,6 @@ describe('AuthController', () => {
       .useValue({ canActivate: () => true })
       .compile();
     controller = module.get(AuthController);
-  });
-
-  it('login returns access token', async () => {
-    authService.login.mockResolvedValue({
-      accessToken: 'jwt',
-      ssoSession: 'cookie',
-      redirectUrl: '/dashboard',
-    });
-    const res = await controller.login({
-      identity: 'n2m',
-      password: 'x',
-    } as any);
-    expect(res.accessToken).toBe('jwt');
   });
 
   it('me returns authenticated user', async () => {

@@ -128,7 +128,7 @@ All routes live under `/api`. Everything except the endpoints noted below requir
 | `POST` | `/siap/notifications/:id/unread` | Mark a notification unread |
 | `POST` | `/notifications/device` | Register a device's FCM token |
 
-`POST /auth/sso/capture` and `GET /auth/microsoft/*` still exist but are deprecated, dev/test only.
+`POST /auth/sso/capture` and `GET /auth/microsoft/*` are dev/test only. The capture route is blocked with a 403 in production — the extension is the real login path, and there is no password-based login endpoint at all: the backend never receives a password.
 
 ## Deployment
 

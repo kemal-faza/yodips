@@ -82,7 +82,6 @@ const mockConfig = {
     return map[k];
   }),
 };
-const mockSsoAuth = { login: jest.fn() };
 const mockMicrosoftAuth = { getAuthUrl: jest.fn(), handleCallback: jest.fn() };
 const mockKulon = {
   checkSessionValid: jest.fn(async () => ({
@@ -119,7 +118,6 @@ function telemetryRuntime(): TelemetryRuntime {
 
 function makeService() {
   return new AuthService(
-    mockSsoAuth as any,
     mockSsoTicket,
     mockMicrosoftAuth as any,
     mockPlaywright as any,
@@ -148,43 +146,7 @@ async function okFetch() {
   });
 }
 
-describe('AuthService.login clock', () => {
-  it('stores the injected wall-clock capturedAt plus a fresh crypto generation', async () => {
-    mockSsoAuth.login.mockResolvedValue({ cookie: 'ci_session_sso=sso', redirectUrl: '/dashboard' });
-    const svc = makeService();
-
-    const result = await svc.login('identity', 'password');
-
-    expect(result).toMatchObject({ accessToken: 'jwt-token', redirectUrl: '/dashboard' });
-    expect(mockSessionStore.get('identity').capturedAt).toBe(clock.wall);
-    expect(mockSessionStore.get('identity').sessionGeneration).toMatch(/^[0-9a-f]{32}$/);
-  });
-
-  it('mints a JWT whose sessionGeneration equals the freshly stored generation (not capturedAt)', async () => {
-    mockSsoAuth.login.mockResolvedValue({ cookie: 'ci_session_sso=sso', redirectUrl: '/dashboard' });
-    const svc = makeService();
-    await svc.login('identity', 'password');
-    const storedGen = mockSessionStore.get('identity').sessionGeneration;
-    expect(storedGen).toMatch(/^[0-9a-f]{32}$/);
-    expect(mockJwt.signAsync).toHaveBeenCalledWith({
-      sub: 'identity',
-      via: 'sso',
-      sessionGeneration: storedGen,
-    });
-  });
-
-  it('mints distinct generations for successive logins (no timestamp collision)', async () => {
-    mockSsoAuth.login.mockResolvedValue({ cookie: 'ci_session_sso=sso', redirectUrl: '/dashboard' });
-    const svc = makeService();
-    await svc.login('u1', 'p');
-    await svc.login('u2', 'p');
-    const g1 = mockSessionStore.get('u1').sessionGeneration;
-    const g2 = mockSessionStore.get('u2').sessionGeneration;
-    expect(g1).toMatch(/^[0-9a-f]{32}$/);
-    expect(g2).toMatch(/^[0-9a-f]{32}$/);
-    expect(g1).not.toBe(g2);
-  });
-
+describe('AuthService session freshness', () => {
   it('uses the injected wall clock for freshness and expires at the TTL boundary', () => {
     const svc = makeService();
     const session = { capturedAt: clock.wall - CachePolicy.AUTH_PROBE };

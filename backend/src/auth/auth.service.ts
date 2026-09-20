@@ -2,7 +2,6 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { SSOAuthService } from '../sso/sso-auth.service';
 import { SSOTicketService } from '../sso/ticket.service';
 import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
 import { PlaywrightAuthService } from '../playwright/playwright-auth.service';
@@ -35,7 +34,6 @@ export class AuthService {
   private readonly runtime: TelemetryRuntime;
 
   constructor(
-    private readonly ssoAuth: SSOAuthService,
     private readonly ssoTicket: SSOTicketService,
     private readonly microsoftAuth: MicrosoftAuthService,
     private readonly playwrightAuth: PlaywrightAuthService,
@@ -49,30 +47,6 @@ export class AuthService {
     this.runtime = runtime ?? createNoopTelemetryRuntime();
   }
 
-  async login(identity: string, password: string) {
-    const baseUrl = this.config.get<string>('SSO_BASE_URL')!;
-    const { cookie, redirectUrl } = await this.ssoAuth.login(
-      baseUrl,
-      identity,
-      password,
-    );
-    // Store session server-side keyed by identity; JWT carries only a reference (not raw cookie).
-    const capturedAt = this.runtime.wallNowMs();
-    const sessionGeneration = generateSessionGeneration();
-    await this.sessionStore.set(identity, {
-      identity,
-      ssoCookie: cookie,
-      microsoftCookie: '',
-      kulonCookie: '',
-      siapCookie: '',
-      capturedAt,
-      sessionGeneration,
-    });
-    const payload = { sub: identity, via: 'sso', sessionGeneration };
-    const accessToken = await this.jwt.signAsync(payload);
-    return { accessToken, redirectUrl };
-  }
-
   /**
    * Capture the SSO session via the interactive flow: Playwright opens a
    * visible Chrome window on the SSO login page, the user logs in (NIM +
@@ -84,6 +58,16 @@ export class AuthService {
    * Otherwise run the interactive flow.
    */
   async captureSsoSession() {
+    // Jalur dev/test saja. Extension adalah login utama; capture hanyalah
+    // fallback saat extension tidak terpasang, dan di produksi endpoint ini
+    // hanya menyisakan permukaan serangan (tiap panggilan = satu launch browser
+    // di server). Fail-closed, bukan sekadar "deprecated".
+    if ((this.config.get<string>('NODE_ENV') ?? '') === 'production') {
+      throw new HttpException(
+        { message: 'Jalur capture tidak tersedia di produksi' },
+        HttpStatus.FORBIDDEN,
+      );
+    }
     // 1) Try smart reuse of a stored, still-valid session — no browser window.
     //    SECURITY: this path uses access to ONE user's stored session to issue
     //    a JWT to an unauthenticated caller (a namespace cross-boundary leak in

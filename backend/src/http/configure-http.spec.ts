@@ -232,8 +232,8 @@ describe('configureHttp', () => {
 
   it('retains DTO validation for API input', async () => {
     await request(app.getHttpServer())
-      .post('/api/auth/login')
-      .send({ identity: 'student', unexpected: 'removed' })
+      .post('/api/auth/pair/consume')
+      .send({ unexpected: 'removed' })
       .expect(400)
       .expect('Cache-Control', 'private, no-store');
   });

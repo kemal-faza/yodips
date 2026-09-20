@@ -14,7 +14,6 @@
   "apiPaths": {
     "auth.me": "/api/auth/me",
     "auth.refresh": "/api/auth/refresh",
-    "auth.login": "/api/auth/login",
     "auth.capture": "/api/auth/sso/capture",
     "auth.microsoftLogin": "/api/auth/microsoft/login",
     "auth.handoff": "/api/auth/session/handoff",

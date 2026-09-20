@@ -42,7 +42,6 @@ export const API = {
   auth: {
     me: '/api/auth/me',
     refresh: '/api/auth/refresh',
-    login: '/api/auth/login',
     capture: '/api/auth/sso/capture',
     microsoftLogin: '/api/auth/microsoft/login',
     handoff: '/api/auth/session/handoff',
