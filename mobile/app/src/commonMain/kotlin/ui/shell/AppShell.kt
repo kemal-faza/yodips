@@ -26,6 +26,10 @@ import ac.undip.sso.ui.navigation.LocalAppNavigation
 import ac.undip.sso.ui.theme.Primary
 import ac.undip.sso.ui.theme.ThemeController
 import ac.undip.sso.ui.theme.accentForeground
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.DateRange
@@ -85,6 +89,11 @@ internal const val BottomBarLabelSizeSp = 10
  *  so the camera is not torn down & re-bound in a tight loop that janks the UI. */
 internal const val TabTapDebounceMs = 250L
 
+/** Durasi transisi antar halaman (ms). Keluar lebih cepat daripada masuk,
+ *  supaya perpindahan terasa responsif dan halaman baru yang datang tenang. */
+internal const val NavEnterDurationMs = 300
+internal const val NavExitDurationMs = 220
+
 enum class Tab(
     val route: String,
     val label: String,
@@ -141,6 +150,33 @@ fun AppShell(
         NavHost(
             navController = navController,
             startDestination = Tab.Dashboard.route,
+            // Halaman baru masuk dari KANAN dan halaman lama keluar ke KIRI;
+            // saat back arahnya dibalik. Sebelumnya semua perpindahan hanya
+            // cross-fade, jadi maju & mundur terasa sama saja.
+            enterTransition = {
+                slideIntoContainer(
+                    AnimatedContentTransitionScope.SlideDirection.Left,
+                    tween(NavEnterDurationMs, easing = FastOutSlowInEasing),
+                )
+            },
+            exitTransition = {
+                slideOutOfContainer(
+                    AnimatedContentTransitionScope.SlideDirection.Left,
+                    tween(NavExitDurationMs, easing = LinearOutSlowInEasing),
+                )
+            },
+            popEnterTransition = {
+                slideIntoContainer(
+                    AnimatedContentTransitionScope.SlideDirection.Right,
+                    tween(NavExitDurationMs, easing = LinearOutSlowInEasing),
+                )
+            },
+            popExitTransition = {
+                slideOutOfContainer(
+                    AnimatedContentTransitionScope.SlideDirection.Right,
+                    tween(NavEnterDurationMs, easing = FastOutSlowInEasing),
+                )
+            },
             modifier =
                 Modifier
                     .fillMaxSize()
