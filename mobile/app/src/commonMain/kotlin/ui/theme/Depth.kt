@@ -83,8 +83,13 @@ data class AppElevation(
         /** Setingkat lebih atas: kartu menu yang bisa ditekan, pill, kalender. */
         val Lifted = AppElevation(2.dp, 12.dp, shade = 6.dp, drop = 2.dp, shadeAlpha = 0.35f)
 
-        /** Mengambang di atas segalanya: FAB, dialog, chrome yang menempel. */
-        val Floating = AppElevation(4.dp, 24.dp, shade = 10.dp, drop = 3.dp, shadeAlpha = 0.40f)
+        /**
+         * Objek yang menonjol keluar dari permukaan lain — FAB di bottom bar,
+         * dialog yang melayang di atas scrim. Perlakuan bayangannya sengaja
+         * lebih tebal daripada kartu: bayangannya jatuh ke permukaan yang LEBIH
+         * TERANG (bar), bukan ke halaman, jadi di situ bayangan memang terbaca.
+         */
+        val Floating = AppElevation(6.dp, 28.dp, shade = 16.dp, drop = 5.dp, shadeAlpha = 0.50f)
     }
 }
 
@@ -120,42 +125,44 @@ fun Modifier.appDepth(
 ): Modifier {
     if (level == AppElevation.Flat) return this
     val effective = if (pressed) level.pressed() else level
-    if (isDarkTheme()) {
-        // Tema gelap: bayangan TIDAK dipakai untuk membangun kedalaman — di atas
-        // latar hampir hitam bayangan tidak punya ruang untuk menggelap, dan
-        // kalau dipaksa jadi blob hitam yang justru mengotori layar. Kedalaman
-        // dipikul tangga luminansi permukaan (lihat `raisedSurfaceColor`).
-        // Bayangan yang tersisa hanya "bayangan kontak": rapat dan tipis, untuk
-        // objek yang memang menempel/terangkat di atas permukaan lain.
-        // `drawWithCache`: bentuk dan jarak dihitung sekali per ukuran, bukan
-        // tiap frame saat daftar di-scroll.
-        return this.drawWithCache {
-            val path = shape.toPath(size, layoutDirection, this)
-            val colour = Color.Black.copy(alpha = 1f - (1f - effective.shadeAlpha).pow(1f / Layers))
-            val spread = effective.shade.toPx()
-            val drop = effective.drop.toPx()
-            onDrawBehind {
-                translate(top = drop) {
-                    for (layer in Layers downTo 1) {
-                        // Jari-jari memakai akar: lapisan menumpuk lebih rapat di
-                        // dekat objek, jadi bayangannya turun tajam lalu menghilang
-                        // (mirip sebaran Gaussian milik blur CSS), bukan landai.
-                        val radius = spread * sqrt(layer.toFloat() / Layers)
-                        // `Stroke` menggambar terpusat di garis bentuk: separuh ke
-                        // dalam (tertutup objeknya), separuh ke luar.
-                        drawPath(
-                            path = path,
-                            color = colour,
-                            style = Stroke(width = radius * 2f),
-                        )
-                    }
+    // Bayangan platform (ambient + spot) dipakai di KEDUA tema. Ini satu-satunya
+    // API bayangan yang benar: bentuknya mengikuti objek, arahnya sesuai cahaya,
+    // dan sisi ATAS objek ikut mendapat bayangan ambient — kabut buatan sendiri
+    // tidak bisa memberi itu. Di tema gelap lapisan ini lemah (latar hampir
+    // hitam tidak punya ruang untuk digelapkan), jadi ditambah kabut kontak.
+    val platform = this
+        .shadow(effective.contact, shape, clip = false)
+        .shadow(effective.ambient, shape, clip = false)
+    if (!isDarkTheme()) return platform
+    // Kabut tambahan khusus tema gelap: "bayangan kontak" yang rapat di tepi
+    // objek, karena bayangan platform di atas latar hampir hitam hampir tak
+    // terlihat. Kedalaman tetap dipikul tangga luminansi permukaan (lihat
+    // `raisedSurfaceColor`), kabut ini hanya menegaskan objeknya menempel.
+    // `drawWithCache`: bentuk dan jarak dihitung sekali per ukuran, bukan tiap
+    // frame saat daftar di-scroll.
+    return platform.drawWithCache {
+        val path = shape.toPath(size, layoutDirection, this)
+        val colour = Color.Black.copy(alpha = 1f - (1f - effective.shadeAlpha).pow(1f / Layers))
+        val spread = effective.shade.toPx()
+        val drop = effective.drop.toPx()
+        onDrawBehind {
+            translate(top = drop) {
+                for (layer in Layers downTo 1) {
+                    // Jari-jari memakai akar: lapisan menumpuk lebih rapat di
+                    // dekat objek, jadi bayangannya turun tajam lalu menghilang
+                    // (mirip sebaran Gaussian milik blur CSS), bukan landai.
+                    val radius = spread * sqrt(layer.toFloat() / Layers)
+                    // `Stroke` menggambar terpusat di garis bentuk: separuh ke
+                    // dalam (tertutup objeknya), separuh ke luar.
+                    drawPath(
+                        path = path,
+                        color = colour,
+                        style = Stroke(width = radius * 2f),
+                    )
                 }
             }
         }
     }
-    return this
-        .shadow(effective.contact, shape, clip = false)
-        .shadow(effective.ambient, shape, clip = false)
 }
 
 /** Jumlah lapisan kabut tema gelap; makin banyak, gradasinya makin mulus. */
