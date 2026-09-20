@@ -148,7 +148,16 @@ fun TasksScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(page, key = { it.id }) { t ->
-                            TaskCard(t, taskBucket(t, ctx.activeCourseIds), onClick = { onOpenDetail(t) })
+                            val bucket = taskBucket(t, ctx.activeCourseIds)
+                            TaskCard(
+                                t = t,
+                                bucket = bucket,
+                                // Pill hanya saat beda dari filter aktif: di tab
+                                // "Perlu dikerjakan" semua kartu ber-pill sama,
+                                // jadi pill-nya tidak memberi informasi apa pun.
+                                showBucket = filter == null || bucket != filter,
+                                onClick = { onOpenDetail(t) },
+                            )
                         }
                         if (remaining > 0) {
                             item(key = "load-more") {
@@ -220,6 +229,7 @@ private fun EmptyTasks(filter: TaskBucket?, searchQuery: String = "") {
 private fun TaskCard(
     t: KulonAssignment,
     bucket: TaskBucket?,
+    showBucket: Boolean = true,
     onClick: () -> Unit = {},
 ) {
     Card(
@@ -242,7 +252,7 @@ private fun TaskCard(
                     maxLines = 2,
                     modifier = Modifier.weight(1f),
                 )
-                if (bucket != null) {
+                if (bucket != null && showBucket) {
                     Spacer(Modifier.width(10.dp))
                     BucketPill(bucket)
                 }
