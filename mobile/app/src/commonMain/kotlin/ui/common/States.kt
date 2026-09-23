@@ -84,10 +84,18 @@ fun <T> LoadableData(
         }
 
         is ApiResult.Error -> {
-            ErrorState(modifier, r.message, onRetry = { attempt++ }, isUnauthorized = r.type == ErrorType.UNAUTHORIZED || r.type == ErrorType.STALE_SESSION)
+            ErrorState(modifier, r.message, onRetry = { attempt++ }, errorType = r.type)
         }
     }
 }
+
+/** User-facing title for a failed source without conflating upstream and JWT sessions. */
+internal fun errorStateTitle(type: ErrorType): String =
+    when (type) {
+        ErrorType.UNAUTHORIZED -> "Sesi berakhir"
+        ErrorType.STALE_SESSION -> "Sesi SIAP/Kulon perlu diperbarui"
+        else -> "Tidak dapat memuat data"
+    }
 
 /** Heuristic: an empty collection / blank string counts as an empty state. */
 private fun <T> isEmpty(data: T): Boolean =
@@ -159,7 +167,7 @@ fun <T> RefreshableLoadableData(
             }
 
             is ApiResult.Error -> {
-                ErrorState(modifier, r.message, onRetry = { attempt++ }, isUnauthorized = r.type == ErrorType.UNAUTHORIZED || r.type == ErrorType.STALE_SESSION)
+                ErrorState(modifier, r.message, onRetry = { attempt++ }, errorType = r.type)
             }
         }
     }
@@ -249,7 +257,7 @@ private fun ErrorState(
     modifier: Modifier,
     message: String,
     onRetry: () -> Unit,
-    isUnauthorized: Boolean,
+    errorType: ErrorType,
 ) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
@@ -258,7 +266,7 @@ private fun ErrorState(
             modifier = Modifier.padding(24.dp),
         ) {
             Text(
-                if (isUnauthorized) "Sesi berakhir" else "Tidak dapat memuat data",
+                errorStateTitle(errorType),
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(

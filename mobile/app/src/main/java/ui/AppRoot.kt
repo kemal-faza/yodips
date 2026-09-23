@@ -4,6 +4,7 @@ import ac.undip.sso.core.data.PersistentCache
 import ac.undip.sso.core.data.SessionLogout
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.data.TokenStoreLike
+import ac.undip.sso.core.data.runSessionRefreshLoop
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
@@ -101,16 +102,18 @@ fun AppRoot(
             )
         }
 
-    // Auto-refresh token: setiap app dibuka atau kembali ke foreground, JWT yang
-    // tinggal dekat kedaluwarsa dirotasi DIAM-DIAM sebelum request apa pun —
-    // supaya "keluar app sebentar lalu disuruh login ulang" tidak terjadi untuk
-    // sesi yang backend-nya masih hidup. Refresh saat refresh sendiri 401
-    // (SESSION_DEAD) tidak memunculkan dialog di sini; dialog hanya dipicu oleh
-    // 401 yang benar-benar tak bisa di-refresh (lihat boot check `/me` di bawah).
+    // Auto-refresh token: saat app dibuka/kembali ke foreground, lalu setiap
+    // menit selama tetap foreground, JWT yang tinggal dekat kedaluwarsa
+    // dirotasi DIAM-DIAM sebelum request berikutnya. Tanpa loop ini, app yang
+    // dibiarkan terbuka melewati TTL JWT tidak pernah memanggil refresh sampai
+    // request data berikutnya sudah menerima 401.
     LaunchedEffect(hasToken, lifecycleOwner) {
         if (!hasToken) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            bootRepo.ensureFreshSession()
+            runSessionRefreshLoop(
+                ensureFresh = { bootRepo.ensureFreshSession() },
+                onDeadSession = { SessionExpiredEvents.notifySessionExpired() },
+            )
         }
     }
 
