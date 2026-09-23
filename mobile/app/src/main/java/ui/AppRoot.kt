@@ -4,9 +4,7 @@ import ac.undip.sso.core.data.PersistentCache
 import ac.undip.sso.core.data.SessionLogout
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.data.TokenStoreLike
-import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.Backend
-import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.normalizeNavTarget
@@ -83,12 +81,18 @@ fun AppRoot(
         checked = true
     }
 
-    // Deteksi dini sesi upstream mati (SIAP/Kulon) saat pertama masuk: `/me`
-    // live-probe validitas cookie (cache 60s di backend) — kalau `complete=false`
-    // padahal JWT masih hidup, langsung munculkan dialog login ulang universal,
-    // tanpa harus menunggu aksi (mis. scan QR) yang akan gagal lebih dulu.
-    // Network error diabaikan (offline ≠ sesi mati); 401 JWT → dialog via
-    // SessionExpiredEvents di dalam repository path.
+    // `/me` sekali saat boot: memicu rotasi JWT dan — hanya untuk sesi yang
+    // benar-benar mati (401 yang tak bisa di-refresh) — dialog login ulang
+    // lewat `SessionExpiredEvents` di repository path.
+    //
+    // `complete=false` (live-probe cookie SIAP/Kulon belum tervalidasi) SENGAJA
+    // TIDAK di-escalate jadi dialog. Itu berarti sesi UPSTREAM yang stale /
+    // probe upstream gagal sesaat; sesi backend + JWT justru masih hidup.
+    // Kebijakan app-wide sudah menetapkan kondisi itu = error per-layar
+    // `STALE_SESSION` yang bisa di-retry, BUKAN sesi mati (lihat
+    // `SessionRefresher.safe`). Meng-escalate-nya memaksa login ulang untuk
+    // sesi yang sebenarnya sehat — inilah "harus login ulang padahal token
+    // masih hidup".
     val bootRepo =
         remember {
             SsoRepository(
@@ -101,8 +105,8 @@ fun AppRoot(
     // tinggal dekat kedaluwarsa dirotasi DIAM-DIAM sebelum request apa pun —
     // supaya "keluar app sebentar lalu disuruh login ulang" tidak terjadi untuk
     // sesi yang backend-nya masih hidup. Refresh saat refresh sendiri 401
-    // (SESSION_DEAD) tidak memunculkan dialog di sini; boot check `/me` di
-    // bawah yang memutuskan (dan `bootRepo` melihat hasil refresh yang sama).
+    // (SESSION_DEAD) tidak memunculkan dialog di sini; dialog hanya dipicu oleh
+    // 401 yang benar-benar tak bisa di-refresh (lihat boot check `/me` di bawah).
     LaunchedEffect(hasToken, lifecycleOwner) {
         if (!hasToken) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -112,22 +116,11 @@ fun AppRoot(
 
     LaunchedEffect(hasToken) {
         if (!hasToken) return@LaunchedEffect
-        // Jeda kecil: biarkan AppShell/notifikasi-permission memulai lebih dulu;
-        // check ini sekali saja per boot.
-        when (val r = bootRepo.sessionStatus()) {
-            is ApiResult.Success -> {
-                if (!r.data.complete) SessionExpiredEvents.notifySessionExpired()
-            }
-
-            is ApiResult.Error -> {
-                // DEAD_SESSION sudah memicu dialog lewat refresher (retryable);
-                // jangan tambah notifikasi ganda di sini.
-                if (r.type == ErrorType.UNAUTHORIZED) {
-                    SessionExpiredEvents.notifySessionExpired()
-                }
-                // NETWORK/SERVER/UPSTREAM → biarkan (bukan bukti sesi mati).
-            }
-        }
+        // Sekali per boot. Rotasi JWT + dialog untuk sesi yang benar-benar mati
+        // ditangani DI DALAM `sessionStatus` (via `SessionRefresher.safe` →
+        // `SessionExpiredEvents`); hasil `complete` sengaja tidak dipakai untuk
+        // memaksa login ulang (lihat catatan kebijakan di atas).
+        bootRepo.sessionStatus()
     }
 
     if (!checked) return
