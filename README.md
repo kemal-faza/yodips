@@ -97,7 +97,7 @@ Backend variables that matter most:
 | `REDIS_URL` / `SESSION_ENC_KEY` / `SESSION_TTL_MS` | Required when `SESSION_BACKEND=redis`; sessions are AES-256-GCM encrypted |
 | `CACHE_TTL_MS` | TTL for upstream scrape cache (default 5 minutes) |
 | `NOTIFICATIONS_ENABLED` / `FIREBASE_SERVICE_ACCOUNT_JSON` | FCM push notifications (production) |
-| `MS_*`, `CHROME_PATH` / `CHROME_PROFILE_DIR`, `CDP_URL` | Deprecated legacy login paths; dummies are fine in production |
+| `MS_*`, `CDP_URL`, `SSO_LOGIN_URL` / `SSO_DASHBOARD_URL`, `CHROME_PROFILE_DIR` | Legacy OIDC/Capture; required only in development/test, omitted from production runtime. `CHROME_PATH` is an optional browser override |
 
 On the web side, `VITE_API_BASE_URL` points at the backend and `VITE_EXTENSION_ID` bakes in the extension ID used for SPA-extension detection.
 

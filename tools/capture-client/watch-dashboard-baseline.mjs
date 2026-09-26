@@ -23,7 +23,7 @@ import {
   PRIMARY_CACHES,
   summarizeDashboardCycle,
 } from "./watch-dashboard-log.mjs";
-import { extractTelemetryEvent } from "./manual-dashboard-baseline.mjs";
+import { extractTelemetryEvent } from "../telemetry/telemetry-event.mjs";
 
 const SCENARIOS = new Set(["first-post-login", "cold-reload", "warm-reload"]);
 const USEFUL_SELECTORS = [

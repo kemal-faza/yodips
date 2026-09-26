@@ -2,11 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { SSOTicketService } from '../sso/ticket.service';
-import { MicrosoftAuthService } from '../microsoft/microsoft-auth.service';
-import { PlaywrightAuthService } from '../playwright/playwright-auth.service';
 import {
-  CapturedSession,
   generateSessionGeneration,
   isSessionGeneration,
 } from '../session/session-contract';
@@ -28,15 +24,10 @@ import type { CacheReadEventInput } from '../observability/telemetry-contract';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  // Reuse a stored session only if it was captured within this window.
-  private readonly SESSION_TTL_MS = 30 * 60_000; // 30 minutes
   private readonly probeCache = new Map<string, { valid: boolean; at: number }>();
   private readonly runtime: TelemetryRuntime;
 
   constructor(
-    private readonly ssoTicket: SSOTicketService,
-    private readonly microsoftAuth: MicrosoftAuthService,
-    private readonly playwrightAuth: PlaywrightAuthService,
     private readonly sessionStore: SessionStore,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
@@ -45,168 +36,6 @@ export class AuthService {
     @Optional() @Inject(TELEMETRY_RUNTIME) runtime?: TelemetryRuntime,
   ) {
     this.runtime = runtime ?? createNoopTelemetryRuntime();
-  }
-
-  /**
-   * Capture the SSO session via the interactive flow: Playwright opens a
-   * visible Chrome window on the SSO login page, the user logs in (NIM +
-   * password + MFA), and the captured session is stored server-side. Issues
-   * a JWT that carries only a session reference (never raw cookies).
-   *
-   * Smart reuse: if a stored session is still fresh AND its Kulon cookie is
-   * still valid, return a JWT immediately WITHOUT opening a browser window.
-   * Otherwise run the interactive flow.
-   */
-  async captureSsoSession() {
-    // Jalur dev/test saja. Extension adalah login utama; capture hanyalah
-    // fallback saat extension tidak terpasang, dan di produksi endpoint ini
-    // hanya menyisakan permukaan serangan (tiap panggilan = satu launch browser
-    // di server). Fail-closed, bukan sekadar "deprecated".
-    if ((this.config.get<string>('NODE_ENV') ?? '') === 'production') {
-      throw new HttpException(
-        { message: 'Jalur capture tidak tersedia di produksi' },
-        HttpStatus.FORBIDDEN,
-      );
-    }
-    // 1) Try smart reuse of a stored, still-valid session — no browser window.
-    //    SECURITY: this path uses access to ONE user's stored session to issue
-    //    a JWT to an unauthenticated caller (a namespace cross-boundary leak in
-    //    a shared deployment), so it is HARD-GATED behind CAPTURE_REUSE_ENABLED
-    //    (default OFF). Do NOT enable except in a single-admin private dev env.
-    const reuseEnabled =
-      this.config.get<string>('CAPTURE_REUSE_ENABLED') === 'true';
-    const existing = reuseEnabled
-      ? await this.findReusableSession()
-      : await this.preventReuse();
-    if (existing) {
-      this.logger.log('Reusing stored SSO session — no browser window needed');
-      const payload = { sub: existing.identity, via: 'reuse', sessionGeneration: existing.sessionGeneration };
-      const accessToken = await this.jwt.signAsync(payload);
-      return {
-        accessToken,
-        capturedAt: existing.capturedAt,
-        sessionGeneration: existing.sessionGeneration,
-        reused: true,
-        hasSso: !!existing.ssoCookie,
-        hasMicrosoft: !!existing.microsoftCookie,
-        hasKulon: !!existing.kulonCookie,
-        hasSiap: !!existing.siapCookie,
-      };
-    }
-
-    // 2) Interactive flow: open a browser window, let the user log in.
-    const loginUrl = this.config.get<string>('SSO_LOGIN_URL')!;
-    const dashboardUrl = this.config.get<string>('SSO_DASHBOARD_URL')!;
-    const profileDir = this.config.get<string>('CHROME_PROFILE_DIR')!;
-    const kulonTicketUrl = this.ssoTicket.buildServiceUrl('kulon', this.ssoTicket.generateTicket());
-    const siapTicketUrl = this.ssoTicket.buildServiceUrl('siap', this.ssoTicket.generateTicket());
-    const kulonTimeoutMs = Number(this.config.get<string>('SSO_CAPTURE_TIMEOUT_MS') ?? 180000);
-    const session = await this.playwrightAuth.launchAndCaptureSession(
-      profileDir,
-      loginUrl,
-      dashboardUrl,
-      kulonTicketUrl,
-      siapTicketUrl,
-      5 * 60_000,
-      kulonTimeoutMs,
-      180000,
-    );
-
-    const check = await this.kulon.checkSessionValid(session.kulonCookie);
-    const stored = check.valid ? session : { ...session, kulonCookie: '' };
-    if (!check.valid) {
-      this.logger.warn('Kulon session not verified on capture — stripping kulon cookie');
-    }
-    // Derive identity from the Kulon session when possible; fall back to a
-    // placeholder. The interactive flow is a single-admin dev path, so the
-    // placeholder never collides with a real per-user key in production.
-    const identity = check.valid
-      ? (await this.kulon.getSessionIdentity(session.kulonCookie)) ?? 'sso'
-      : 'sso';
-    await this.sessionStore.set(identity, { ...stored, identity });
-
-    const payload = { sub: identity, via: 'playwright', sessionGeneration: stored.sessionGeneration };
-    const accessToken = await this.jwt.signAsync(payload);
-    const siapCheck = session.siapCookie
-      ? await this.siap.checkSessionValid(session.siapCookie)
-      : { valid: false, reason: 'no-cookie' as const };
-    return {
-      accessToken,
-      capturedAt: session.capturedAt,
-      sessionGeneration: stored.sessionGeneration,
-      reused: false,
-      hasSso: !!session.ssoCookie,
-      hasMicrosoft: !!session.microsoftCookie,
-      hasKulon: check.valid,
-      hasSiap: siapCheck.valid,
-    };
-  }
-
-  /** A session is reusable if captured within the TTL window. */
-  private isFresh(session: { capturedAt: number }): boolean {
-    return this.runtime.wallNowMs() - session.capturedAt < this.SESSION_TTL_MS;
-  }
-
-  /**
-   * Explicit no-reuse gate: always returns null so `/sso/capture` falls through
-   * to the interactive (headed-browser) flow and NEVER hands an existing stored
-   * session to an unauthenticated caller. Replaces `findReusableSession` when
-   * the CAPTURE_REUSE_ENABLED flag is unset (the security-safe default).
-   */
-  private async preventReuse(): Promise<null> {
-    return null;
-  }
-
-  /** A session is reusable only if its Kulon cookie is still VERIFIED valid. */
-  private async kulonProbeOk(kulonCookie: string): Promise<boolean> {
-    const check = await this.kulon.checkSessionValid(kulonCookie);
-    return check.valid;
-  }
-
-  /**
-   * Return a fresh, still-valid stored session to reuse — but ONLY when exactly
-   * one session exists in the store (single-admin dev path). Once the store
-   * holds multiple users' sessions, silently handing any one of them out to an
-   * unauthenticated `/sso/capture` caller would leak User A's session to User B
-   * (B3). In the multi-user case we force the interactive flow instead.
-   */
-  private async findReusableSession(): Promise<CapturedSession | null> {
-    const all = await this.sessionStore.all();
-    if (all.length !== 1) return null;
-    const [s] = all;
-    if (!isSessionGeneration(s.sessionGeneration)) return null;
-    if (this.isFresh(s) && (await this.kulonProbeOk(s.kulonCookie))) {
-      return s;
-    }
-    return null;
-  }
-
-  getMicrosoftAuthUrl() {
-    return { authUrl: this.microsoftAuth.getAuthUrl() };
-  }
-
-  async handleMicrosoftCallback(code: string, state?: string) {
-    const { accessToken, sessionCookies } =
-      await this.microsoftAuth.handleCallback(code, state);
-    // Key the stored Microsoft session by the OIDC `state` (already validated
-    // for CSRF) instead of a shared literal — otherwise concurrent users would
-    // overwrite each other's session (B10). The `state` is unique per login
-    // attempt, so the JWT sub is a stable reference to that session.
-    const identity = state ? `microsoft:${state}` : 'microsoft';
-    const capturedAt = this.runtime.wallNowMs();
-    const sessionGeneration = generateSessionGeneration();
-    await this.sessionStore.set(identity, {
-      identity,
-      ssoCookie: '',
-      microsoftCookie: sessionCookies,
-      kulonCookie: '',
-      siapCookie: '',
-      capturedAt,
-      sessionGeneration,
-    });
-    const payload = { sub: identity, via: 'oidc', sessionGeneration };
-    const jwt = await this.jwt.signAsync(payload);
-    return { accessToken: jwt };
   }
 
   /**

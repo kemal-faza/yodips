@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  extractTelemetryEvent,
-  summarizeEvents,
-} from "./manual-dashboard-baseline.mjs";
+import { summarizeEvents } from "./manual-dashboard-baseline.mjs";
+import { extractTelemetryEvent } from "../telemetry/telemetry-event.mjs";
 
 describe("manual dashboard baseline helpers", () => {
   it("extracts only a structured telemetry event from a prefixed log line", () => {

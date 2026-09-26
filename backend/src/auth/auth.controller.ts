@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpException, HttpStatus, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpException, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { HandoffDto } from './dto/handoff.dto';
@@ -7,28 +7,6 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 @Controller('api/auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
-
-  // captureSsoSession IS a login mechanism (it generates the JWT in the
-  // response), so it must NOT require a JWT. Blocked in production by the
-  // service (dev/test fallback only); the @Throttle below still bounds the
-  // development case, where every call can launch a browser on the server.
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('sso/capture')
-  captureSsoSession() {
-    return this.authService.captureSsoSession();
-  }
-
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Get('microsoft/login')
-  microsoftLogin() {
-    return this.authService.getMicrosoftAuthUrl();
-  }
-
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Get('microsoft/callback')
-  microsoftCallback(@Query('code') code: string, @Query('state') state?: string) {
-    return this.authService.handleMicrosoftCallback(code, state);
-  }
 
   // Handoff is THE remote login mechanism (it issues the JWT), so it must NOT
   // require a JWT. DoS is mitigated by the aggressive @Throttle below.

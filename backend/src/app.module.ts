@@ -8,6 +8,7 @@ import { validateEnv } from './config/env.validation';
 import { SSOModule } from './sso/sso.module';
 import { CacheModule } from './cache/cache.module';
 import { AuthModule } from './auth/auth.module';
+import { legacyAuthModulesForRuntime } from './auth/legacy-auth-module-loader';
 import { KulonModule } from './kulon/kulon.module';
 import { SiapModule } from './siap/siap.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -32,6 +33,7 @@ import { ObservabilityModule } from './observability/observability.module';
     SSOModule,
     CacheModule,
     AuthModule,
+    ...legacyAuthModulesForRuntime(),
     KulonModule,
     SiapModule,
     NotificationsModule,
