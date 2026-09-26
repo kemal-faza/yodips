@@ -74,6 +74,7 @@ function makeSeamMock(overrides: Record<string, unknown> = {}): any {
       .fn()
       .mockResolvedValue(canned),
     getContextForSession: jest.fn().mockResolvedValue(canned),
+    getKhsContextForSession: jest.fn().mockResolvedValue(canned),
     getContextForCurrent: jest.fn().mockResolvedValue(canned),
     getCookieForSession: jest.fn().mockResolvedValue('sia_app_session=TEST'),
     checkSessionValid: jest.fn(),
@@ -1303,8 +1304,8 @@ describe('SiapService', () => {
     // through apiMock.mintToken, so the retry/invalidate tests below assert real
     // mint counts and the token-cache invalidation on api-credential. A FRESH
     // cache per service keeps one test's `:siap:khs` write out of the next.
-    function khsSvc(): SiapService {
-      return makeRealSeamService(apiMock, new InMemoryDataCache(60_000));
+    function khsSvc(store: any = STORE): SiapService {
+      return makeRealSeamService(apiMock, new InMemoryDataCache(60_000), store);
     }
 
     beforeEach(() => {
@@ -1366,6 +1367,145 @@ describe('SiapService', () => {
       expect(khs.semesters[0].nilai[0].sks).toBe(3);
       // mint ONCE for the whole batch.
       expect(apiMock.mintToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns API KHS without a web cookie and omits unavailable detail ids', async () => {
+      const noCookieSession = {
+        identity: NIM,
+        emailSso: EMAIL,
+        sessionGeneration: TEST_GEN,
+        capturedAt: Date.now(),
+      };
+      const noCookieStore = {
+        get: jest.fn().mockResolvedValue(noCookieSession),
+        getIfGeneration: jest.fn().mockResolvedValue(noCookieSession),
+      };
+      apiMock.fetch
+        .mockResolvedValueOnce([
+          { ta: '2024', smt: '1', smt_ambil: '1', ipk: '3.65' },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id_irs: '10622041',
+            kode_mk: 'MIK1624203',
+            nama_mk: 'Statistika',
+            sks_mk: '2',
+            nilai_akhir_huruf: 'A',
+            nilai_bobot: '4',
+          },
+        ]);
+
+      const khs = await khsSvc(noCookieStore).getKhs(ref(NIM));
+
+      expect(khs).toMatchObject({
+        ipk: 3.65,
+        semesters: [
+          {
+            semester: '2024/2025 Ganjil',
+            totalSks: 2,
+            nilai: [
+              {
+                kode: 'MIK1624203',
+                mataKuliah: 'Statistika',
+                nilaiHuruf: 'A',
+              },
+            ],
+          },
+        ],
+      });
+      expect(khs.semesters[0].nilai[0].detailId).toBeUndefined();
+      expect(apiMock.mintToken).toHaveBeenCalledWith(EMAIL, NIM);
+    });
+
+    it('preserves API KHS rows through per-semester detail failures', async () => {
+      const daftar = [1, 2, 3, 4].map((smt_ambil) => ({
+        ta: '2024',
+        smt: String(smt_ambil % 2 === 0 ? 2 : 1),
+        smt_ambil: String(smt_ambil),
+        ipk: '3.65',
+      }));
+      const rows = [1, 2, 3, 4].map((smt_ambil) => ({
+        id_irs: smt_ambil === 4 ? '10622041' : String(100 + smt_ambil),
+        kode_mk: smt_ambil === 4 ? 'MIK1624203' : `MIK1624${smt_ambil}01`,
+        nama_mk: `Mata Kuliah ${smt_ambil}`,
+        sks_mk: '2',
+        nilai_akhir_huruf: 'A',
+        nilai_bobot: '4',
+      }));
+      apiMock.fetch.mockImplementation(
+        async (endpoint: string, _token: string, form?: Record<string, string>) =>
+          endpoint === 'v2/daftar_khs'
+            ? daftar
+            : [rows[Number(form?.smt_ambil) - 1]],
+      );
+      (global.fetch as jest.Mock).mockImplementation(
+        async (input: any, init?: RequestInit) => {
+          const url = typeof input === 'string' ? input : input.url;
+          const form = new URLSearchParams(String(init?.body ?? ''));
+          const smtAmbil = form.get('smt_ambil');
+          if (smtAmbil === '1') {
+            return {
+              ok: true,
+              url: 'https://siap.undip.ac.id/login',
+              headers: { get: () => 'text/html' },
+              text: async () => '<html>login</html>',
+            };
+          }
+          if (smtAmbil === '2') throw new Error('temporary network failure');
+          return {
+            ok: true,
+            url,
+            headers: { get: () => 'text/html' },
+            // Semester 3 has a body-read/parse failure; semester 4 is valid.
+            text: async () => {
+              if (smtAmbil === '3') {
+                throw new SyntaxError('malformed HTML body');
+              }
+              return fixture('get_khs.html');
+            },
+          };
+        },
+      );
+
+      const khs = await khsSvc().getKhs(ref(NIM));
+
+      expect(khs.semesters).toHaveLength(4);
+      expect(
+        khs.semesters.map((semester) => semester.nilai[0].mataKuliah),
+      ).toEqual([
+        'Mata Kuliah 1',
+        'Mata Kuliah 2',
+        'Mata Kuliah 3',
+        'Mata Kuliah 4',
+      ]);
+      expect(khs.semesters.slice(0, 3).map((s) => s.nilai[0].detailId)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+      expect(khs.semesters[3].nilai[0].detailId).toBe(
+        '10622041#24060121130000#460110',
+      );
+    });
+
+    it('propagates primary API failures even when the web cookie is absent', async () => {
+      const noCookieSession = {
+        identity: NIM,
+        emailSso: EMAIL,
+        sessionGeneration: TEST_GEN,
+        capturedAt: Date.now(),
+      };
+      const noCookieStore = {
+        get: jest.fn().mockResolvedValue(noCookieSession),
+        getIfGeneration: jest.fn().mockResolvedValue(noCookieSession),
+      };
+      const apiFailure = new Error('KHS API unavailable');
+      apiMock.fetch.mockRejectedValueOnce(apiFailure);
+
+      await expect(
+        khsSvc(noCookieStore).getKhs(ref(NIM)),
+      ).rejects.toBe(apiFailure);
+      expect(apiMock.mintToken).toHaveBeenCalledWith(EMAIL, NIM);
     });
 
     it('sends the within-year `smt` param per semester (NOT cumulative)', async () => {

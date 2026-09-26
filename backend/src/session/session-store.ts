@@ -52,6 +52,15 @@ export abstract class SessionStore {
    * instead of a silent use of B's cookies.
    */
   abstract getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null>;
+  /** Atomically replace a snapshot only while it still equals the value read
+   * before upstream validation. `dead` means the requested generation has no
+   * live record; `conflict` means a newer update won and must be preserved. */
+  abstract replaceIfUnchanged(
+    identity: string,
+    generation: string,
+    expected: CapturedSession,
+    replacement: CapturedSession,
+  ): Promise<'updated' | 'conflict' | 'dead'>;
   /**
    * Atomic compare-and-clear: delete the record for `identity` ONLY if its
    * live `sessionGeneration` exactly equals `generation`.
@@ -63,4 +72,36 @@ export abstract class SessionStore {
    * then Lua-compare-and-DELs the exact raw envelope read (false if changed).
    */
   abstract clearIfGeneration(identity: string, generation: string): Promise<boolean>;
+}
+
+/** Full session snapshot comparison shared by both storage adapters. */
+export function sameCapturedSession(a: CapturedSession, b: CapturedSession): boolean {
+  return a.identity === b.identity &&
+    a.ssoCookie === b.ssoCookie &&
+    a.microsoftCookie === b.microsoftCookie &&
+    a.kulonCookie === b.kulonCookie &&
+    a.siapCookie === b.siapCookie &&
+    a.emailSso === b.emailSso &&
+    a.capturedAt === b.capturedAt &&
+    a.sessionGeneration === b.sessionGeneration;
+}
+
+/** Enforce the immutable fields of an in-place Kulon-cookie renewal. */
+export function isKulonCookieRenewal(
+  identity: string,
+  generation: string,
+  expected: CapturedSession,
+  replacement: CapturedSession,
+): boolean {
+  return expected.identity === identity &&
+    expected.sessionGeneration === generation &&
+    replacement.identity === identity &&
+    replacement.sessionGeneration === generation &&
+    replacement.kulonCookie.trim().length > 0 &&
+    replacement.kulonCookie !== expected.kulonCookie &&
+    replacement.capturedAt === expected.capturedAt &&
+    replacement.ssoCookie === expected.ssoCookie &&
+    replacement.microsoftCookie === expected.microsoftCookie &&
+    replacement.siapCookie === expected.siapCookie &&
+    replacement.emailSso === expected.emailSso;
 }

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CapturedSession } from './session-contract';
-import { SessionStore } from './session-store';
+import { isKulonCookieRenewal, sameCapturedSession, SessionStore } from './session-store';
 import { evaluateRecord } from './session-record-policy';
 
 interface StoredRecord {
@@ -29,7 +29,7 @@ export class InMemorySessionStore extends SessionStore {
 
   async set(identity: string, session: CapturedSession): Promise<void> {
     this.records.set(identity, { session, expiresAt: Date.now() + this.ttlMs });
-    this.logger.log(`SSO session stored for ${identity}`);
+    this.logger.log('SSO session stored');
   }
 
   async get(identity: string): Promise<CapturedSession | null> {
@@ -75,6 +75,33 @@ export class InMemorySessionStore extends SessionStore {
       this.records.delete(identity);
     }
     return null;
+  }
+
+  async replaceIfUnchanged(
+    identity: string,
+    generation: string,
+    expected: CapturedSession,
+    replacement: CapturedSession,
+  ): Promise<'updated' | 'conflict' | 'dead'> {
+    const record = this.records.get(identity) ?? null;
+    const decision = evaluateRecord(record, Date.now(), {
+      ttlMs: this.ttlMs,
+      absoluteMs: this.absoluteMs,
+      generation,
+    });
+    if (decision.kind === 'generation-mismatch') return 'dead';
+    if (decision.kind === 'expired' || decision.kind === 'absolute-dead') {
+      this.records.delete(identity);
+      return 'dead';
+    }
+    if (decision.kind !== 'live' || !record) return 'dead';
+    if (!sameCapturedSession(record.session, expected)) return 'conflict';
+    if (!isKulonCookieRenewal(identity, generation, expected, replacement)) {
+      throw new Error('Invalid session renewal replacement');
+    }
+    record.session = replacement;
+    record.expiresAt = Date.now() + this.ttlMs;
+    return 'updated';
   }
 
   /**

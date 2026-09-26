@@ -1,6 +1,6 @@
 import { KulonUpstreamSession } from './kulon-upstream.session';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
-import { SessionStore } from '../session/session-store';
+import { isKulonCookieRenewal, sameCapturedSession, SessionStore } from '../session/session-store';
 import type { CapturedSession } from '../playwright/playwright-auth.service';
 import { DataCache } from '../cache/data-cache';
 import { InMemoryDataCache } from '../cache/in-memory-data.cache';
@@ -23,6 +23,21 @@ class FakeStore extends SessionStore {
     const rec = (this.map.get(k) as CapturedSession | undefined) ?? null;
     if (!rec || rec.sessionGeneration !== generation) return Promise.resolve(null);
     return Promise.resolve(rec);
+  }
+  replaceIfUnchanged(
+    k: string,
+    generation: string,
+    expected: CapturedSession,
+    replacement: CapturedSession,
+  ): Promise<'updated' | 'conflict' | 'dead'> {
+    const rec = (this.map.get(k) as CapturedSession | undefined) ?? null;
+    if (!rec || rec.sessionGeneration !== generation) return Promise.resolve('dead');
+    if (!sameCapturedSession(rec, expected)) return Promise.resolve('conflict');
+    if (!isKulonCookieRenewal(k, generation, expected, replacement)) {
+      return Promise.reject(new Error('Invalid session renewal replacement'));
+    }
+    this.map.set(k, replacement);
+    return Promise.resolve('updated');
   }
   clear(k: string): Promise<void> {
     this.map.delete(k);

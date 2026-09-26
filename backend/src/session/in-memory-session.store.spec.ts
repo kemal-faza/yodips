@@ -210,4 +210,79 @@ describe('InMemorySessionStore (per-user, TTL)', () => {
       expect(hit?.kulonCookie).toContain('MoodleSession=NEW');
     });
   });
+
+  describe('replaceIfUnchanged (upstream-cookie renewal CAS)', () => {
+    it('replaces only Kulon cookie and preserves identity, generation, capture time, and other session fields', async () => {
+      const expected = {
+        ...makeSession('a', 'MoodleSession=OLD'),
+        microsoftCookie: 'MS=keep',
+        siapCookie: 'sia_app_session=keep',
+        emailSso: 'student@example.test',
+      };
+      const replacement = { ...expected, kulonCookie: 'MoodleSession=NEW' };
+      await store.set('a', expected);
+
+      await expect(
+        store.replaceIfUnchanged('a', GEN_A, expected, replacement),
+      ).resolves.toBe('updated');
+      expect(await store.get('a')).toEqual(replacement);
+    });
+
+    it('returns conflict and preserves the newer same-generation snapshot', async () => {
+      const expected = makeSession('a', 'MoodleSession=OLD');
+      const newer = { ...expected, kulonCookie: 'MoodleSession=OTHER' };
+      await store.set('a', expected);
+      await store.set('a', newer);
+
+      await expect(
+        store.replaceIfUnchanged('a', GEN_A, expected, { ...expected, kulonCookie: 'MoodleSession=RENEWED' }),
+      ).resolves.toBe('conflict');
+      expect(await store.get('a')).toEqual(newer);
+    });
+
+    it('returns dead for absent, generation-mismatched, and absolute-expired records', async () => {
+      const expected = makeSession('a', 'MoodleSession=OLD');
+      const replacement = { ...expected, kulonCookie: 'MoodleSession=NEW' };
+      await expect(
+        store.replaceIfUnchanged('missing', GEN_A, { ...expected, identity: 'missing' }, { ...replacement, identity: 'missing' }),
+      ).resolves.toBe('dead');
+
+      await store.set('a', { ...expected, sessionGeneration: GEN_B });
+      await expect(store.replaceIfUnchanged('a', GEN_A, expected, replacement)).resolves.toBe('dead');
+
+      const absolute = new InMemorySessionStore(1000, 20);
+      const expired = { ...expected, capturedAt: Date.now() - 30 };
+      await absolute.set('a', expired);
+      await expect(
+        absolute.replaceIfUnchanged('a', GEN_A, expired, { ...expired, kulonCookie: 'MoodleSession=NEW' }),
+      ).resolves.toBe('dead');
+      await expect(absolute.get('a')).resolves.toBeNull();
+    });
+
+    it('rejects a replacement that changes a non-Kulon credential', async () => {
+      const expected = makeSession('a', 'MoodleSession=OLD');
+      await store.set('a', expected);
+      await expect(
+        store.replaceIfUnchanged('a', GEN_A, expected, expected),
+      ).rejects.toThrow('Invalid session renewal replacement');
+      await expect(
+        store.replaceIfUnchanged('a', GEN_A, expected, {
+          ...expected,
+          kulonCookie: 'MoodleSession=NEW',
+          siapCookie: 'sia_app_session=changed',
+        }),
+      ).rejects.toThrow('Invalid session renewal replacement');
+      expect(await store.get('a')).toEqual(expected);
+    });
+
+    it('rejects an empty renewed Kulon cookie', async () => {
+      const expected = makeSession('a', 'MoodleSession=OLD');
+      await store.set('a', expected);
+
+      await expect(
+        store.replaceIfUnchanged('a', GEN_A, expected, { ...expected, kulonCookie: '' }),
+      ).rejects.toThrow('Invalid session renewal replacement');
+      expect(await store.get('a')).toEqual(expected);
+    });
+  });
 });

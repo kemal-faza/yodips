@@ -15,6 +15,7 @@ const ref = (sub = 'u1', sessionGeneration = GENERATION) => ({
 const NO_STORE: SessionStore = {
   get: async () => null,
   getIfGeneration: async () => null,
+  replaceIfUnchanged: async () => 'dead',
   clear: async () => undefined,
   clearIfGeneration: async () => true,
   set: async () => undefined,

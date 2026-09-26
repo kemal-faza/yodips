@@ -4,7 +4,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { SessionStore } from '../session/session-store';
+import { isKulonCookieRenewal, sameCapturedSession, SessionStore } from '../session/session-store';
 import type { CapturedSession } from '../playwright/playwright-auth.service';
 
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
@@ -24,6 +24,21 @@ class FakeSessionStore extends SessionStore {
     const rec = this.records.get(identity) ?? null;
     if (!rec || rec.sessionGeneration !== generation) return null;
     return rec;
+  }
+  async replaceIfUnchanged(
+    identity: string,
+    generation: string,
+    expected: CapturedSession,
+    replacement: CapturedSession,
+  ): Promise<'updated' | 'conflict' | 'dead'> {
+    const rec = this.records.get(identity);
+    if (!rec || rec.sessionGeneration !== generation) return 'dead';
+    if (!sameCapturedSession(rec, expected)) return 'conflict';
+    if (!isKulonCookieRenewal(identity, generation, expected, replacement)) {
+      throw new Error('Invalid session renewal replacement');
+    }
+    this.records.set(identity, replacement);
+    return 'updated';
   }
   async clear(identity: string): Promise<void> {
     this.records.delete(identity);

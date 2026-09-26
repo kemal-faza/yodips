@@ -374,7 +374,7 @@ describe('RedisSessionStore', () => {
   describe('stateful Redis fake: deferred GET -> replacement -> EVAL really compares envelopes (D)', () => {
     /**
      * Minimal in-test Redis that ACTUALLY stores raw envelopes and evaluates
-     * the compare-and-delete Lua by string comparison — no mocked desired
+     * the compare-and-delete/replace Lua by string comparison — no mocked desired
      * return. Deferred hooks let the test interleave a B-replacement between
      * the store's GET and its EVAL, proving the Lua loses and B survives.
      */
@@ -410,8 +410,16 @@ describe('RedisSessionStore', () => {
           const current = kv.get(key) ?? null;
           if (onEval) { const hook = onEval; onEval = null; hook(key, expected, current); }
           // REALLY evaluate the comparison like Redis would — no stubbed
-          // outcome: conditional EXPIRE and conditional DEL scripts compared
-          // against the live value.
+          // outcome: conditional EXPIRE, DEL, and SET scripts compare against
+          // the live value.
+          if (script.includes('redis.call("SET"')) {
+            if (current === expected) {
+              kv.set(key, String(rest[0]));
+              expiries.set(key, Number(rest[1]));
+              return 1;
+            }
+            return 0;
+          }
           if (script.includes('EXPIRE')) {
             if (current === expected) { expiries.set(key, Number(rest[0])); return 1; }
             return 0;
@@ -480,6 +488,101 @@ describe('RedisSessionStore', () => {
         kulonCookie: expect.stringContaining('MoodleSession=NEW'),
       });
       expect(fake.kv.has('sso:session:u')).toBe(true);
+    });
+
+    it('replaces only Kulon cookie while preserving the full session snapshot fields', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      const expected = {
+        ...makeSession('u', 'MoodleSession=OLD', GEN_A),
+        microsoftCookie: 'MS=keep',
+        siapCookie: 'sia_app_session=keep',
+        emailSso: 'student@example.test',
+      };
+      const replacement = { ...expected, kulonCookie: 'MoodleSession=NEW' };
+      await s.set('u', expected);
+
+      await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('updated');
+      await expect(s.getIfGeneration('u', GEN_A)).resolves.toEqual(replacement);
+    });
+
+    it('GET -> newer handoff -> EVAL returns conflict and preserves the newer generation', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      const expected = makeSession('u', 'MoodleSession=OLD', GEN_A);
+      const replacement = { ...expected, kulonCookie: 'MoodleSession=RENEWED' };
+      const newer = makeSession('u', 'MoodleSession=NEW-LOGIN', GEN_B);
+      await s.set('u', expected);
+      fake.onGetHook = () => { void s.set('u', newer); };
+
+      await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('conflict');
+      await expect(s.getIfGeneration('u', GEN_B)).resolves.toMatchObject({
+        kulonCookie: 'MoodleSession=NEW-LOGIN',
+      });
+      expect(fake.kv.has('sso:session:u')).toBe(true);
+    });
+
+    it('GET -> same-generation renewal -> EVAL returns conflict and preserves the newer cookie', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      const expected = makeSession('u', 'MoodleSession=OLD', GEN_A);
+      const replacement = { ...expected, kulonCookie: 'MoodleSession=RENEWED' };
+      const newer = { ...expected, kulonCookie: 'MoodleSession=OTHER-RENEWAL' };
+      await s.set('u', expected);
+      fake.onGetHook = () => { void s.set('u', newer); };
+
+      await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('conflict');
+      await expect(s.getIfGeneration('u', GEN_A)).resolves.toEqual(newer);
+    });
+
+    it('returns dead for absent records and generation mismatch without touching the live replacement', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      const expected = makeSession('u', 'MoodleSession=OLD', GEN_A);
+      const replacement = { ...expected, kulonCookie: 'MoodleSession=RENEWED' };
+
+      await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('dead');
+      await s.set('u', makeSession('u', 'MoodleSession=NEW-LOGIN', GEN_B));
+      await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('dead');
+      await expect(s.getIfGeneration('u', GEN_B)).resolves.toMatchObject({
+        kulonCookie: 'MoodleSession=NEW-LOGIN',
+      });
+    });
+
+    it('rejects a no-op Kulon cookie replacement', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      const expected = makeSession('u', 'MoodleSession=OLD', GEN_A);
+      await s.set('u', expected);
+
+      await expect(s.replaceIfUnchanged('u', GEN_A, expected, expected)).rejects.toThrow(
+        'Invalid session renewal replacement',
+      );
+      await expect(s.getIfGeneration('u', GEN_A)).resolves.toEqual(expected);
+    });
+
+    it('absolute lifetime expiry is dead and never renews the envelope', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key', 20);
+      const expired = { ...makeSession('u', 'MoodleSession=OLD', GEN_A), capturedAt: Date.now() - 30 };
+      await s.set('u', expired);
+
+      await expect(
+        s.replaceIfUnchanged('u', GEN_A, expired, { ...expired, kulonCookie: 'MoodleSession=NEW' }),
+      ).resolves.toBe('dead');
+      expect(fake.kv.has('sso:session:u')).toBe(false);
+    });
+
+    it('rejects an empty renewed Kulon cookie without replacing the stored session', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      const expected = makeSession('u', 'MoodleSession=OLD', GEN_A);
+      await s.set('u', expected);
+
+      await expect(
+        s.replaceIfUnchanged('u', GEN_A, expected, { ...expected, kulonCookie: '' }),
+      ).rejects.toThrow('Invalid session renewal replacement');
+      await expect(s.getIfGeneration('u', GEN_A)).resolves.toEqual(expected);
     });
   });
 });

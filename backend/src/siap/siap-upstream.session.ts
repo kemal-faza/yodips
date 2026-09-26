@@ -110,6 +110,11 @@ export interface SiapSessionContext {
   token: string;
 }
 
+/** SIAP API context plus the optional web cookie used only for KHS details. */
+export interface SiapKhsSessionContext extends SiapSessionContext {
+  siapCookie?: string;
+}
+
 /** Scrape fallback shape (used when the session store lacks emailSso). */
 export type SiapIdentityScraper = (siapCookie: string) => Promise<{
   nim: string;
@@ -241,6 +246,25 @@ export class SiapUpstreamSession {
       throw sessionDead();
     }
     return this.resolveScoped(ref, session);
+  }
+
+  /**
+   * KHS is read from the SIAP API; its optional detail-id scrape is the only
+   * part that needs the web cookie. Resolve the same exact-generation API
+   * identity/token without requiring that cookie, while still requiring a
+   * live session record. Other API and cookie-backed methods keep using
+   * getContextForSession/getCookieForSession and retain their cookie checks.
+   */
+  async getKhsContextForSession(ref: SessionRef): Promise<SiapKhsSessionContext> {
+    const session = await readLiveSession(this.store, ref);
+    if (!session) {
+      throw sessionDead();
+    }
+    const context = await this.resolveScoped(ref, session);
+    return {
+      ...context,
+      ...(session.siapCookie ? { siapCookie: session.siapCookie } : {}),
+    };
   }
 
   /**

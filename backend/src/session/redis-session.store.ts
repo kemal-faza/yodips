@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import Redis from 'ioredis';
 import { CapturedSession } from './session-contract';
-import { SessionStore } from './session-store';
+import { isKulonCookieRenewal, sameCapturedSession, SessionStore } from './session-store';
 import { evaluateRecord } from './session-record-policy';
 
 const KEY_PREFIX = 'sso:session:';
@@ -21,6 +21,9 @@ const CAS_DELETE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return red
  * null and never slides B's TTL.
  */
 const CAS_EXPIRE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("EXPIRE", KEYS[1], ARGV[2]) else return 0 end`;
+
+/** Atomic replacement guarded by the exact encrypted envelope read earlier. */
+const CAS_REPLACE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then redis.call("SET", KEYS[1], ARGV[2], "EX", ARGV[3]); return 1 else return 0 end`;
 
 /**
  * Redis-backed SessionStore for production.
@@ -53,7 +56,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
   async set(identity: string, session: CapturedSession): Promise<void> {
     const envelope = this.encrypt(JSON.stringify(session));
     await this.client.set(`${KEY_PREFIX}${identity}`, envelope, 'EX', this.ttlSeconds());
-    this.logger.log(`SSO session stored for ${identity}`);
+    this.logger.log('SSO session stored');
   }
 
   async get(identity: string): Promise<CapturedSession | null> {
@@ -167,6 +170,46 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     return session;
   }
 
+  async replaceIfUnchanged(
+    identity: string,
+    generation: string,
+    expected: CapturedSession,
+    replacement: CapturedSession,
+  ): Promise<'updated' | 'conflict' | 'dead'> {
+    const key = `${KEY_PREFIX}${identity}`;
+    const envelope = await this.client.get(key);
+    if (!envelope) return 'dead';
+    const session = this.decrypt(envelope);
+    if (!session) {
+      await this.casDeleteIfEqual(key, envelope);
+      return 'dead';
+    }
+    const decision = evaluateRecord({ session }, Date.now(), {
+      ttlMs: this.ttlMs,
+      absoluteMs: this.absoluteMs,
+      generation,
+    });
+    if (decision.kind === 'generation-mismatch') return 'dead';
+    if (decision.kind === 'absolute-dead') {
+      await this.casDeleteIfEqual(key, envelope);
+      return 'dead';
+    }
+    if (decision.kind !== 'live') return 'dead';
+    if (!sameCapturedSession(session, expected)) return 'conflict';
+    if (!isKulonCookieRenewal(identity, generation, expected, replacement)) {
+      throw new Error('Invalid session renewal replacement');
+    }
+
+    const nextEnvelope = this.encrypt(JSON.stringify(replacement));
+    const replaced = await this.casReplaceIfEqual(
+      key,
+      envelope,
+      nextEnvelope,
+      this.ttlSeconds(),
+    );
+    return replaced === 1 ? 'updated' : 'conflict';
+  }
+
   private async casExpireIfEqual(key: string, expectedEnvelope: string, ttlSeconds: number): Promise<number> {
     const res = await (this.client as unknown as {
       eval: (script: string, numKeys: number, key: string, ...args: unknown[]) => Promise<unknown>;
@@ -178,6 +221,23 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     const res = await (this.client as unknown as {
       eval: (script: string, numKeys: number, key: string, arg: string) => Promise<unknown>;
     }).eval(CAS_DELETE_LUA, 1, key, expectedEnvelope);
+    return res === 1 || res === '1' ? 1 : 0;
+  }
+
+  private async casReplaceIfEqual(
+    key: string,
+    expectedEnvelope: string,
+    nextEnvelope: string,
+    ttlSeconds: number,
+  ): Promise<number> {
+    const res = await (this.client as unknown as {
+      eval: (
+        script: string,
+        numKeys: number,
+        key: string,
+        ...args: unknown[]
+      ) => Promise<unknown>;
+    }).eval(CAS_REPLACE_LUA, 1, key, expectedEnvelope, nextEnvelope, ttlSeconds);
     return res === 1 || res === '1' ? 1 : 0;
   }
 

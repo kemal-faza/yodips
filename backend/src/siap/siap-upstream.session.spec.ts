@@ -27,6 +27,9 @@ class FakeStore extends SessionStore {
     this.map.delete(k);
     return true;
   }
+  async replaceIfUnchanged(): Promise<'dead'> {
+    return 'dead';
+  }
   async all() { return Array.from(this.map.values()); }
 }
 
@@ -104,6 +107,90 @@ describe('SiapUpstreamSession.getContextForSession (B: generation-qualified TOCT
     await expect(
       (seam as any).getCookieForSession({ sub: NIM, sessionGeneration: GEN_A }),
     ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+  });
+});
+
+describe('SiapUpstreamSession.getKhsContextForSession', () => {
+  it('resolves API identity and token for a live generation without a web cookie', async () => {
+    const store = new FakeStore(
+      new Map([
+        [NIM, { identity: NIM, emailSso: EMAIL, sessionGeneration: DEFAULT_GEN }],
+      ]),
+    );
+    const { seam, api } = makeSeam({ store });
+
+    await expect(
+      seam.getKhsContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+    ).resolves.toEqual({ emailSso: EMAIL, nim: NIM, token: 'T1' });
+    expect(api.mintToken).toHaveBeenCalledWith(EMAIL, NIM);
+  });
+
+  it('returns the optional web cookie from the same live-generation snapshot', async () => {
+    const store = new FakeStore(
+      new Map([
+        [
+          NIM,
+          {
+            identity: NIM,
+            emailSso: EMAIL,
+            siapCookie: 'cookie-a',
+            sessionGeneration: DEFAULT_GEN,
+          },
+        ],
+      ]),
+    );
+    const { seam } = makeSeam({ store });
+
+    await expect(
+      seam.getKhsContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+    ).resolves.toMatchObject({ token: 'T1', siapCookie: 'cookie-a' });
+  });
+
+  it('does not resolve a KHS context from a replacement generation', async () => {
+    const genA = 'a'.repeat(32);
+    const genB = 'b'.repeat(32);
+    const store = new FakeStore(
+      new Map([
+        [
+          NIM,
+          {
+            identity: NIM,
+            emailSso: EMAIL,
+            siapCookie: 'cookie-b',
+            sessionGeneration: genB,
+          },
+        ],
+      ]),
+    );
+    const { seam, api } = makeSeam({ store });
+
+    await expect(
+      seam.getKhsContextForSession({ sub: NIM, sessionGeneration: genA }),
+    ).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(api.mintToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps the ordinary API and cookie paths bound to a web cookie', async () => {
+    const store = new FakeStore(
+      new Map([
+        [NIM, { identity: NIM, emailSso: EMAIL, sessionGeneration: DEFAULT_GEN }],
+      ]),
+    );
+    const { seam, api } = makeSeam({ store });
+    const ref = { sub: NIM, sessionGeneration: DEFAULT_GEN };
+
+    await expect(seam.getContextForSession(ref)).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    await expect(seam.getCookieForSession(ref)).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(api.mintToken).not.toHaveBeenCalled();
   });
 });
 

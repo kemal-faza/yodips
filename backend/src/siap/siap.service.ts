@@ -457,7 +457,7 @@ export class SiapService {
    */
   private async fetchKhs(ref: SessionRef): Promise<SiapKhs> {
     this.requireRef(ref);
-    let ctx = await this.upstream.getContextForSession(ref);
+    let ctx = await this.upstream.getKhsContextForSession(ref);
     // Batch: ONE token for the whole method (spec §2.2). Retry the whole
     // batch once on an api-credential (fresh token invalidates the old).
     const fetchBatch = async <T>(
@@ -469,7 +469,10 @@ export class SiapService {
         await fetchBatch<Array<Record<string, unknown>>>('v2/daftar_khs');
       const list = Array.isArray(daftar) ? daftar : [];
       const ipk = parseApiDaftarKhs(list).ipk;
-      const siapCookie = await this.requireSiapCookieForSession(ref);
+      // The SIAP API provides the complete KHS. The page cookie is only needed
+      // to attach optional detail ids, so a missing/stale cookie must not hide
+      // API results.
+      const siapCookie = ctx.siapCookie;
       const khsUrl = `${this.baseUrl}/irs/mhs/irs/get_khs`;
       // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
       // order preserved so `semesters` stays in `list` order. Each semester
@@ -484,22 +487,27 @@ export class SiapService {
           'v2/lihat_khs',
           { ta, smt_ambil: smtAmbil, smt },
         );
-        const nilai = mergeKhsDetailIds(
-          parseApiKhs(Array.isArray(rows) ? rows : []),
-          parseKhsDetailIds(
-            await this.fetchKhsDetailIdsHtml(
+        const nilai = parseApiKhs(Array.isArray(rows) ? rows : []);
+        let detailIds: Array<{ kode: string; detailId: string }> = [];
+        if (siapCookie) {
+          try {
+            const html = await this.fetchKhsDetailIdsHtml(
               khsUrl,
               siapCookie,
               ta,
               smtAmbil,
               smt,
-            ),
-          ),
-        );
-        const totalSks = nilai.reduce((s, n) => s + n.sks, 0);
-        const rawIp = nilai.length
-          ? nilai.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
-            nilai.reduce((s, n) => s + n.sks, 0)
+            );
+            detailIds = parseKhsDetailIds(html);
+          } catch {
+            // Keep this semester's API rows and continue with the others.
+          }
+        }
+        const nilaiWithDetails = mergeKhsDetailIds(nilai, detailIds);
+        const totalSks = nilaiWithDetails.reduce((s, n) => s + n.sks, 0);
+        const rawIp = nilaiWithDetails.length
+          ? nilaiWithDetails.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
+            nilaiWithDetails.reduce((s, n) => s + n.sks, 0)
           : 0;
         // Label always from the TA + within-year smt (NOT semesterLabel('',…)).
         const label = this.semesterLabelFromTa(ta, smt);
@@ -507,7 +515,7 @@ export class SiapService {
           semester: label,
           ip: round(rawIp),
           totalSks,
-          nilai,
+          nilai: nilaiWithDetails,
         };
       });
       return { ipk: ipk ?? 0, semesters }; // ipk REQUIRED on SiapKhs
@@ -519,7 +527,7 @@ export class SiapService {
       // Retry once on api-credential: invalidate the cached token + re-mint.
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
         if (this.cache) await this.cache.del(cacheKeyForSession(ref, 'siap', 'token'));
-        ctx = await this.upstream.getContextForSession(ref);
+        ctx = await this.upstream.getKhsContextForSession(ref);
         const khs = await build();
         return khs;
       }
