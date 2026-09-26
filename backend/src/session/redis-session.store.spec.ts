@@ -535,7 +535,7 @@ describe('RedisSessionStore', () => {
       await expect(s.getIfGeneration('u', GEN_A)).resolves.toEqual(newer);
     });
 
-    it('returns dead for absent records and generation mismatch without touching the live replacement', async () => {
+    it('returns dead for absent records and conflict for generation mismatch without touching the live replacement', async () => {
       const fake = makeStatefulClient();
       const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
       const expected = makeSession('u', 'MoodleSession=OLD', GEN_A);
@@ -543,7 +543,7 @@ describe('RedisSessionStore', () => {
 
       await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('dead');
       await s.set('u', makeSession('u', 'MoodleSession=NEW-LOGIN', GEN_B));
-      await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('dead');
+      await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('conflict');
       await expect(s.getIfGeneration('u', GEN_B)).resolves.toMatchObject({
         kulonCookie: 'MoodleSession=NEW-LOGIN',
       });

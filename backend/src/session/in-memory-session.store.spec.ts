@@ -240,7 +240,7 @@ describe('InMemorySessionStore (per-user, TTL)', () => {
       expect(await store.get('a')).toEqual(newer);
     });
 
-    it('returns dead for absent, generation-mismatched, and absolute-expired records', async () => {
+    it('returns dead for absent and absolute-expired records, conflict for a live generation mismatch', async () => {
       const expected = makeSession('a', 'MoodleSession=OLD');
       const replacement = { ...expected, kulonCookie: 'MoodleSession=NEW' };
       await expect(
@@ -248,7 +248,8 @@ describe('InMemorySessionStore (per-user, TTL)', () => {
       ).resolves.toBe('dead');
 
       await store.set('a', { ...expected, sessionGeneration: GEN_B });
-      await expect(store.replaceIfUnchanged('a', GEN_A, expected, replacement)).resolves.toBe('dead');
+      await expect(store.replaceIfUnchanged('a', GEN_A, expected, replacement)).resolves.toBe('conflict');
+      await expect(store.get('a')).resolves.toMatchObject({ sessionGeneration: GEN_B });
 
       const absolute = new InMemorySessionStore(1000, 20);
       const expired = { ...expected, capturedAt: Date.now() - 30 };

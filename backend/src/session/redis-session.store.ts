@@ -189,7 +189,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
       absoluteMs: this.absoluteMs,
       generation,
     });
-    if (decision.kind === 'generation-mismatch') return 'dead';
+    if (decision.kind === 'generation-mismatch') return 'conflict';
     if (decision.kind === 'absolute-dead') {
       await this.casDeleteIfEqual(key, envelope);
       return 'dead';
