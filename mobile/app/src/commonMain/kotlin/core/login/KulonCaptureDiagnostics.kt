@@ -6,6 +6,8 @@ enum class KulonCaptureOutcome {
     INTERACTION_REQUIRED,
     /** The SSO ticket endpoint is in flight; this is never a success state. */
     CAPTURE_IN_PROGRESS,
+    /** A known page that must be checked for authenticated or login markers. */
+    LANDING_CANDIDATE,
     /** An allowed host/path that is not a recognized Kulon landing or login. */
     UNKNOWN_PATH,
     /** The known `/my/` landing did not expose the expected authenticated marker. */
@@ -21,6 +23,20 @@ enum class KulonCaptureFailure {
     NETWORK,
 }
 
+enum class KulonLandingMarker {
+    SESSKEY,
+    LOGIN_FORM,
+    UNKNOWN,
+}
+
+/** Decode the deliberately small string returned by the WebView marker probe. */
+fun parseKulonLandingMarkerResult(result: String?): KulonLandingMarker =
+    when (result?.trim()?.removeSurrounding("\"")) {
+        "sesskey" -> KulonLandingMarker.SESSKEY
+        "login" -> KulonLandingMarker.LOGIN_FORM
+        else -> KulonLandingMarker.UNKNOWN
+    }
+
 fun classifyKulonCaptureFailure(failure: KulonCaptureFailure): KulonCaptureOutcome =
     when (failure) {
         KulonCaptureFailure.TIMEOUT -> KulonCaptureOutcome.TIMEOUT
@@ -28,21 +44,24 @@ fun classifyKulonCaptureFailure(failure: KulonCaptureFailure): KulonCaptureOutco
     }
 
 /**
- * A known `/my/` landing is authenticated only when Moodle's marker exists and
- * the direct-ticket flow installed a new session cookie.
+ * The known `/my/` and root landings are candidates only: authentication requires
+ * Moodle's marker and a new session cookie. A login form at root requires interaction.
  */
 fun classifyKulonCaptureLanding(
     url: String?,
     hasSesskeyMarker: Boolean,
     hasNewMoodleSessionCookie: Boolean,
+    hasLoginFormMarker: Boolean = false,
 ): KulonCaptureOutcome {
     val navigation = classifyKulonCaptureNavigation(url)
     return when (navigation) {
-        KulonCaptureOutcome.AUTHENTICATED ->
-            if (hasSesskeyMarker && hasNewMoodleSessionCookie) {
-                KulonCaptureOutcome.AUTHENTICATED
-            } else {
-                KulonCaptureOutcome.UNVERIFIED_LANDING
+        KulonCaptureOutcome.LANDING_CANDIDATE ->
+            when {
+                hasLoginFormMarker ->
+                    KulonCaptureOutcome.INTERACTION_REQUIRED
+                hasSesskeyMarker && hasNewMoodleSessionCookie ->
+                    KulonCaptureOutcome.AUTHENTICATED
+                else -> KulonCaptureOutcome.UNVERIFIED_LANDING
             }
         else -> navigation
     }
@@ -63,7 +82,7 @@ fun classifyKulonCaptureNavigation(url: String?): KulonCaptureOutcome {
             "/auth/oidc" -> KulonCaptureOutcome.CAPTURE_IN_PROGRESS
             "/login", "/login/index.php", "/auth/user/login" ->
                 KulonCaptureOutcome.INTERACTION_REQUIRED
-            "/my" -> KulonCaptureOutcome.AUTHENTICATED
+            "/", "/my" -> KulonCaptureOutcome.LANDING_CANDIDATE
             else -> KulonCaptureOutcome.UNKNOWN_PATH
         }
     }

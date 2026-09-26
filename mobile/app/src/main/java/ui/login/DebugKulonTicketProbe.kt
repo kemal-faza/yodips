@@ -2,6 +2,7 @@ package ac.undip.sso.ui.login
 
 import ac.undip.sso.BuildConfig
 import ac.undip.sso.core.login.KulonCaptureFailure
+import ac.undip.sso.core.login.KulonLandingMarker
 import ac.undip.sso.core.login.KulonCaptureOutcome
 import ac.undip.sso.core.login.classifyKulonCaptureFailure
 import ac.undip.sso.core.login.classifyKulonCaptureLanding
@@ -9,6 +10,7 @@ import ac.undip.sso.core.login.classifyKulonCaptureNavigation
 import ac.undip.sso.core.login.generateSsoTicket
 import ac.undip.sso.core.login.isAllowedLoginHost
 import ac.undip.sso.core.login.kulonTicketUrl
+import ac.undip.sso.core.login.parseKulonLandingMarkerResult
 import ac.undip.sso.core.login.redactKulonCaptureLocation
 import android.graphics.Bitmap
 import android.os.Handler
@@ -43,8 +45,13 @@ import java.security.MessageDigest
 private const val TAG = "KulonTicketProbe"
 private const val KULON_ORIGIN = "https://kulon2.undip.ac.id/"
 private const val PROBE_TIMEOUT_MS = 45_000L
-private const val SESSKEY_MARKER_PROBE =
-    "(function(){return !!document.querySelector('input[name=\"sesskey\"]');})()"
+private val LANDING_MARKERS_PROBE = """
+    (function(){
+        var hasSesskey = !!document.querySelector('input[name="sesskey"]');
+        var hasLoginForm = !!document.querySelector('input[type="password"], form[action*="login"]');
+        return hasLoginForm ? 'login' : (hasSesskey ? 'sesskey' : 'unknown');
+    })()
+""".trimIndent()
 
 /**
  * Read-only direct-ticket discovery harness. This is intentionally absent from
@@ -57,6 +64,7 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
     var visible by remember { mutableStateOf(false) }
     var outcomeText by remember { mutableStateOf("belum dijalankan") }
     var probeText by remember { mutableStateOf("probe belum dijalankan") }
+    var locationText by remember { mutableStateOf("location=not_started") }
     var completed by remember { mutableStateOf(false) }
     var attemptId by remember { mutableStateOf(0) }
     var baselineCookieFingerprint by remember { mutableStateOf<String?>(null) }
@@ -68,6 +76,7 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
         attempt: Int,
         outcome: KulonCaptureOutcome,
         hasSesskeyMarker: Boolean? = null,
+        hasLoginFormMarker: Boolean? = null,
     ) {
         if (attempt != attemptId || completed) return
         completed = true
@@ -77,15 +86,18 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
         val cookieExists = currentCookieFingerprint != null
         val cookieChanged = cookieExists && currentCookieFingerprint != baselineCookieFingerprint
         val markerStatus = hasSesskeyMarker?.toString() ?: "unavailable"
+        val loginFormStatus = hasLoginFormMarker?.toString() ?: "unavailable"
         outcomeText = outcome.name.lowercase()
         probeText =
-            "sesskey_marker=$markerStatus · MoodleSession exists=$cookieExists · changed=$cookieChanged"
+            "sesskey_marker=$markerStatus · login_form_marker=$loginFormStatus · " +
+                "MoodleSession exists=$cookieExists · changed=$cookieChanged"
 
         // Keep the diagnostic artifact to timestamp, outcome and booleans only.
         Log.i(
             TAG,
             "time_epoch_ms=${System.currentTimeMillis()} outcome=${outcome.name} " +
-                "sesskey_marker=$markerStatus cookie_name=MoodleSession " +
+                "sesskey_marker=$markerStatus login_form_marker=$loginFormStatus " +
+                "cookie_name=MoodleSession " +
                 "cookie_exists=$cookieExists cookie_changed=$cookieChanged",
         )
     }
@@ -106,6 +118,7 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
             completed = false
             outcomeText = "menunggu hasil"
             probeText = "menunggu landing Kulon"
+            locationText = "location=not_started"
             visible = true
         },
         modifier = modifier,
@@ -133,6 +146,7 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
                     }
                     Text("Outcome: $outcomeText", style = MaterialTheme.typography.bodyMedium)
                     Text(probeText, style = MaterialTheme.typography.bodySmall)
+                    Text("Lokasi: $locationText", style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
                     AndroidView(
                         modifier = Modifier
@@ -170,9 +184,10 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
                                             return
                                         }
                                         val result = classifyKulonCaptureNavigation(url)
+                                        locationText = redactKulonCaptureLocation(url)
                                         Log.i(
                                             TAG,
-                                            "state=navigation ${redactKulonCaptureLocation(url)}",
+                                            "state=navigation $locationText",
                                         )
                                         when (result) {
                                             KulonCaptureOutcome.INTERACTION_REQUIRED,
@@ -182,13 +197,15 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
                                                 finish(activeAttemptId, result)
                                                 view.stopLoading()
                                             }
-                                            KulonCaptureOutcome.AUTHENTICATED -> {
+                                            KulonCaptureOutcome.LANDING_CANDIDATE -> {
                                                 if (waitForLandingMarker) {
-                                                    view.evaluateJavascript(SESSKEY_MARKER_PROBE) { raw ->
+                                                    view.evaluateJavascript(LANDING_MARKERS_PROBE) { raw ->
                                                         if (activeAttemptId != attemptId || completed) {
                                                             return@evaluateJavascript
                                                         }
-                                                        val markerPresent = raw?.trim() == "true"
+                                                        val marker = parseKulonLandingMarkerResult(raw)
+                                                        val loginFormPresent = marker == KulonLandingMarker.LOGIN_FORM
+                                                        val markerPresent = marker == KulonLandingMarker.SESSKEY
                                                         val currentFingerprint = moodleSessionFingerprint(
                                                             CookieManager.getInstance(),
                                                         )
@@ -198,11 +215,18 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
                                                             url,
                                                             hasSesskeyMarker = markerPresent,
                                                             hasNewMoodleSessionCookie = cookieChanged,
+                                                            hasLoginFormMarker = loginFormPresent,
                                                         )
-                                                        finish(activeAttemptId, landing, markerPresent)
+                                                        finish(
+                                                            activeAttemptId,
+                                                            landing,
+                                                            markerPresent,
+                                                            loginFormPresent,
+                                                        )
                                                     }
                                                 }
                                             }
+                                            KulonCaptureOutcome.AUTHENTICATED -> Unit
                                             KulonCaptureOutcome.CAPTURE_IN_PROGRESS -> Unit
                                             KulonCaptureOutcome.TIMEOUT,
                                             KulonCaptureOutcome.NETWORK_FAILURE -> Unit
@@ -244,9 +268,10 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
                                             result == KulonCaptureOutcome.UNKNOWN_PATH ||
                                             result == KulonCaptureOutcome.EXTERNAL_HOST
                                         ) {
+                                            locationText = redactKulonCaptureLocation(target)
                                             Log.i(
                                                 TAG,
-                                                "state=blocked_navigation ${redactKulonCaptureLocation(target)}",
+                                                "state=blocked_navigation $locationText",
                                             )
                                             finish(activeAttemptId, result)
                                             return true

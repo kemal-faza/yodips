@@ -7,8 +7,12 @@ class KulonCaptureDiagnosticsTest {
     @Test
     fun `classifies authenticated Kulon pages and login redirects`() {
         assertEquals(
-            KulonCaptureOutcome.AUTHENTICATED,
+            KulonCaptureOutcome.LANDING_CANDIDATE,
             classifyKulonCaptureNavigation("https://kulon2.undip.ac.id/my/?sesskey=secret-ticket"),
+        )
+        assertEquals(
+            KulonCaptureOutcome.LANDING_CANDIDATE,
+            classifyKulonCaptureNavigation("https://kulon2.undip.ac.id/"),
         )
         assertEquals(
             KulonCaptureOutcome.CAPTURE_IN_PROGRESS,
@@ -73,6 +77,54 @@ class KulonCaptureDiagnosticsTest {
                 hasNewMoodleSessionCookie = true,
             ),
         )
+    }
+
+    @Test
+    fun `root landing distinguishes authenticated login and unverified pages`() {
+        val root = "https://kulon2.undip.ac.id/"
+
+        assertEquals(
+            KulonCaptureOutcome.AUTHENTICATED,
+            classifyKulonCaptureLanding(
+                root,
+                hasSesskeyMarker = true,
+                hasNewMoodleSessionCookie = true,
+            ),
+        )
+        assertEquals(
+            KulonCaptureOutcome.INTERACTION_REQUIRED,
+            classifyKulonCaptureLanding(
+                root,
+                hasSesskeyMarker = false,
+                hasNewMoodleSessionCookie = false,
+                hasLoginFormMarker = true,
+            ),
+        )
+        assertEquals(
+            KulonCaptureOutcome.INTERACTION_REQUIRED,
+            classifyKulonCaptureLanding(
+                root,
+                hasSesskeyMarker = true,
+                hasNewMoodleSessionCookie = true,
+                hasLoginFormMarker = true,
+            ),
+        )
+        assertEquals(
+            KulonCaptureOutcome.UNVERIFIED_LANDING,
+            classifyKulonCaptureLanding(
+                root,
+                hasSesskeyMarker = false,
+                hasNewMoodleSessionCookie = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `landing marker result accepts only the expected webview strings`() {
+        assertEquals(KulonLandingMarker.SESSKEY, parseKulonLandingMarkerResult("\"sesskey\""))
+        assertEquals(KulonLandingMarker.LOGIN_FORM, parseKulonLandingMarkerResult("\"login\""))
+        assertEquals(KulonLandingMarker.UNKNOWN, parseKulonLandingMarkerResult("\"other\""))
+        assertEquals(KulonLandingMarker.UNKNOWN, parseKulonLandingMarkerResult(null))
     }
 
     @Test
