@@ -2,7 +2,7 @@
 
 import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { extractTelemetryEvent } from "./manual-dashboard-baseline.mjs";
+import { extractTelemetryEvent } from "../telemetry/telemetry-event.mjs";
 
 export const MOBILE_DASHBOARD_PATHS = Object.freeze([
   "/api/siap/profile",

@@ -6,7 +6,7 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
-import { extractTelemetryEvent } from "./manual-dashboard-baseline.mjs";
+import { extractTelemetryEvent } from "../telemetry/telemetry-event.mjs";
 
 export { extractTelemetryEvent };
 
