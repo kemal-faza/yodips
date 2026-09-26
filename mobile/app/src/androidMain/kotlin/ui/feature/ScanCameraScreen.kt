@@ -142,8 +142,7 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                 galleryBusy = true
                 scope.launch {
                     val token = decodeQrFromGallery(context, scanner, uri)
-                    if (token != null) {
-                        processing.set(true)
+                    if (token != null && tryStartScanRequest(processing)) {
                         outcome = scanOutcome(repo.markKehadiran(token))
                     }
                     galleryBusy = false
@@ -203,7 +202,6 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                         .build()
                 analysis.setAnalyzer(scanExecutor) { imageProxy ->
                     decodeQr(imageProxy, scanner, processing) { token ->
-                        processing.set(true)
                         scope.launch {
                             outcome = scanOutcome(repo.markKehadiran(token))
                         }
@@ -505,8 +503,8 @@ private fun PermissionPrompt(
 
 /**
  * Run the MLKit QR decode on one camera frame and hand the first token to
- * [onToken]. Fully idempotent per-frame; the [processing] gate (thread-safe)
- * keeps us from firing duplicate presence calls while a previous call runs.
+ * [onToken]. The atomic [processing] gate is claimed by the first accepted
+ * decode across camera and gallery, preventing duplicate attendance requests.
  */
 private fun decodeQr(
     imageProxy: ImageProxy,
@@ -523,8 +521,7 @@ private fun decodeQr(
                 if (!processing.get()) {
                     val token =
                         codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }?.rawValue
-                    if (!token.isNullOrBlank()) {
-                        processing.set(true)
+                    if (!token.isNullOrBlank() && tryStartScanRequest(processing)) {
                         onToken(token)
                     }
                 }
