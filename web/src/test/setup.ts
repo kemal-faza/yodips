@@ -61,6 +61,15 @@ if (typeof SVGGraphicsElement !== 'undefined' && !SVGGraphicsElement.prototype.g
 if (typeof SVGTextContentElement !== 'undefined' && !SVGTextContentElement.prototype.getComputedTextLength) {
   SVGTextContentElement.prototype.getComputedTextLength = () => 0;
 }
+// jsdom currently omits SVGTextContentElement entirely, so SVG <text> nodes
+// inherit directly from SVGElement. Keep Unovis' SVG fallback available there.
+if (
+  typeof SVGTextContentElement === 'undefined' &&
+  typeof SVGElement !== 'undefined' &&
+  !('getComputedTextLength' in SVGElement.prototype)
+) {
+  (SVGElement.prototype as any).getComputedTextLength = () => 0;
+}
 if (typeof SVGGeometryElement !== 'undefined' && !SVGGeometryElement.prototype.getTotalLength) {
   SVGGeometryElement.prototype.getTotalLength = () => 0;
 }

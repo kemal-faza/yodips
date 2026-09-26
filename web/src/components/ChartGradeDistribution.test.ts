@@ -11,6 +11,12 @@ const data = [
 ];
 
 describe('ChartGradeDistribution palette', () => {
+  it('provides SVG text measurement in jsdom for Unovis axis layout', () => {
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+
+    expect((text as any).getComputedTextLength()).toBe(0);
+  });
+
   it('renders the legend with the reference colors (B is blue, never black)', () => {
     const w = mount(ChartGradeDistribution, { props: { data } });
     // jsdom normalizes inline hex to rgb(): #3b82f6 → rgb(59, 130, 246).
