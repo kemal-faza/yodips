@@ -10,18 +10,17 @@
  * Pertanyaan yang dijawab spike ini (murni PROBE, bukan menebak):
  *   1. Mana endpoint publik (bisa diakses TANPA header auth)?
  *   2. Mana endpoint yang butuh Basic auth `base64(nim:token)`?
- *   3. Endpoint absen API `absensi/proses_absen/{tokenParam}` — apa bentuk
- *      permintaannya & respons TANPA token valid?
+ *   3. Endpoint absen API `absen/proses_absen/{tokenParam}` — apakah route
+ *      merespons request dummy tanpa identitas atau kredensial?
  *
  * Driver CLI: `npx ts-node tools/siapapi-probe.ts <fetchers|absen>`.
  *   - `fetchers` (default): probe GET tiap endpoint `.../index.php/<path>`,
  *     dump preview, tandai butuh-auth (401/403 vs 200/404/405).
- *   - `absen`: probe POST `absensi/proses_absen/<dummy-token>` dengan
- *     variasi header (no-auth vs Basic nim:nim) — tanpa valid token, hanya
- *     lihat apakah endpoint merespons dan bentuk body-nya.
+ *   - `absen`: satu POST ke route singular dengan token all-zero dan
+ *     `app_ver=24`; tidak menerima token, identitas, atau auth dari env.
  *
- * CATATAN: jangankan tebak — kandidat path di bawah berasal dari decompile,
- * tapi respons mentah dari probe ini yang menentukan bentuk sebenarnya.
+ * CATATAN: kandidat GET path di bawah berasal dari decompile. Probe absen
+ * hanya memastikan route merespons; statusnya tidak membuktikan kontrak sukses.
  */
 
 export interface ProbeResponse {
@@ -34,8 +33,39 @@ export interface ProbeResponse {
   hadBasicAuth?: boolean;
 }
 
-function readPreview(text: string): string {
-  return text
+const QR_TOKEN_PATH = /\/(?:absen|absensi)\/proses_absen\/([^/]+)/i;
+
+/** Drop credentials, query values and QR tokens before a URL enters an artifact. */
+export function redactProbeUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    url.username = "";
+    url.password = "";
+    url.pathname = url.pathname.replace(QR_TOKEN_PATH, (match) => {
+      const tokenStart = match.lastIndexOf("/") + 1;
+      return `${match.slice(0, tokenStart)}[redacted]`;
+    });
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "[redacted-url]";
+  }
+}
+
+function redactEchoedQrToken(text: string, rawUrl: string): string {
+  try {
+    const token = new URL(rawUrl).pathname.match(QR_TOKEN_PATH)?.[1];
+    if (!token) return text;
+    const variants = new Set([token, decodeURIComponent(token)]);
+    return [...variants].reduce((safe, value) => safe.split(value).join("[redacted]"), text);
+  } catch {
+    return text;
+  }
+}
+
+function readPreview(text: string, rawUrl: string): string {
+  return redactEchoedQrToken(text, rawUrl)
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -81,11 +111,13 @@ export async function probe(
   url: string,
   method = "GET",
   extraHeaders: Record<string, string> = {},
+  body?: string,
 ): Promise<ProbeResponse> {
   let res: Response;
   try {
     res = await fetch(url, {
       method,
+      ...(body === undefined ? {} : { body }),
       headers: {
         Accept: "application/json",
         ...extraHeaders,
@@ -93,29 +125,40 @@ export async function probe(
     });
   } catch (e) {
     return {
-      url,
+      url: redactProbeUrl(url),
       method,
       status: 0,
       contentType: null,
-      preview: `FETCH_ERR: ${(e as Error).message}`,
+      // Fetch errors may embed the full URL (including a QR token); keep only
+      // the category so transport diagnostics cannot leak request data.
+      preview: "FETCH_ERR: request failed",
       bytes: 0,
       hadBasicAuth: Boolean(extraHeaders.Authorization),
     };
   }
-  const text = await res.clone().text();
+  let text: string;
+  try {
+    text = await res.clone().text();
+  } catch {
+    return {
+      url: redactProbeUrl(url),
+      method,
+      status: res.status,
+      contentType: res.headers.get("content-type"),
+      preview: "BODY_READ_ERR: response body unavailable",
+      bytes: Number(res.headers.get("content-length") ?? 0),
+      hadBasicAuth: Boolean(extraHeaders.Authorization),
+    };
+  }
   return {
-    url,
+    url: redactProbeUrl(url),
     method,
     status: res.status,
     contentType: res.headers.get("content-type"),
-    preview: readPreview(text),
+    preview: readPreview(text, url),
     bytes: Number(res.headers.get("content-length") ?? text.length),
     hadBasicAuth: Boolean(extraHeaders.Authorization),
   };
-}
-
-function basic(nim: string, secret: string): string {
-  return "Basic " + Buffer.from(`${nim}:${secret}`).toString("base64");
 }
 
 declare const console: { log(...args: unknown[]): void };
@@ -124,41 +167,19 @@ if (require.main === module) {
   const category = process.argv[2] ?? "fetchers";
   (async () => {
     if (category === "absen") {
-      // Probe endpoint absen API. Token dummy = GUID palsu (invalid, anti-replay).
-      const dummyToken = process.env.SIAPAPI_DUMMY_TOKEN ?? "dummy-qr-token-000000";
-      const nim = process.env.SIAPAPI_NIM ?? "";
-      const urls = [
-        `${SIAPAPI_BASE}/index.php/absensi/proses_absen/${dummyToken}`,
-        `${SIAPAPI_BASE}/absensi/proses_absen/${dummyToken}`,
-      ];
-      for (const u of urls) {
-        const variants: Array<[string, Record<string, string>]> = [
-          ["POST no-auth", { "Content-Type": "application/x-www-form-urlencoded" }],
-          [
-            "POST Basic(nim:nim)",
-            {
-              "Content-Type": "application/x-www-form-urlencoded",
-              Authorization: basic(nim, nim),
-            },
-          ],
-          [
-            "POST Basic(nim:token)",
-            {
-              "Content-Type": "application/x-www-form-urlencoded",
-              Authorization: basic(nim, "dummy-token"),
-            },
-          ],
-        ];
-        for (const [label, headers] of variants) {
-          const r = await probe(u, "POST", headers);
-          console.log(
-            `[${r.status}] ${label} ${u}\n` +
-              `    ct=${r.contentType} bytes=${r.bytes} preview=${r.preview}` +
-              (r.hadBasicAuth ? " [BASIC]" : "") +
-              `\n`,
-          );
-        }
-      }
+      // Fixed all-zero token; never accept a live QR or identity/auth override.
+      const dummyToken = "00000000-0000-0000-0000-000000000000";
+      const url = `${SIAPAPI_BASE}/index.php/absen/proses_absen/${dummyToken}`;
+      const r = await probe(
+        url,
+        "POST",
+        { "Content-Type": "application/x-www-form-urlencoded" },
+        "app_ver=24",
+      );
+      console.log(
+        `[${r.status}] POST ${r.url}\n` +
+          `    ct=${r.contentType} bytes=${r.bytes} preview=${r.preview}\n`,
+      );
       return;
     }
 
@@ -171,7 +192,7 @@ if (require.main === module) {
             ? " PUBLIC"
             : "";
       console.log(
-        `[${r.status}]${flag} ${r.method} ${u}\n` +
+        `[${r.status}]${flag} ${r.method} ${r.url}\n` +
           `    ct=${r.contentType} bytes=${r.bytes} preview=${r.preview}\n`,
       );
     }
