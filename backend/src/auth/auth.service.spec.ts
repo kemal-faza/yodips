@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { AuthService } from './auth.service';
+import { LegacyAuthService } from './legacy-auth.service';
 import { CachePolicy } from '../cache/cache-policy';
 import type { TelemetryRuntime } from '../observability/telemetry';
 
@@ -118,7 +119,18 @@ function telemetryRuntime(): TelemetryRuntime {
 
 function makeService() {
   return new AuthService(
-    mockSsoTicket,
+    mockSessionStore as any,
+    mockJwt as any,
+    mockConfig as any,
+    mockKulon as any,
+    mockSiap as any,
+    telemetryRuntime(),
+  );
+}
+
+function makeLegacyService() {
+  return new LegacyAuthService(
+    mockSsoTicket as any,
     mockMicrosoftAuth as any,
     mockPlaywright as any,
     mockSessionStore as any,
@@ -146,9 +158,9 @@ async function okFetch() {
   });
 }
 
-describe('AuthService session freshness', () => {
+describe('LegacyAuthService session freshness', () => {
   it('uses the injected wall clock for freshness and expires at the TTL boundary', () => {
-    const svc = makeService();
+    const svc = makeLegacyService();
     const session = { capturedAt: clock.wall - CachePolicy.AUTH_PROBE };
 
     expect((svc as any).isFresh(session)).toBe(true);
@@ -157,7 +169,7 @@ describe('AuthService session freshness', () => {
   });
 });
 
-describe('AuthService.captureSsoSession', () => {
+describe('LegacyAuthService.captureSsoSession', () => {
   it('never reuses a legacy stored session without a valid generation (E)', async () => {
     mockSessionStore._map.set('24060121130000', {
       identity: '24060121130000',
@@ -177,7 +189,7 @@ describe('AuthService.captureSsoSession', () => {
       capturedAt: Date.now(),
       sessionGeneration: GEN_1,
     });
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
     expect(res.reused).toBe(false);
     expect(mockPlaywright.launchAndCaptureSession).toHaveBeenCalled();
@@ -195,7 +207,7 @@ describe('AuthService.captureSsoSession', () => {
     });
     await okFetch();
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     expect(res.reused).toBe(true);
@@ -233,7 +245,7 @@ describe('AuthService.captureSsoSession', () => {
     mockPlaywright.launchAndCaptureSession.mockResolvedValue(fullCookies);
     await okFetch();
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     expect(res.reused).toBe(false);
@@ -262,7 +274,7 @@ describe('AuthService.captureSsoSession', () => {
     };
     mockPlaywright.launchAndCaptureSession.mockResolvedValue(fullCookies);
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     expect(res.reused).toBe(false);
@@ -302,7 +314,7 @@ describe('AuthService.captureSsoSession', () => {
       sessionGeneration: GEN_1,
     });
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     expect(res.reused).toBe(false);
@@ -326,7 +338,7 @@ describe('AuthService.captureSsoSession', () => {
       sessionGeneration: GEN_1,
     });
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     expect(res.reused).toBe(false);
@@ -347,7 +359,7 @@ describe('AuthService.captureSsoSession', () => {
       reason: 'stale',
     });
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     expect(res.hasKulon).toBe(false);
@@ -369,7 +381,7 @@ describe('AuthService.captureSsoSession', () => {
       reason: 'ok',
     });
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     expect(res.reused).toBe(true);
@@ -405,7 +417,7 @@ describe('AuthService.captureSsoSession', () => {
       sessionGeneration: GEN_1,
     });
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     // Must NOT silently hand out a stored session belonging to another user —
@@ -430,7 +442,7 @@ describe('AuthService.captureSsoSession', () => {
     });
     mockKulon.getSessionIdentity.mockResolvedValue('24060121130000');
 
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
 
     expect(res.hasKulon).toBe(true);
@@ -453,7 +465,7 @@ describe('AuthService.captureSsoSession', () => {
       sessionGeneration: reusedGen,
     });
     await okFetch();
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
     expect(mockJwt.signAsync).toHaveBeenCalledWith({
       sub: '24060121130000',
@@ -472,7 +484,7 @@ describe('AuthService.captureSsoSession', () => {
       capturedAt: clock.wall,
       sessionGeneration: GEN_3,
     });
-    const svc = makeService();
+    const svc = makeLegacyService();
     const res = await svc.captureSsoSession();
     expect(mockJwt.signAsync).toHaveBeenCalledWith({
       sub: '24060121130000',
@@ -904,7 +916,7 @@ describe('AuthService.handleSessionHandoff', () => {
   });
 });
 
-describe('AuthService.handleMicrosoftCallback', () => {
+describe('LegacyAuthService.handleMicrosoftCallback', () => {
   it('stores the Microsoft session under a per-login key, not a shared literal (B10)', async () => {
     mockMicrosoftAuth.handleCallback.mockResolvedValue({
       accessToken: 'ms-at',
@@ -912,7 +924,7 @@ describe('AuthService.handleMicrosoftCallback', () => {
     });
     // Capture the JWT payloads so we can assert distinct subs.
     mockJwt.signAsync.mockImplementation(async (p: any) => `jwt-${p.sub}`);
-    const svc = makeService();
+    const svc = makeLegacyService();
     const resA = await svc.handleMicrosoftCallback('codeA', 'stateA');
     const resB = await svc.handleMicrosoftCallback('codeB', 'stateB');
 
@@ -936,7 +948,7 @@ describe('AuthService.handleMicrosoftCallback', () => {
       accessToken: 'ms-at',
       sessionCookies: 'ESTSAUTH=MS',
     });
-    const svc = makeService();
+    const svc = makeLegacyService();
     await svc.handleMicrosoftCallback('codeX', 'stateX');
     const storedGen = mockSessionStore.get('microsoft:stateX').sessionGeneration;
     expect(storedGen).toMatch(/^[0-9a-f]{32}$/);

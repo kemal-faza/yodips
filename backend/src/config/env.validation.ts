@@ -43,40 +43,48 @@ export class EnvConfig {
   @Min(1)
   PORT: number = 3000;
 
-  // Microsoft Entra (for Kulon OIDC)
+  // Microsoft Entra (legacy OIDC; required only outside production)
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  MS_TENANT_ID: string;
+  MS_TENANT_ID?: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  MS_CLIENT_ID: string;
+  MS_CLIENT_ID?: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  MS_CLIENT_SECRET: string;
+  MS_CLIENT_SECRET?: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  MS_REDIRECT_URI: string;
+  MS_REDIRECT_URI?: string;
 
-  // Playwright (browser automation for SSO session capture)
+  // Playwright and interactive browser settings are dev/test-only.
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  CDP_URL: string;
+  CDP_URL?: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  SSO_DASHBOARD_URL: string;
+  SSO_DASHBOARD_URL?: string;
 
   // Interactive login (headed browser)
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  SSO_LOGIN_URL: string;
+  SSO_LOGIN_URL?: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  CHROME_PROFILE_DIR: string;
+  CHROME_PROFILE_DIR?: string;
 
   // Browser binary for the interactive login window (optional — code defaults
   // to Google Chrome). Declared here or `whitelist` strips it → fallback Chrome.
@@ -229,5 +237,27 @@ export function validateEnv(config: Record<string, unknown>): EnvConfig {
       errors.map((e) => JSON.stringify(e.constraints)).join(', '),
     );
   }
+
+  if (validated.NODE_ENV !== Env.Production) {
+    const legacyAuthConfig: Array<[string, string | undefined]> = [
+      ['MS_TENANT_ID', validated.MS_TENANT_ID],
+      ['MS_CLIENT_ID', validated.MS_CLIENT_ID],
+      ['MS_CLIENT_SECRET', validated.MS_CLIENT_SECRET],
+      ['MS_REDIRECT_URI', validated.MS_REDIRECT_URI],
+      ['CDP_URL', validated.CDP_URL],
+      ['SSO_DASHBOARD_URL', validated.SSO_DASHBOARD_URL],
+      ['SSO_LOGIN_URL', validated.SSO_LOGIN_URL],
+      ['CHROME_PROFILE_DIR', validated.CHROME_PROFILE_DIR],
+    ];
+    const missingLegacyAuthConfig = legacyAuthConfig
+      .filter(([, value]) => !value?.trim())
+      .map(([name]) => name);
+    if (missingLegacyAuthConfig.length > 0) {
+      throw new Error(
+        `Legacy auth configuration is required outside production: ${missingLegacyAuthConfig.join(', ')}`,
+      );
+    }
+  }
+
   return validated;
 }
