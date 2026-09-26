@@ -9,6 +9,7 @@ import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.normalizeNavTarget
+import ac.undip.sso.ui.login.DebugKulonTicketProbe
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
 import ac.undip.sso.ui.theme.ThemeController
@@ -176,6 +177,7 @@ fun AppRoot(
             initialNavTarget = normalizeNavTarget(pendingNavTarget),
             onNavConsumed = onNavConsumed,
             notificationHistory = PushGraph.history,
+            debugContent = { DebugKulonTicketProbe() },
         )
     } else {
         LoginScreen(

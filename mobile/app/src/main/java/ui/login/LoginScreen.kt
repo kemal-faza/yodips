@@ -4,6 +4,7 @@ import ac.undip.sso.BuildConfig
 import ac.undip.sso.core.login.LoginUrls
 import ac.undip.sso.core.login.generateSsoTicket
 import ac.undip.sso.core.login.isAllowedLoginHost
+import ac.undip.sso.core.login.redactKulonCaptureLocation
 import ac.undip.sso.core.login.isAuthenticatedKulonUrl
 import ac.undip.sso.core.login.isAuthenticatedSiapUrl
 import ac.undip.sso.core.login.isMicrosoftAuthorize
@@ -202,7 +203,7 @@ fun LoginScreen(
                 }
 
                 is HandoffResult.Failure -> {
-                    slog("handoff FAIL: ".plus(r.reason.take(160)))
+                    slog("handoff FAIL")
                     loading = false
                     error = r.reason
                     phase = 2 // allow retry by re-loading SIAP
@@ -244,7 +245,7 @@ fun LoginScreen(
                                     favicon: Bitmap?,
                                 ) {
                                     super.onPageStarted(view, url, favicon)
-                                    slog("onPageStarted p$phase $url")
+                                    slog("onPageStarted p$phase ${redactKulonCaptureLocation(url)}")
                                     loading = true
                                     // A hop through Microsoft marks a real sign-in round-trip.
                                     if (isMicrosoftAuthorize(url)) seenMicrosoft = true
@@ -255,7 +256,7 @@ fun LoginScreen(
                                     url: String?,
                                 ) {
                                     super.onPageFinished(view, url)
-                                    slog("onPageFinished p$phase $url")
+                                    slog("onPageFinished p$phase ${redactKulonCaptureLocation(url)}")
                                     loading = false
                                     // Normalize the SSO login layout so its card actually
                                     // paints in this WebView (see SSO_LAYOUT_SHIM). Apply
@@ -305,7 +306,7 @@ fun LoginScreen(
                                     request: WebResourceRequest?,
                                 ): Boolean {
                                     val host = request?.url?.host.orEmpty()
-                                    slog("override host=$host phase=$phase")
+                                    slog("override phase=$phase ${redactKulonCaptureLocation(request?.url?.toString())}")
                                     // Block anything not part of the SSO/Microsoft sign-in.
                                     if (!isAllowedLoginHost(host)) return true
                                     if (isMicrosoftAuthorize(request?.url?.toString())) seenMicrosoft = true
@@ -340,6 +341,7 @@ fun LoginScreen(
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 }
             }
+
         }
     }
 }

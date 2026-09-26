@@ -122,6 +122,7 @@ fun AppShell(
     initialNavTarget: String? = null,
     onNavConsumed: () -> Unit = {},
     notificationHistory: NotificationHistoryStore? = null,
+    debugContent: (@Composable () -> Unit)? = null,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -215,6 +216,7 @@ fun AppShell(
                     repo = repo,
                     themeController = themeController,
                     onLogout = onLogout,
+                    debugContent = debugContent,
                 )
             }
             composable("khs") {

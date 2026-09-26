@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -59,6 +60,7 @@ fun ProfileScreen(
     repo: SsoRepository,
     themeController: ThemeController,
     onLogout: () -> Unit,
+    debugContent: (@Composable () -> Unit)? = null,
 ) {
     val darkTheme = themeController.dark
     FeatureScreen(
@@ -73,10 +75,16 @@ fun ProfileScreen(
             }
         },
     ) {
-        RefreshableLoadableData(load = {
-            repo.profile()
-        }, onRefresh = { repo.profile(force = true) }, emptyMessage = "Profil belum tersedia") { p ->
-            ProfileContent(p, onLogout)
+        Column(Modifier.fillMaxSize()) {
+            debugContent?.invoke()
+            RefreshableLoadableData(
+                load = { repo.profile() },
+                onRefresh = { repo.profile(force = true) },
+                modifier = Modifier.weight(1f),
+                emptyMessage = "Profil belum tersedia",
+            ) { p ->
+                ProfileContent(p, onLogout)
+            }
         }
     }
 }
