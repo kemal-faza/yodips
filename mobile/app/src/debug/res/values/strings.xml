@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds carry a distinct launcher label so a debug install (separate
+     package, e.g. the isolated .localdebug E2E build) is not confused with the
+     release app on the same device. Release keeps the main "YoDips" label. -->
+<resources>
+    <string name="app_name">YoDips Debug</string>
+</resources>
