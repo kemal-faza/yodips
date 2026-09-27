@@ -120,6 +120,59 @@ class KulonCaptureDiagnosticsTest {
     }
 
     @Test
+    fun `recovery landing accepts a sesskey page without a rotated cookie`() {
+        // The browser can hold a live Kulon cookie while the backend copy is
+        // stale; the ticket then lands authenticated without rotating
+        // MoodleSession. The renewal endpoint re-validates the cookie upstream
+        // and against the JWT identity before storing it, so a sesskey landing
+        // is enough for recovery. The diagnostic
+        // `classifyKulonCaptureLanding` keeps the stricter new-cookie rule.
+        assertEquals(
+            KulonCaptureOutcome.AUTHENTICATED,
+            classifyKulonRecoveryLanding(
+                "https://kulon2.undip.ac.id/my/",
+                hasSesskeyMarker = true,
+            ),
+        )
+        assertEquals(
+            KulonCaptureOutcome.AUTHENTICATED,
+            classifyKulonRecoveryLanding(
+                "https://kulon2.undip.ac.id/",
+                hasSesskeyMarker = true,
+            ),
+        )
+        assertEquals(
+            KulonCaptureOutcome.INTERACTION_REQUIRED,
+            classifyKulonRecoveryLanding(
+                "https://kulon2.undip.ac.id/my/",
+                hasSesskeyMarker = true,
+                hasLoginFormMarker = true,
+            ),
+        )
+        assertEquals(
+            KulonCaptureOutcome.UNVERIFIED_LANDING,
+            classifyKulonRecoveryLanding(
+                "https://kulon2.undip.ac.id/my/",
+                hasSesskeyMarker = false,
+            ),
+        )
+        assertEquals(
+            KulonCaptureOutcome.UNKNOWN_PATH,
+            classifyKulonRecoveryLanding(
+                "https://kulon2.undip.ac.id/course/view.php",
+                hasSesskeyMarker = true,
+            ),
+        )
+        assertEquals(
+            KulonCaptureOutcome.EXTERNAL_HOST,
+            classifyKulonRecoveryLanding(
+                "https://kulon2.undip.ac.id.evil.example/my/",
+                hasSesskeyMarker = true,
+            ),
+        )
+    }
+
+    @Test
     fun `landing marker result accepts only the expected webview strings`() {
         assertEquals(KulonLandingMarker.SESSKEY, parseKulonLandingMarkerResult("\"sesskey\""))
         assertEquals(KulonLandingMarker.LOGIN_FORM, parseKulonLandingMarkerResult("\"login\""))

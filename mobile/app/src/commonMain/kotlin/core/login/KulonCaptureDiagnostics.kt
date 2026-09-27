@@ -52,15 +52,47 @@ fun classifyKulonCaptureLanding(
     hasSesskeyMarker: Boolean,
     hasNewMoodleSessionCookie: Boolean,
     hasLoginFormMarker: Boolean = false,
+): KulonCaptureOutcome =
+    classifyKulonLanding(
+        url = url,
+        hasLoginFormMarker = hasLoginFormMarker,
+        isAuthenticated = hasSesskeyMarker && hasNewMoodleSessionCookie,
+    )
+
+/**
+ * Recovery acceptance for the interactive Kulon capture. The browser can
+ * already hold a live Kulon cookie while the backend copy is stale (the
+ * upstream rotated the session after the handoff snapshot); the ticket then
+ * lands authenticated without rotating MoodleSession, so requiring a changed
+ * cookie would block a valid recovery. The renewal endpoint re-validates the
+ * cookie upstream and against the JWT identity before storing it, so a
+ * sesskey landing without a login form is enough here.
+ * [classifyKulonCaptureLanding] keeps the stricter new-cookie rule for the
+ * silent-ticket diagnostic.
+ */
+fun classifyKulonRecoveryLanding(
+    url: String?,
+    hasSesskeyMarker: Boolean,
+    hasLoginFormMarker: Boolean = false,
+): KulonCaptureOutcome =
+    classifyKulonLanding(
+        url = url,
+        hasLoginFormMarker = hasLoginFormMarker,
+        isAuthenticated = hasSesskeyMarker,
+    )
+
+/** Shared landing contract; only the authenticated predicate differs per caller. */
+private fun classifyKulonLanding(
+    url: String?,
+    hasLoginFormMarker: Boolean,
+    isAuthenticated: Boolean,
 ): KulonCaptureOutcome {
     val navigation = classifyKulonCaptureNavigation(url)
     return when (navigation) {
         KulonCaptureOutcome.LANDING_CANDIDATE ->
             when {
-                hasLoginFormMarker ->
-                    KulonCaptureOutcome.INTERACTION_REQUIRED
-                hasSesskeyMarker && hasNewMoodleSessionCookie ->
-                    KulonCaptureOutcome.AUTHENTICATED
+                hasLoginFormMarker -> KulonCaptureOutcome.INTERACTION_REQUIRED
+                isAuthenticated -> KulonCaptureOutcome.AUTHENTICATED
                 else -> KulonCaptureOutcome.UNVERIFIED_LANDING
             }
         else -> navigation

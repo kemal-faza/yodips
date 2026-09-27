@@ -69,7 +69,11 @@ fun isAllowedLoginHost(host: String): Boolean {
 }
 
 /** True when the URL is on the SSO home (not a Microsoft authorize page). */
-fun isSsoHost(url: String?): Boolean = url?.startsWith("https://sso.undip.ac.id") == true
+fun isSsoHost(url: String?): Boolean {
+    val u = url ?: return false
+    // Exact origin boundary — `sso.undip.ac.id.evil.example` must NOT match.
+    return u == "https://sso.undip.ac.id" || u.startsWith("https://sso.undip.ac.id/")
+}
 
 /** True when the URL is the SSO login form (host SSO + login path). */
 fun isSsoLoginPage(url: String?): Boolean {
@@ -136,6 +140,48 @@ fun ssoLoginCompleted(
     if (queryParam(u, "error") != null) return false // prompt=none interaction bounce
     return !isSsoLoginPath(u) // a genuine post-login page (not the login form)
 }
+
+/** Whether an explicit Kulon recovery may use the already-authenticated SSO dashboard. */
+fun ssoRecoveryLoginCompleted(
+    url: String?,
+    seenMicrosoft: Boolean,
+    hasSsoCookie: Boolean,
+    hasAuthenticatedDashboardMarker: Boolean,
+): Boolean {
+    val u = url ?: return false
+    if (!isSsoHost(u)) return false
+    if (ssoLoginCompleted(u, seenMicrosoft, hasSsoCookie)) return true
+    if (!hasSsoCookie || !hasAuthenticatedDashboardMarker || queryParam(u, "error") != null) {
+        return false
+    }
+    val landing = u.substringBefore('#').substringBefore('?').removeSuffix("/")
+    return landing == "https://sso.undip.ac.id/pages/dashboard"
+}
+
+/**
+ * Keep a resumed interaction redirect only when the Kulon capture classifier
+ * flags the navigation as an interaction page: https on an allowlisted host
+ * (undip.ac.id or the Microsoft sign-in domains). This is a host-level
+ * allowlist, not an authorize-path match — Microsoft and SSO keep flow state
+ * on several paths under those hosts (`/kmsi`, tenant-specific authorize
+ * URLs, `?code=` returns), and matching shapes here already broke the live
+ * A55 flow once. The value stays in memory and is only loaded after an
+ * explicit user CTA.
+ */
+fun resumeKulonInteractionUrl(url: String?): String? =
+    url?.takeIf { classifyKulonCaptureNavigation(it) == KulonCaptureOutcome.INTERACTION_REQUIRED }
+
+/**
+ * After the interactive SSO hop the browser can land straight on an
+ * authenticated Kulon page without pausing on an SSO page of its own (observed
+ * on A55: Microsoft → SSO callback → Kulon `/my/`). A Kulon landing candidate
+ * is the signal that the SSO hop is done, so the caller can mint the ticket
+ * exactly like [ssoLoginCompleted] does for an SSO landing. The landing probe
+ * still has to expose the authenticated marker before the cookie is submitted
+ * to the backend, which re-validates it upstream.
+ */
+fun shouldStartKulonTicketAfterSso(url: String?): Boolean =
+    classifyKulonCaptureNavigation(url) == KulonCaptureOutcome.LANDING_CANDIDATE
 
 /** Percent-decode a URL-encoded string (replaces java.net.URLDecoder). */
 private fun percentDecode(s: String): String {

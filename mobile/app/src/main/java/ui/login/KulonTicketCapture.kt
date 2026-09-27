@@ -5,15 +5,17 @@ import ac.undip.sso.core.data.DirectTicketCaptureResult
 import ac.undip.sso.core.login.KulonCaptureOutcome
 import ac.undip.sso.core.login.KulonLandingMarker
 import ac.undip.sso.core.login.LoginUrls
-import ac.undip.sso.core.login.classifyKulonCaptureLanding
 import ac.undip.sso.core.login.classifyKulonCaptureNavigation
+import ac.undip.sso.core.login.classifyKulonRecoveryLanding
 import ac.undip.sso.core.login.generateSsoTicket
 import ac.undip.sso.core.login.isAllowedLoginHost
 import ac.undip.sso.core.login.isMicrosoftAuthorize
-import ac.undip.sso.core.login.isSsoLoginPage
 import ac.undip.sso.core.login.kulonTicketUrl
 import ac.undip.sso.core.login.parseKulonLandingMarkerResult
+import ac.undip.sso.core.login.resumeKulonInteractionUrl
+import ac.undip.sso.core.login.shouldStartKulonTicketAfterSso
 import ac.undip.sso.core.login.ssoLoginCompleted
+import ac.undip.sso.core.login.ssoRecoveryLoginCompleted
 import ac.undip.sso.core.network.UpstreamSessionService
 import android.graphics.Bitmap
 import android.net.Uri
@@ -57,8 +59,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 private const val KULON_ORIGIN = "https://kulon2.undip.ac.id/"
+private const val SSO_ORIGIN = "https://sso.undip.ac.id"
 private const val TICKET_CAPTURE_TIMEOUT_MS = 5 * 60 * 1000L
-private val LANDING_MARKERS_PROBE =
+/**
+ * Shared by this dialog and the debug diagnostics screen so a marker-detection
+ * fix cannot silently apply to only one of them.
+ */
+internal val KULON_LANDING_MARKERS_PROBE =
     """
     (function(){
         var hasSesskey = !!document.querySelector('input[name="sesskey"]');
@@ -66,6 +73,37 @@ private val LANDING_MARKERS_PROBE =
         return hasLoginForm ? 'login' : (hasSesskey ? 'sesskey' : 'unknown');
     })()
     """.trimIndent()
+private val SSO_AUTHENTICATED_DASHBOARD_MARKERS_PROBE =
+    """
+    (function(){
+        try {
+            var path = location.pathname.replace(/\/+$/, "");
+            if (location.origin !== "$SSO_ORIGIN" || path !== "/pages/dashboard") return false;
+            var links = Array.from(document.querySelectorAll('a[href]'));
+            function hasMarker(labels, paths) {
+                return links.some(function(a) {
+                    var target;
+                    try { target = new URL(a.href, location.href); } catch (e) { return false; }
+                    if (target.origin !== location.origin) return false;
+                    var label = (a.innerText || "").trim().toLowerCase();
+                    var segments = target.pathname.toLowerCase().split("/");
+                    return labels.includes(label) || paths.some(function(segment) {
+                        return segments.includes(segment);
+                    });
+                });
+            }
+            return hasMarker(["logout", "log out", "keluar"], ["logout", "keluar"]) &&
+                hasMarker(["profile", "profil"], ["profile", "profil"]);
+        } catch (e) {
+            return false;
+        }
+    })()
+    """.trimIndent()
+
+private fun isSsoRecoveryDashboardCandidate(url: String?): Boolean {
+    val landing = url?.substringBefore('#')?.substringBefore('?')?.removeSuffix("/") ?: return false
+    return landing == "$SSO_ORIGIN/pages/dashboard"
+}
 
 /** Bridges the suspend recovery call to a user-confirmed Android WebView flow. */
 internal class KulonTicketCaptureBridge : DirectTicketCapture {
@@ -151,7 +189,10 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
     var busy by remember { mutableStateOf(true) }
     var phase by remember { mutableStateOf(CapturePhase.DIRECT_TICKET) }
     var seenMicrosoft by remember { mutableStateOf(false) }
-    var baselineFingerprint by remember { mutableStateOf<String?>(null) }
+    var pendingInteractionUrl by remember { mutableStateOf<String?>(null) }
+    // Bumped on every load/finish so a queued evaluateJavascript result from an
+    // older navigation can never decide the current one.
+    var navigationToken by remember { mutableStateOf(0) }
     val handler = remember { Handler(Looper.getMainLooper()) }
 
     fun finish(result: DirectTicketCaptureResult) {
@@ -159,6 +200,8 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
         finished = true
         busy = false
         awaitingMicrosoft = false
+        pendingInteractionUrl = null
+        navigationToken += 1
         handler.removeCallbacksAndMessages(null)
         request.finish(result)
     }
@@ -166,11 +209,9 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
     fun startTicket(view: WebView) {
         phase = CapturePhase.DIRECT_TICKET
         awaitingMicrosoft = false
+        pendingInteractionUrl = null
         busy = true
-        baselineFingerprint =
-            fingerprintMoodleSessionCookieHeader(
-                CookieManager.getInstance().getCookie(KULON_ORIGIN),
-            )
+        navigationToken += 1
         view.loadUrl(kulonTicketUrl(generateSsoTicket()))
     }
 
@@ -180,7 +221,10 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
         seenMicrosoft = false
         awaitingMicrosoft = false
         busy = true
-        view.loadUrl(LoginUrls.SSO_LOGIN)
+        val resumeUrl = pendingInteractionUrl ?: LoginUrls.SSO_LOGIN
+        pendingInteractionUrl = null
+        navigationToken += 1
+        view.loadUrl(resumeUrl)
     }
 
     val timeout = remember(request) {
@@ -190,8 +234,11 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
     DisposableEffect(request) {
         handler.postDelayed(timeout, TICKET_CAPTURE_TIMEOUT_MS)
         onDispose {
+            // Fence queued evaluateJavascript callbacks before the WebView is
+            // destroyed; otherwise one could still load a URL on a dead view.
+            finished = true
             handler.removeCallbacksAndMessages(null)
-            if (!finished) request.finish(DirectTicketCaptureResult.NetworkFailure)
+            request.finish(DirectTicketCaptureResult.NetworkFailure)
             webView?.stopLoading()
             webView?.destroy()
             webView = null
@@ -259,15 +306,53 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                                                 return
                                             }
                                             if (isMicrosoftAuthorize(url)) seenMicrosoft = true
-                                            if (
-                                                inspectLanding &&
-                                                ssoLoginCompleted(
-                                                    url,
-                                                    seenMicrosoft,
-                                                    cookies.getCookie("https://sso.undip.ac.id")
-                                                        ?.contains("ci_session_sso=") == true,
-                                                )
-                                            ) {
+                                            if (inspectLanding) {
+                                                val hasSsoCookie =
+                                                    cookies.getCookie(SSO_ORIGIN)
+                                                        ?.contains("ci_session_sso=") == true
+                                                val dashboardCandidate = isSsoRecoveryDashboardCandidate(url)
+                                                if (ssoLoginCompleted(url, seenMicrosoft, hasSsoCookie)) {
+                                                    startTicket(view)
+                                                } else if (hasSsoCookie && dashboardCandidate) {
+                                                    val token = navigationToken
+                                                    view.evaluateJavascript(SSO_AUTHENTICATED_DASHBOARD_MARKERS_PROBE) { raw ->
+                                                        if (
+                                                            finished ||
+                                                            webView !== view ||
+                                                            token != navigationToken ||
+                                                            phase != CapturePhase.SSO_LOGIN
+                                                        ) {
+                                                            return@evaluateJavascript
+                                                        }
+                                                        val currentHasSsoCookie =
+                                                            cookies.getCookie(SSO_ORIGIN)
+                                                                ?.contains("ci_session_sso=") == true
+                                                        val marker = raw == "true"
+                                                        val accepted =
+                                                            ssoRecoveryLoginCompleted(
+                                                                url,
+                                                                seenMicrosoft,
+                                                                currentHasSsoCookie,
+                                                                marker,
+                                                            )
+                                                        if (accepted) {
+                                                            startTicket(view)
+                                                        } else {
+                                                            // The dashboard markers did not prove an
+                                                            // authenticated session (guest page or
+                                                            // changed markup); offer the explicit
+                                                            // retry instead of idling until timeout.
+                                                            awaitingMicrosoft = true
+                                                            busy = false
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // Observed on A55: SSO can redirect straight
+                                            // into Kulon once Microsoft completes, with
+                                            // no SSO page of its own to detect. Mint the
+                                            // ticket here like a completed SSO hop would.
+                                            if (inspectLanding && shouldStartKulonTicketAfterSso(url)) {
                                                 startTicket(view)
                                             }
                                             return
@@ -275,6 +360,7 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
 
                                         when (classifyKulonCaptureNavigation(url)) {
                                             KulonCaptureOutcome.INTERACTION_REQUIRED -> {
+                                                pendingInteractionUrl = resumeKulonInteractionUrl(url)
                                                 awaitingMicrosoft = true
                                                 busy = false
                                                 view.stopLoading()
@@ -289,17 +375,20 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                                             }
                                             KulonCaptureOutcome.LANDING_CANDIDATE -> {
                                                 if (inspectLanding) {
-                                                    view.evaluateJavascript(LANDING_MARKERS_PROBE) { raw ->
-                                                        if (finished) return@evaluateJavascript
+                                                    val token = navigationToken
+                                                    view.evaluateJavascript(KULON_LANDING_MARKERS_PROBE) { raw ->
+                                                        if (
+                                                            finished ||
+                                                            webView !== view ||
+                                                            token != navigationToken
+                                                        ) {
+                                                            return@evaluateJavascript
+                                                        }
                                                         val marker = parseKulonLandingMarkerResult(raw)
                                                         val cookieHeader = cookies.getCookie(KULON_ORIGIN)
-                                                        val fingerprint =
-                                                            fingerprintMoodleSessionCookieHeader(cookieHeader)
-                                                        val outcome = classifyKulonCaptureLanding(
+                                                        val outcome = classifyKulonRecoveryLanding(
                                                             url,
                                                             hasSesskeyMarker = marker == KulonLandingMarker.SESSKEY,
-                                                            hasNewMoodleSessionCookie =
-                                                                fingerprint != null && fingerprint != baselineFingerprint,
                                                             hasLoginFormMarker = marker == KulonLandingMarker.LOGIN_FORM,
                                                         )
                                                         when (outcome) {
@@ -359,6 +448,7 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                                         if (classifyKulonCaptureNavigation(target) ==
                                             KulonCaptureOutcome.INTERACTION_REQUIRED
                                         ) {
+                                            pendingInteractionUrl = resumeKulonInteractionUrl(target)
                                             awaitingMicrosoft = true
                                             busy = false
                                             view?.stopLoading()

@@ -45,13 +45,6 @@ import java.security.MessageDigest
 private const val TAG = "KulonTicketProbe"
 private const val KULON_ORIGIN = "https://kulon2.undip.ac.id/"
 private const val PROBE_TIMEOUT_MS = 45_000L
-private val LANDING_MARKERS_PROBE = """
-    (function(){
-        var hasSesskey = !!document.querySelector('input[name="sesskey"]');
-        var hasLoginForm = !!document.querySelector('input[type="password"], form[action*="login"]');
-        return hasLoginForm ? 'login' : (hasSesskey ? 'sesskey' : 'unknown');
-    })()
-""".trimIndent()
 
 /**
  * Read-only direct-ticket discovery harness. This is intentionally absent from
@@ -199,7 +192,7 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
                                             }
                                             KulonCaptureOutcome.LANDING_CANDIDATE -> {
                                                 if (waitForLandingMarker) {
-                                                    view.evaluateJavascript(LANDING_MARKERS_PROBE) { raw ->
+                                                    view.evaluateJavascript(KULON_LANDING_MARKERS_PROBE) { raw ->
                                                         if (activeAttemptId != attemptId || completed) {
                                                             return@evaluateJavascript
                                                         }

@@ -1,6 +1,8 @@
 package ac.undip.sso.core.login
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,6 +47,8 @@ class LoginFlowTest {
     fun `host predicates classify urls correctly`() {
         assertTrue(isSsoHost("https://sso.undip.ac.id/auth/user/login"))
         assertTrue(isSsoHost("https://sso.undip.ac.id/"))
+        assertTrue(isSsoHost("https://sso.undip.ac.id"))
+        assertFalse(isSsoHost("https://sso.undip.ac.id.evil.example/pages/dashboard"))
         assertFalse(isSsoHost("https://login.microsoftonline.com/tenant/authorize"))
         assertFalse(isSsoHost(null))
         assertFalse(isSsoHost(""))
@@ -129,5 +133,94 @@ class LoginFlowTest {
     @Test
     fun `return to SSO without fresh cookie does not advance`() {
         assertFalse(ssoLoginCompleted("https://sso.undip.ac.id/dashboard", seenMicrosoft = true, hasSsoCookie = false))
+    }
+
+    @Test
+    fun `Kulon recovery accepts authenticated SSO dashboard after user confirmation`() {
+        assertTrue(
+            ssoRecoveryLoginCompleted(
+                url = "https://sso.undip.ac.id/pages/dashboard",
+                seenMicrosoft = false,
+                hasSsoCookie = true,
+                hasAuthenticatedDashboardMarker = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `Kulon recovery rejects a guest page or an incomplete authenticated marker`() {
+        assertFalse(
+            ssoRecoveryLoginCompleted(
+                url = "https://sso.undip.ac.id/auth/user/login",
+                seenMicrosoft = false,
+                hasSsoCookie = true,
+                hasAuthenticatedDashboardMarker = true,
+            ),
+        )
+        assertFalse(
+            ssoRecoveryLoginCompleted(
+                url = "https://sso.undip.ac.id/pages/dashboard",
+                seenMicrosoft = false,
+                hasSsoCookie = false,
+                hasAuthenticatedDashboardMarker = true,
+            ),
+        )
+        assertFalse(
+            ssoRecoveryLoginCompleted(
+                url = "https://sso.undip.ac.id/pages/dashboard",
+                seenMicrosoft = false,
+                hasSsoCookie = true,
+                hasAuthenticatedDashboardMarker = false,
+            ),
+        )
+        assertFalse(
+            ssoRecoveryLoginCompleted(
+                url = "https://sso.undip.ac.id/pages/dashboard?error=interaction_required",
+                seenMicrosoft = false,
+                hasSsoCookie = true,
+                hasAuthenticatedDashboardMarker = true,
+            ),
+        )
+        assertFalse(
+            ssoRecoveryLoginCompleted(
+                url = "https://sso.undip.ac.id.evil.example/pages/dashboard",
+                seenMicrosoft = true,
+                hasSsoCookie = true,
+                hasAuthenticatedDashboardMarker = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `Kulon recovery resumes only an allowlisted interaction URL`() {
+        val microsoftUrl =
+            "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?client_id=test&state=opaque-state"
+        val ssoLoginUrl = "https://sso.undip.ac.id/auth/user/login?continue=%2Fpages%2Fdashboard"
+
+        assertEquals(microsoftUrl, resumeKulonInteractionUrl(microsoftUrl))
+        assertEquals(ssoLoginUrl, resumeKulonInteractionUrl(ssoLoginUrl))
+        assertNull(resumeKulonInteractionUrl("https://sso.undip.ac.id/pages/dashboard"))
+        assertNull(resumeKulonInteractionUrl("https://evil.example/authorize"))
+        assertNull(resumeKulonInteractionUrl("http://login.microsoftonline.com/authorize"))
+    }
+
+    @Test
+    fun `Kulon recovery mints the ticket when SSO redirects straight to Kulon`() {
+        // Observed on A55: after Microsoft completes, SSO redirects straight to
+        // the Kulon dashboard without pausing on a visible SSO page. The SSO
+        // phase must treat a Kulon landing candidate as SSO completion.
+        assertTrue(shouldStartKulonTicketAfterSso("https://kulon2.undip.ac.id/my/"))
+        assertTrue(shouldStartKulonTicketAfterSso("https://kulon2.undip.ac.id/"))
+
+        assertFalse(shouldStartKulonTicketAfterSso("https://kulon2.undip.ac.id/login/index.php"))
+        assertFalse(shouldStartKulonTicketAfterSso("https://kulon2.undip.ac.id/auth/oidc/?t=secret"))
+        assertFalse(shouldStartKulonTicketAfterSso("https://sso.undip.ac.id/pages/dashboard"))
+        assertFalse(
+            shouldStartKulonTicketAfterSso(
+                "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=opaque",
+            ),
+        )
+        assertFalse(shouldStartKulonTicketAfterSso("https://evil.example/my/"))
+        assertFalse(shouldStartKulonTicketAfterSso(null))
     }
 }
