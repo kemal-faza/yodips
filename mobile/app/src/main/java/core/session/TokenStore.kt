@@ -1,6 +1,7 @@
 package ac.undip.sso.core.session
 
 import ac.undip.sso.core.data.TokenStoreLike
+import ac.undip.sso.core.data.CookieUpdateResult
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -48,6 +49,23 @@ class TokenStore(
             it[Keys.JWT] = cipher.encrypt(token)
             if (siap != null) it[Keys.SIAP_COOKIE] = cipher.encrypt(siap)
             if (kulon != null) it[Keys.KULON_COOKIE] = cipher.encrypt(kulon)
+        }
+    }
+
+    /**
+     * Replace only Kulon's encrypted cookie in one DataStore transaction.
+     * JWT and SIAP credentials are left untouched if encryption or persistence
+     * fails; DataStore's edit transaction rolls the whole update back.
+     */
+    override suspend fun updateKulonCookie(cookie: String): CookieUpdateResult {
+        if (cookie.isBlank()) return CookieUpdateResult.FAILED
+        return try {
+            dataStore.edit { it[Keys.KULON_COOKIE] = cipher.encrypt(cookie) }
+            CookieUpdateResult.UPDATED
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            CookieUpdateResult.FAILED
         }
     }
 

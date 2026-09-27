@@ -27,6 +27,9 @@ interface PersistentCache {
         json: String,
         fetchedAt: Long,
     )
+
+    /** Drop all user-scoped cached values during explicit logout. */
+    suspend fun clear() = Unit
 }
 
 /** No disk backing — unit tests use this so nothing touches DataStore. */
@@ -65,4 +68,6 @@ class EncryptedPersistentCache(
     ) {
         delegate.save(key, cipher.encrypt(json), fetchedAt)
     }
+
+    override suspend fun clear() = delegate.clear()
 }

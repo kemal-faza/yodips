@@ -1,7 +1,19 @@
-import { Body, Controller, Get, HttpException, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpException,
+  HttpStatus,
+  Post,
+  Req,
+  UseGuards,
+  ValidationPipe,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { HandoffDto } from './dto/handoff.dto';
+import { UpstreamSessionRenewalDto } from './dto/upstream-session-renewal.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Controller('api/auth')
@@ -36,6 +48,20 @@ export class AuthController {
   @Get('me')
   me(@Req() req: any) {
     return this.authService.me(req.user);
+  }
+
+  // Cookie renewal mutates one credential on the existing session, so require
+  // the exact live JWT generation and throttle upstream validation attempts.
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @Post('upstream-session/renew')
+  renewUpstreamSession(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    dto: UpstreamSessionRenewalDto,
+    @Req() req: any,
+  ) {
+    return this.authService.renewUpstreamSession(dto, req.user);
   }
 
   // Server-side logout. NOT JWT-guarded: an expired-but-valid bearer must still

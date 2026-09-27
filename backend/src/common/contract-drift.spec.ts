@@ -45,7 +45,15 @@ function declaredKotlin(source: string, startMarker: string): string[] {
   return [...block.matchAll(/const val [A-Z0-9_]+ = "([A-Z][A-Z0-9_]+)"/g)].map((m) => m[1]);
 }
 
-const CORE_CODES = ['KULON_STALE', 'SIAP_STALE', 'INVALID_TOKEN', 'SESSION_DEAD'];
+const CORE_CODES = [
+  'KULON_STALE',
+  'SIAP_STALE',
+  'INVALID_TOKEN',
+  'SESSION_DEAD',
+  'UPSTREAM_SESSION_INVALID',
+  'UPSTREAM_SESSION_CONFLICT',
+  'UPSTREAM_UNAVAILABLE',
+];
 
 const CLIENTS: { name: string; file: string; codes: () => string[] }[] = [
   {

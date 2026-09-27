@@ -60,6 +60,17 @@ type KulonScope =
   | { kind: 'session'; ref: SessionRef }
   | { kind: 'current'; sub: string };
 
+export type KulonRenewalValidation =
+  | { kind: 'valid'; identity: string }
+  | { kind: 'invalid' }
+  | { kind: 'unavailable' };
+
+class KulonRenewalProbeFailure extends Error {
+  constructor(readonly kind: 'invalid' | 'unavailable') {
+    super('Kulon renewal validation failed');
+  }
+}
+
 type TimelineCourses = {
   all: Omit<KulonCourse, 'timelineStatus'>[];
   inprogress: Omit<KulonCourse, 'timelineStatus'>[];
@@ -272,6 +283,123 @@ export class KulonService {
       return this.identityFromProfilePage(sessionCookie);
     } catch {
       return null;
+    }
+  }
+
+  /** Read-only credential and identity check used only by authenticated renewal. */
+  async validateSessionCookieForRenewal(
+    sessionCookie: string,
+  ): Promise<KulonRenewalValidation> {
+    if (!sessionCookie) return { kind: 'invalid' };
+    try {
+      await timedFetch<void>(
+        this.runtime,
+        KULON_ROUTE_CONTEXTS.sessionIdentity,
+        `${this.baseUrl}/my/`,
+        { headers: { Cookie: sessionCookie }, redirect: 'follow' },
+        async (res): Promise<UpstreamAttemptResult<void>> => {
+          if (!res.ok) {
+            const kind =
+              res.status >= 500 || res.status === 429
+                ? 'unavailable'
+                : 'invalid';
+            return {
+              ok: false,
+              error: new KulonRenewalProbeFailure(kind),
+              outcome: 'http_error',
+              reason: 'http-not-ok',
+              status: res.status,
+            };
+          }
+          if (isLoginRedirect(res.url)) {
+            return {
+              ok: false,
+              error: new KulonRenewalProbeFailure('invalid'),
+              outcome: 'stale',
+              reason: 'login-redirect',
+              status: res.status,
+            };
+          }
+          const html = await res.text();
+          try {
+            this.parseSesskey(html);
+          } catch {
+            return {
+              ok: false,
+              error: new KulonRenewalProbeFailure('invalid'),
+              outcome: 'stale',
+              reason: 'login-redirect',
+              status: res.status,
+            };
+          }
+          return {
+            ok: true,
+            value: undefined,
+            outcome: 'ok',
+            status: res.status,
+          };
+        },
+      );
+
+      const identity = await timedFetch<string | null>(
+        this.runtime,
+        KULON_ROUTE_CONTEXTS.profileIdentity,
+        `${this.baseUrl}/user/profile.php`,
+        { headers: { Cookie: sessionCookie }, redirect: 'follow' },
+        async (res): Promise<UpstreamAttemptResult<string | null>> => {
+          if (!res.ok) {
+            const kind =
+              res.status >= 500 || res.status === 429
+                ? 'unavailable'
+                : 'invalid';
+            return {
+              ok: false,
+              error: new KulonRenewalProbeFailure(kind),
+              outcome: 'http_error',
+              reason: 'http-not-ok',
+              status: res.status,
+            };
+          }
+          if (isLoginRedirect(res.url)) {
+            return {
+              ok: false,
+              error: new KulonRenewalProbeFailure('invalid'),
+              outcome: 'stale',
+              reason: 'login-redirect',
+              status: res.status,
+            };
+          }
+          const page = await res.text();
+          const title = page.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
+          const anchored = title.match(/(\d{8,16})\s*:\s*Public profile/i);
+          const derived =
+            anchored?.[1] ?? title.match(/\b\d{8,16}\b/)?.[0] ?? null;
+          if (!derived) {
+            return {
+              ok: false,
+              error: new KulonRenewalProbeFailure('invalid'),
+              outcome: 'stale',
+              reason: 'login-redirect',
+              status: res.status,
+            };
+          }
+          return {
+            ok: true,
+            value: derived,
+            outcome: 'ok',
+            status: res.status,
+          };
+        },
+      );
+      return identity ? { kind: 'valid', identity } : { kind: 'invalid' };
+    } catch (error) {
+      if (error instanceof KulonRenewalProbeFailure)
+        return { kind: error.kind };
+      const transportReason = getTimedFetchTransportReason(error);
+      if (transportReason === 'redirect-loop') return { kind: 'invalid' };
+      // DNS/connectivity and response-body failures mean identity could not be
+      // checked, not that the cookie is invalid.
+      return { kind: 'unavailable' };
     }
   }
 

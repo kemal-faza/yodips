@@ -10,6 +10,8 @@ import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.normalizeNavTarget
 import ac.undip.sso.ui.login.DebugKulonTicketProbe
+import ac.undip.sso.ui.login.KulonTicketCaptureBridge
+import ac.undip.sso.ui.login.KulonTicketCaptureOverlay
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
 import ac.undip.sso.ui.theme.ThemeController
@@ -55,6 +57,7 @@ fun AppRoot(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val kulonTicketCapture = remember { KulonTicketCaptureBridge() }
 
     // Android 13+: POST_NOTIFICATIONS harus diminta runtime. Setelah login,
     // bukan saat splash — user baru peduli notifikasi setelah masuk app.
@@ -95,13 +98,13 @@ fun AppRoot(
     // `SessionRefresher.safe`). Meng-escalate-nya memaksa login ulang untuk
     // sesi yang sebenarnya sehat — inilah "harus login ulang padahal token
     // masih hidup".
-    val bootRepo =
-        remember {
-            SsoRepository(
-                persistent = persistentCache,
-                tokenStore = tokenStore,
-            )
-        }
+    val repo = remember(tokenStore, persistentCache, kulonTicketCapture) {
+        SsoRepository(
+            persistent = persistentCache,
+            tokenStore = tokenStore,
+            directTicketCapture = kulonTicketCapture,
+        )
+    }
 
     // Auto-refresh token: saat app dibuka/kembali ke foreground, lalu setiap
     // menit selama tetap foreground, JWT yang tinggal dekat kedaluwarsa
@@ -112,7 +115,7 @@ fun AppRoot(
         if (!hasToken) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             runSessionRefreshLoop(
-                ensureFresh = { bootRepo.ensureFreshSession() },
+                ensureFresh = { repo.ensureFreshSession() },
                 onDeadSession = { SessionExpiredEvents.notifySessionExpired() },
             )
         }
@@ -124,7 +127,7 @@ fun AppRoot(
         // ditangani DI DALAM `sessionStatus` (via `SessionRefresher.safe` →
         // `SessionExpiredEvents`); hasil `complete` sengaja tidak dipakai untuk
         // memaksa login ulang (lihat catatan kebijakan di atas).
-        bootRepo.sessionStatus()
+        repo.sessionStatus()
     }
 
     if (!checked) return
@@ -156,6 +159,7 @@ fun AppRoot(
                 // still completes the removal, so the persisted JWT cannot
                 // survive to resurrect the session after restart. Durable
                 // removal completes BEFORE the UI flips to login (last).
+                repo.clearForLogout()
                 tokenStore.clear() // durable: awaited DataStore edit, first
                 Backend.authToken = null
                 runCatching { CookieManager.getInstance().removeAllCookies(null) }
@@ -170,8 +174,7 @@ fun AppRoot(
 
     if (hasToken) {
         AppShell(
-            tokenStore = tokenStore,
-            persistentCache = persistentCache,
+            repo = repo,
             themeController = themeController,
             onLogout = onLogout,
             initialNavTarget = normalizeNavTarget(pendingNavTarget),
@@ -181,14 +184,19 @@ fun AppRoot(
         )
     } else {
         LoginScreen(
-            onLoggedIn = { hasToken = true },
+            onLoggedIn = {
+                scope.launch {
+                    repo.resumeForNewSession()
+                    hasToken = true
+                }
+            },
             tokenStore = tokenStore,
         )
     }
 
-    // Universal "session expired" dialog: fired by SsoRepository on ANY 401
-    // (expired JWT or backend lost the upstream session), so a dead session
-    // surfaces immediately instead of silently serving stale cache. It only
+    // Universal "session expired" dialog: fired by SsoRepository only for an
+    // explicit SESSION_DEAD response. Upstream stale and unclassified 401s stay
+    // local so they cannot erase a recoverable session. It only
     // shows while the user is logged in (events are ignored post-logout), is
     // non-dismissible — the session is dead, the only way forward is re-login —
     // and its CTA reuses the normal logout path so the next login starts clean.
@@ -207,4 +215,6 @@ fun AppRoot(
             },
         )
     }
+
+    if (hasToken) KulonTicketCaptureOverlay(kulonTicketCapture)
 }

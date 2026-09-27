@@ -1,6 +1,7 @@
 package ac.undip.sso.core.session
 
 import ac.undip.sso.core.data.TokenStoreLike
+import ac.undip.sso.core.data.CookieUpdateResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,6 +56,10 @@ class TokenStore private constructor(
             _jwt.value = jwt
         }
     }
+
+    /** Upstream cookies are never persisted or exposed by the WASM token store. */
+    override suspend fun updateKulonCookie(cookie: String): CookieUpdateResult =
+        CookieUpdateResult.UNSUPPORTED
 
     override suspend fun currentToken(): String? = _jwt.value
 

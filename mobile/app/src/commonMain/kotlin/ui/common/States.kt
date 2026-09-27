@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -94,6 +95,7 @@ internal fun errorStateTitle(type: ErrorType): String =
     when (type) {
         ErrorType.UNAUTHORIZED -> "Sesi berakhir"
         ErrorType.STALE_SESSION -> "Sesi SIAP/Kulon perlu diperbarui"
+        ErrorType.RECOVERY_UNSUPPORTED -> "Pemulihan perlu dilanjutkan di Android"
         else -> "Tidak dapat memuat data"
     }
 
@@ -259,6 +261,7 @@ private fun ErrorState(
     onRetry: () -> Unit,
     errorType: ErrorType,
 ) {
+    val uriHandler = LocalUriHandler.current
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -275,6 +278,13 @@ private fun ErrorState(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
+            if (errorType == ErrorType.RECOVERY_UNSUPPORTED) {
+                Button(onClick = {
+                    uriHandler.openUri("https://github.com/kemal-faza/yodips/releases")
+                }) {
+                    Text("Buka aplikasi YoDips Android")
+                }
+            }
             Button(onClick = onRetry) { Text("Coba lagi") }
         }
     }

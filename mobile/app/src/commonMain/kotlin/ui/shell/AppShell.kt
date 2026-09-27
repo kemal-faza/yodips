@@ -1,7 +1,5 @@
 package ac.undip.sso.ui.shell
 
-import ac.undip.sso.core.data.TokenStoreLike
-import ac.undip.sso.core.data.PersistentCache
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonCourse
@@ -115,8 +113,7 @@ enum class Tab(
 
 @Composable
 fun AppShell(
-    tokenStore: TokenStoreLike,
-    persistentCache: PersistentCache,
+    repo: SsoRepository,
     themeController: ThemeController,
     onLogout: () -> Unit = {},
     initialNavTarget: String? = null,
@@ -127,13 +124,6 @@ fun AppShell(
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val repo =
-        remember {
-            SsoRepository(
-                persistent = persistentCache,
-                tokenStore = tokenStore,
-            )
-        }
     // Selected task handed to the detail sub-screen (navigated by id so the
     // back stack stays light; the screen re-fetches detail from the api).
     var selectedTask by remember { mutableStateOf<KulonAssignment?>(null) }

@@ -42,4 +42,12 @@ class JwtExpiryTest {
     fun `undecodable payload returns null`() {
         assertNull(jwtExpiryEpochSeconds("a.@@@not-base64@@@.c"))
     }
+
+    @Test
+    fun `reads only a well-formed session generation`() {
+        val generation = "0123456789abcdef0123456789abcdef"
+        assertEquals(generation, jwtSessionGeneration(jwt("{\"sessionGeneration\":\"$generation\"}")))
+        assertNull(jwtSessionGeneration(jwt("{\"sessionGeneration\":\"not-a-generation\"}")))
+        assertNull(jwtSessionGeneration("garbage"))
+    }
 }

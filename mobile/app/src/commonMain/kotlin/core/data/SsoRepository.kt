@@ -2,6 +2,7 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.Backend
+import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
 import ac.undip.sso.core.network.KulonAssignment
@@ -20,6 +21,8 @@ import ac.undip.sso.core.network.SiapNilaiDetail
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.network.SsoApi
+import ac.undip.sso.core.network.UpstreamSessionService
+import ac.undip.sso.core.network.jwtSessionGeneration
 import ac.undip.sso.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -34,8 +37,16 @@ interface TokenStoreLike {
     val siapCookie: Flow<String?>
     val kulonCookie: Flow<String?>
     suspend fun save(token: String, siap: String?, kulon: String?)
+    /** Atomically replace only the Kulon cookie; unsupported stores do no write. */
+    suspend fun updateKulonCookie(cookie: String): CookieUpdateResult = CookieUpdateResult.UNSUPPORTED
     suspend fun currentToken(): String?
     suspend fun clear()
+}
+
+enum class CookieUpdateResult {
+    UPDATED,
+    UNSUPPORTED,
+    FAILED,
 }
 
 /**
@@ -56,9 +67,10 @@ class SsoRepository(
     cache: DataCache = InMemoryDataCache(),
     persistent: PersistentCache = NoOpPersistentCache,
     diskMaxAgeMs: Long = DEFAULT_DISK_MAX_AGE_MS,
-    onSessionExpired: () -> Unit = SessionExpiredEvents::notifySessionExpired,
-    tokenStore: TokenStoreLike? = null,
+    private val onSessionExpired: () -> Unit = SessionExpiredEvents::notifySessionExpired,
+    private val tokenStore: TokenStoreLike? = null,
     refreshToken: suspend () -> String = { Backend.refresh() },
+    directTicketCapture: DirectTicketCapture? = null,
 ) {
     // Stale-while-revalidate refreshes must not block callers nor outlive a
     // screen: a supervised IO scope owned by the repository.
@@ -77,6 +89,15 @@ class SsoRepository(
         tokenStore = tokenStore,
         onSessionExpired = onSessionExpired,
     )
+
+    private val recoveryCoordinator = tokenStore?.let { store ->
+        SessionRecoveryCoordinator(
+            capture = directTicketCapture ?: DirectTicketCapture { DirectTicketCaptureResult.Unsupported },
+            renewal = api,
+            tokenStore = store,
+            readCurrentStatus = { api.me(); Unit },
+        )
+    }
 
     suspend fun profile(force: Boolean = false): ApiResult<SiapProfile> =
         cached("profile", SiapProfile.serializer(), force) {
@@ -122,7 +143,7 @@ class SsoRepository(
 
     suspend fun assignments(force: Boolean = false): ApiResult<List<KulonAssignment>> =
         cached("assignments", ListSerializer(KulonAssignment.serializer()), force) {
-            refresher.safe(serviceStale = true) { api.assignments() }
+            kulonRead { api.assignments() }
         }
 
     /** Detail satu tugas — JANGAN di-cache (isi bisa berubah sering, dan payload kecil). */
@@ -130,25 +151,25 @@ class SsoRepository(
         assignmentId: Long,
         cmid: Long,
     ): ApiResult<KulonAssignmentDetail> =
-        refresher.safe(serviceStale = true) {
+        kulonRead {
             api.assignmentDetail(assignmentId, cmid)
         }
 
     suspend fun courses(force: Boolean = false): ApiResult<List<KulonCourse>> =
         cached("courses", ListSerializer(KulonCourse.serializer()), force) {
-            refresher.safe(serviceStale = true) { api.courses() }
+            kulonRead { api.courses() }
         }
 
     /** Lightweight course list for task filtering; omits progress/lecturer work. */
     suspend fun courseList(force: Boolean = false): ApiResult<List<KulonCourse>> =
         cached("courses:list", ListSerializer(KulonCourse.serializer()), force) {
-            refresher.safe(serviceStale = true) { api.courses(list = true) }
+            kulonRead { api.courses(list = true) }
         }
 
     /** Konten course (sections + items) — di-cache per course, back/forth tanpa refetch. */
     suspend fun courseContent(courseId: Long, force: Boolean = false): ApiResult<KulonCourseContent> =
         cached("course-content-$courseId", KulonCourseContent.serializer(), force) {
-            refresher.safe(serviceStale = true) { api.courseContent(courseId) }
+            kulonRead { api.courseContent(courseId) }
         }
 
     suspend fun lecturers(force: Boolean = false): ApiResult<List<SiapLecturer>> =
@@ -170,6 +191,76 @@ class SsoRepository(
 
     suspend fun unregisterPushDevice(token: String): ApiResult<PushDeviceResponse> =
         refresher.safe(retryable = false) { api.unregisterPushDevice(PushDeviceRequest(token)) }
+
+    /** Cancel ticket recovery and clear user-scoped memory/disk cache on logout. */
+    suspend fun clearForLogout() {
+        try {
+            recoveryCoordinator?.clear()
+        } finally {
+            cacheCoordinator.clear()
+        }
+    }
+
+    suspend fun resumeForNewSession() {
+        recoveryCoordinator?.resumeForNewSession()
+    }
+
+    private suspend fun <T> kulonRead(block: suspend () -> T): ApiResult<T> {
+        val generationBeforeRequest = tokenStore?.currentToken()?.let(::jwtSessionGeneration)
+        val initial = refresher.safe(serviceStale = true, block = block)
+        val stale = initial as? ApiResult.Error ?: return initial
+        if (stale.type != ErrorType.STALE_SESSION) return initial
+
+        val generation = generationBeforeRequest ?: return recoveryError(stale, SessionRecoveryOutcome.UNSUPPORTED)
+        // A logout or a replacement login may cross the upstream response. Do
+        // not open a ticket or apply its result to a different local session.
+        if (tokenStore.currentToken()?.let(::jwtSessionGeneration) != generation) {
+            return ApiResult.Error(stale.code, "Sesi berubah. Muat ulang data Kulon.", stale.type)
+        }
+
+        val outcome = recoveryCoordinator?.recover(generation, UpstreamSessionService.KULON)
+            ?: SessionRecoveryOutcome.UNSUPPORTED
+        if (outcome != SessionRecoveryOutcome.RECOVERED) return recoveryError(stale, outcome)
+
+        // Recovery is intentionally non-recursive. The recovered cookie is
+        // persisted before this one final read; a second stale response is
+        // returned to the screen and cannot trigger another ticket flow.
+        if (tokenStore.currentToken()?.let(::jwtSessionGeneration) != generation) {
+            return ApiResult.Error(stale.code, "Sesi berubah. Muat ulang data Kulon.", stale.type)
+        }
+        return refresher.safe(retryable = false, serviceStale = true, block = block)
+    }
+
+    private fun recoveryError(
+        previous: ApiResult.Error,
+        outcome: SessionRecoveryOutcome,
+    ): ApiResult.Error = when (outcome) {
+        SessionRecoveryOutcome.RECOVERED -> previous
+        SessionRecoveryOutcome.SESSION_DEAD -> {
+            onSessionExpired()
+            ApiResult.Error(401, "Sesi YoDips sudah berakhir. Silakan login kembali.", ErrorType.UNAUTHORIZED)
+        }
+        SessionRecoveryOutcome.AUTH_REJECTED ->
+            ApiResult.Error(previous.code, "Server menolak token YoDips. Sesi lokal tetap disimpan.", ErrorType.UNAUTHORIZED)
+        SessionRecoveryOutcome.SESSION_CHANGED ->
+            ApiResult.Error(previous.code, "Sesi berubah. Muat ulang data Kulon.", previous.type)
+        SessionRecoveryOutcome.INTERACTION_REQUIRED ->
+            ApiResult.Error(previous.code, "Login Microsoft diperlukan untuk memulihkan sesi Kulon.", previous.type)
+        SessionRecoveryOutcome.CONFLICT ->
+            ApiResult.Error(409, "Sesi Kulon berubah di perangkat lain. Muat ulang data.", previous.type)
+        SessionRecoveryOutcome.NETWORK_FAILURE ->
+            ApiResult.Error(null, "Jaringan gagal saat memulihkan sesi Kulon.", ErrorType.NETWORK)
+        SessionRecoveryOutcome.UPSTREAM_INVALID ->
+            ApiResult.Error(previous.code, "Ticket Kulon tidak menghasilkan sesi yang valid.", previous.type)
+        SessionRecoveryOutcome.UNSUPPORTED ->
+            ApiResult.Error(
+                previous.code,
+                "Pemulihan Kulon tidak tersedia di platform ini. Lanjutkan lewat YoDips Android.",
+                ErrorType.RECOVERY_UNSUPPORTED,
+            )
+        SessionRecoveryOutcome.PERSISTENCE_FAILURE ->
+            ApiResult.Error(null, "Cookie Kulon baru tidak dapat disimpan dengan aman.", ErrorType.SERVER)
+    }
 
     private suspend fun <T> cached(
         key: String,

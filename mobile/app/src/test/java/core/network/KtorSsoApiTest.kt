@@ -316,6 +316,101 @@ class KtorSsoApiTest {
     }
 
     @Test
+    fun `upstream renewal posts only the requested service and cookie`() = runBlocking {
+        val response = api(
+            mockClient(
+                body = """{"service":"kulon","status":"renewed"}""",
+                assertRequest = { req ->
+                    assertEquals("POST", req.method.value)
+                    assertEquals("/api/auth/upstream-session/renew", req.url.encodedPath)
+                    assertTrue(
+                        "content-type present",
+                        req.body.contentType != null &&
+                            req.body.contentType.toString().startsWith("application/json"),
+                    )
+                    val bytes = (req.body as io.ktor.http.content.OutgoingContent.ByteArrayContent).bytes()
+                    val sent = kotlinx.serialization.json.Json.decodeFromString<UpstreamSessionRenewalRequest>(
+                        bytes.decodeToString(),
+                    )
+                    assertEquals(UpstreamSessionService.KULON, sent.service)
+                    assertEquals("MoodleSession=test-cookie", sent.cookie)
+                },
+            ),
+        ).renewUpstreamSession(UpstreamSessionService.KULON, "MoodleSession=test-cookie")
+
+        assertEquals(UpstreamSessionService.KULON, response.service)
+        assertEquals("renewed", response.status)
+    }
+
+    @Test
+    fun `upstream renewal maps conflict without exposing response body`() = runBlocking {
+        val thrown = try {
+            api(
+                mockClient(
+                    status = HttpStatusCode.Conflict,
+                    body = """{"message":"contains cookie-secret","code":"UPSTREAM_SESSION_CONFLICT"}""",
+                ),
+            ).renewUpstreamSession(UpstreamSessionService.KULON, "cookie-secret")
+            null
+        } catch (e: UpstreamSessionRenewalException) {
+            e
+        }
+
+        assertEquals(RenewalContractFailure.UPSTREAM_SESSION_CONFLICT, thrown?.failure)
+        assertEquals(null, thrown?.message)
+        assertEquals(null, thrown?.cause)
+    }
+
+    @Test
+    fun `bare renewal 401 is rejected without being classified as SESSION_DEAD`() = runBlocking {
+        val thrown = try {
+            api(
+                mockClient(
+                    status = HttpStatusCode.Unauthorized,
+                    body = """{"message":"token rejected"}""",
+                ),
+            ).renewUpstreamSession(UpstreamSessionService.KULON, "cookie-value")
+            null
+        } catch (e: UpstreamSessionRenewalException) {
+            e
+        }
+
+        assertEquals(RenewalContractFailure.AUTH_REJECTED, thrown?.failure)
+        assertEquals(null, thrown?.message)
+        assertEquals(null, thrown?.cause)
+    }
+
+    @Test
+    fun `upstream renewal maps session dead, invalid session, unavailable, and unsupported codes`() = runBlocking {
+        suspend fun failure(
+            status: HttpStatusCode,
+            code: String,
+        ): RenewalContractFailure? =
+            try {
+                api(
+                    mockClient(
+                        status = status,
+                        body = """{"message":"sensitive detail","code":"$code"}""",
+                    ),
+                ).renewUpstreamSession(UpstreamSessionService.KULON, "secret")
+                null
+            } catch (e: UpstreamSessionRenewalException) {
+                e.failure
+            }
+
+        assertEquals(RenewalContractFailure.SESSION_DEAD, failure(HttpStatusCode.Unauthorized, "SESSION_DEAD"))
+        assertEquals(
+            RenewalContractFailure.UPSTREAM_SESSION_INVALID,
+            failure(HttpStatusCode.UnprocessableEntity, "UPSTREAM_SESSION_INVALID"),
+        )
+        assertEquals(
+            RenewalContractFailure.UPSTREAM_UNAVAILABLE,
+            failure(HttpStatusCode.BadGateway, "UPSTREAM_UNAVAILABLE"),
+        )
+        assertEquals(RenewalContractFailure.UNSUPPORTED, failure(HttpStatusCode.NotFound, "NOT_FOUND"))
+    }
+
+    @Test
     fun `me hits auth me and parses status fields`() = runBlocking {
         val me = api(
             mockClient(

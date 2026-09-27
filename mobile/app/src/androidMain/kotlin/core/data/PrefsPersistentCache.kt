@@ -34,4 +34,8 @@ class PrefsPersistentCache(
             it[longPreferencesKey(timeKey(key))] = fetchedAt
         }
     }
+
+    override suspend fun clear() {
+        context.cacheDataStore.edit { it.clear() }
+    }
 }

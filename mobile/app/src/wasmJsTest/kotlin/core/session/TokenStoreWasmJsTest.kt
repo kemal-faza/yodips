@@ -1,8 +1,10 @@
 package ac.undip.sso.core.session
 
+import ac.undip.sso.core.data.CookieUpdateResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /**
@@ -55,5 +57,19 @@ class TokenStoreWasmJsTest {
         assertNull(store.currentToken())
         assertNull(store.siapCookie.first())
         assertNull(store.kulonCookie.first())
+    }
+
+    @Test
+    fun `updateKulonCookie is unsupported and does not persist upstream cookie`() = runTest {
+        val storage = FakeStorage()
+        val store = TokenStore(storage = storage)
+        store.save("jwt-kept", null, null)
+
+        assertEquals(CookieUpdateResult.UNSUPPORTED, store.updateKulonCookie("kulon-secret"))
+
+        assertEquals("jwt-kept", store.currentToken())
+        assertNull(store.kulonCookie.first())
+        assertNull(storage.get("kulon_cookie"))
+        assertEquals("jwt-kept", storage.get("sso_token"))
     }
 }

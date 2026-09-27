@@ -27,6 +27,9 @@ interface DataCache {
         value: ApiResult<T>,
     )
 
+    /** Drop all user-scoped entries during explicit logout. */
+    suspend fun clear() = Unit
+
     sealed interface Cached<out T> {
         data class Fresh<T>(
             val data: T,
@@ -78,5 +81,9 @@ class InMemoryDataCache(
         mutex.withLock {
             store[key] = Entry(value, nowMs())
         }
+    }
+
+    override suspend fun clear() {
+        mutex.withLock { store.clear() }
     }
 }

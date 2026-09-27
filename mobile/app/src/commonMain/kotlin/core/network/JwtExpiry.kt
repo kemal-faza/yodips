@@ -26,3 +26,21 @@ fun jwtExpiryEpochSeconds(token: String): Long? {
     val match = Regex("\"exp\"\\s*:\\s*(\\d+)").find(json) ?: return null
     return match.groupValues[1].toLongOrNull()
 }
+
+/**
+ * Read the opaque 128-bit session generation from a YoDips JWT. This value is
+ * used only as an in-memory recovery-flight key; callers must not log or send
+ * it to upstream services. Signature validation remains the backend's job.
+ */
+fun jwtSessionGeneration(token: String): String? {
+    val parts = token.split('.')
+    if (parts.size != 3 || parts[1].isEmpty()) return null
+    val padded = parts[1] + "=".repeat((4 - parts[1].length % 4) % 4)
+    val json = runCatching { Base64.UrlSafe.decode(padded).decodeToString() }.getOrNull() ?: return null
+    val generation = Regex("\"sessionGeneration\"\\s*:\\s*\"([0-9a-f]{32})\"")
+        .find(json)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?: return null
+    return generation
+}

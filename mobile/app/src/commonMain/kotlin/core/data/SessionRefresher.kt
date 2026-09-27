@@ -2,6 +2,7 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiHttpException
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.isServiceStaleCode
@@ -52,7 +53,7 @@ class SessionRefresher(
     private val tokenStore: TokenStoreLike?,
     private val onSessionExpired: () -> Unit,
 ) {
-    enum class RefreshResult { SUCCESS, DEAD_SESSION, NETWORK_FAILURE }
+    enum class RefreshResult { SUCCESS, DEAD_SESSION, REJECTED, NETWORK_FAILURE }
 
     private companion object {
         const val REFRESH_IDENTITY = "session-refresh"
@@ -111,12 +112,12 @@ class SessionRefresher(
             tokenStore?.save(newJwt, siap, kulon)
             RefreshResult.SUCCESS
         } catch (e: ApiHttpException) {
-            // HANYA 401 = bukti sesi mati (SESSION_DEAD / INVALID_TOKEN dari
-            // /api/auth/refresh). 429/5xx dari endpoint refresh adalah
-            // gangguan server — memperlakukannya sebagai dead session
-            // memunculkan popup login ulang palsu (fix relogin-loop).
-            if (e.status == 401) RefreshResult.DEAD_SESSION
-            else RefreshResult.NETWORK_FAILURE
+            when {
+                e.status == 401 && e.code == BackendCodes.SESSION_DEAD ->
+                    RefreshResult.DEAD_SESSION
+                e.status == 401 -> RefreshResult.REJECTED
+                else -> RefreshResult.NETWORK_FAILURE
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -127,8 +128,7 @@ class SessionRefresher(
     /**
      * Maps every backend call into [ApiResult] (see [ErrorType]). On 401:
      * - If !retryable (POST path like markKehadiran): no refresh attempted;
-     *   serviceStale 401 → upstream data gagal (error per-layar), sesi backend
-     *   mati hanya bila endpoint tidak menyentuh upstream (dialog).
+     *   serviceStale 401 → upstream data gagal (error per-layar).
      * - If retryable: single-flight refresh, then retries block() once.
      *
      * [serviceStale] marks calls whose data is scraped from Kulon/SIAP with the
@@ -136,13 +136,9 @@ class SessionRefresher(
      * the JWT may still be valid, mapped to [ErrorType.STALE_SESSION]. A backend
      * envelope carrying a [SERVICE_STALE_CODES] code is treated the same way.
      *
-     * DIALOG POLICY (fix relogin-loop): popup "Sesi Berakhir" HANYA muncul saat
-     * sesi backend benar-benar mati — refresh gagal 401 (DEAD_SESSION) atau 401
-     * pada endpoint yang tidak menyentuh upstream setelah refresh sukses. Retry
-     * 401 dengan JWT segar pada endpoint serviceStale selalu berarti upstream
-     * stale; memaksa logout di situ menciptakan loop login ulang padahal hanya
-     * cookie SIAP/Kulon yang kadaluwarsa (dan re-login pun belum tentu
-     * memperbaikinya bila kegagalannya sementara).
+     * DIALOG POLICY: only an explicit `SESSION_DEAD` backend code opens the
+     * global login dialog. Other 401s stay local, including rejected refresh
+     * tokens and protected routes that return an unclassified 401.
      */
     suspend fun <T> safe(
         retryable: Boolean = true,
@@ -152,11 +148,14 @@ class SessionRefresher(
         return try {
             ApiResult.Success(block())
         } catch (e: ApiHttpException) {
+            if (e.status == 401 && e.code == BackendCodes.SESSION_DEAD) {
+                onSessionExpired()
+                return ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
+            }
             val stale = serviceStale || isServiceStaleCode(e.code)
             val staleType = if (stale) ErrorType.STALE_SESSION else ErrorType.UNAUTHORIZED
             if (e.status == 401) {
                 if (!retryable) {
-                    if (!stale) onSessionExpired()
                     return ApiResult.Error(e.status, e.message, staleType)
                 }
                 when (tryRefresh()) {
@@ -164,12 +163,15 @@ class SessionRefresher(
                         try {
                             ApiResult.Success(block())
                         } catch (e2: ApiHttpException) {
+                            if (e2.status == 401 && e2.code == BackendCodes.SESSION_DEAD) {
+                                onSessionExpired()
+                                return ApiResult.Error(e2.status, e2.message, ErrorType.UNAUTHORIZED)
+                            }
                             val t = typeForHttp(e2.status)
                             // JWT segar PASTI lolos JwtAuthGuard → 401 pada
                             // retry = upstream stale (serviceStale). Endpoint
                             // non-upstream yang masih 401 = sesi bermasalah.
                             val staleRetry = serviceStale || isServiceStaleCode(e2.code)
-                            if (t == ErrorType.UNAUTHORIZED && !staleRetry) onSessionExpired()
                             ApiResult.Error(
                                 e2.status,
                                 e2.message,
@@ -183,7 +185,10 @@ class SessionRefresher(
                     }
                     RefreshResult.DEAD_SESSION -> {
                         onSessionExpired()
-                        ApiResult.Error(e.status, e.message, staleType)
+                        ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
+                    }
+                    RefreshResult.REJECTED -> {
+                        ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
                     }
                     RefreshResult.NETWORK_FAILURE -> {
                         ApiResult.Error(null, "Tidak dapat terhubung ke server", ErrorType.NETWORK)
@@ -198,9 +203,12 @@ class SessionRefresher(
             // Network or generic error.
             // IOException is JVM-only; wasmJs uses Exception for network failures.
             if (e is ApiHttpException) {
+                if (e.status == 401 && e.code == BackendCodes.SESSION_DEAD) {
+                    onSessionExpired()
+                    return ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
+                }
                 val t = typeForHttp(e.status)
                 val stale = serviceStale || isServiceStaleCode(e.code)
-                if (t == ErrorType.UNAUTHORIZED && !stale) onSessionExpired()
                 ApiResult.Error(
                     e.status,
                     e.message,

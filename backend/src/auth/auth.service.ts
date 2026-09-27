@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { ERROR_CODES } from '../common/error-codes';
 import {
   generateSessionGeneration,
   isSessionGeneration,
@@ -11,6 +12,7 @@ import { readLiveSession, sessionDead } from '../session/live-session';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
 import { HandoffDto } from './dto/handoff.dto';
+import { UpstreamSessionRenewalDto } from './dto/upstream-session-renewal.dto';
 import { CachePolicy } from '../cache/cache-policy';
 import {
   createNoopTelemetryRuntime,
@@ -196,6 +198,60 @@ export class AuthService {
   }
 
   /**
+   * Replace the Kulon cookie on the JWT's exact live generation. The cookie is
+   * validated read-only before the store's compare-and-swap; no identity or
+   * generation is accepted from the request body.
+   */
+  async renewUpstreamSession(
+    dto: UpstreamSessionRenewalDto,
+    user: { sub?: unknown; sessionGeneration?: unknown },
+  ): Promise<{ service: 'kulon'; status: 'renewed' }> {
+    const sub =
+      typeof user?.sub === 'string' && user.sub.length > 0 ? user.sub : null;
+    const generation = user?.sessionGeneration;
+    if (!sub || !isSessionGeneration(generation)) throw sessionDead();
+
+    const expected = await readLiveSession(this.sessionStore, {
+      sub,
+      sessionGeneration: generation,
+    });
+    if (!expected || expected.identity !== sub) throw sessionDead();
+
+    if (
+      dto?.service !== 'kulon' ||
+      !isRenewableKulonCookie(dto.cookie) ||
+      dto.cookie === expected.kulonCookie
+    ) {
+      throw upstreamSessionInvalid();
+    }
+
+    let validation: Awaited<
+      ReturnType<KulonService['validateSessionCookieForRenewal']>
+    >;
+    try {
+      validation = await this.kulon.validateSessionCookieForRenewal(dto.cookie);
+    } catch {
+      throw upstreamUnavailable();
+    }
+    if (validation.kind === 'unavailable') throw upstreamUnavailable();
+    if (validation.kind !== 'valid' || validation.identity !== sub) {
+      throw upstreamSessionInvalid();
+    }
+
+    const replacement = { ...expected, kulonCookie: dto.cookie };
+    const outcome = await this.sessionStore.replaceIfUnchanged(
+      sub,
+      generation,
+      expected,
+      replacement,
+    );
+    if (outcome === 'dead') throw sessionDead();
+    if (outcome === 'conflict') throw upstreamSessionConflict();
+
+    return { service: 'kulon', status: 'renewed' };
+  }
+
+  /**
    * Server-side logout. Verifies the SIGNATURE only (ignoreExpiration) so an
    * expired-but-valid JWT can still clear its session, then applies the
    * atomic session-generation semantics via `clearIfGeneration`:
@@ -334,4 +390,52 @@ export class AuthService {
       return 0;
     }
   }
+}
+
+function isRenewableKulonCookie(cookie: unknown): cookie is string {
+  if (
+    typeof cookie !== 'string' ||
+    cookie.length === 0 ||
+    cookie.length > 8192 ||
+    !/^[\x20-\x7e]+$/.test(cookie)
+  ) {
+    return false;
+  }
+  return cookie.split(';').some((part) => {
+    const separator = part.indexOf('=');
+    if (separator < 0) return false;
+    const name = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    return /^MoodleSession(?:_[A-Za-z0-9-]+)?$/.test(name) && value.length > 0;
+  });
+}
+
+function upstreamSessionInvalid(): HttpException {
+  return new HttpException(
+    {
+      message: 'Cookie sesi Kulon tidak valid',
+      code: ERROR_CODES.UPSTREAM_SESSION_INVALID,
+    },
+    HttpStatus.UNPROCESSABLE_ENTITY,
+  );
+}
+
+function upstreamSessionConflict(): HttpException {
+  return new HttpException(
+    {
+      message: 'Sesi berubah saat pembaruan Kulon diproses',
+      code: ERROR_CODES.UPSTREAM_SESSION_CONFLICT,
+    },
+    HttpStatus.CONFLICT,
+  );
+}
+
+function upstreamUnavailable(): HttpException {
+  return new HttpException(
+    {
+      message: 'Sesi Kulon tidak dapat diverifikasi saat ini',
+      code: ERROR_CODES.UPSTREAM_UNAVAILABLE,
+    },
+    HttpStatus.BAD_GATEWAY,
+  );
 }

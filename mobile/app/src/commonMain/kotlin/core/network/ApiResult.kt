@@ -20,8 +20,9 @@ sealed class ApiResult<out T> {
 /** Coarse error taxonomy consumed by the UI + auth layers. */
 enum class ErrorType {
     NETWORK, // connectivity / DNS / timeout — retryable, not session-related
-    UNAUTHORIZED, // auth-level 401 (bad/expired JWT) → should lead to re-login
+    UNAUTHORIZED, // auth-level 401; global re-login requires the SESSION_DEAD code
     STALE_SESSION, // service-level 401 (upstream Kulon/SIAP session died) → re-auth
+    RECOVERY_UNSUPPORTED, // show a user-directed platform action; retain session
     NOT_FOUND,
     SERVER, // 5xx or unexpected upstream/parsing failure
     UPSTREAM, // a real (non-session) business error surfaced by an upstream service

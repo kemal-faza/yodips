@@ -24,6 +24,7 @@ suspend fun runSessionRefreshLoop(
                 return
             }
             SessionRefresher.RefreshResult.SUCCESS,
+            SessionRefresher.RefreshResult.REJECTED,
             SessionRefresher.RefreshResult.NETWORK_FAILURE,
             -> delay(intervalMs)
         }

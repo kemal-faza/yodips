@@ -1,5 +1,6 @@
 package ac.undip.sso.core.session
 
+import ac.undip.sso.core.data.CookieUpdateResult
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
@@ -51,6 +52,20 @@ class TokenStoreTest {
         assertEquals("jwt-A", s.currentToken())
         assertEquals("siap-1", s.siapCookie.first())
         assertEquals("kulon-2", s.kulonCookie.first())
+    }
+
+    @Test
+    fun `updateKulonCookie encrypts new cookie and preserves token and siap cookie`() = runBlocking {
+        val ds = dataStore(File.createTempFile("tok", ".preferences_pb"))
+        val s = tokenStore(ds)
+        s.save("jwt-A", "siap-1", "kulon-2")
+
+        assertEquals(CookieUpdateResult.UPDATED, s.updateKulonCookie("kulon-3"))
+
+        assertEquals("jwt-A", s.currentToken())
+        assertEquals("siap-1", s.siapCookie.first())
+        assertEquals("kulon-3", s.kulonCookie.first())
+        assertNotEquals("kulon-3", ds.data.first()[stringPreferencesKey("kulon_cookie")])
     }
 
     @Test

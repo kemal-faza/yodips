@@ -23,7 +23,17 @@ package ac.undip.sso.core.network
  *   POST /api/auth/logout
  *   POST /api/siap/kehadiran
  */
-interface SsoApi {
+interface SsoApi : UpstreamSessionRenewal {
+    /**
+     * POST /api/auth/upstream-session/renew. Fake and unsupported clients fail
+     * closed without retaining or exposing the submitted cookie.
+     */
+    override suspend fun renewUpstreamSession(
+        service: UpstreamSessionService,
+        cookie: String,
+    ): UpstreamSessionRenewalResponse =
+        throw UpstreamSessionRenewalException(RenewalContractFailure.UNSUPPORTED)
+
     /** GET /api/siap/profile */
     suspend fun profile(): SiapProfile
 

@@ -40,16 +40,15 @@ fun AppRoot(themeController: ThemeController) {
     // `/me` sekali saat boot setelah token dimuat. `complete=false` (cookie
     // upstream stale / probe gagal sesaat) TIDAK memaksa login ulang — sesi
     // backend + JWT masih hidup dan tetap dirotasi (lihat AppRoot android).
-    val bootRepo =
-        remember {
-            SsoRepository(
-                persistent = NoOpPersistentCache,
-                tokenStore = tokenStore,
-            )
-        }
+    val repo = remember(tokenStore) {
+        SsoRepository(
+            persistent = NoOpPersistentCache,
+            tokenStore = tokenStore,
+        )
+    }
     LaunchedEffect(hasToken) {
         if (!hasToken) return@LaunchedEffect
-        bootRepo.sessionStatus()
+        repo.sessionStatus()
     }
 
     // Live push/nav dari service worker (postMessage):
@@ -147,14 +146,16 @@ fun AppRoot(themeController: ThemeController) {
         SessionLogout(
             pushUnregister = { wasmLogoutGlue.pushUnregister() },
             revokeServerSession = { Backend.api.logout() },
-            localCleanup = { wasmLogoutGlue.localCleanup() },
+            localCleanup = {
+                repo.clearForLogout()
+                wasmLogoutGlue.localCleanup()
+            },
         )
     }
 
     if (hasToken) {
         AppShell(
-            tokenStore = tokenStore,
-            persistentCache = NoOpPersistentCache,
+            repo = repo,
             themeController = themeController,
             onLogout = {
                 GlobalScope.launch { sessionLogout.logout() }
@@ -170,7 +171,12 @@ fun AppRoot(themeController: ThemeController) {
     } else {
         LoginScreen(
             tokenStore = tokenStore,
-            onLoggedIn = { hasToken = true },
+            onLoggedIn = {
+                GlobalScope.launch {
+                    repo.resumeForNewSession()
+                    hasToken = true
+                }
+            },
         )
     }
 }

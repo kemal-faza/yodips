@@ -16,6 +16,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.isSuccess
 import io.ktor.http.contentType
 import io.ktor.client.request.request
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -177,6 +178,47 @@ class KtorSsoApi(
         }
         return json.decodeFromString<LogoutResponse>(handle(resp))
     }
+
+    override suspend fun renewUpstreamSession(
+        service: UpstreamSessionService,
+        cookie: String,
+    ): UpstreamSessionRenewalResponse {
+        try {
+            val resp = client.post("$root/api/auth/upstream-session/renew") {
+                setBody(json.encodeToString(UpstreamSessionRenewalRequest(service, cookie)))
+                contentType(ContentType.Application.Json)
+            }
+            val response = json.decodeFromString<UpstreamSessionRenewalResponse>(handle(resp))
+            if (response.service != service || response.status != "renewed") {
+                throw UpstreamSessionRenewalException(RenewalContractFailure.UPSTREAM_SESSION_INVALID)
+            }
+            return response
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: UpstreamSessionRenewalException) {
+            throw e
+        } catch (e: ApiHttpException) {
+            throw UpstreamSessionRenewalException(mapRenewalFailure(e.status, e.code))
+        } catch (_: Exception) {
+            // Deliberately discard transport/serialization details: they may
+            // contain request data, response bodies, or upstream diagnostics.
+            throw UpstreamSessionRenewalException(RenewalContractFailure.NETWORK_FAILURE)
+        }
+    }
+
+    private fun mapRenewalFailure(status: Int, code: String?): RenewalContractFailure =
+        when {
+            code == BackendCodes.SESSION_DEAD -> RenewalContractFailure.SESSION_DEAD
+            status == 401 -> RenewalContractFailure.AUTH_REJECTED
+            code == "UPSTREAM_SESSION_CONFLICT" || status == 409 ->
+                RenewalContractFailure.UPSTREAM_SESSION_CONFLICT
+            code == "UPSTREAM_SESSION_INVALID" || status == 422 ->
+                RenewalContractFailure.UPSTREAM_SESSION_INVALID
+            code == "UPSTREAM_UNAVAILABLE" || status == 429 || status >= 500 ->
+                RenewalContractFailure.UPSTREAM_UNAVAILABLE
+            status == 404 -> RenewalContractFailure.UNSUPPORTED
+            else -> RenewalContractFailure.NETWORK_FAILURE
+        }
 }
 
 /** Backend error envelope subset used only to lift the `code` off a failure. */

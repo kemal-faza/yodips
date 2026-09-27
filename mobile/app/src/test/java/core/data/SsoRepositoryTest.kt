@@ -2,6 +2,7 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiHttpException
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranRequest
 import ac.undip.sso.core.network.KehadiranResponse
@@ -23,6 +24,9 @@ import ac.undip.sso.core.network.SiapLecturer
 import ac.undip.sso.core.network.SiapNilaiDetail
 import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SsoApi
+import ac.undip.sso.core.network.UpstreamSessionRenewalResponse
+import ac.undip.sso.core.network.UpstreamSessionService
+import kotlin.io.encoding.Base64
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -41,12 +45,17 @@ private class FakeTokenStore(
     var kulon: String? = null,
 ) : TokenStoreLike {
     var saved: Triple<String, String?, String?>? = null
+    var updatedKulonCookie: String? = null
     override val siapCookie: Flow<String?> = flowOf(siap)
     override val kulonCookie: Flow<String?> = flowOf(kulon)
     override suspend fun save(token: String, siap: String?, kulon: String?) {
         saved = Triple(token, siap, kulon)
     }
     override suspend fun currentToken(): String? = saved?.first
+    override suspend fun updateKulonCookie(cookie: String): CookieUpdateResult {
+        updatedKulonCookie = cookie
+        return CookieUpdateResult.UPDATED
+    }
     override suspend fun clear() { saved = null }
 }
 
@@ -56,6 +65,12 @@ private class FakeApi : SsoApi {
     var meStub: suspend () -> MeResponse = { throw UnsupportedOperationException("me not stubbed") }
     var markKehadiranStub: suspend (KehadiranRequest) -> KehadiranResponse = { throw UnsupportedOperationException("markKehadiran not stubbed") }
     var registerPushDeviceStub: suspend (PushDeviceRequest) -> PushDeviceResponse = { throw UnsupportedOperationException("registerPushDevice not stubbed") }
+    var assignmentsStub: suspend () -> List<KulonAssignment> = { throw UnsupportedOperationException("assignments not stubbed") }
+    var assignmentDetailStub: suspend (Long, Long) -> KulonAssignmentDetail = { _, _ -> throw UnsupportedOperationException("assignmentDetail not stubbed") }
+    var coursesStub: suspend (Boolean) -> List<KulonCourse> = { throw UnsupportedOperationException("courses not stubbed") }
+    var renewalStub: suspend (UpstreamSessionService, String) -> UpstreamSessionRenewalResponse = { _, _ ->
+        throw UnsupportedOperationException("renewal not stubbed")
+    }
 
     override suspend fun profile(): SiapProfile = profileStub()
 
@@ -70,16 +85,21 @@ private class FakeApi : SsoApi {
 
     override suspend fun jadwal(): List<SiapJadwal> = throw UnsupportedOperationException()
 
-    override suspend fun assignments(): List<KulonAssignment> = throw UnsupportedOperationException()
+    override suspend fun assignments(): List<KulonAssignment> = assignmentsStub()
 
     override suspend fun assignmentDetail(assignmentId: Long, cmid: Long): KulonAssignmentDetail =
-        throw UnsupportedOperationException()
+        assignmentDetailStub(assignmentId, cmid)
 
-    override suspend fun courses(list: Boolean): List<KulonCourse> = throw UnsupportedOperationException()
+    override suspend fun courses(list: Boolean): List<KulonCourse> = coursesStub(list)
 
     var courseContentStub: suspend (Long) -> KulonCourseContent = { throw UnsupportedOperationException("courseContent not stubbed") }
 
     override suspend fun courseContent(courseId: Long): KulonCourseContent = courseContentStub(courseId)
+
+    override suspend fun renewUpstreamSession(
+        service: UpstreamSessionService,
+        cookie: String,
+    ): UpstreamSessionRenewalResponse = renewalStub(service, cookie)
 
     override suspend fun lecturers(): List<SiapLecturer> = throw UnsupportedOperationException()
 
@@ -121,11 +141,11 @@ class SsoRepositoryTest {
         val repo =
             SsoRepository(
                 FakeApi().apply { profileStub = { throw error } },
-                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
+                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD) },
             )
         val r = runBlocking { repo.profile() }
         assertTrue(r is ApiResult.Error)
-        assertEquals(ErrorType.STALE_SESSION, (r as ApiResult.Error).type)
+        assertEquals(ErrorType.UNAUTHORIZED, (r as ApiResult.Error).type)
         assertEquals(401, r.code)
     }
 
@@ -137,7 +157,7 @@ class SsoRepositoryTest {
                 FakeApi().apply {
                     registerPushDeviceStub = { throw error }
                 },
-                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
+                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD) },
             )
         val r = runBlocking { repo.registerPushDevice("tok") }
         assertTrue(r is ApiResult.Error)
@@ -192,13 +212,13 @@ class SsoRepositoryTest {
             SsoRepository(
                 FakeApi().apply { profileStub = { throw error } },
                 onSessionExpired = { notified++ },
-                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
+                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD) },
             )
 
         val r = runBlocking { repo.profile() }
 
         assertTrue(r is ApiResult.Error)
-        assertEquals(ErrorType.STALE_SESSION, (r as ApiResult.Error).type)
+        assertEquals(ErrorType.UNAUTHORIZED, (r as ApiResult.Error).type)
         assertEquals(1, notified)
     }
 
@@ -243,7 +263,7 @@ class SsoRepositoryTest {
             SsoRepository(
                 api,
                 onSessionExpired = { notified++ },
-                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
+                refreshToken = { throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD) },
             )
         val r = runBlocking { repo.sessionStatus() }
         assertTrue(r is ApiResult.Error)
@@ -346,11 +366,11 @@ class SsoRepositoryTest {
             api,
             onSessionExpired = { notified++ },
             tokenStore = FakeTokenStore(),
-            refreshToken = { throw ApiHttpException(401, "SESSION_DEAD") },
+            refreshToken = { throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD) },
         )
         val r = repo.profile(force = true)
         assertEquals(1, notified)
-        assertTrue(r is ApiResult.Error && r.type == ErrorType.STALE_SESSION)
+        assertTrue(r is ApiResult.Error && r.type == ErrorType.UNAUTHORIZED)
     }
 
     @Test
@@ -419,6 +439,102 @@ class SsoRepositoryTest {
         assertTrue(r1 is ApiResult.Success || r2 is ApiResult.Success)
         assertEquals(1, refreshCalls)
     }
+
+    @Test
+    fun `stale Kulon read captures renews persists and performs one final read`() = runBlocking {
+        val generation = "0123456789abcdef0123456789abcdef"
+        val token = jwtWithGeneration(generation)
+        val store = FakeTokenStore().apply { saved = Triple(token, "siap-cookie", "old-kulon") }
+        var calls = 0
+        var captures = 0
+        var renewals = 0
+        val expected = listOf(KulonAssignment(id = 7, name = "final"))
+        val api = FakeApi().apply {
+            assignmentsStub = {
+                calls++
+                when (calls) {
+                    1, 2 -> throw ApiHttpException(401, "stale")
+                    else -> expected
+                }
+            }
+            renewalStub = { service, cookie ->
+                renewals++
+                assertEquals(UpstreamSessionService.KULON, service)
+                assertEquals("MoodleSession=new", cookie)
+                UpstreamSessionRenewalResponse(service = service, status = "renewed")
+            }
+        }
+        val repo = SsoRepository(
+            api = api,
+            tokenStore = store,
+            refreshToken = { token },
+            directTicketCapture = DirectTicketCapture {
+                captures++
+                DirectTicketCaptureResult.Authenticated("MoodleSession=new")
+            },
+        )
+
+        val result = repo.assignments(force = true)
+
+        assertEquals(ApiResult.Success(expected), result)
+        assertEquals(3, calls) // initial GET, JWT-refresh retry, one post-renewal GET
+        assertEquals(1, captures)
+        assertEquals(1, renewals)
+        assertEquals("MoodleSession=new", store.updatedKulonCookie)
+    }
+
+    @Test
+    fun `a stale final Kulon read does not recurse into another capture`() = runBlocking {
+        val token = jwtWithGeneration("0123456789abcdef0123456789abcdef")
+        val store = FakeTokenStore().apply { saved = Triple(token, null, "old-kulon") }
+        var calls = 0
+        var captures = 0
+        val api = FakeApi().apply {
+            assignmentsStub = { calls++; throw ApiHttpException(401, "stale") }
+            renewalStub = { service, _ -> UpstreamSessionRenewalResponse(service = service, status = "renewed") }
+        }
+        val repo = SsoRepository(
+            api = api,
+            tokenStore = store,
+            refreshToken = { token },
+            directTicketCapture = DirectTicketCapture {
+                captures++
+                DirectTicketCaptureResult.Authenticated("MoodleSession=new")
+            },
+        )
+
+        val result = repo.assignments(force = true)
+
+        assertTrue(result is ApiResult.Error && result.type == ErrorType.STALE_SESSION)
+        assertEquals(3, calls)
+        assertEquals(1, captures)
+    }
+
+    @Test
+    fun `missing generation returns platform recovery guidance without capture`() = runBlocking {
+        val store = FakeTokenStore().apply { saved = Triple("not-a-jwt", null, null) }
+        var captures = 0
+        val api = FakeApi().apply { assignmentsStub = { throw ApiHttpException(401, "stale") } }
+        val repo = SsoRepository(
+            api = api,
+            tokenStore = store,
+            refreshToken = { "not-a-jwt" },
+            directTicketCapture = DirectTicketCapture {
+                captures++
+                DirectTicketCaptureResult.Unsupported
+            },
+        )
+
+        val result = repo.assignments(force = true)
+
+        assertTrue(result is ApiResult.Error && result.message.contains("YoDips Android"))
+        assertEquals(0, captures)
+    }
+}
+
+private fun jwtWithGeneration(generation: String): String {
+    val payload = Base64.UrlSafe.encode("{\"sessionGeneration\":\"$generation\"}".encodeToByteArray())
+    return "header.$payload.signature"
 }
 
 private val jsonSerializer =

@@ -52,10 +52,10 @@ class SessionRefresherTest {
     }
 
     @Test
-    fun `refresh 401 maps to DEAD_SESSION and fires no dialog by itself`() = runTest {
+    fun `refresh SESSION_DEAD maps to DEAD_SESSION and fires no dialog by itself`() = runTest {
         val refresher = SessionRefresher(
             scope = backgroundScope,
-            refreshToken = { throw http401() },
+            refreshToken = { throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD) },
             tokenStore = null,
             onSessionExpired = {},
         )
@@ -63,6 +63,21 @@ class SessionRefresherTest {
             SessionRefresher.RefreshResult.DEAD_SESSION,
             refresher.tryRefresh(),
         )
+    }
+
+    @Test
+    fun `refresh 401 without SESSION_DEAD is rejected without global logout`() = runTest {
+        var dialogs = 0
+        val refresher = SessionRefresher(
+            scope = backgroundScope,
+            refreshToken = {
+                throw ApiHttpException(401, "invalid token", "INVALID_TOKEN")
+            },
+            tokenStore = null,
+            onSessionExpired = { dialogs++ },
+        )
+        assertEquals(SessionRefresher.RefreshResult.REJECTED, refresher.tryRefresh())
+        assertEquals(0, dialogs)
     }
 
     @Test
@@ -175,15 +190,16 @@ class SessionRefresherTest {
         assertEquals(0, dialogs)
     }
 
-    // Endpoint yang TIDAK menyentuh upstream (mis. register push): 401 setelah
-    // refresh sukses = sesi backend benar-benar bermasalah → dialog tetap.
+    // Endpoint yang TIDAK menyentuh upstream (mis. register push): an unclassified
+    // 401 stays local; only an explicit SESSION_DEAD code opens the global dialog.
     @Test
-    fun `non-serviceStale retry 401 still fires the dialog`() = runTest {
+    fun `non-serviceStale retry 401 stays local without SESSION_DEAD`() = runTest {
         var dialogs = 0
         val r = refresher(backgroundScope, { "fresh-jwt" }, { dialogs++ })
         val result = r.safe(serviceStale = false) { throw http401() }
         assertTrue(result is ApiResult.Error)
-        assertEquals(1, dialogs)
+        assertEquals(ErrorType.UNAUTHORIZED, (result as ApiResult.Error).type)
+        assertEquals(0, dialogs)
     }
 
     // Refresh yang gagal 401 (SESSION_DEAD — backend kehilangan record sesi)
@@ -194,7 +210,7 @@ class SessionRefresherTest {
         var dialogs = 0
         val r = refresher(
             backgroundScope,
-            { throw ApiHttpException(401, "SESSION_DEAD") },
+            { throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD) },
             { dialogs++ },
         )
         val result = r.safe(serviceStale = true) { throw http401() }
@@ -218,7 +234,7 @@ class SessionRefresherTest {
     }
 
     @Test
-    fun `a non-stale backend code still maps to UNAUTHORIZED and fires the dialog`() = runTest {
+    fun `explicit SESSION_DEAD maps to UNAUTHORIZED and fires the dialog`() = runTest {
         var dialogs = 0
         val r = refresher(backgroundScope, { "fresh-jwt" }, { dialogs++ })
         val result = r.safe(serviceStale = false) {
@@ -267,7 +283,11 @@ class SessionRefresherTest {
     @Test
     fun `ensureFresh surfaces DEAD_SESSION without firing the dialog`() = runTest {
         var dialogs = 0
-        val r = refresher(backgroundScope, { throw http401() }, { dialogs++ })
+        val r = refresher(
+            backgroundScope,
+            { throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD) },
+            { dialogs++ },
+        )
         val result = r.ensureFresh(token = jwt(1_000_000), nowEpochSeconds = 1_000_000, leewaySeconds = 300)
         assertEquals(SessionRefresher.RefreshResult.DEAD_SESSION, result)
         assertEquals(0, dialogs)
