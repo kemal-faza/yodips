@@ -30,13 +30,13 @@ import { SessionStore as SessionStoreToken } from './session-store';
  */
 
 // A module-scoped seam file the mocked ioredis factory can close over.
-import { releaseHooks } from './session-bootstrap-test.seam';
+import { releaseHooks } from '../../test/session-bootstrap-test.seam';
 
 // Mock ioredis BEFORE any store module file is imported. jest.mock is hoisted
 // above imports by babel/ts-jest, so this factory runs first regardless.
 jest.mock('ioredis', () => {
-  const seam = jest.requireActual<typeof import('./session-bootstrap-test.seam')>(
-    './session-bootstrap-test.seam',
+  const seam = jest.requireActual<typeof import('../../test/session-bootstrap-test.seam')>(
+    '../../test/session-bootstrap-test.seam',
   );
   const Redis = jest.fn().mockImplementation(() => {
     const client = {
