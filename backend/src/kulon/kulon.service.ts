@@ -125,13 +125,6 @@ export type {
   KulonSessionCheck,
   KulonSubmission,
 } from './kulon-parse';
-export {
-  deriveSectionLabel,
-  extractCourseCode,
-  extractFileType,
-  parseSectionProgress,
-  parseSemester,
-} from './kulon-parse';
 
 @Injectable()
 export class KulonService {
@@ -459,11 +452,13 @@ export class KulonService {
         const { value } = await this.cache.getStale<KulonCourse[]>(
           kulonCacheKey(scope, 'courses'),
           () =>
-            this.fetchCourses(sessionCookie, sesskey, scope, {
-              withLecturers: true,
-              withProgress: true,
-              skipCacheRead: true,
-            }, ref),
+            this.fetchCourses(
+              sessionCookie,
+              sesskey,
+              scope,
+              { withLecturers: true, withProgress: true },
+              ref,
+            ),
           swrWindow('KULON_COURSES'),
         );
         return value;
@@ -499,7 +494,6 @@ export class KulonService {
       this.fetchCourses(sessionCookie, sesskey, scope, {
         withLecturers: false,
         withProgress: false,
-        skipCacheRead: true,
       });
     if (!this.cache) return load();
     const { value } = await this.cache.getStale<KulonCourse[]>(
@@ -535,7 +529,6 @@ export class KulonService {
               {
                 withLecturers: true,
                 withProgress: false,
-                skipCacheRead: true,
               },
               ref,
             ),
@@ -561,15 +554,10 @@ export class KulonService {
     opts: {
       withLecturers?: boolean;
       withProgress?: boolean;
-      skipCacheRead?: boolean;
     } = {},
     lecturerRef?: SessionRef,
   ): Promise<KulonCourse[]> {
     const scope = normalizeKulonScope(scopeInput);
-    if (scope && this.cache && !opts.skipCacheRead) {
-      const hit = await this.cache.get<KulonCourse[]>(kulonCacheKey(scope, 'courses'));
-      if (hit) return hit;
-    }
     // Moodle's own timeline classification is the source of truth for
     // "active now": a course present in the 'inprogress' bucket is the
     // current semester. Kulon course names/ID numbers carry no reliable
@@ -838,7 +826,6 @@ export class KulonService {
           : this.fetchCourses(sessionCookie, sesskey, scope, {
               withLecturers: false,
               withProgress: false,
-              skipCacheRead: true,
             }),
     );
     const results: KulonAssignment[][] = [];
