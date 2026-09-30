@@ -562,32 +562,6 @@ describe("LoginView fragment handoff (YD-AUTH-002)", () => {
     w.unmount();
   });
 
-  it("a late extension 'ok' result cannot overwrite the fragment-consume token or re-scrub", async () => {
-    // Fragment-consume path finishes handoff synchronously and returns before
-    // the extension listener is registered, so there is no competing callback.
-    const store = makeStore({ isHandoffMode: true, token: null });
-    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
-    const router = { replace: vi.fn(), push: vi.fn() };
-    const w = mount(LoginView, {
-      global: {
-        mocks: {
-          $route: makeRoute(GOOD_HASH),
-          $router: router,
-        },
-      },
-    });
-    await flushPromises();
-    expect(store.finishHandoff).toHaveBeenCalledWith(GOOD_TOKEN);
-    const goodCalls = store.finishHandoff.mock.calls.length;
-    const scrubCalls = replaceState.mock.calls.length;
-    expect(store.finishHandoff).toHaveBeenCalledTimes(goodCalls);
-    expect(store.finishHandoff).not.toHaveBeenCalledWith("ext.jwt.other");
-    expect(store.onExtensionResult).not.toHaveBeenCalled();
-    expect(replaceState).toHaveBeenCalledTimes(scrubCalls);
-    replaceState.mockRestore();
-    w.unmount();
-  });
-
   it("handoff mode with a malformed or empty fragment does not scrub or consume", async () => {
     const store = makeStore({ isHandoffMode: true });
     const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});

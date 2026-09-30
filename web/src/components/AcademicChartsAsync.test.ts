@@ -1,4 +1,3 @@
-import { defineComponent } from 'vue';
 import { flushPromises, mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import AcademicChartsAsync from './AcademicChartsAsync.vue';
@@ -10,39 +9,27 @@ const props = {
   ipMax: 3,
 };
 
+const chunkState = vi.hoisted(() => ({ failNext: false }));
+
+// Mock at the real boundary: the component's own `import('./AcademicCharts.vue')`.
+vi.mock('./AcademicCharts.vue', () => {
+  if (chunkState.failNext) {
+    chunkState.failNext = false;
+    throw new Error('chunk failed');
+  }
+  return {
+    default: {
+      name: 'ChartsStub',
+      template: '<div data-test="academic-charts-loaded" />',
+    },
+  };
+});
+
 describe('AcademicChartsAsync', () => {
-  it('shows a loading state while the chart chunk is pending', async () => {
-    let resolve!: (module: { default: ReturnType<typeof defineComponent> }) => void;
-    const loadCharts = () => new Promise<{ default: ReturnType<typeof defineComponent> }>((done) => {
-      resolve = done;
-    });
-
-    const wrapper = mount(AcademicChartsAsync, { props: { ...props, loadCharts } });
-
-    const loading = wrapper.find('[data-test="academic-charts-loading"]');
-    expect(loading.exists()).toBe(true);
-    expect(loading.attributes('aria-busy')).toBe('true');
-    expect(loading.find('.motion-safe\\:animate-pulse').exists()).toBe(true);
-    expect(wrapper.find('[data-test="academic-charts-loaded"]').exists()).toBe(false);
-
-    resolve({
-      default: defineComponent({
-        props: { ipMax: { type: Number, required: true } },
-        template: '<div data-test="academic-charts-loaded">{{ ipMax }}</div>',
-      }),
-    });
-    await flushPromises();
-    expect(wrapper.find('[data-test="academic-charts-loaded"]').exists()).toBe(true);
-    expect(wrapper.find('[data-test="academic-charts-loaded"]').text()).toBe('3');
-  });
-
-  it('shows an error and retries a failed chart chunk', async () => {
-    const loaded = defineComponent({ template: '<div data-test="academic-charts-loaded" />' });
-    const loadCharts = vi
-      .fn<() => Promise<{ default: ReturnType<typeof defineComponent> }>>()
-      .mockRejectedValueOnce(new Error('chunk failed'))
-      .mockResolvedValueOnce({ default: loaded });
-    const wrapper = mount(AcademicChartsAsync, { props: { ...props, loadCharts } });
+  it('shows an error and recovers when the chunk import succeeds on retry', async () => {
+    chunkState.failNext = true;
+    vi.resetModules();
+    const wrapper = mount(AcademicChartsAsync, { props });
 
     await flushPromises();
     expect(wrapper.find('[data-test="academic-charts-error"]').attributes('role')).toBe('alert');
@@ -50,6 +37,19 @@ describe('AcademicChartsAsync', () => {
     await wrapper.get('[data-test="academic-charts-retry"]').trigger('click');
     await flushPromises();
     expect(wrapper.find('[data-test="academic-charts-loaded"]').exists()).toBe(true);
-    expect(loadCharts).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-test="academic-charts-error"]').exists()).toBe(false);
+  });
+
+  it('shows the loading skeleton until the chart chunk resolves', async () => {
+    const wrapper = mount(AcademicChartsAsync, { props });
+
+    const loading = wrapper.find('[data-test="academic-charts-loading"]');
+    expect(loading.exists()).toBe(true);
+    expect(loading.attributes('aria-busy')).toBe('true');
+    expect(loading.find('.motion-safe\\:animate-pulse').exists()).toBe(true);
+
+    await flushPromises();
+    expect(wrapper.find('[data-test="academic-charts-loading"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="academic-charts-loaded"]').exists()).toBe(true);
   });
 });

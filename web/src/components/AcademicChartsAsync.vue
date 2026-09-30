@@ -3,28 +3,21 @@ import { onMounted, ref, shallowRef } from 'vue';
 import type { Component } from 'vue';
 import type { CumulativeSksRow, GradeDistRow, IpTrendRow } from '../utils/dashboard';
 
-type AcademicChartsModule = { default: Component };
-type ChartLoader = () => Promise<AcademicChartsModule>;
-
 const props = defineProps<{
   ipTrendRows: IpTrendRow[];
   gradeRows: GradeDistRow[];
   sksRows: CumulativeSksRow[];
   ipMax: number;
-  /** Test seam; production uses the route-split AcademicCharts chunk. */
-  loadCharts?: ChartLoader;
 }>();
 
 const chartComponent = shallowRef<Component | null>(null);
 const status = ref<'loading' | 'ready' | 'error'>('loading');
 
-const defaultLoader: ChartLoader = () => import('./AcademicCharts.vue');
-
 async function load() {
   status.value = 'loading';
   chartComponent.value = null;
   try {
-    const module = await (props.loadCharts ?? defaultLoader)();
+    const module = await import('./AcademicCharts.vue');
     chartComponent.value = module.default;
     status.value = 'ready';
   } catch {

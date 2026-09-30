@@ -5,7 +5,7 @@ import * as api from '../api/client';
 import { clearCache, CacheStaleError } from '../api/cache';
 
 vi.mock('../api/client', () => ({
-  getAllAssignments: vi.fn(), getAssignments: vi.fn(),
+  getAllAssignments: vi.fn(),
   getCourses: vi.fn(),
   getCourseList: vi.fn(),
   getCourseContent: vi.fn(),

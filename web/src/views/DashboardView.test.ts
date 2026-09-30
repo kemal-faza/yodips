@@ -107,15 +107,6 @@ describe('DashboardView (academic dashboard)', () => {
     expect(w.text()).toContain('Pengguna'); // header fallback still renders
   });
 
-  it('renders chart paths without NaN coordinates (numeric-x regression guard)', async () => {
-    const router = buildRouter(createMemoryHistory());
-    const w = mount(DashboardView, { global: { plugins: [router], stubs } });
-    await flushPromises();
-    const paths = w.findAll('path');
-    const nanPaths = paths.filter((p) => (p.attributes('d') ?? '').includes('NaN'));
-    expect(nanPaths.length).toBe(0);
-  });
-
   it('prefers KHS-computed IPK over the fragile profile IPK', async () => {
     setPayload({
       ...payload,

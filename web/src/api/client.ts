@@ -4,17 +4,13 @@ import type {
   AssignmentDetail,
   CaptureResult,
   Course,
-  KehadiranResult,
   KulonCourseContent,
   PairConsumeResult,
   PairRequestResult,
   PairStatusResult,
-  SiapAbsenItem,
   SiapIrs,
   SiapJadwal,
-  SiapKehadiran,
   SiapKhs,
-  SiapLecturer,
   SiapNotifications,
   SiapProfile,
   User,
@@ -37,22 +33,8 @@ const CACHE = {
   khs: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
   irs: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
   jadwal: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
-  lecturers: { freshTtl: 60 * 60_000, staleTtl: 24 * 60 * 60_000 },
-  absen: { freshTtl: 5 * 60_000, staleTtl: 30 * 60_000 },
-  kehadiran: { freshTtl: 60_000, staleTtl: 5 * 60_000 },
   notifications: { freshTtl: 60_000, staleTtl: 5 * 60_000 },
 } as const;
-
-export interface DashboardSliceError { status: number; message: string; }
-export interface DashboardPayload {
-  profile: SiapProfile | null;
-  khs: SiapKhs | null;
-  irs: SiapIrs | null;
-  jadwal: SiapJadwal[];
-  courses: Course[];
-  assignments: Assignment[];
-  errors: Partial<Record<'profile'|'khs'|'irs'|'jadwal'|'courses'|'assignments', DashboardSliceError>>;
-}
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000',
@@ -213,13 +195,6 @@ export async function logoutSession(): Promise<void> {
   await apiClient.post(API.auth.logout);
 }
 
-export async function getAssignments(): Promise<Assignment[]> {
-  return getCached('kulon:upcoming', async () => {
-    const { data } = await apiClient.get<Assignment[]>(API.kulon.assignments);
-    return data;
-  }, CACHE.assignments);
-}
-
 export async function getAllAssignments(): Promise<Assignment[]> {
   return getCached('kulon:assignments', async () => {
     const { data } = await apiClient.get<Assignment[]>(API.kulon.allAssignments);
@@ -323,40 +298,4 @@ export async function pairStatus(code: string): Promise<PairStatusResult> {
     params: { code },
   });
   return data;
-}
-
-export async function getSiapLecturers(): Promise<SiapLecturer[]> {
-  return getCached('siap:lecturers', async () => {
-    const { data } = await apiClient.get<SiapLecturer[]>(API.siap.lecturers);
-    return data;
-  }, CACHE.lecturers);
-}
-
-export async function getSiapAbsen(): Promise<SiapAbsenItem[]> {
-  return getCached('siap:absen', async () => {
-    const { data } = await apiClient.get<SiapAbsenItem[]>(API.siap.absen);
-    return data;
-  }, CACHE.absen);
-}
-
-export async function getSiapKehadiran(idJadwal: string): Promise<SiapKehadiran> {
-  return getCached(`siap:kehadiran:${idJadwal}`, async () => {
-    const { data } = await apiClient.get<SiapKehadiran>(API.siap.kehadiran(idJadwal));
-    return data;
-  }, CACHE.kehadiran);
-}
-
-/** Proxy token hasil scan QR absensi ke SIAP (anti-replay milik SIAP). */
-export async function postKehadiranToken(token: string): Promise<KehadiranResult> {
-  const { data } = await apiClient.post<KehadiranResult>(API.siap.markKehadiran, { token });
-  return data;
-}
-
-/** @deprecated The web dashboard uses the slice getters above so each route
- * can retain its own freshness and refresh policy. Kept for older consumers. */
-export async function getDashboard(): Promise<DashboardPayload> {
-  return getCached('dashboard', async () => {
-    const { data } = await apiClient.get<DashboardPayload>(API.dashboard);
-    return data;
-  }, { freshTtl: 60_000, staleTtl: 60_000 });
 }

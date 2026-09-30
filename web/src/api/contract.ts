@@ -119,13 +119,4 @@ export function isServiceStale(url: string, code?: string): boolean {
   return isServiceSessionPath(url);
 }
 
-/**
- * SSO bootstrap ticket: base64 of the current unix second — the canonical
- * algorithm declared as `ssoTicket.algorithm` in
- * `contract/backend-contract.json`. Mirrors backend `SSOTicketService`,
- * extension `urls.generateTicket` and mobile `generateSsoTicket()`. Pinned by
- * contract.test.ts so drift breaks a test.
- */
-export function buildSsoTicket(nowSeconds = Math.floor(Date.now() / 1000)): string {
-  return btoa(String(nowSeconds));
-}
+
