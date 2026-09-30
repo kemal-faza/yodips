@@ -1,6 +1,7 @@
 package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.ErrorType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -42,6 +43,18 @@ class CacheCoordinatorTest {
         }
         assertEquals("fresh", (out as ApiResult.Success).data)
         assertEquals(1, networkCalls)
+    }
+
+    @Test
+    fun `an error result is never cached in memory or on disk`() = runTest {
+        val cache = InMemoryDataCache()
+        val disk = FakeDisk()
+        val out = coordinator(cache, disk).cached("k", String.serializer(), force = true) {
+            ApiResult.Error(500, "boom", ErrorType.SERVER)
+        }
+        assertEquals("boom", (out as ApiResult.Error).message)
+        assertEquals(0, disk.saved.size)
+        org.junit.Assert.assertNull(cache.get<String>("k"))
     }
 
     @Test

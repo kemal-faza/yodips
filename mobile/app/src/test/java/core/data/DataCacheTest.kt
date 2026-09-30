@@ -1,7 +1,6 @@
 package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
-import ac.undip.sso.core.network.ErrorType
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -31,13 +30,5 @@ class DataCacheTest {
     @Test
     fun `unknown key returns null`() = runTest {
         assertNull(InMemoryDataCache().get<String>("nope"))
-    }
-
-    @Test
-    fun `errors are not cached`() = runTest {
-        val cache = InMemoryDataCache(ttlMs = 10_000)
-        cache.put("k", ApiResult.Error(500, "boom", ErrorType.SERVER))
-        val got = cache.get<String>("k", System.currentTimeMillis())
-        assertTrue(got is DataCache.Cached.Fresh)
     }
 }

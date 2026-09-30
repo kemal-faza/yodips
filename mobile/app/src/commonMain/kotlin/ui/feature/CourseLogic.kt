@@ -138,4 +138,3 @@ internal fun defaultCollapsed(sections: List<KulonSection>, now: Long = nowMs())
 }
 
 /** Kecil — helper agar test tidak butuh konstruktor panjang. */
-internal fun item(kind: String): KulonContentItem = KulonContentItem(kind = kind)

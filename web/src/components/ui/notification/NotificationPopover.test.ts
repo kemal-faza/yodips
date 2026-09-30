@@ -61,5 +61,8 @@ describe('NotificationPopover', () => {
     document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     await new Promise((r) => setTimeout(r, 200)); // wait for the close transition
     expect(w.find('[data-test="notification-toggle"]').exists()).toBe(true);
+    // The panel itself is gone: content unmounted, not just hidden.
+    expect(w.text()).not.toContain('Tugas jatuh tempo');
+    expect(w.find('[data-test="mark-all-read"]').exists()).toBe(false);
   });
 });

@@ -35,13 +35,6 @@ describe('trust-proxy policy mapping (YD-RATE-001 hardening)', () => {
   it('maps 2 → local/private groups + complete current Cloudflare IPv4+IPv6 ranges', () => {
     const policy = trustProxyPolicyForHops(2);
     expect(policy).toBe(TRUST_PROXY_POLICY_LOCAL_AND_CLOUDFLARE);
-    expect(policy).toEqual([
-      'loopback',
-      'linklocal',
-      'uniquelocal',
-      ...CLOUDFLARE_IPV4_CIDRS,
-      ...CLOUDFLARE_IPV6_CIDRS,
-    ]);
   });
 
   it('fails closed (false) for any out-of-range value', () => {

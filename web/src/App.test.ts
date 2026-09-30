@@ -22,7 +22,6 @@ vi.mock("./config/extension", () => ({
 }));
 
 vi.mock("./api/client", () => ({
-  getAssignments: vi.fn().mockResolvedValue([]),
   getAllAssignments: vi.fn().mockResolvedValue([]),
   getCourses: vi.fn().mockResolvedValue([]),
   getDashboardCourses: vi.fn().mockResolvedValue([]),

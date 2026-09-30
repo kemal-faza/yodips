@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { generateTicket, buildKulonTicketUrl, buildSiapTicketUrl, KULON_OIDC_URL, SIAP_SSO_URL, DEFAULT_SERVER_URL } from './urls.js';
+import { generateTicket, buildKulonTicketUrl, buildSiapTicketUrl, DEFAULT_SERVER_URL } from './urls.js';
 
 describe('DEFAULT_SERVER_URL', () => {
   it('menunjuk backend produksi — default localhost membuat install CWS baru gagal fetch', () => {
@@ -52,10 +52,10 @@ describe('generateTicket', () => {
 });
 
 describe('ticket URLs', () => {
-  it('buildKulonTicketUrl appends t to OIDC URL', () => {
-    expect(buildKulonTicketUrl()).toMatch(new RegExp(`^${KULON_OIDC_URL}\\?t=[A-Za-z0-9+/=]+$`));
+  it('buildKulonTicketUrl appends t to the prod OIDC URL', () => {
+    expect(buildKulonTicketUrl()).toMatch(/^https:\/\/kulon2\.undip\.ac\.id\/auth\/oidc\/\?t=[A-Za-z0-9+/=]+$/);
   });
-  it('buildSiapTicketUrl appends t to SSO URL', () => {
-    expect(buildSiapTicketUrl()).toMatch(new RegExp(`^${SIAP_SSO_URL}\\?t=[A-Za-z0-9+/=]+$`));
+  it('buildSiapTicketUrl appends t to the prod SSO URL', () => {
+    expect(buildSiapTicketUrl()).toMatch(/^https:\/\/siap\.undip\.ac\.id\/sso\/login\?t=[A-Za-z0-9+/=]+$/);
   });
 });

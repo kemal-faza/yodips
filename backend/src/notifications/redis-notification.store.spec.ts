@@ -1,4 +1,5 @@
 import { RedisNotificationStore } from './redis-notification.store';
+import { MAX_WEB_SUBSCRIPTIONS } from './notification-store';
 
 /** Fake ioredis minimal: subset perintah yang dipakai store. */
 function fakeRedis() {
@@ -72,20 +73,14 @@ function fakeRedis() {
         expired(key);
         return [...(sets.get(key) ?? [])];
       },
-      // Deterministic Lua simulator: mirrors the atomic addWebSubscription
-      // script (read -> duplicate-check -> cap-check -> append -> set) over the
-      // same `strings` map. The `script`/`numKeys` args are ignored.
-      async eval(script: string, numKeys: number, key: string, payloadJson: string, capStr: string) {
-        expired(key);
-        const cap = Number(capStr);
-        const list: Array<{ endpoint: string; p256dh: string; auth: string }> =
-          strings.has(key) ? JSON.parse(strings.get(key)!) : [];
-        const incoming = JSON.parse(payloadJson);
-        if (list.some((e) => e.endpoint === incoming.endpoint)) return 'duplicate';
-        if (list.length >= cap) return 'cap-reached';
-        list.push(incoming);
-        strings.set(key, JSON.stringify(list));
-        return 'added';
+      async eval(
+        _script: string,
+        _numKeys: number,
+        _key: string,
+        _payloadJson: string,
+        _capStr: string,
+      ): Promise<string> {
+        throw new Error('Redis EVAL must be stubbed by the test');
       },
     },
   };
@@ -141,51 +136,68 @@ describe('RedisNotificationStore', () => {
     expect(await s.tryLockCycle()).toBe(true);
   });
 
-  it('web subscriptions honor the per-user cap atomically (via Lua)', async () => {
+  it('indexes the user only when the Lua status is added', async () => {
     const f = fakeRedis();
     const s = new RedisNotificationStore(f.client as any, () => f.now);
-    for (let i = 0; i < 8; i++) {
-      expect(
-        await s.addWebSubscription('u1', {
-          endpoint: `https://pusher/${i}`,
-          p256dh: 'p',
-          auth: 'a',
-        }),
-      ).toBe('added');
-    }
-    expect(
-      await s.addWebSubscription('u1', {
-        endpoint: 'https://pusher/9',
-        p256dh: 'p',
-        auth: 'a',
-      }),
-    ).toBe('cap-reached');
-    expect(await s.getWebSubscriptions('u1')).toHaveLength(8);
+    jest
+      .spyOn(f.client, 'eval')
+      .mockResolvedValueOnce('added')
+      .mockResolvedValueOnce('duplicate')
+      .mockResolvedValueOnce('cap-reached');
+
+    const sub = { endpoint: 'https://pusher/1', p256dh: 'p', auth: 'a' };
+    await expect(s.addWebSubscription('u1', sub)).resolves.toBe('added');
+    await expect(s.addWebSubscription('u2', sub)).resolves.toBe('duplicate');
+    await expect(
+      s.addWebSubscription('u3', { ...sub, endpoint: 'https://pusher/2' }),
+    ).resolves.toBe('cap-reached');
+    // Only the 'added' status indexes the user.
     expect(await s.listSubsWithWeb()).toEqual(['u1']);
   });
 
-  it('re-adding the same endpoint reports duplicate (via Lua)', async () => {
+  it('Lua guard: duplicate detection and the cap live inside one atomic EVAL', async () => {
     const f = fakeRedis();
     const s = new RedisNotificationStore(f.client as any, () => f.now);
+    const evalSpy = jest.spyOn(f.client, 'eval').mockResolvedValue('added');
+
     await s.addWebSubscription('u1', {
       endpoint: 'https://pusher/1',
       p256dh: 'p',
       auth: 'a',
     });
-    expect(
-      await s.addWebSubscription('u1', {
-        endpoint: 'https://pusher/1',
-        p256dh: 'p',
-        auth: 'a',
-      }),
-    ).toBe('duplicate');
-    expect(await s.getWebSubscriptions('u1')).toHaveLength(1);
+
+    const [script, numKeys, key, payloadJson, capStr] = evalSpy.mock.calls[0];
+    expect(numKeys).toBe(1);
+    expect(key).toBe('notif:web:u1');
+    expect(JSON.parse(payloadJson)).toEqual({
+      endpoint: 'https://pusher/1',
+      p256dh: 'p',
+      auth: 'a',
+    });
+    expect(capStr).toBe(String(MAX_WEB_SUBSCRIPTIONS));
+
+    const lua = String(script);
+    expect(lua).toContain('for i = 1, #list do');
+    expect(lua).toContain(
+      "if list[i]['endpoint'] == incoming['endpoint'] then return 'duplicate' end",
+    );
+    expect(lua).toContain(
+      "if #list >= tonumber(ARGV[2]) then return 'cap-reached' end",
+    );
+    expect(lua).toContain('list[#list + 1] = incoming');
+    expect(lua).toContain("redis.call('SET', KEYS[1], cjson.encode(list))");
+    expect(lua).toContain("return 'added'");
+    // Duplicate check must run before the cap check (an endpoint already at the
+    // cap boundary reports duplicate, not cap-reached).
+    expect(lua.indexOf("return 'duplicate'")).toBeLessThan(
+      lua.indexOf("return 'cap-reached'"),
+    );
   });
 
   it('addWebSubscription issues a single atomic EVAL (no lock key, no get/set RMW)', async () => {
     const f = fakeRedis();
     const s = new RedisNotificationStore(f.client as any, () => f.now);
-    const evalSpy = jest.spyOn(f.client, 'eval');
+    const evalSpy = jest.spyOn(f.client, 'eval').mockResolvedValue('added');
     await s.addWebSubscription('u1', {
       endpoint: 'https://pusher/1',
       p256dh: 'p',

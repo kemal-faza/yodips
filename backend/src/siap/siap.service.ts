@@ -509,7 +509,7 @@ export class SiapService {
           ? nilaiWithDetails.reduce((s, n) => s + (n.bobot ?? 0) * n.sks, 0) /
             nilaiWithDetails.reduce((s, n) => s + n.sks, 0)
           : 0;
-        // Label always from the TA + within-year smt (NOT semesterLabel('',…)).
+        // Label always from the TA + within-year smt.
         const label = this.semesterLabelFromTa(ta, smt);
         return {
           semester: label,

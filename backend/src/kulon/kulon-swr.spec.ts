@@ -3,7 +3,7 @@ import type { DataCache } from '../cache/data-cache';
 import { KulonService } from './kulon.service';
 import type { KulonUpstreamSession } from './kulon-upstream.session';
 import type { KulonCourse, KulonCourseContent } from './kulon-parse';
-import { cacheKeyForCurrent, cacheKeyForSession } from '../session/session-scope';
+import { cacheKeyForSession } from '../session/session-scope';
 import { SessionStore } from '../session/session-store';
 
 /** Minimal store stub: only the getContext seam path reads the store here. */
@@ -158,29 +158,6 @@ describe('KulonService SWR course refresh', () => {
       'core_course_get_enrolled_courses_by_timeline_classification',
       expect.objectContaining({ classification: 'all' }),
     );
-  });
-
-  it('keeps internal course-cache reuse for assignments aggregation', async () => {
-    const cache = makeCache();
-    cache.get.mockResolvedValue(cachedCourses);
-    const upstream = makeUpstream();
-    const service = new KulonService(
-      NO_STORE,
-      cache as unknown as DataCache,
-      undefined,
-      upstream as unknown as KulonUpstreamSession,
-    );
-
-    const result = await internals(service).fetchCourses(
-      'cookie',
-      'sesskey',
-      'u1',
-      { withProgress: false, withLecturers: false },
-    );
-
-    expect(result).toEqual(cachedCourses);
-    expect(cache.get).toHaveBeenCalledWith(cacheKeyForCurrent('u1', 'kulon', 'courses'));
-    expect(upstream.ajax).not.toHaveBeenCalled();
   });
 
   it('uses getStale as the sole payload writer for all four Kulon families', async () => {

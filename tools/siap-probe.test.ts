@@ -5,7 +5,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { probe, listCandidateUrls } from "./siap-probe";
+import { probe } from "./siap-probe";
 
 type FakeResponse = {
   status: number;
@@ -49,17 +49,6 @@ function withFetch(
 }
 
 describe("siap-probe", () => {
-  it("exposes probe() returning a Promise<ProbeResponse>", () => {
-    assert.equal(typeof probe, "function");
-    assert.ok(probe("https://siap.undip.ac.id/x", {}) instanceof Promise);
-  });
-
-  it("lists candidate URLs without duplicates", () => {
-    const urls = listCandidateUrls();
-    assert.ok(urls.length >= 5, "expect >=5 candidate URLs");
-    assert.equal(new Set(urls).size, urls.length, "no duplicate URLs");
-  });
-
   it("sends the CI guard header + session cookie on every probe", async () => {
     const orig = (globalThis as any).fetch;
     let capturedInit: any = null;

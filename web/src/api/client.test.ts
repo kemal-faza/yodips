@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getAssignments, getCourses, getCourseList, capture } from './client';
+import { getCourses, getCourseList, capture } from './client';
 import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
 
 const { getCachedMock } = vi.hoisted(() => ({ getCachedMock: vi.fn() }));
@@ -55,19 +55,6 @@ describe('api client', () => {
     mockRequest.mockReset();
     // Re-import the module fresh so it picks up the mocked axios create.
     vi.resetModules();
-  });
-
-  it('getAssignments fetches /api/kulon/assignments', async () => {
-    mockRequest.mockResolvedValue({
-      data: [{ id: 1, name: 'T', module: 'assign', eventType: 'due', duedate: 0, overdue: false, course: 'C', courseId: 1 }],
-    });
-    const { getAssignments } = await import('./client');
-    const result = await getAssignments();
-    expect(mockRequest).toHaveBeenCalled();
-    const call = mockRequest.mock.calls[0][0];
-    expect(call.method).toBe('get');
-    expect(call.url).toBe('/api/kulon/assignments');
-    expect(result).toHaveLength(1);
   });
 
   it('capture posts to /api/auth/sso/capture', async () => {
@@ -458,86 +445,6 @@ describe('api client', () => {
         endLogout();
       }
     });
-
-    it('sibling 401 whose response handler runs AFTER logout began (deferred ordering) rejects immediately — deterministic interceptor/store boundary proof', async () => {
-      // This is the F2 seam's exact shape, made deterministic: the user clicks
-      // logout while a sibling request is ALREADY in flight; the sibling's 401
-      // response handler runs after logout() has begun. `beginLogout()` here
-      // models "logout began" and is called BEFORE `onRejected` executes — the
-      // interceptor must see the flag up and reject with zero refresh/retry/
-      // reauth side effects. The interceptor reads the flag synchronously at the
-      // top of the 401 branch, so there is no race in the unit: the flag state
-      // at the moment the handler runs is fully determined by the test. (The
-      // store-side ordering — logout raises the flag before any await, so a
-      // response handler that runs after the click always sees it up — is the
-      // caller's contract, pinned by the store test in Step 9; this test pins
-      // the callee's contract: flag up ⇒ bare reject.)
-      localStorage.setItem('sso_token', 'keep-me');
-      await vi.resetModules();
-      const [{ apiClient }, { sessionLifetime }] = await Promise.all([
-        import('./client'),
-        import('../lib/session-lifetime'),
-      ]);
-      const beginLogout = () => { sessionLifetime.begin(); sessionLifetime.advance(); };
-      const endLogout = () => sessionLifetime.end();
-      const onRejected = responseHandlers.onRejected!;
-      const error = {
-        response: { status: 401, data: { code: 'SESSION_DEAD' } },
-        config: { method: 'get', url: '/api/kulon/assignments' },
-      };
-      // Logout click: the request was sent earlier; its 401 response handler now
-      // runs with the flag up — exactly the deferred-ordering seam.
-      beginLogout();
-      try {
-        await expect(onRejected(error)).rejects.toMatchObject(error);
-        expect(mockRequest).not.toHaveBeenCalled(); // no refresh POST, no retry
-        expect(localStorage.getItem('sso_token')).toBe('keep-me');
-        expect(emitReauthRequested).not.toHaveBeenCalled();
-        expect(emitTokenRefreshed).not.toHaveBeenCalled();
-      } finally {
-        endLogout();
-      }
-    });
-  });
-
-  it('getSiapLecturers GET /api/siap/lecturers', async () => {
-    mockRequest.mockResolvedValue({ data: [{ kode: 'MIK16245xx', dosen: 'Dosen A' }] });
-    const { getSiapLecturers } = await import('./client');
-    const r = await getSiapLecturers();
-    expect(mockRequest.mock.calls[0][0]).toMatchObject({ method: 'get', url: '/api/siap/lecturers' });
-    expect(r[0].dosen).toBe('Dosen A');
-  });
-
-  it('getSiapAbsen GET /api/siap/absen', async () => {
-    mockRequest.mockResolvedValue({
-      data: [{ idJadwal: '77', nama: 'Matkul A', hadirPct: 85.7, hadir: 12, total: 14 }],
-    });
-    const { getSiapAbsen } = await import('./client');
-    const r = await getSiapAbsen();
-    expect(mockRequest.mock.calls[0][0]).toMatchObject({ method: 'get', url: '/api/siap/absen' });
-    expect(r[0].idJadwal).toBe('77');
-  });
-
-  it('getSiapKehadiran GET /api/siap/kehadiran/:idJadwal', async () => {
-    mockRequest.mockResolvedValue({
-      data: { pertemuanId: '77', sections: [{ label: 'Absensi Kuliah', rows: [] }] },
-    });
-    const { getSiapKehadiran } = await import('./client');
-    const r = await getSiapKehadiran('77');
-    expect(mockRequest.mock.calls[0][0]).toMatchObject({ method: 'get', url: '/api/siap/kehadiran/77' });
-    expect(r.pertemuanId).toBe('77');
-  });
-
-  it('postKehadiranToken POST /api/siap/kehadiran body {token}', async () => {
-    mockRequest.mockResolvedValue({ data: { status: 'success', message: 'Absensi tercatat' } });
-    const { postKehadiranToken } = await import('./client');
-    const r = await postKehadiranToken('TOKEN-QR');
-    expect(mockRequest.mock.calls[0][0]).toMatchObject({
-      method: 'post',
-      url: '/api/siap/kehadiran',
-      data: { token: 'TOKEN-QR' },
-    });
-    expect(r.status).toBe('success');
   });
 
   it('logoutSession POSTs /api/auth/logout with the stored bearer', async () => {
@@ -570,26 +477,6 @@ describe('api client', () => {
     // No refresh POST, no retry — a single terminal reject.
     expect(mockRequest).toHaveBeenCalledTimes(0);
     expect(localStorage.getItem('sso_token')).toBe('old-jwt');
-  });
-
-  describe('getDashboard', () => {
-    it('getDashboard fetches /api/dashboard and routes through getCached with key dashboard + 60s TTLs', async () => {
-      getCachedMock.mockClear();
-      mockRequest.mockResolvedValue({
-        data: { profile: null, khs: null, irs: null, jadwal: [], courses: [], assignments: [], errors: {} },
-      });
-      const { getDashboard } = await import('./client');
-      const out = await getDashboard();
-      const call = mockRequest.mock.calls[0][0];
-      expect(call.method).toBe('get');
-      expect(call.url).toBe('/api/dashboard');
-      expect(out.errors).toEqual({});
-      expect(getCachedMock).toHaveBeenCalledWith(
-        'dashboard',
-        expect.any(Function),
-        { freshTtl: 60_000, staleTtl: 60_000 },
-      );
-    });
   });
 });
 

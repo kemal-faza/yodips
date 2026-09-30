@@ -1,29 +1,97 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import {
   API,
   BACKEND_ERROR_CODES,
-  buildSsoTicket,
   isServiceSessionPath,
   isServiceStale,
   parseErrorEnvelope,
 } from './contract';
 
-describe('API paths', () => {
-  it('mirrors the backend route table', () => {
-    expect(API.auth.me).toBe('/api/auth/me');
-    expect(API.auth.refresh).toBe('/api/auth/refresh');
-    expect(API.kulon.courses).toBe('/api/kulon/courses');
-    expect(API.kulon.courseSummary).toBe('/api/kulon/courses/summary');
-    expect(API.kulon.assignmentDetail(42)).toBe('/api/kulon/assignments/42/detail');
-    expect(API.siap.kehadiran('37')).toBe('/api/siap/kehadiran/37');
-  });
+/**
+ * SSOT tabel route: `contract/backend-contract.json` `apiPaths`. Tabel `API`
+ * web hanya boleh MIRROR sebagian dari kanonik — test di bawah gagal kalau web
+ * mengarang path, kalau nilainya berbeda dari kanonik, atau kalau ada entry web
+ * baru yang belum punya baris mirror.
+ */
+const canonical = JSON.parse(
+  readFileSync(resolve(__dirname, '../../../contract/backend-contract.json'), 'utf8'),
+) as { apiPaths: Record<string, string> };
 
-  it('mendaftarkan route pairing + kode INVALID_CODE', () => {
-    expect(API.auth.pairRequest).toBe('/api/auth/pair/request');
-    expect(API.auth.pairConsume).toBe('/api/auth/pair/consume');
-    expect(BACKEND_ERROR_CODES.INVALID_CODE).toBe('INVALID_CODE');
+interface RouteMirror {
+  canonicalKey: string;
+  /** Argumen contoh untuk entry fungsi; juga menyubstitusi `:param` kanonik. */
+  sample?: string | number;
+}
+
+const ROUTE_MIRRORS: Record<string, RouteMirror> = {
+  'auth.me': { canonicalKey: 'auth.me' },
+  'auth.refresh': { canonicalKey: 'auth.refresh' },
+  'auth.capture': { canonicalKey: 'auth.capture' },
+  'auth.microsoftLogin': { canonicalKey: 'auth.microsoftLogin' },
+  'auth.handoff': { canonicalKey: 'auth.handoff' },
+  'auth.logout': { canonicalKey: 'auth.logout' },
+  'auth.pairRequest': { canonicalKey: 'auth.pairRequest' },
+  'auth.pairConsume': { canonicalKey: 'auth.pairConsume' },
+  'auth.pairStatus': { canonicalKey: 'auth.pairStatus' },
+  'kulon.courses': { canonicalKey: 'kulon.courses' },
+  'kulon.courseSummary': { canonicalKey: 'kulon.courseSummary' },
+  'kulon.assignments': { canonicalKey: 'kulon.assignments' },
+  'kulon.allAssignments': { canonicalKey: 'kulon.allAssignments' },
+  'kulon.assignmentDetail': { canonicalKey: 'kulon.assignmentDetail', sample: 42 },
+  'kulon.courseContent': { canonicalKey: 'kulon.courseContent', sample: 7 },
+  'siap.profile': { canonicalKey: 'siap.profile' },
+  'siap.irs': { canonicalKey: 'siap.irs' },
+  'siap.khs': { canonicalKey: 'siap.khs' },
+  'siap.lecturers': { canonicalKey: 'siap.lecturers' },
+  'siap.jadwal': { canonicalKey: 'siap.jadwal' },
+  'siap.absen': { canonicalKey: 'siap.absen' },
+  'siap.notifications': { canonicalKey: 'siap.notifications' },
+  'siap.markNotification': { canonicalKey: 'siap.markNotification', sample: 'abc' },
+  // Tabel web memisahkan item (GET :id) dari collection (POST); kanonik
+  // menyebutnya kehadiranById dan kehadiran.
+  'siap.kehadiran': { canonicalKey: 'siap.kehadiranById', sample: '37' },
+  'siap.markKehadiran': { canonicalKey: 'siap.kehadiran' },
+  dashboard: { canonicalKey: 'dashboard' },
+};
+
+function readWebEntry(dotPath: string): unknown {
+  return dotPath
+    .split('.')
+    .reduce<unknown>((acc, key) => (acc as Record<string, unknown> | undefined)?.[key], API);
+}
+
+function renderCanonical(template: string, sample?: string | number): string {
+  return sample === undefined ? template : template.replace(/:[A-Za-z]+/g, String(sample));
+}
+
+describe('API paths mirror contract/backend-contract.json apiPaths', () => {
+  it.each(Object.entries(ROUTE_MIRRORS) as Array<[string, RouteMirror]>)(
+    '%s cocok dengan kanonik',
+    (webKey, mirror) => {
+      const entry = readWebEntry(webKey);
+      expect(entry, `${webKey} tidak ada di tabel API web`).toBeDefined();
+      const template = canonical.apiPaths[mirror.canonicalKey];
+      if (!template) {
+        throw new Error(`apiPaths.${mirror.canonicalKey} tidak ada di kontrak kanonik`);
+      }
+
+      const actual =
+        typeof entry === 'function'
+          ? (entry as unknown as (arg: string | number) => string)(mirror.sample as string | number)
+          : entry;
+      expect(actual).toBe(renderCanonical(template, mirror.sample));
+    },
+  );
+
+  it('setiap entry tabel API web punya baris mirror', () => {
+    const webKeys = Object.entries(API).flatMap(([group, entries]) =>
+      typeof entries === 'string'
+        ? [group]
+        : Object.keys(entries).map((key) => `${group}.${key}`),
+    );
+    expect(webKeys.sort()).toEqual(Object.keys(ROUTE_MIRRORS).sort());
   });
 });
 
@@ -45,6 +113,8 @@ describe('parseErrorEnvelope', () => {
     expect(BACKEND_ERROR_CODES.SIAP_STALE).toBe('SIAP_STALE');
     expect(BACKEND_ERROR_CODES.INVALID_TOKEN).toBe('INVALID_TOKEN');
     expect(BACKEND_ERROR_CODES.SESSION_DEAD).toBe('SESSION_DEAD');
+    expect(BACKEND_ERROR_CODES.INVALID_CODE).toBe('INVALID_CODE');
+    expect(BACKEND_ERROR_CODES.EXPIRED_CODE).toBe('EXPIRED_CODE');
   });
 });
 
@@ -72,33 +142,5 @@ describe('isServiceStale', () => {
     expect(isServiceStale('/api/siap/profile')).toBe(true);
     expect(isServiceStale('/api/auth/me')).toBe(false);
     expect(isServiceStale('/api/dashboard')).toBe(false);
-  });
-});
-
-describe('buildSsoTicket', () => {
-  it('is base64 of the unix-second timestamp (backend SSOTicketService algorithm)', () => {
-    // btoa("1756000000") — pinned so drift vs extension/mobile breaks THIS test.
-    expect(buildSsoTicket(1_756_000_000)).toBe(btoa('1756000000'));
-    expect(buildSsoTicket(1_756_000_000)).toBe('MTc1NjAwMDAwMA==');
-  });
-
-  it('agrees with the canonical ssoTicket.algorithm', () => {
-    // The canonical JSON is the single source; this asserts the declared
-    // algorithm and the implementation are the same (base64 of decimal unix
-    // seconds) at a fixed clock — so a semantic drift on either side fails.
-    const { ssoTicket } = JSON.parse(
-      readFileSync(
-        resolve(__dirname, '../../../contract/backend-contract.json'),
-        'utf8',
-      ),
-    ) as { ssoTicket: { algorithm: string } };
-    expect(ssoTicket.algorithm).toBe('base64(decimal unix seconds)');
-    expect(buildSsoTicket(1_756_000_000)).toBe(btoa('1756000000'));
-  });
-});
-
-describe('API.siap lecturers path (kontrak layar mobile)', () => {
-  it('mendaftarkan /api/siap/lecturers', () => {
-    expect(API.siap.lecturers).toBe('/api/siap/lecturers');
   });
 });

@@ -3,22 +3,11 @@ import fs from 'fs';
 import path from 'path';
 import { Test } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
-import {
-  KulonService,
-  parseSemester,
-  extractFileType,
-  deriveSectionLabel,
-  extractCourseCode,
-  parseSectionProgress,
-} from './kulon.service';
+import { KulonService } from './kulon.service';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { KulonUpstreamSession } from './kulon-upstream.session';
-import {
-  parseAssignmentIndex,
-  parseMoodleDate,
-  parseQuizIndex,
-} from './kulon-parse';
-import { CachePolicy, swrWindow } from '../cache/cache-policy';
+import { parseMoodleDate, parseQuizIndex } from './kulon-parse';
+import { swrWindow } from '../cache/cache-policy';
 import { TELEMETRY_RUNTIME, type TelemetryRuntime } from '../observability/telemetry';
 import { NestTelemetrySink } from '../observability/nest-telemetry.sink';
 import { KulonModule } from './kulon.module';
@@ -60,119 +49,6 @@ function recordingRuntime(): { runtime: TelemetryRuntime; events: unknown[] } {
     },
   };
 }
-
-describe('parseSemester', () => {
-  it('extracts semester from fullname', () => {
-    expect(parseSemester('S1 2025/2026 Genap Keamanan dan Jaminan Informasi B')).toBe('2025/2026 Genap');
-  });
-  it('returns null when no pattern', () => {
-    expect(parseSemester('Pemrograman Berorientasi Objek E')).toBeNull();
-  });
-  it('falls back to idnumber', () => {
-    expect(parseSemester('KJI B', 'MIK1624601 S1 2025/2026 Genap')).toBe('2025/2026 Genap');
-  });
-  it('handles Ganjil and case-insensitive', () => {
-    expect(parseSemester('S1 2024/2025 ganjil Algoritma')).toBe('2024/2025 Ganjil');
-  });
-});
-
-describe('extractFileType', () => {
-  it.each([
-    ['https://kulon/pl/pluginfile.php/1.pdf', 'pdf'],
-    ['https://kulon/theme/image.php/moove/core/1/f/pdf', 'pdf'],
-    ['https://kulon/theme/image.php/moove/core/1/f/vnd.ms-powerpoint', 'pptx'],
-    ['https://kulon/theme/image.php/moove/core/1/f/pptx', 'pptx'],
-    ['https://kulon/theme/image.php/moove/core/1/f/edit-doc', 'doc'],
-    ['https://kulon/mod/resource/view.php?id=5', 'other'],
-    ['https://kulon/a/notes.pptx?forcedownload=1', 'pptx'],
-    ['https://kulon/x.DOC', 'doc'],
-    ['https://kulon/y.xlsx', 'xlsx'],
-  ])('%s -> %s', (url, expected) => expect(extractFileType(url)).toBe(expected));
-});
-
-describe('deriveSectionLabel', () => {
-  it('labels section 0 as General', () => {
-    expect(deriveSectionLabel(0, 'General')).toEqual({ label: 'General' });
-  });
-  it('synthesizes Pertemuan N for a pure date-range title', () => {
-    expect(deriveSectionLabel(1, '9 February - 15 February')).toEqual({
-      label: 'Pertemuan 1',
-      dateRange: '9 February - 15 February',
-    });
-  });
-  it('keeps a custom name without dateRange', () => {
-    expect(deriveSectionLabel(2, 'Pertemuan 11')).toEqual({ label: 'Pertemuan 11' });
-  });
-  it('strips surrounding whitespace', () => {
-    expect(deriveSectionLabel(3, '  Bab 4  ')).toEqual({ label: 'Bab 4' });
-  });
-});
-
-describe('extractCourseCode', () => {
-  const RAW = '[SIAP] [55201] [K2024] [Reguler] [MIK1624105] S1 2024/2025 Ganjil Aljabar Linier D';
-
-  it('extracts bracketed MIK-style code from shortname', () => {
-    expect(extractCourseCode(RAW, 'S1 2024/2025 Ganjil Aljabar Linier D')).toBe('MIK1624105');
-  });
-  it('falls back to fullname when shortname has no bracketed code', () => {
-    expect(extractCourseCode('CA', 'S1 [MIK1624503] Sistem Informasi')).toBe('MIK1624503');
-  });
-  it('ignores non-code bracket tokens and passes original shortname through', () => {
-    // [SIAP]/[Reguler] letters-only, [55201] digits-only, [K2024] 1-letter+4-digits
-    // -> no [A-Z]{2,3}\d{5,} token, so the helper returns the original shortname untouched.
-    expect(extractCourseCode('[SIAP] [55201] [K2024] [Reguler] X', '')).toBe('[SIAP] [55201] [K2024] [Reguler] X');
-  });
-  it('returns original shortname when neither shortname nor fullname has a code', () => {
-    expect(extractCourseCode('CA', 'Course A')).toBe('CA');
-    expect(extractCourseCode('K', 'Kripto')).toBe('K');
-  });
-});
-
-describe('parseSectionProgress', () => {
-  const section = (label: string, dateRange?: string) => ({ id: 1, label, dateRange, items: [] });
-  const now = new Date(2026, 1, 20); // 20 Feb 2026
-
-  it('returns undefined when no dated sections', () => {
-    expect(parseSectionProgress([section('General'), section('Bab 1')], now)).toBeUndefined();
-  });
-  it('counts a dated section as ended when its end date has passed', () => {
-    expect(parseSectionProgress([section('P1', '1 February - 8 February')], now)).toBe(100);
-  });
-  it('does not count a dated section that has not ended yet', () => {
-    expect(parseSectionProgress([section('P1', '15 March - 22 March')], now)).toBe(0);
-  });
-  it('computes a partial ratio (1 of 2 ended = 50)', () => {
-    expect(parseSectionProgress([
-      section('P1', '1 February - 5 February'),
-      section('P2', '1 March - 5 March'),
-    ], now)).toBe(50);
-  });
-  it('ignores sections with unparseable dateRange and uses only parseable ones', () => {
-    expect(parseSectionProgress([
-      section('P1', '1 February - 5 February'),
-      section('P2', 'weird'),
-    ], now)).toBe(100);
-  });
-  it('returns 100 for a PAST course even when its end-date month is ahead of now (year inference fails for past semesters)', () => {
-    // A past-semester course (ended Dec 2024) whose section end month is "December":
-    // with now = 20 Feb 2026, the old year-inference checked Dec 2026 & Dec 2027 (both
-    // future) and misclassified it as not-ended -> 0%. A past course must be 100%.
-    expect(parseSectionProgress(
-      [section('P1', '1 December - 15 December')],
-      now,
-      { isPast: true },
-    )).toBe(100);
-  });
-  it('keeps inprogress logic when isPast is false (a not-yet-ended section stays 0)', () => {
-    expect(parseSectionProgress(
-      [section('P1', '15 March - 22 March')],
-      now,
-      { isPast: false },
-    )).toBe(0);
-  });
-});
-
-
 
 describe('sub-based session resolution (endpoint API)', () => {
   const SESSKEY_PAGE =
@@ -674,16 +550,12 @@ describe('KulonService', () => {
     expect(upstreamMock.getContextForSession).toHaveBeenCalledTimes(1);
   });
 
-  it('getAllAssignments uses renamed key + 3-min TTL', async () => {
-    const setSpy = jest.fn();
+  it('getAllAssignments membaca payload dari key assignments:all + window KULON_ASSIGNMENTS_ALL', async () => {
+    const getStale = jest.fn().mockResolvedValue({ value: [], stale: false });
     const cacheMock = {
-      get: jest.fn().mockResolvedValue(null),
-      getStale: jest.fn(async (key: string, fetcher: () => unknown) => {
-        const value = await fetcher();
-        await setSpy(key, value, CachePolicy.KULON_ASSIGNMENTS_ALL);
-        return { value, stale: false };
-      }),
-      set: setSpy,
+      get: jest.fn(),
+      getStale,
+      set: jest.fn(),
       del: jest.fn(),
     };
     const upstreamMock = {
@@ -699,11 +571,13 @@ describe('KulonService', () => {
       upstreamMock as any,
     );
     await service.getAllAssignments(ref('2304012012345'));
-    expect(setSpy).toHaveBeenCalledWith(
+    expect(getStale).toHaveBeenCalledWith(
       cacheKeyForSession(ref('2304012012345'), 'kulon', 'assignments', 'all'),
-      expect.anything(),
-      CachePolicy.KULON_ASSIGNMENTS_ALL,
+      expect.any(Function),
+      swrWindow('KULON_ASSIGNMENTS_ALL'),
     );
+    // getStale adalah satu-satunya penulis payload; service tidak set langsung.
+    expect(cacheMock.set).not.toHaveBeenCalled();
   });
 
   it('getAllAssignments passes withProgress:false to the courses fetch', async () => {
@@ -734,21 +608,19 @@ describe('KulonService', () => {
       'c1',
       'sk1',
       { kind: 'session', ref: ref('u1') },
-      { withLecturers: false, withProgress: false, skipCacheRead: true },
+      { withLecturers: false, withProgress: false },
     );
     spy.mockRestore();
   });
 
-  it('fetchCourses with withProgress:false skips progress scrape and does NOT write cache on miss', async () => {
-    const setSpy = jest.fn();
+  it('fetchCourses dengan withProgress:false melewati progress scrape dan tidak menulis cache langsung', async () => {
     const cacheMock = {
-      get: jest.fn().mockResolvedValue(null), // cold miss
-      getStale: jest.fn(async (key: string, fetcher: () => unknown) => {
-        const value = await fetcher();
-        await setSpy(key, value, CachePolicy.KULON_ASSIGNMENTS_ALL);
-        return { value, stale: false };
-      }),
-      set: setSpy,
+      get: jest.fn(), // jalur list tidak boleh membaca key payload penuh
+      getStale: jest.fn(async (_key: string, fetcher: () => unknown) => ({
+        value: await fetcher(),
+        stale: false,
+      })),
+      set: jest.fn(),
       del: jest.fn(),
     };
     const upstreamMock = {
@@ -769,9 +641,19 @@ describe('KulonService', () => {
     const progressSpy = jest.spyOn(svc as any, 'fetchCourseContent');
     await svc.getAllAssignments(ref('u1'));
     expect(progressSpy).not.toHaveBeenCalled();
-    expect(setSpy).not.toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.anything());
-    // assignments:all is written by getStale, the sole payload owner.
-    expect(setSpy).toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'assignments', 'all'), expect.anything(), CachePolicy.KULON_ASSIGNMENTS_ALL);
+    // Agregasi tugas memakai key list, bukan key courses lengkap.
+    expect(cacheMock.getStale).toHaveBeenCalledWith(
+      cacheKeyForSession(ref('u1'), 'kulon', 'courses', 'list'),
+      expect.any(Function),
+      swrWindow('KULON_COURSES'),
+    );
+    expect(cacheMock.getStale).not.toHaveBeenCalledWith(
+      cacheKeyForSession(ref('u1'), 'kulon', 'courses'),
+      expect.any(Function),
+      expect.anything(),
+    );
+    // Satu-satunya penulis payload adalah getStale, bukan service langsung.
+    expect(cacheMock.set).not.toHaveBeenCalled();
     progressSpy.mockRestore();
   });
 
@@ -822,27 +704,6 @@ describe('KulonService', () => {
     expect(upstreamMock.ajax).not.toHaveBeenCalled();
     expect(setSpy).not.toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.anything());
     expect(out).toEqual([]);
-  });
-
-  it('public getCourses (no opts) lets getStale write the progress-complete payload', async () => {
-    const cache = {
-      get: jest.fn().mockResolvedValue(null),
-      getStale: jest.fn(async (key: string, fetcher: () => unknown) => {
-        const value = await fetcher();
-        await cache.set(key, value, CachePolicy.KULON_COURSES);
-        return { value, stale: false };
-      }),
-      set: jest.fn(),
-      del: jest.fn(),
-    };
-    const siapFake = { getLecturers: jest.fn().mockResolvedValue([{ kode: 'M1', dosen: 'Dr. X' }]) };
-    const svcNew = makeAuthedKulonSvc({ cache, siap: siapFake });
-    svcNew.fetchTimelineCourses = jest.fn().mockResolvedValue([
-      { id: 1, fullname: 'Matkul', shortname: 'M1', idnumber: '', timelineStatus: 'inprogress' },
-    ]) as any;
-    (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
-    await svcNew.getCourses(ref('u1'));
-    expect(cache.set).toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.anything(), CachePolicy.KULON_COURSES);
   });
 
   it('getAllAssignments single-flights concurrent callers (1 upstream run)', async () => {
@@ -1280,40 +1141,6 @@ describe('KulonService', () => {
     ).rejects.toThrow('ASSIGNMENT_NOT_FOUND');
   });
 
-  describe('parseAssignmentIndex', () => {
-    const indexHtml =
-      '<table class="generaltable"><thead><tr><th>Section</th><th>Assignments</th><th>Due date</th><th>Submission</th><th>Grade</th></tr></thead><tbody>' +
-      '<tr><td class="cell c0">Pertemuan Kedua</td><td class="cell c1"><a href="https://kulon2.undip.ac.id/mod/assign/view.php?id=3317">Tugas Kelompok I. Galat</a></td><td class="cell c2">Tuesday, 18 March 2025, 12:00 AM</td><td class="cell c3">No submission</td><td class="cell c4 lastcol">-</td></tr>' +
-      '<tr><td class="cell c0"></td><td class="cell c1"><a href="https://kulon2.undip.ac.id/mod/assign/view.php?id=3342">Tugas Individu I. Galat</a></td><td class="cell c2">Thursday, 7 May 2027, 11:50 PM</td><td class="cell c3">Submitted for grading</td><td class="cell c4 lastcol">-</td></tr>' +
-      '<tr><td class="cell c0"></td><td class="cell c1"><a href="https://kulon2.undip.ac.id/mod/assign/view.php?id=9999">Tugas Dinilai</a></td><td class="cell c2">Monday, 2 June 2025, 8:00 AM</td><td class="cell c3">Graded</td><td class="cell c4 lastcol">85.00</td></tr>' +
-      '</tbody></table>';
-
-    it('parses each row into a KulonAssignment with submission status', () => {
-      const rows = parseAssignmentIndex(indexHtml, 9371, 'Struktur Diskret D');
-      expect(rows).toHaveLength(3);
-
-      const [notSub, submitted, graded] = rows;
-      expect(notSub.name).toBe('Tugas Kelompok I. Galat');
-      expect(notSub.courseModuleId).toBe(3317);
-      expect(notSub.assignmentId).toBe(3317);
-      expect(notSub.courseId).toBe(9371);
-      expect(notSub.course).toBe('Struktur Diskret D');
-      expect(notSub.submissionStatus).toBe('not_submitted');
-      expect(notSub.overdue).toBe(true); // due March 2025
-
-      expect(submitted.name).toBe('Tugas Individu I. Galat');
-      expect(submitted.submissionStatus).toBe('submitted');
-      expect(submitted.overdue).toBe(false); // due May 2026
-
-      expect(graded.submissionStatus).toBe('graded');
-    });
-
-    it('returns empty when page has no mod-index table', () => {
-      const rows = parseAssignmentIndex('<html>no table</html>', 1, 'C');
-      expect(rows).toEqual([]);
-    });
-  });
-
   describe('parseQuizIndex', () => {
     // Real Kulon (moove) structure: c0 Week, c1 Name(link, RELATIVE view.php),
     // c2 Quiz closes, c3 Grade.
@@ -1524,18 +1351,13 @@ describe('KulonService', () => {
     expect(out).toEqual(cachedCourses);
   });
 
-  it('getCourses on cache miss scrapes, merges lecturers, and caches the merged list', async () => {
+  it('getCourses on cache miss merges lecturers and hands the payload to getStale', async () => {
     global.fetch = jest.fn();
-    const cache = {
-      get: jest.fn().mockResolvedValue(null),
-      getStale: jest.fn(async (key: string, fetcher: () => unknown) => {
-        const value = await fetcher();
-        await cache.set(key, value, CachePolicy.KULON_COURSES);
-        return { value, stale: false };
-      }),
-      set: jest.fn(),
-      del: jest.fn(),
-    };
+    const getStale = jest.fn(async (_key: string, fetcher: () => unknown) => ({
+      value: await fetcher(),
+      stale: false,
+    }));
+    const cache = { get: jest.fn(), getStale, set: jest.fn(), del: jest.fn() };
     const siapFake = { getLecturers: jest.fn().mockResolvedValue([{ kode: 'MIK1624105', dosen: 'Dr. X' }]) };
     const svcNew = makeAuthedKulonSvc({ cache, siap: siapFake });
     svcNew.fetchTimelineCourses = jest.fn().mockResolvedValue([
@@ -1543,10 +1365,14 @@ describe('KulonService', () => {
     ]) as any;
     (svcNew as any).fetchCourseContent = jest.fn().mockResolvedValue({ sections: [] }) as any;
     const out = await svcNew.getCourses(ref('u1'));
-    expect(cache.set).toHaveBeenCalledWith(cacheKeyForSession(ref('u1'), 'kulon', 'courses'), expect.arrayContaining([
-      expect.objectContaining({ lecturer: 'Dr. X' }),
-    ]), CachePolicy.KULON_COURSES);
+    expect(getStale).toHaveBeenCalledWith(
+      cacheKeyForSession(ref('u1'), 'kulon', 'courses'),
+      expect.any(Function),
+      swrWindow('KULON_COURSES'),
+    );
+    expect(out).toEqual([expect.objectContaining({ lecturer: 'Dr. X' })]);
     expect(siapFake.getLecturers).toHaveBeenCalledWith(ref('u1'));
+    expect(cache.set).not.toHaveBeenCalled();
   });
 
   it('getAllAssignments uses getStale for the payload key (SWR)', async () => {

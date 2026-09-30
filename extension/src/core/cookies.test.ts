@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   evaluateCookies,
-  cookiesToStr,
   buildHandoffBody,
   cookiePatternsForPhase,
   phasesToClear,
@@ -99,21 +98,22 @@ describe("cookieStoreForTab", () => {
   });
 });
 
-describe("cookiesToStr", () => {
-  it("groups matching cookies into a string", () => {
-    expect(
-      cookiesToStr([KULON, SSO_SESS], (c) => c.domain.includes("undip.ac.id")),
-    ).toBe("MoodleSession=abc; ci_session_sso=ssoX");
-  });
-});
-
 describe("buildHandoffBody", () => {
   it("segments cookies per service", () => {
     const body = buildHandoffBody([KULON, SSO_SESS, MS, SIAP]);
-    expect(body.kulonCookie).toContain("MoodleSession=abc");
-    expect(body.ssoCookie).toContain("ci_session_sso=ssoX");
-    expect(body.microsoftCookie).toContain("MSAuth=ms1");
-    expect(body.siapCookie).toContain("sia_app_session=siap1");
+    expect(body.kulonCookie).toBe("MoodleSession=abc");
+    expect(body.ssoCookie).toBe("ci_session_sso=ssoX");
+    expect(body.microsoftCookie).toBe("MSAuth=ms1");
+    expect(body.siapCookie).toBe("sia_app_session=siap1");
+  });
+  it("joins multiple matching cookies with a semicolon space (Cookie header format)", () => {
+    const secondSiap = {
+      name: "sipp_extra",
+      domain: "siap.undip.ac.id",
+      value: "siap2",
+    };
+    const body = buildHandoffBody([SIAP, secondSiap]);
+    expect(body.siapCookie).toBe("sia_app_session=siap1; sipp_extra=siap2");
   });
   it("excludes a bare csrftoken from ssoCookie on the parent domain", () => {
     const parentCsrf = { name: "csrftoken", domain: "undip.ac.id", value: "x" };

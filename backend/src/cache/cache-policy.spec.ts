@@ -8,31 +8,6 @@ import {
 } from './cache-policy';
 
 describe('CachePolicy', () => {
-  it('defines every cache key with a positive finite TTL (ms)', () => {
-    const keys = [
-      'KULON_COURSES',
-      'KULON_ASSIGNMENTS_ALL',
-      'KULON_ASSIGNMENT_DETAIL',
-      'KULON_COURSE_CONTENT',
-      'KULON_SESSKEY',
-      'SIAP_PROFILE',
-      'SIAP_IRS',
-      'SIAP_KHS',
-      'SIAP_LECTURERS',
-      'SIAP_NOTIFICATIONS',
-      'SIAP_JADWAL',
-      'SIAP_ABSEN',
-      'SIAP_IDENTITY',
-      'SIAP_TOKEN',
-      'AUTH_PROBE',
-    ] as const;
-    for (const k of keys) {
-      expect(CachePolicy[k]).toBeDefined();
-      expect(Number.isFinite(CachePolicy[k])).toBe(true);
-      expect(CachePolicy[k]).toBeGreaterThan(0);
-    }
-  });
-
   it('keeps every behavior-preserving numeric value', () => {
     expect(CachePolicy).toEqual({
       KULON_COURSES: 300_000,

@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class StoredNotification(
-    /** Dedup key: <title+body> hash (from the PushMessagingService requestCode). */
+    /** Dedup key: title|body hash (stable across a repeat push). */
     val id: String = "",
     val title: String = "",
     val body: String = "",
@@ -28,7 +28,7 @@ interface NotificationHistoryStore {
 /** Maksimal jumlah notifikasi yang disimpan agar DataStore tidak membengkak. */
 internal const val NOTIFICATION_HISTORY_LIMIT = 100
 
-/** Build a dedup id from title+body (mirror of the status-bar requestCode). */
+/** Build the stable title|body dedup id used by [mergeNotification]. */
 internal fun notificationId(title: String, body: String): String =
     (title + "|" + body).hashCode().toString()
 

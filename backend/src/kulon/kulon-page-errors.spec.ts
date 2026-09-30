@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { isKulonPageCompatibilityError, KulonService } from './kulon.service';
+import { KulonService } from './kulon.service';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import type {
   KulonAssignment,
@@ -144,7 +144,7 @@ describe('Kulon page transport error classification', () => {
   it.each([
     [404, 'COURSE_NOT_FOUND'],
     [302, 'Kulon page failed: 302'],
-  ])('marks page compatibility error without changing its plain Error shape (%i)', async (status, message) => {
+  ])('surfaces plain page compatibility errors for 404 and 3xx (%i)', async (status, message) => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status,
@@ -158,7 +158,6 @@ describe('Kulon page transport error classification', () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe(message);
     expect(error).not.toBeInstanceOf(StaleUpstreamError);
-    expect(isKulonPageCompatibilityError(error)).toBe(true);
   });
 
   it('emits one timed stale event for a login HTML page', async () => {

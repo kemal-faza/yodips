@@ -10,7 +10,6 @@ import { clearCache } from '../api/cache';
 
 vi.mock('../api/client', () => ({
   getAllAssignments: vi.fn(),
-  getAssignments: vi.fn(),
   getCourses: vi.fn(),
   getCourseList: vi.fn(),
   getCourseContent: vi.fn(),

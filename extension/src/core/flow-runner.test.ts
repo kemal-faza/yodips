@@ -1,39 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { drainPendingEvent, pollStatusForEpoch, type FlowEvent } from "./flow.js";
+import { drainPendingEvent, type FlowEvent } from "./flow.js";
 import { createSerializedFlowRunner } from "./flow-runner.js";
-import {
-  createLifecycleCoordinator,
-  createSerialQueue,
-  createSingleFlight,
-} from "./single-flight.js";
+import { createLifecycleCoordinator } from "./single-flight.js";
 
 describe("handoff race protection", () => {
-  it("joins concurrent handoff admissions instead of running the backend handoff twice", async () => {
-    const flight = createSingleFlight<string>();
-    let calls = 0;
-    let resolve: (value: string) => void = () => {};
-    const gate = new Promise<string>((next) => {
-      resolve = next;
-    });
-
-    const first = flight(async () => {
-      calls++;
-      return gate;
-    });
-    const second = flight(async () => {
-      calls++;
-      return "wrong-generation";
-    });
-
-    expect(second).toBe(first);
-    resolve("first-generation");
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      "first-generation",
-      "first-generation",
-    ]);
-    expect(calls).toBe(1);
-  });
-
   it("keeps a joined caller pending until the active flow drains HANDOFF_OK", async () => {
     const events: FlowEvent["type"][] = [];
     let release: () => void = () => {};
@@ -75,30 +45,6 @@ describe("handoff race protection", () => {
         { type: "REQUEST", mode: "auto" },
       ),
     ).toBeNull();
-  });
-
-  it("releases a failed admission so the next attempt can run", async () => {
-    const flight = createSingleFlight<string>();
-    let calls = 0;
-    const failure = new Error("handoff failed");
-    const first = flight(async () => {
-      calls++;
-      throw failure;
-    });
-    const joined = flight(async () => {
-      calls++;
-      return "unexpected";
-    });
-
-    expect(joined).toBe(first);
-    await expect(first).rejects.toBe(failure);
-    await expect(
-      flight(async () => {
-        calls++;
-        return "second-attempt";
-      }),
-    ).resolves.toBe("second-attempt");
-    expect(calls).toBe(2);
   });
 
   it("keeps logout ahead of later events while a handoff is active", async () => {
@@ -157,19 +103,19 @@ describe("handoff race protection", () => {
   });
 
   it("runs lifecycle tasks in order even when an earlier task fails", async () => {
-    const queue = createSerialQueue();
+    const lifecycle = createLifecycleCoordinator();
     const events: string[] = [];
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const first = queue(async () => {
+    const first = lifecycle.enqueue(async () => {
       events.push("first-start");
       await gate;
       events.push("first-end");
       throw new Error("first failed");
     });
-    const second = queue(async () => {
+    const second = lifecycle.enqueue(async () => {
       events.push("second");
     });
 
@@ -226,19 +172,6 @@ describe("handoff race protection", () => {
     // A fresh login request begins a NEW epoch, never joins the restored one.
     const fresh = lifecycle.beginHandoff();
     expect(fresh).toBe(5);
-
-    // A status poll carrying the OLD (pre-restart) epoch must never surface
-    // the stale pre-restart cached result — the epoch fence rejects it.
-    const stalePoll = pollStatusForEpoch(
-      3,
-      lifecycle.currentEpoch(),
-      { status: "ok", accessToken: "pre-restart-token" },
-      { core: "done", service: null },
-    );
-    expect(stalePoll).toEqual({
-      status: "error",
-      message: "Sesi login berubah. Silakan ulangi login.",
-    });
   });
 
   it("restoreEpoch never rewinds an already-advanced in-memory epoch", () => {

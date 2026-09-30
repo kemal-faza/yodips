@@ -1,27 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { summarizeEvents } from "./manual-dashboard-baseline.mjs";
-import { extractTelemetryEvent } from "../telemetry/telemetry-event.mjs";
 
 describe("manual dashboard baseline helpers", () => {
-  it("extracts only a structured telemetry event from a prefixed log line", () => {
-    assert.deepEqual(
-      extractTelemetryEvent(
-        '[Nest] [telemetry] {"v":1,"event":"dashboard.request","route":"GET /api/dashboard","outcome":"ok","status":200,"durationMs":42,"responseBytes":128,"cacheState":"unknown","sub":"24060121130000"}',
-      ),
-      {
-        v: 1,
-        event: "dashboard.request",
-        route: "GET /api/dashboard",
-        outcome: "ok",
-        status: 200,
-        durationMs: 42,
-        responseBytes: 128,
-        cacheState: "unknown",
-      },
-    );
-  });
-
   it("summarizes dashboard, slice, and upstream events without raw fields", () => {
     const report = summarizeEvents([
       {

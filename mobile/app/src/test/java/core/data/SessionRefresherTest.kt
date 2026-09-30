@@ -137,16 +137,6 @@ class SessionRefresherTest {
         assertEquals(Triple("rotated-jwt", "siap-c", "kulon-c"), store.saved)
     }
 
-    @Test
-    fun `http status to ErrorType mapping is reusable`() {
-        // Covered end-to-end by SsoRepositoryTest through the facade; here we
-        // pin the reusable mapping itself (push/session paths may reuse it).
-        assertEquals(ErrorType.UNAUTHORIZED, typeForHttp(401))
-        assertEquals(ErrorType.NOT_FOUND, typeForHttp(404))
-        assertEquals(ErrorType.UPSTREAM, typeForHttp(422))
-        assertEquals(ErrorType.SERVER, typeForHttp(500))
-    }
-
     // ---------- safe(): dialog policy (fix relogin-loop) ----------
 
     private fun refresher(
