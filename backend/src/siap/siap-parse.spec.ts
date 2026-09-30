@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import {
   currentSemesterCount,
-  lecturersFromIrs,
   mergeKhsDetailIds,
   parseAbsenTable,
   parseApiAbsen,
@@ -14,9 +13,7 @@ import {
   parseDetailNilaiTable,
   parseIrsTable,
   parseKhsDetailIds,
-  parseKhsNilai,
   pickProfileValue,
-  semesterLabel,
 } from './siap-parse';
 
 describe('pickProfileValue', () => {
@@ -25,30 +22,6 @@ describe('pickProfileValue', () => {
       '<div><b>Nama Lengkap</b>:</div><div class="col-sm-9">BUDI SANTOSO</div>';
     expect(pickProfileValue(html, 'Nama Lengkap')).toBe('BUDI SANTOSO');
     expect(pickProfileValue(html, 'NIM')).toBeUndefined();
-  });
-});
-
-describe('parseKhsNilai', () => {
-  it('skips the -kosong- placeholder and maps kode/nama/sks/huruf/bobot columns', () => {
-    const kosong = '<table><tr><td colspan="9">-kosong-</td></tr></table>';
-    expect(parseKhsNilai(kosong)).toEqual([]);
-
-    // Real layout: NO, KODE, MATA KULIAH, …, SKS(c5), HURUF(c6), BOBOT(c7).
-    const html = `
-      <table>
-        <tr><td>1</td><td>MIK1624105</td><td>Aljabar Linier</td><td>2</td><td>0</td><td>2</td><td>A</td><td>4</td></tr>
-        <tr><th colspan="9">footer</th></tr>
-      </table>`;
-    const rows = parseKhsNilai(html);
-    expect(rows).toEqual([
-      {
-        kode: 'MIK1624105',
-        mataKuliah: 'Aljabar Linier',
-        sks: 2,
-        nilaiHuruf: 'A',
-        bobot: 4,
-      },
-    ]);
   });
 });
 
@@ -159,13 +132,7 @@ describe('parseDetailNilaiTable', () => {
   });
 });
 
-describe('semesterLabel / currentSemesterCount', () => {
-  it('derives "ta/ta+1 Ganjil|Genap" from angkatan + cumulative semester', () => {
-    expect(semesterLabel('2024', 1)).toBe('2024/2025 Ganjil');
-    expect(semesterLabel('2024', 2)).toBe('2024/2025 Genap');
-    expect(semesterLabel('2024', 3)).toBe('2025/2026 Ganjil');
-  });
-
+describe('currentSemesterCount', () => {
   it('counts completed semesters from the profile label', () => {
     // "2026/2027 Ganjil" with angkatan 2024 -> (2027-2024)*2 - 1 = 5
     expect(currentSemesterCount('2024', '2026/2027 Ganjil')).toBe(5);
@@ -287,16 +254,6 @@ describe('parseApiIrs', () => {
     expect(mk[0].kode).toBe('MIK1624103');
     expect(mk[0].sks).toBe(4);
     expect(mk[0].dosen).toBe('Dosen A');
-  });
-
-  it('extracts lecturers filtered by kode pattern, joins multi-name with |', () => {
-    const rows = [
-      { kode_mk: 'MIK1624103', nama_dosen: 'Dosen A' },
-      { kode_mk: 'MIK1624103', nama_dosen: 'Dosen B' },
-      { kode_mk: 'UUW1624002', nama_dosen: '' }, // filtered: no dosen
-    ];
-    const out = lecturersFromIrs(rows as any);
-    expect(out).toEqual([{ kode: 'MIK1624103', dosen: 'Dosen A | Dosen B' }]);
   });
 });
 

@@ -54,8 +54,6 @@ import {
 } from '../observability/telemetry';
 import type { UpstreamReason } from '../observability/telemetry-contract';
 
-const kulonPageCompatibilityErrors = new WeakSet<object>();
-
 type KulonScope =
   | { kind: 'session'; ref: SessionRef }
   | { kind: 'current'; sub: string };
@@ -88,20 +86,6 @@ function kulonCacheKey(scope: KulonScope, ...parts: string[]): string {
   return scope.kind === 'session'
     ? cacheKeyForSession(scope.ref, 'kulon', ...parts)
     : cacheKeyForCurrent(scope.sub, 'kulon', ...parts);
-}
-
-/** Mark the exact legacy plain Error used for expected Moodle page incompatibilities. */
-export function markKulonPageCompatibilityError(error: unknown): void {
-  if (typeof error === 'object' && error !== null) {
-    kulonPageCompatibilityErrors.add(error);
-  }
-}
-
-/** Identify a marked 404/3xx page error without changing its class or message. */
-export function isKulonPageCompatibilityError(error: unknown): boolean {
-  return typeof error === 'object' && error !== null
-    ? kulonPageCompatibilityErrors.has(error)
-    : false;
 }
 
 function httpErrorResult<T>(error: unknown, status: number): UpstreamAttemptResult<T> {
@@ -898,14 +882,12 @@ export class KulonService {
           if (!res.ok) {
             if (res.status === 404) {
               const error = new Error(notFoundCode ?? 'Kulon page not found');
-              markKulonPageCompatibilityError(error);
               return httpErrorResult(error, res.status);
             }
             if (!Number.isFinite(res.status) || res.status < 400) {
               const error = new Error(
                 `Kulon page failed: ${Number.isFinite(res.status) ? res.status : 'unknown'}`,
               );
-              markKulonPageCompatibilityError(error);
               return httpErrorResult(error, res.status);
             }
             return httpErrorResult(

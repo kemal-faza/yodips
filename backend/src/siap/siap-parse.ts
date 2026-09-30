@@ -252,36 +252,6 @@ export function parseKumulatifIpk(html: string): number | undefined {
   return Number.isFinite(v) ? v : undefined;
 }
 
-export function parseKhsNilai(
-  html: string,
-): SiapKhsSemester['nilai'] {
-  // An empty semester is rendered as a "-kosong-" placeholder row.
-  if (/kosong/i.test(html)) return [];
-  const nilai: SiapKhsSemester['nilai'] = [];
-  for (const row of dataRows(html)) {
-    const c = rowCells(row);
-    // Require at least kode + sks; skip header/footer `th`-only rows.
-    if (!c[1] || c.length < 6) continue;
-    nilai.push({
-      mataKuliah: c[2] ?? '',
-      kode: c[1] ?? '',
-      sks: Number(c[5]) || 0,
-      nilaiHuruf: c[6] ?? '',
-      bobot: Number(c[7]) || 0,
-    });
-  }
-  return nilai;
-}
-
-/**
- * Semester label for a given semester number, e.g. angkatan 2024, smt 1 →
- * "2024/2025 Ganjil". ta = angkatan + floor((smt-1)/2); odd = Ganjil.
- */
-export function semesterLabel(angkatan: string, smt: number): string {
-  const ta = Number(angkatan) + Math.floor((smt - 1) / 2);
-  return `${ta}/${ta + 1} ${smt % 2 === 1 ? 'Ganjil' : 'Genap'}`;
-}
-
 /**
  * Number of completed semesters. Preferred: derive from the profile's
  * semester label (e.g. "2026/2027 Ganjil" with angkatan 2024 → 5). Fallback:
@@ -622,24 +592,6 @@ export function parseApiIrs(
     dosen: (r.nama_dosen as string) || undefined,
     status: 'rencana',
   }));
-}
-
-const KODE_MK_RE = /^[A-Z]{2,3}\d{5,}$/;
-
-/** Extract lecturer list from `v2/lihat_irs` rows (kode + joined dosen via |). */
-export function lecturersFromIrs(
-  rows: Array<Record<string, unknown>>,
-): { kode: string; dosen: string }[] {
-  const map = new Map<string, Set<string>>();
-  for (const r of rows) {
-    const kode = String(r.kode_mk ?? '');
-    if (!KODE_MK_RE.test(kode)) continue;
-    const dosen = String(r.nama_dosen ?? '').trim();
-    if (!dosen) continue;
-    if (!map.has(kode)) map.set(kode, new Set());
-    map.get(kode)!.add(dosen);
-  }
-  return Array.from(map, ([kode, set]) => ({ kode, dosen: Array.from(set).join(' | ') }));
 }
 
 /** Map API `absen` rows into SiapAbsenItem[], grouped by kode_mk/idjadwal. */

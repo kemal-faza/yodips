@@ -158,17 +158,6 @@ async function okFetch() {
   });
 }
 
-describe('LegacyAuthService session freshness', () => {
-  it('uses the injected wall clock for freshness and expires at the TTL boundary', () => {
-    const svc = makeLegacyService();
-    const session = { capturedAt: clock.wall - CachePolicy.AUTH_PROBE };
-
-    expect((svc as any).isFresh(session)).toBe(true);
-    clock.wall += 30 * 60_000;
-    expect((svc as any).isFresh(session)).toBe(false);
-  });
-});
-
 describe('LegacyAuthService.captureSsoSession', () => {
   it('never reuses a legacy stored session without a valid generation (E)', async () => {
     mockSessionStore._map.set('24060121130000', {
@@ -322,11 +311,14 @@ describe('LegacyAuthService.captureSsoSession', () => {
   });
 
   it('opens interactive window when stored session is stale by TTL', async () => {
+    // Deterministic against the injected wall clock: 31 min old > 30 min TTL.
+    // The Kulon probe is live, so TTL alone must reject the stored session.
+    mockKulon.checkSessionValid.mockResolvedValue({ valid: true, reason: 'ok' });
     mockSessionStore._map.set('24060121130000', {
       identity: '24060121130000',
       ssoCookie: 'ci_session_sso=SSO',
       kulonCookie: 'MoodleSession=K',
-      capturedAt: Date.now() - 60 * 60 * 1000, // 1h old
+      capturedAt: clock.wall - 31 * 60_000,
       sessionGeneration: GEN_1,
     });
     mockPlaywright.launchAndCaptureSession.mockResolvedValue({
@@ -1095,10 +1087,6 @@ describe('AuthService.me', () => {
       expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'miss' }),
       expect.objectContaining({ cache: 'auth.probe', backend: 'memory', outcome: 'miss' }),
     ]);
-  });
-
-  it('AUTH_PROBE TTL matches the probe cache window', () => {
-    expect(CachePolicy.AUTH_PROBE).toBe(60_000);
   });
 
   // Sesi Android pairing tidak pernah punya ssoCookie (handoffBody tanpa ssoCookie).
