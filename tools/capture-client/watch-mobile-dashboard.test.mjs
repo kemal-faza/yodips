@@ -11,7 +11,7 @@ const paths = [
 
 test("parses low-cardinality mobile log lines without retaining secrets", () => {
   const event = parseMobileLogLine(
-    '09-18 21:00:00.000 I/YODIPS_MOBILE_PERF: {"v":1,"event":"mobile.http","ts":1726693200000,"method":"GET","path":"/api/siap/khs","outcome":"ok","status":200,"durationMs":42,"responseBytes":128}',
+    '09-18 21:00:00.000 I/YODIPS_MOBILE_PERF: {"v":1,"event":"mobile.http","ts":1726693200000,"method":"GET","path":"/api/siap/khs","outcome":"ok","status":200,"durationMs":42,"responseBytes":128,"sub":"24060121130000","accessToken":"secret-token"}',
   );
   assert.deepEqual(event, {
     ts: 1726693200000,

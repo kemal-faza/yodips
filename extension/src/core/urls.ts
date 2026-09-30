@@ -3,8 +3,8 @@
 // fetch tanpa penjelasan (insiden 2026-08-26).
 export const DEFAULT_SERVER_URL = 'https://backend.crunchy.my.id';
 export const SSO_LOGIN_URL = 'https://sso.undip.ac.id/auth/user/login';
-export const KULON_OIDC_URL = 'https://kulon2.undip.ac.id/auth/oidc/';
-export const SIAP_SSO_URL = 'https://siap.undip.ac.id/sso/login';
+const KULON_OIDC_URL = 'https://kulon2.undip.ac.id/auth/oidc/';
+const SIAP_SSO_URL = 'https://siap.undip.ac.id/sso/login';
 
 /**
  * base64 of the current unix second — the canonical SSO ticket algorithm

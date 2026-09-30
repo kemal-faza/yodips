@@ -1,21 +1,5 @@
-/** Run only one async operation at a time and share its result with joiners. */
-export function createSingleFlight<T>() {
-  let active: Promise<T> | null = null;
-
-  return (task: () => Promise<T>): Promise<T> => {
-    if (active) return active;
-
-    const flight = Promise.resolve().then(task);
-    const joined = flight.finally(() => {
-      if (active === joined) active = null;
-    });
-    active = joined;
-    return joined;
-  };
-}
-
 /** Run asynchronous lifecycle operations sequentially, continuing after failure. */
-export function createSerialQueue() {
+function createSerialQueue() {
   let tail = Promise.resolve();
 
   return <T>(task: () => Promise<T>): Promise<T> => {

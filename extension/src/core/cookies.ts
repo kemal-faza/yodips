@@ -2,7 +2,7 @@ import type { CookieFlags, Service } from "./contract.js";
 
 export const SSO_SESSION_COOKIE = "ci_session_sso";
 export const SIAP_SESSION_COOKIE_RE = /^(?:sia_|sipp|siapp|ciapp_)/i;
-export const PHASE_CHAIN: Service[] = ["sso", "kulon", "siap"];
+const PHASE_CHAIN: Service[] = ["sso", "kulon", "siap"];
 
 export interface CookieP {
   name: string | RegExp;
@@ -96,7 +96,7 @@ export function evaluateCookies(cookies: CookieLite[]): CookieFlags {
   };
 }
 
-export function cookiesToStr<T extends CookieLite>(
+function cookiesToStr<T extends CookieLite>(
   cookies: T[],
   pred: (cookie: T) => boolean,
 ): string {

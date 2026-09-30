@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  extractTelemetryEvent,
-  summarizeDashboardCycle,
-} from "./watch-dashboard-log.mjs";
+import { summarizeDashboardCycle } from "./watch-dashboard-log.mjs";
 
 const PRIMARY_CACHES = [
   "siap.profile",
@@ -37,23 +34,6 @@ function refreshes(outcome = "ok") {
 }
 
 describe("backend dashboard log watcher helpers", () => {
-  it("keeps telemetry fields, strips identifiers, and recognizes cache labels", () => {
-    assert.deepEqual(
-      extractTelemetryEvent(
-        '[Nest] {"v":1,"ts":"2026-09-18T12:00:00.000Z","event":"cache.read","cache":"kulon.courses","backend":"memory","outcome":"miss","durationMs":0,"sub":"24060121130000"}',
-      ),
-      {
-        v: 1,
-        ts: "2026-09-18T12:00:00.000Z",
-        event: "cache.read",
-        cache: "kulon.courses",
-        backend: "memory",
-        outcome: "miss",
-        durationMs: 0,
-      },
-    );
-  });
-
   it("summarizes a complete cold six-slice cycle and assignment fan-out", () => {
     const report = summarizeDashboardCycle([
       ...reads("miss"),
