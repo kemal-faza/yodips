@@ -1,49 +1,43 @@
 import 'reflect-metadata';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { NotificationsController } from './notifications.controller';
-import { NotificationStore } from './notification-store';
+import { MAX_WEB_SUBSCRIPTIONS, NotificationStore } from './notification-store';
 
-class StoreMock implements Partial<NotificationStore> {
-  tokens: Record<string, string[]> = {};
-  subs = new Set<string>();
-  web: Record<string, Array<{ endpoint: string; p256dh: string; auth: string }>> = {};
-  async addDeviceToken(sub: string, token: string) {
-    const list = this.tokens[sub] ?? (this.tokens[sub] = []);
-    if (!list.includes(token)) list.push(token);
-    this.subs.add(sub);
-  }
-  async removeDeviceToken(sub: string, token: string) {
-    const rest = (this.tokens[sub] ?? []).filter((t) => t !== token);
-    this.tokens[sub] = rest;
-    if (rest.length === 0) this.subs.delete(sub);
-  }
-  async getDeviceTokens(sub: string) {
-    return this.tokens[sub] ?? [];
-  }
-  async addWebSubscription(
-    sub: string,
-    s: { endpoint: string; p256dh: string; auth: string },
-    cap = 8,
-  ) {
-    const list = this.web[sub] ?? (this.web[sub] = []);
-    if (list.some((e) => e.endpoint === s.endpoint)) return 'duplicate';
-    if (list.length >= cap) return 'cap-reached';
-    list.push(s);
-    return 'added';
-  }
-  async removeWebSubscription(sub: string, s: { endpoint: string; p256dh: string; auth: string }) {
-    const list = this.web[sub] ?? [];
-    const rest = list.filter((e) => e.endpoint !== s.endpoint);
-    if (rest.length === 0) delete this.web[sub];
-    else this.web[sub] = rest;
-  }
-  async getWebSubscriptions(sub: string) {
-    return this.web[sub] ?? [];
-  }
+interface WebSub {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
 }
 
-function makeController(opts: { nodeEnv?: string; vapidPublicKey?: string } = {}) {
-  const store = new StoreMock();
+interface StoreSpy {
+  addDeviceToken: jest.Mock;
+  removeDeviceToken: jest.Mock;
+  getDeviceTokens: jest.Mock;
+  addWebSubscription: jest.Mock;
+  removeWebSubscription: jest.Mock;
+  getWebSubscriptions: jest.Mock;
+}
+
+/**
+ * Store spy: kontrak controller adalah DELEGASI (panggil method store dengan
+ * argumen yang benar + map hasilnya ke HTTP). Prune indeks, cap per-user dan
+ * idempotensi duplicate dimiliki `notification-store.spec.ts`.
+ */
+function makeStore(): StoreSpy {
+  return {
+    addDeviceToken: jest.fn().mockResolvedValue(undefined),
+    removeDeviceToken: jest.fn().mockResolvedValue(undefined),
+    getDeviceTokens: jest.fn().mockResolvedValue([]),
+    addWebSubscription: jest.fn().mockResolvedValue('added'),
+    removeWebSubscription: jest.fn().mockResolvedValue(undefined),
+    getWebSubscriptions: jest.fn().mockResolvedValue([]),
+  };
+}
+
+function makeController(
+  opts: { nodeEnv?: string; vapidPublicKey?: string; webPushCap?: number } = {},
+) {
+  const store = makeStore();
   const fakePoller = {
     runCycle: async () => ({ usersChecked: 0, pushesSent: 0 }),
     calls: [] as Array<[number, number | undefined]>,
@@ -54,14 +48,18 @@ function makeController(opts: { nodeEnv?: string; vapidPublicKey?: string } = {}
     return { usersChecked: 0, pushesSent: 0 };
   };
   const fakeConfig = {
-    get: (k: string) => (k === 'NODE_ENV' ? opts.nodeEnv ?? 'development' : undefined),
+    get: (k: string) => {
+      if (k === 'NODE_ENV') return opts.nodeEnv ?? 'development';
+      if (k === 'WEB_PUSH_MAX_SUBSCRIPTIONS') return opts.webPushCap;
+      return undefined;
+    },
   };
   const fakeWebPush = {
     publicKey: opts.vapidPublicKey ?? '',
     send: async () => ({ invalid: [] }),
   };
   const controller = new NotificationsController(
-    store,
+    store as unknown as NotificationStore,
     fakePoller as any,
     fakeConfig as any,
     fakeWebPush as any,
@@ -70,10 +68,12 @@ function makeController(opts: { nodeEnv?: string; vapidPublicKey?: string } = {}
 }
 
 describe('NotificationsController', () => {
-  it('POST device menyimpan token utk req.user.sub', async () => {
+  it('POST device mendaftarkan token utk req.user.sub', async () => {
     const { store, controller } = makeController();
-    await controller.register({ user: { sub: 'u1' } }, { token: 'tok-1' });
-    expect(await store.getDeviceTokens('u1')).toEqual(['tok-1']);
+    await expect(
+      controller.register({ user: { sub: 'u1' } }, { token: 'tok-1' }),
+    ).resolves.toEqual({ ok: true });
+    expect(store.addDeviceToken).toHaveBeenCalledWith('u1', 'tok-1');
   });
 
   it('POST tanpa sub -> 401', async () => {
@@ -83,12 +83,12 @@ describe('NotificationsController', () => {
     expect((err as HttpException).getStatus()).toBe(HttpStatus.UNAUTHORIZED);
   });
 
-  it('DELETE menghapus token; token terakhir memprune indeks', async () => {
+  it('DELETE device mendelegasikan penghapusan token ke store', async () => {
     const { store, controller } = makeController();
-    await controller.register({ user: { sub: 'u1' } }, { token: 'tok-1' });
-    await controller.unregister({ user: { sub: 'u1' } }, { token: 'tok-1' });
-    expect(await store.getDeviceTokens('u1')).toEqual([]);
-    expect(store.subs.size).toBe(0);
+    await expect(
+      controller.unregister({ user: { sub: 'u1' } }, { token: 'tok-1' }),
+    ).resolves.toEqual({ ok: true });
+    expect(store.removeDeviceToken).toHaveBeenCalledWith('u1', 'tok-1');
   });
 
   it('DELETE tanpa sub -> 401', async () => {
@@ -111,15 +111,20 @@ describe('NotificationsController', () => {
     expect((err as HttpException).getStatus()).toBe(HttpStatus.FORBIDDEN);
   });
 
-  it('POST web-device menyimpan web subscription utk req.user.sub', async () => {
+  it('POST web-device menyimpan subscription + cap default store', async () => {
     const { store, controller } = makeController();
-    await controller.registerWeb(
-      { user: { sub: 'u1' } },
-      { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' },
-    );
-    expect(await store.getWebSubscriptions('u1')).toEqual([
-      { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' },
-    ]);
+    const sub: WebSub = { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' };
+    await expect(controller.registerWeb({ user: { sub: 'u1' } }, sub)).resolves.toEqual({
+      ok: true,
+    });
+    expect(store.addWebSubscription).toHaveBeenCalledWith('u1', sub, MAX_WEB_SUBSCRIPTIONS);
+  });
+
+  it('POST web-device memakai WEB_PUSH_MAX_SUBSCRIPTIONS bila di-set', async () => {
+    const { store, controller } = makeController({ webPushCap: 3 });
+    const sub: WebSub = { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' };
+    await controller.registerWeb({ user: { sub: 'u1' } }, sub);
+    expect(store.addWebSubscription).toHaveBeenCalledWith('u1', sub, 3);
   });
 
   it('POST web-device tanpa sub -> 401', async () => {
@@ -130,12 +135,38 @@ describe('NotificationsController', () => {
     expect((err as HttpException).getStatus()).toBe(HttpStatus.UNAUTHORIZED);
   });
 
-  it('DELETE web-device menghapus subscription', async () => {
+  it('registerWeb: duplicate dari store tetap sukses (idempotent)', async () => {
     const { store, controller } = makeController();
-    const sub = { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' };
-    await controller.registerWeb({ user: { sub: 'u1' } }, sub);
-    await controller.removeWeb({ user: { sub: 'u1' } }, sub);
-    expect(await store.getWebSubscriptions('u1')).toEqual([]);
+    store.addWebSubscription.mockResolvedValue('duplicate');
+    await expect(
+      controller.registerWeb(
+        { user: { sub: 'u1' } },
+        { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' },
+      ),
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it('registerWeb: cap-reached dari store -> 409 WEB_PUSH_CAP_REACHED', async () => {
+    const { store, controller } = makeController();
+    store.addWebSubscription.mockResolvedValue('cap-reached');
+    const err = await controller
+      .registerWeb(
+        { user: { sub: 'u1' } },
+        { endpoint: 'https://pusher/9', p256dh: 'pk', auth: 'auth' },
+      )
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect((err as HttpException).getStatus()).toBe(HttpStatus.CONFLICT);
+    expect((err as HttpException).getResponse()).toMatchObject({ code: 'WEB_PUSH_CAP_REACHED' });
+  });
+
+  it('DELETE web-device mendelegasikan penghapusan subscription ke store', async () => {
+    const { store, controller } = makeController();
+    const sub: WebSub = { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' };
+    await expect(controller.removeWeb({ user: { sub: 'u1' } }, sub)).resolves.toEqual({
+      ok: true,
+    });
+    expect(store.removeWebSubscription).toHaveBeenCalledWith('u1', sub);
   });
 
   it('DELETE web-device tanpa sub -> 401', async () => {
@@ -149,48 +180,5 @@ describe('NotificationsController', () => {
   it('GET vapid-public-key mengembalikan publicKey dari WebPushService', async () => {
     const { controller } = makeController({ vapidPublicKey: 'vapid-pub' });
     expect(await controller.vapidPublicKey()).toEqual({ publicKey: 'vapid-pub' });
-  });
-
-  it('registerWeb: duplicate endpoint is idempotent (second call returns ok, single stored)', async () => {
-    const { store, controller } = makeController();
-    const sub = { endpoint: 'https://pusher/abc', p256dh: 'pk', auth: 'auth' };
-    await controller.registerWeb({ user: { sub: 'u1' } }, sub);
-    await expect(controller.registerWeb({ user: { sub: 'u1' } }, sub)).resolves.toEqual({ ok: true });
-    expect(await store.getWebSubscriptions('u1')).toEqual([sub]);
-  });
-
-  it('registerWeb: 9th subscription for one user -> 409 WEB_PUSH_CAP_REACHED', async () => {
-    const { store, controller } = makeController();
-    for (let i = 0; i < 8; i++) {
-      await controller.registerWeb(
-        { user: { sub: 'u1' } },
-        { endpoint: `https://pusher/${i}`, p256dh: 'pk', auth: 'auth' },
-      );
-    }
-    const err = await controller
-      .registerWeb(
-        { user: { sub: 'u1' } },
-        { endpoint: 'https://pusher/9', p256dh: 'pk', auth: 'auth' },
-      )
-      .catch((e) => e);
-    expect(err).toBeInstanceOf(HttpException);
-    expect((err as HttpException).getStatus()).toBe(HttpStatus.CONFLICT);
-    expect((err as HttpException).getResponse()).toMatchObject({ code: 'WEB_PUSH_CAP_REACHED' });
-    expect(await store.getWebSubscriptions('u1')).toHaveLength(8);
-  });
-
-  it('registerWeb: over-cap for user u2 does not affect u1', async () => {
-    const { store, controller } = makeController();
-    for (let i = 0; i < 8; i++) {
-      await controller.registerWeb(
-        { user: { sub: 'u1' } },
-        { endpoint: `https://pusher/${i}`, p256dh: 'pk', auth: 'auth' },
-      );
-    }
-    await controller.registerWeb(
-      { user: { sub: 'u2' } },
-      { endpoint: 'https://pusher/only', p256dh: 'pk', auth: 'auth' },
-    );
-    expect(await store.getWebSubscriptions('u2')).toHaveLength(1);
   });
 });
