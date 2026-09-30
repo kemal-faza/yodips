@@ -1,5 +1,5 @@
 {
-  "$comment": "Canonical backend contract. SINGLE SOURCE for error codes, API paths and the SSO ticket algorithm. Every client mirrors a subset; backend/src/common/contract-drift.spec.ts asserts no client invents a code and the backend constant table matches this file. Change here first, then the clients. See docs/adr/0002-contract-as-shared-data.md.",
+  "$comment": "Canonical backend contract. SINGLE SOURCE for error codes, API paths and the SSO ticket algorithm. Every client mirrors a subset; backend/src/common/contract-drift.spec.ts asserts no client invents a code and the backend constant table matches this file, and web/src/api/contract.test.ts asserts its runtime API table against apiPaths. Change here first, then the clients. See docs/adr/0002-contract-as-shared-data.md.",
   "errorCodes": [
     "KULON_NO_COOKIE",
     "KULON_STALE",
@@ -19,6 +19,7 @@
     "auth.refresh": "/api/auth/refresh",
     "auth.capture": "/api/auth/sso/capture",
     "auth.microsoftLogin": "/api/auth/microsoft/login",
+    "auth.microsoftCallback": "/api/auth/microsoft/callback",
     "auth.handoff": "/api/auth/session/handoff",
     "auth.upstreamSessionRenew": "/api/auth/upstream-session/renew",
     "auth.logout": "/api/auth/logout",
@@ -27,8 +28,10 @@
     "auth.pairStatus": "/api/auth/pair/status",
     "kulon.courses": "/api/kulon/courses",
     "kulon.courseSummary": "/api/kulon/courses/summary",
+    "kulon.courseContent": "/api/kulon/courses/:id/content",
     "kulon.assignments": "/api/kulon/assignments",
     "kulon.allAssignments": "/api/kulon/assignments/all",
+    "kulon.assignmentDetail": "/api/kulon/assignments/:id/detail",
     "siap.profile": "/api/siap/profile",
     "siap.irs": "/api/siap/irs",
     "siap.khs": "/api/siap/khs",
@@ -36,18 +39,20 @@
     "siap.jadwal": "/api/siap/jadwal",
     "siap.absen": "/api/siap/absen",
     "siap.notifications": "/api/siap/notifications",
+    "siap.markNotification": "/api/siap/notifications/:id/unread",
     "siap.kehadiran": "/api/siap/kehadiran",
+    "siap.kehadiranById": "/api/siap/kehadiran/:id",
     "siap.nilaiDetail": "/api/siap/nilai/:id/detail",
     "notifications.device": "/api/notifications/device",
     "notifications.webDevice": "/api/notifications/web-device",
     "notifications.vapidPublicKey": "/api/notifications/vapid-public-key",
+    "notifications.devRunCycle": "/api/notifications/dev/run-cycle",
     "dashboard": "/api/dashboard"
   },
   "ssoTicket": {
     "algorithm": "base64(decimal unix seconds)",
     "mirrors": [
       "backend SSOTicketService",
-      "web/src/api/contract.ts buildSsoTicket",
       "extension/src/core/urls.ts generateTicket",
       "mobile LoginFlow.generateSsoTicket"
     ]
