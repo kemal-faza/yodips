@@ -17,9 +17,12 @@ class NotificationHistoryTest {
 
     @Test
     fun `blank id is derived from title and body`() {
-        val merged = mergeNotification(emptyList(), StoredNotification(title = "Tugas baru", body = "due 07 Mei"))
+        val title = "Tugas baru"
+        val body = "due 07 Mei"
+        val merged = mergeNotification(emptyList(), StoredNotification(title = title, body = body))
         assertEquals(1, merged.size)
-        assertEquals(notificationId("Tugas baru", "due 07 Mei"), merged[0].id)
+        // Independent computation of the documented contract: title|body hash.
+        assertEquals((title + "|" + body).hashCode().toString(), merged[0].id)
     }
 
     @Test

@@ -110,11 +110,6 @@ internal class SessionFlight<T> {
         }
     }
 
-    /** Observable seam for tests: the tracked flight for [identity], if any. */
-    internal suspend fun currentForTest(identity: Any): Claim<T>? =
-        mutex.withLock {
-            flights[identity]?.let { Claim(identity, it.generation, it.deferred, isOwner = true) }
-        }
 }
 
 /**

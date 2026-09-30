@@ -122,7 +122,7 @@ class CourseLogicTest {
         val sections =
             listOf(
                 section(0, "General"),
-                section(1, "Pertemuan 1", "9 February - 15 February", listOf(item("file"))),
+                section(1, "Pertemuan 1", "9 February - 15 February", listOf(KulonContentItem(kind = "file"))),
                 section(2, "Pertemuan 2", "16 February - 22 February"),
             )
         val map = defaultCollapsed(sections, now = dateMs(2026, 2, 12))
@@ -136,7 +136,7 @@ class CourseLogicTest {
         val sections =
             listOf(
                 section(0, "General"),
-                section(1, "Pertemuan 1", items = listOf(item("assign"))),
+                section(1, "Pertemuan 1", items = listOf(KulonContentItem(kind = "assign"))),
                 section(2, "Pertemuan 2"),
             )
         val map = defaultCollapsed(sections, now = dateMs(2026, 8, 1))

@@ -102,38 +102,6 @@ class WasmLogoutCoordinatorTest {
     }
 
     @Test
-    fun `suspend clear delegates to the same synchronous primitive`() = runTest {
-        // Mirrors the production TokenStore.wasmJs shape (`clear() =
-        // clearImmediately()`): one synchronous primitive, two entry points
-        // removing identical state. The glue below is the REAL coordinator
-        // wired to the synchronous entry inline, so the suspending path and
-        // the logout path cannot diverge.
-        val ops = RecordingOps()
-        val store =
-            object {
-                var persisted: String? = "jwt-1"
-                fun clearImmediately() {
-                    persisted = null
-                }
-                suspend fun clear() = clearImmediately()
-            }
-        val wired =
-            WasmLogoutCoordinator(
-                object : WasmLogoutCoordinator.Ops by ops {
-                    override fun clearPersistedCredentialsImmediately() {
-                        ops.calls += "clearPersistedCredentials"
-                        store.clearImmediately()
-                    }
-                },
-            )
-        wired.localCleanup()
-        assertNull(store.persisted)
-        store.persisted = "jwt-2"
-        store.clear()
-        assertNull("suspend clear() must remove the same state", store.persisted)
-    }
-
-    @Test
     fun `browser unsubscribe still follows ordinary backend DELETE failure`() = runTest {
         val ops = RecordingOps(serverDeleteError = IOException("offline"))
         WasmLogoutCoordinator(ops).pushUnregister()

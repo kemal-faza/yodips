@@ -83,9 +83,12 @@ class LoginFlowTest {
 
     @Test
     fun `sso ticket encodes unix seconds and builds bridge urls`() {
-        // base64 of the ASCII string "0" = base64.startswith from 0 seconds
+        val before = System.currentTimeMillis() / 1000
         val ticket = generateSsoTicket()
-        assertFalse(ticket.isEmpty())
+        val after = System.currentTimeMillis() / 1000
+        // Decode at the cross-language contract: base64(decimal unix seconds).
+        val seconds = kotlin.io.encoding.Base64.Default.decode(ticket).decodeToString().toLongOrNull()
+        assertTrue("ticket must decode to unix seconds", seconds != null && seconds in before..(after + 1))
         // ticket url shape matches backend SSOTicketService
         assertTrue(kulonTicketUrl(ticket).startsWith("https://kulon2.undip.ac.id/auth/oidc/?t="))
         assertTrue(siapTicketUrl(ticket).endsWith(ticket))

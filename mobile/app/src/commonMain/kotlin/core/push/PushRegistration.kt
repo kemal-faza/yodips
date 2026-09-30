@@ -28,31 +28,9 @@ class PushRegistration(private val ops: Ops) {
         suspend fun clearPending(expectedToken: String)
     }
 
-    /** Login sukses / app start dgn sesi hidup. Pending didahulukan. */
-    suspend fun onLogin(): String? {
-        val token = prepareLoginToken() ?: return null
-        return if (registerOnBackend(token)) token else null
-    }
-
-    /** Rotasi token saat app hidup. */
-    suspend fun onNewToken(newToken: String): String? {
-        val token = prepareNewToken(newToken)
-        return if (registerOnBackend(token)) token else null
-    }
-
-    /** Stash a device token without registering it for the inactive account. */
-    suspend fun stashPending(token: String) {
-        stashPending(token, DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS)
-    }
-
     /** Stash using the coordinator's injected bound while it owns the lock. */
     internal suspend fun stashPending(token: String, timeoutMillis: Long) {
         stashBeforeRegistration(token, timeoutMillis)
-    }
-
-    /** Clear only the pending value that was just registered. */
-    suspend fun clearPending(token: String) {
-        clearPending(token, DEFAULT_PUSH_OPERATION_TIMEOUT_MILLIS)
     }
 
     /** Clear using the coordinator's injected bound while it owns the lock. */

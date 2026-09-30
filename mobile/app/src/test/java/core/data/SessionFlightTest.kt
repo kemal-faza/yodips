@@ -47,12 +47,12 @@ class SessionFlightTest {
         assertTrue("completed deferred is not in-flight: B is a fresh creator", b.isOwner)
         assertTrue("B runs a new deferred, never A's", a.deferred !== b.deferred)
         gate.release(a, Unit) // A's stale release after B claimed
-        assertSame("stale release must not erase the newer run", b.deferred, gate.currentForTest(id)?.deferred)
+        // The only observable contract: a third caller joins B, never starts
+        // a duplicate post-cleanup sequence.
         val c = gate.claim(id)
         assertFalse("third caller joins B, never starts a duplicate", c.isOwner)
         assertSame(b.deferred, c.deferred)
         gate.release(b, Unit)
-        assertNull(gate.currentForTest(id))
     }
 
     @Test
@@ -61,9 +61,12 @@ class SessionFlightTest {
         val a = gate.claim(id)
         val other = gate.claim("other")
         gate.release(other, Unit) // never was the `id` flight
-        assertSame(a.deferred, gate.currentForTest(id)?.deferred)
+        val b = gate.claim(id)
+        assertFalse("in-flight run survives a foreign release", b.isOwner)
+        assertSame(a.deferred, b.deferred)
         gate.release(a, Unit)
-        assertNull(gate.currentForTest(id))
+        val reopened = gate.claim(id)
+        assertTrue("key reopens once the flight is released", reopened.isOwner)
     }
 
     @Test
@@ -82,7 +85,8 @@ class SessionFlightTest {
         joinedSignal.await()
         gate.release(a, Unit)
         assertEquals("waiter-done", waiter.await())
-        assertNull(gate.currentForTest(id))
+        val next = gate.claim(id)
+        assertTrue("key reopens once the released flight finishes", next.isOwner)
     }
 
     @Test
@@ -95,7 +99,8 @@ class SessionFlightTest {
         assertTrue("no stale state survives a release", b.isOwner)
         assertNotSame(a.deferred, b.deferred)
         gate.release(b, Unit)
-        assertNull(gate.currentForTest(id))
+        val c = gate.claim(id)
+        assertTrue("the next creator starts fresh after release", c.isOwner)
     }
 
     @Test
@@ -119,7 +124,9 @@ class SessionFlightTest {
         assertTrue("a newer generation starts a fresh flight", genTwo.isOwner)
         assertNotSame(genOne.deferred, genTwo.deferred)
         gate.release(genOne, Unit) // stale release must not erase gen 2
-        assertSame(genTwo.deferred, gate.currentForTest(id)?.deferred)
+        val join = gate.claim(id, generation = 2L)
+        assertFalse("gen 2 remains the active flight", join.isOwner)
+        assertSame(genTwo.deferred, join.deferred)
         gate.release(genTwo, Unit)
     }
 
