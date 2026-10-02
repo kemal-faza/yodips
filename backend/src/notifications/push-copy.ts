@@ -7,8 +7,21 @@ export interface PushCopy {
   data: Record<string, string>;
 }
 
-const fmtDate = new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short' });
-const fmtTime = new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+// Deadline Kulon adalah epoch absolut; teks push WAJIB tampil dalam WIB.
+// Dyno produksi (Heroku) ber-TZ UTC — tanpa timeZone eksplisit deadline
+// tampil 7 jam lebih awal (dan bisa bergeser tanggalnya) dibanding app.
+const JAKARTA_TZ = 'Asia/Jakarta';
+const fmtDate = new Intl.DateTimeFormat('id-ID', {
+  day: '2-digit',
+  month: 'short',
+  timeZone: JAKARTA_TZ,
+});
+const fmtTime = new Intl.DateTimeFormat('id-ID', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: JAKARTA_TZ,
+});
 
 export function formatDueDate(dueAtSec: number): string {
   const d = new Date(dueAtSec * 1000);

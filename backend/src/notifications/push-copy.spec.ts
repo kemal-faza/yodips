@@ -8,6 +8,8 @@ describe('eventToPush', () => {
     expect(p.collapseKey).toBe('new_task');
     expect(p.title).toBe('Tugas baru');
     expect(p.body).toContain('Quiz 2');
+    // Deadline 1756000000 = 2025-08-24T01:46:40Z = 24 Agu 08.46 WIB.
+    expect(p.body).toContain('due 24 Agu 08.46');
     expect(p.data['type']).toBe('new_task');
     expect(p.data['target']).toBe('tasks');
   });
@@ -33,10 +35,13 @@ describe('eventToPush', () => {
     });
     expect(p.title).toBe('Deadline 24 jam');
     expect(p.body).toContain('Laporan IRS');
+    expect(p.body).toContain('due 24 Agu 08.46');
     expect(p.data['type']).toBe('deadline_reached');
   });
 
-  it('formatDueDate berbentuk "DD MMM HH.MM"', () => {
+  it('formatDueDate berbentuk "DD MMM HH.MM" dalam WIB, bukan TZ server', () => {
     expect(formatDueDate(1756072500)).toMatch(/^\d{1,2} \w{3} \d{2}\.\d{2}$/);
+    // 2025-08-24T21:55:00Z = 25 Agu 04.55 WIB; di server UTC tampil 24 Agu 21.55.
+    expect(formatDueDate(1756072500)).toBe('25 Agu 04.55');
   });
 });
