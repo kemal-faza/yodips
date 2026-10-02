@@ -46,13 +46,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -79,6 +80,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -151,15 +153,20 @@ fun AppShell(
             // Halaman baru masuk dari KANAN dan halaman lama keluar ke KIRI;
             // saat back arahnya dibalik. Sebelumnya semua perpindahan hanya
             // cross-fade, jadi maju & mundur terasa sama saja.
+            //
+            // Pindah tab mengikuti urutan bottom bar (seperti pager): pindah ke
+            // tab yang ada di KANAN → konten bergerak KANAN→KIRI, pindah ke tab
+            // di KIRI → konten bergerak KIRI→KANAN. Detail screen tetap push
+            // dari kanan; pop tetap ke kanan.
             enterTransition = {
                 slideIntoContainer(
-                    AnimatedContentTransitionScope.SlideDirection.Left,
+                    tabSlideDirection() ?: AnimatedContentTransitionScope.SlideDirection.Left,
                     tween(NavEnterDurationMs, easing = FastOutSlowInEasing),
                 )
             },
             exitTransition = {
                 slideOutOfContainer(
-                    AnimatedContentTransitionScope.SlideDirection.Left,
+                    tabSlideDirection() ?: AnimatedContentTransitionScope.SlideDirection.Left,
                     tween(NavExitDurationMs, easing = LinearOutSlowInEasing),
                 )
             },
@@ -308,6 +315,24 @@ fun AppShell(
     }
 }
 
+/**
+ * Arah slide untuk perpindahan antar tab top-level: `Left` kalau tab tujuan ada
+ * di kanan tab asal (konten bergerak kanan→kiri), `Right` kalau di kiri
+ * (konten bergerak kiri→kanan). Null kalau salah satu sisi bukan tab — mis.
+ * masuk ke layar detail — supaya arah push/pop biasa yang dipakai.
+ */
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.tabSlideDirection():
+    AnimatedContentTransitionScope.SlideDirection? {
+    val from = Tab.entries.indexOfFirst { it.route == initialState.destination.route }
+    val to = Tab.entries.indexOfFirst { it.route == targetState.destination.route }
+    if (from < 0 || to < 0) return null
+    return if (to > from) {
+        AnimatedContentTransitionScope.SlideDirection.Left
+    } else {
+        AnimatedContentTransitionScope.SlideDirection.Right
+    }
+}
+
 private fun navigate(
     controller: NavHostController,
     route: String,
@@ -365,10 +390,12 @@ fun ShellBottomBar(
         ) {
             Tab.entries.forEach { tab ->
                 if (tab == Tab.Scan) {
-                    // Center slot: raised dark-teal FAB — the big circle. Enlarged so it
-                    // clearly reads bigger; protrudes above the bar via natural overflow
-                    // (no fill* modifier: a fill inflated the M3 NavigationBar height and
-                    // blanked content). No label (the reference shows only 4 labels).
+                    // Center slot: raised dark-teal FAB — the big circle. Melebar
+                    // mengikuti lebar slot sampai maksimal 78dp, lalu `aspectRatio`
+                    // mengunci 1:1 supaya lingkarannya selalu bulat (dulu `size(78.dp)`
+                    // mentok ke lebar slot di layar sempit, jadi tampak elips). Karena
+                    // tingginya ikut lebar (bukan `fill*` bebas), tinggi bar tidak
+                    // ikut membengkak. No label (the reference shows only 4 labels).
                     Box(
                         modifier =
                             Modifier
@@ -384,7 +411,16 @@ fun ShellBottomBar(
                                 // yang lebih terang, jadi bayangan platform saja
                                 // sudah terbaca — sama seperti di tema terang.
                                 .appDepth(AppElevation.Floating, CircleShape, haze = false)
-                                .size(78.dp)
+                                // `widthIn` DI LUAR `fillMaxWidth`: batas 78dp
+                                // dipasang lebih dulu, baru lebar slot mengisi
+                                // sampai batas itu (urutan terbalik bikin
+                                // `widthIn` tak berefek dan lingkaran ikut
+                                // membesar selebar layar lebar). Lalu dikunci
+                                // 1:1 — dulu `size(78.dp)` mentok ke lebar slot
+                                // di layar sempit (< 78dp), jadi tampak elips.
+                                .widthIn(max = 78.dp)
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
                                 .clip(CircleShape)
                                 // Bola teal: bibir atas menangkap cahaya, bawahnya
                                 // menggelap, jadi bentuknya terbaca sebagai volume.
@@ -400,7 +436,10 @@ fun ShellBottomBar(
                             Icons.Filled.QrCodeScanner,
                             contentDescription = tab.label,
                             tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(54.dp),
+                            // Separuh diameter lingkaran: ikon ikut mengecil saat
+                            // lingkarannya mengecil, jadi sudutnya tidak pernah
+                            // menyentuh bibir lingkaran.
+                            modifier = Modifier.fillMaxSize(0.5f),
                         )
                     }
                 }
