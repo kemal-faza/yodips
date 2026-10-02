@@ -144,4 +144,98 @@ class CacheCoordinatorTest {
         runCurrent()
         assertEquals("duplicate background refresh must be skipped", 1, networkCalls)
     }
+
+    @Test
+    fun `stale hit publishes the cached value first, then the refreshed value`() = runTest {
+        val cache = InMemoryDataCache(ttlMs = -1)
+        cache.put("k", ApiResult.Success("stale-but-here"))
+        val published = mutableListOf<ApiResult<String>>()
+        coordinator(cache, scope = backgroundScope).cached(
+            "k", String.serializer(), force = false,
+            onValue = { published += it },
+        ) {
+            ApiResult.Success("fresh")
+        }
+        // The immediate (cache) value is observable before the refresh resolves.
+        assertEquals(listOf<ApiResult<String>>(ApiResult.Success("stale-but-here")), published)
+        runCurrent()
+        assertEquals(
+            listOf(ApiResult.Success("stale-but-here"), ApiResult.Success("fresh")),
+            published,
+        )
+    }
+
+    @Test
+    fun `a failed background refresh keeps the last published value`() = runTest {
+        val cache = InMemoryDataCache(ttlMs = -1)
+        cache.put("k", ApiResult.Success("stale-but-here"))
+        val published = mutableListOf<ApiResult<String>>()
+        coordinator(cache, scope = backgroundScope).cached(
+            "k", String.serializer(), force = false,
+            onValue = { published += it },
+        ) {
+            ApiResult.Error(500, "boom", ErrorType.SERVER)
+        }
+        runCurrent()
+        // No error event: the screen keeps showing the value it already had.
+        assertEquals(listOf<ApiResult<String>>(ApiResult.Success("stale-but-here")), published)
+    }
+
+    @Test
+    fun `force publishes an error so an explicit pull can surface the failure`() = runTest {
+        val published = mutableListOf<ApiResult<String>>()
+        val error = ApiResult.Error(500, "boom", ErrorType.SERVER)
+        coordinator().cached(
+            "k", String.serializer(), force = true,
+            onValue = { published += it },
+        ) { error }
+        assertEquals(listOf(error), published)
+    }
+
+    @Test
+    fun `revalidate false serves stale without scheduling a network refresh`() = runTest {
+        val cache = InMemoryDataCache(ttlMs = -1)
+        cache.put("k", ApiResult.Success("stale-but-here"))
+        var networkCalls = 0
+        val published = mutableListOf<ApiResult<String>>()
+        val out = coordinator(cache, scope = backgroundScope).cached(
+            "k", String.serializer(), force = false, revalidate = false,
+            onValue = { published += it },
+        ) {
+            networkCalls += 1
+            ApiResult.Success("fresh")
+        }
+        runCurrent()
+        assertEquals("stale-but-here", (out as ApiResult.Success).data)
+        assertEquals("rare data must not refresh on entry", 0, networkCalls)
+        assertEquals(listOf<ApiResult<String>>(ApiResult.Success("stale-but-here")), published)
+    }
+
+    @Test
+    fun `revalidate false still fetches on a cold miss`() = runTest {
+        var networkCalls = 0
+        val out = coordinator().cached("k", String.serializer(), force = false, revalidate = false) {
+            networkCalls += 1
+            ApiResult.Success("from-network")
+        }
+        assertEquals("from-network", (out as ApiResult.Success).data)
+        assertEquals(1, networkCalls)
+    }
+
+    @Test
+    fun `revalidate false restores a disk entry without scheduling a refresh`() = runTest {
+        val disk = FakeDisk().apply {
+            seeded = mapOf("k" to PersistentCache.Entry(json = "\"from-disk\"", fetchedAt = System.currentTimeMillis()))
+        }
+        var networkCalled = false
+        val out = coordinator(disk = disk, scope = backgroundScope).cached(
+            "k", String.serializer(), force = false, revalidate = false,
+        ) {
+            networkCalled = true
+            ApiResult.Success("from-network")
+        }
+        runCurrent()
+        assertEquals("from-disk", (out as ApiResult.Success).data)
+        org.junit.Assert.assertFalse(networkCalled)
+    }
 }

@@ -1,5 +1,6 @@
 package ac.undip.sso.ui.feature
 
+import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.KulonAssignment
@@ -159,19 +160,24 @@ internal fun SectionHeader(
  * Cumulative IPK/SKS cards sourced from the authoritative KHS + current-term
  * IRS (profile.ipk / profile.sksLulus are unreliable/absent). Until loads
  * complete it renders placeholders so the row keeps its size (no popping).
+ *
+ * Warm start renders the last cached values immediately; [refreshTick] > 0
+ * (Dashboard pull-to-refresh) forces a fresh KHS/IRS read. Both sources are
+ * cache-only on a normal entry — no network work for rarely-changing data.
  */
 @Composable
 internal fun AcademicStats(
     repo: SsoRepository,
+    refreshTick: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     var attempt by remember { mutableIntStateOf(0) }
-    var khs by remember { mutableStateOf<ApiResult<SiapKhs>?>(null) }
-    var irs by remember { mutableStateOf<ApiResult<SiapIrs>?>(null) }
-    LaunchedEffect(attempt) {
+    var khs by remember { mutableStateOf(repo.state<SiapKhs>(CacheKeys.KHS)?.value) }
+    var irs by remember { mutableStateOf(repo.state<SiapIrs>(CacheKeys.IRS)?.value) }
+    LaunchedEffect(attempt, refreshTick) {
         coroutineScope {
-            launch { khs = repo.khs() }
-            launch { irs = repo.irs() }
+            launch { khs = repo.khs(force = refreshTick > 0) }
+            launch { irs = repo.irs(force = refreshTick > 0) }
         }
     }
     AcademicStatsContent(khs = khs, irs = irs, modifier = modifier)

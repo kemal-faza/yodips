@@ -49,33 +49,58 @@ class CacheCoordinator(
     private var generation = 0L
     private val refreshJobs = mutableMapOf<RefreshKey, RefreshRun>()
 
+    /**
+     * [onValue] is invoked with every result the caller observes immediately
+     * (fresh/stale/disk/network) and with a background refresh success once it
+     * is committed. Ordering matters: an immediate cached value is published
+     * BEFORE the background refresh starts, so a fast refresh can never be
+     * overwritten by the older value. Background failures are NOT published —
+     * the previously shown value stays on screen. Every publish is
+     * generation-checked, so a logout racing a fetch cannot repopulate state
+     * with the previous session's data.
+     *
+     * [revalidate] = false makes the read cache-only for rarely-changing data:
+     * a stale memory/disk value is served WITHOUT scheduling a background
+     * refresh, so re-entering the screen performs no network work at all.
+     * A cold miss (no memory, no fresh-enough disk entry) still fetches, and
+     * `force = true` (pull-to-refresh) always bypasses the cache.
+     */
     suspend fun <T> cached(
         key: String,
         serializer: KSerializer<T>,
         force: Boolean,
+        revalidate: Boolean = true,
+        onValue: (ApiResult<T>) -> Unit = {},
         block: suspend () -> ApiResult<T>,
     ): ApiResult<T> {
         val requestGeneration = lifecycleMutex.withLock { generation }
         if (force) {
             val fresh = block()
             commitIfCurrent(requestGeneration, key, serializer, fresh)
+            publishIfCurrent(requestGeneration, fresh, onValue)
             return fresh
         }
         when (val prev = cache.get<T>(key)) {
-            is DataCache.Cached.Fresh -> return prev.data
+            is DataCache.Cached.Fresh -> {
+                publishIfCurrent(requestGeneration, prev.data, onValue)
+                return prev.data
+            }
 
             is DataCache.Cached.Stale -> {
-                refreshBackground(key, serializer, requestGeneration, block)
+                publishIfCurrent(requestGeneration, prev.data, onValue)
+                if (revalidate) refreshBackground(key, serializer, requestGeneration, onValue, block)
                 return prev.data
             }
 
             null -> {
                 restoreFromDisk(key, serializer, requestGeneration)?.let { fromDisk ->
-                    refreshBackground(key, serializer, requestGeneration, block)
+                    publishIfCurrent(requestGeneration, fromDisk, onValue)
+                    if (revalidate) refreshBackground(key, serializer, requestGeneration, onValue, block)
                     return fromDisk
                 }
                 val fresh = block()
                 commitIfCurrent(requestGeneration, key, serializer, fresh)
+                publishIfCurrent(requestGeneration, fresh, onValue)
                 return fresh
             }
         }
@@ -121,6 +146,7 @@ class CacheCoordinator(
         key: String,
         serializer: KSerializer<T>,
         requestGeneration: Long,
+        onValue: (ApiResult<T>) -> Unit,
         block: suspend () -> ApiResult<T>,
     ) {
         val claim = refreshFlight.claimOrNull(key, requestGeneration) ?: return
@@ -129,7 +155,11 @@ class CacheCoordinator(
             val currentJob = currentCoroutineContext()[Job]
             try {
                 val fresh = block()
-                commitIfCurrent(requestGeneration, key, serializer, fresh)
+                // Publish only a committed success: a background failure must
+                // not replace data already on screen.
+                if (commitIfCurrent(requestGeneration, key, serializer, fresh)) {
+                    publishIfCurrent(requestGeneration, fresh, onValue)
+                }
             } finally {
                 refreshFlight.release(claim, Unit)
                 withContext(NonCancellable) {
@@ -153,26 +183,41 @@ class CacheCoordinator(
         }
     }
 
+    /** Publish [result] only while the lifecycle generation still matches. */
+    private suspend fun <T> publishIfCurrent(
+        requestGeneration: Long,
+        result: ApiResult<T>,
+        onValue: (ApiResult<T>) -> Unit,
+    ) {
+        lifecycleMutex.withLock {
+            if (generation == requestGeneration) onValue(result)
+        }
+    }
+
+    /** @return true when [result] was a success committed to this generation's cache. */
     private suspend fun <T> commitIfCurrent(
         requestGeneration: Long,
         key: String,
         serializer: KSerializer<T>,
         result: ApiResult<T>,
-    ) {
-        if (result !is ApiResult.Success) return
-        lifecycleMutex.withLock {
-            if (generation != requestGeneration) return@withLock
+    ): Boolean {
+        if (result !is ApiResult.Success) return false
+        return lifecycleMutex.withLock {
+            if (generation != requestGeneration) return@withLock false
             cache.put(key, result)
-            val payload = runCatching { json.encodeToString(serializer, result.data) }.getOrNull() ?: return@withLock
-            // Serialize the disk write with clear(): either it finishes before
-            // the wipe, or observes the newer generation and skips the write.
-            scope.launch {
-                lifecycleMutex.withLock {
-                    if (generation == requestGeneration) {
-                        runCatching { persistent.save(key, payload, nowMs()) }
+            val payload = runCatching { json.encodeToString(serializer, result.data) }.getOrNull()
+            if (payload != null) {
+                // Serialize the disk write with clear(): either it finishes before
+                // the wipe, or observes the newer generation and skips the write.
+                scope.launch {
+                    lifecycleMutex.withLock {
+                        if (generation == requestGeneration) {
+                            runCatching { persistent.save(key, payload, nowMs()) }
+                        }
                     }
                 }
             }
+            true
         }
     }
 }

@@ -1,5 +1,6 @@
 package ac.undip.sso.ui.feature
 
+import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapKhs
 import ac.undip.sso.ui.common.LoadableData
@@ -60,7 +61,14 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 internal fun AcademicCharts(repo: SsoRepository, refreshTick: Int) {
-    LoadableData(load = { repo.khs() }, emptyMessage = "Belum ada data nilai untuk grafik", refreshTrigger = refreshTick) { khs ->
+    LoadableData(
+        // force saat Dashboard di-pull supaya grafik ikut data terbaru; load
+        // biasa cache-only (KHS = data jarang berubah).
+        load = { repo.khs(force = refreshTick > 0) },
+        emptyMessage = "Belum ada data nilai untuk grafik",
+        refreshTrigger = refreshTick,
+        state = repo.state(CacheKeys.KHS),
+    ) { khs ->
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             LineChartCard(
                 title = "Tren Indeks Prestasi (IP)",

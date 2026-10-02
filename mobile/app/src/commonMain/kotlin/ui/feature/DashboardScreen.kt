@@ -1,6 +1,7 @@
 @file:OptIn(kotlin.time.ExperimentalTime::class)
 package ac.undip.sso.ui.feature
 
+import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapJadwal
@@ -71,6 +72,7 @@ fun DashboardScreen(
             repo.profile(force = true)
         },
         emptyMessage = "Belum ada data",
+        state = repo.state(CacheKeys.PROFILE),
         loading = { DashboardSkeleton() },
     ) { profile ->
         DashboardContent(profile, repo, onOpenIrs, onOpenKhs, onOpenNotifications, onOpenCourses, refreshTick)
@@ -157,7 +159,7 @@ private fun DashboardContent(
             }
         }
 
-        AcademicStats(repo)
+        AcademicStats(repo, refreshTick)
 
         MenuRow(
             items =

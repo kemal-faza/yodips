@@ -1,8 +1,11 @@
 package ac.undip.sso.ui.feature
 
+import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapNilai
 import ac.undip.sso.ui.common.RefreshableLoadableData
+import ac.undip.sso.ui.common.SkeletonBlock
+import ac.undip.sso.ui.common.SkeletonGroup
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.accentForeground
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -33,7 +37,13 @@ fun KhsScreen(
     onOpenNilaiDetail: (SiapNilai) -> Unit = {},
 ) {
     FeatureScreen("KHS", onBack = onBack) {
-        RefreshableLoadableData(load = { repo.khs() }, onRefresh = { repo.khs(force = true) }, emptyMessage = "Belum ada KHS") { khs ->
+        RefreshableLoadableData(
+            load = { repo.khs() },
+            onRefresh = { repo.khs(force = true) },
+            emptyMessage = "Belum ada KHS",
+            state = repo.state(CacheKeys.KHS),
+            loading = { KhsSkeleton() },
+        ) { khs ->
             LazyColumn(
                 Modifier.fillMaxSize(),
                 contentPadding =
@@ -80,6 +90,34 @@ fun KhsScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Skeleton KHS: kartu IPK + tiga kartu semester (bentuk yang sama dengan konten). */
+@Composable
+private fun KhsSkeleton() {
+    SkeletonGroup {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SkeletonBlock(
+                Modifier
+                    .fillMaxWidth()
+                    .height(104.dp),
+                shape = RoundedCornerShape(12.dp),
+            )
+            repeat(3) {
+                SkeletonBlock(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(156.dp),
+                    shape = RoundedCornerShape(12.dp),
+                )
             }
         }
     }

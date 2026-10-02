@@ -27,6 +27,8 @@ import ac.undip.sso.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 
@@ -76,6 +78,13 @@ class SsoRepository(
     // screen: a supervised IO scope owned by the repository.
     private val refreshScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
+    // Latest result per fixed source, exposed so a screen re-entered in the same
+    // process can render its cached value in the first frame (no skeleton flash)
+    // and still receive silent background-refresh updates. The map is immutable
+    // after construction; StateFlow writes are thread-safe.
+    private val states: Map<String, MutableStateFlow<ApiResult<*>?>> =
+        CacheKeys.ALL.associateWith { MutableStateFlow<ApiResult<*>?>(null) }
+
     private val cacheCoordinator = CacheCoordinator(
         cache = cache,
         persistent = persistent,
@@ -99,8 +108,27 @@ class SsoRepository(
         )
     }
 
-    suspend fun profile(force: Boolean = false): ApiResult<SiapProfile> =
-        cached("profile", SiapProfile.serializer(), force) {
+    /**
+     * Observable latest result for a fixed cache key ([CacheKeys]). Screens use
+     * it to seed their UI from the already-cached value: re-entering a page shows
+     * content immediately, and a stale-while-revalidate background refresh
+     * updates it in place. Unknown keys return null — dynamic cache keys
+     * (e.g. course content) intentionally stay non-observable.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T> state(key: String): StateFlow<ApiResult<T>?>? = states[key]?.let { it as StateFlow<ApiResult<T>?> }
+
+    /**
+     * Rarely-changing data: cache-only by default (`revalidate = false`) —
+     * entering a screen serves the cached value without any network work.
+     * `force = true` (pull-to-refresh) fetches fresh; a cold miss (or a disk
+     * entry older than [DEFAULT_DISK_MAX_AGE_MS]) still fetches.
+     */
+    suspend fun profile(
+        force: Boolean = false,
+        revalidate: Boolean = false,
+    ): ApiResult<SiapProfile> =
+        cached(CacheKeys.PROFILE, SiapProfile.serializer(), force, revalidate) {
             refresher.safe(serviceStale = true) { api.profile() }
         }
 
@@ -121,13 +149,19 @@ class SsoRepository(
     suspend fun ensureFreshSession(): SessionRefresher.RefreshResult =
         refresher.ensureFresh()
 
-    suspend fun irs(force: Boolean = false): ApiResult<SiapIrs> =
-        cached("irs", SiapIrs.serializer(), force) {
+    suspend fun irs(
+        force: Boolean = false,
+        revalidate: Boolean = false,
+    ): ApiResult<SiapIrs> =
+        cached(CacheKeys.IRS, SiapIrs.serializer(), force, revalidate) {
             refresher.safe(serviceStale = true) { api.irs() }
         }
 
-    suspend fun khs(force: Boolean = false): ApiResult<SiapKhs> =
-        cached("khs", SiapKhs.serializer(), force) {
+    suspend fun khs(
+        force: Boolean = false,
+        revalidate: Boolean = false,
+    ): ApiResult<SiapKhs> =
+        cached(CacheKeys.KHS, SiapKhs.serializer(), force, revalidate) {
             refresher.safe(serviceStale = true) { api.khs() }
         }
 
@@ -136,13 +170,21 @@ class SsoRepository(
     suspend fun nilaiDetail(id: String): ApiResult<SiapNilaiDetail> =
         refresher.safe(serviceStale = true) { api.nilaiDetail(id) }
 
-    suspend fun jadwal(force: Boolean = false): ApiResult<List<SiapJadwal>> =
-        cached("jadwal", ListSerializer(SiapJadwal.serializer()), force) {
+    /**
+     * Dynamic (per-meeting) data: SWR by default. Callers joining it into a
+     * rarely-changing screen (IRS) pass `revalidate = false` so that screen
+     * performs no background network work on entry.
+     */
+    suspend fun jadwal(
+        force: Boolean = false,
+        revalidate: Boolean = true,
+    ): ApiResult<List<SiapJadwal>> =
+        cached(CacheKeys.JADWAL, ListSerializer(SiapJadwal.serializer()), force, revalidate) {
             refresher.safe(serviceStale = true) { api.jadwal() }
         }
 
     suspend fun assignments(force: Boolean = false): ApiResult<List<KulonAssignment>> =
-        cached("assignments", ListSerializer(KulonAssignment.serializer()), force) {
+        cached(CacheKeys.ASSIGNMENTS, ListSerializer(KulonAssignment.serializer()), force) {
             kulonRead { api.assignments() }
         }
 
@@ -156,13 +198,13 @@ class SsoRepository(
         }
 
     suspend fun courses(force: Boolean = false): ApiResult<List<KulonCourse>> =
-        cached("courses", ListSerializer(KulonCourse.serializer()), force) {
+        cached(CacheKeys.COURSES, ListSerializer(KulonCourse.serializer()), force) {
             kulonRead { api.courses() }
         }
 
     /** Lightweight course list for task filtering; omits progress/lecturer work. */
     suspend fun courseList(force: Boolean = false): ApiResult<List<KulonCourse>> =
-        cached("courses:list", ListSerializer(KulonCourse.serializer()), force) {
+        cached(CacheKeys.COURSES_LIST, ListSerializer(KulonCourse.serializer()), force) {
             kulonRead { api.courses(list = true) }
         }
 
@@ -172,13 +214,19 @@ class SsoRepository(
             kulonRead { api.courseContent(courseId) }
         }
 
-    suspend fun lecturers(force: Boolean = false): ApiResult<List<SiapLecturer>> =
-        cached("lecturers", ListSerializer(SiapLecturer.serializer()), force) {
+    suspend fun lecturers(
+        force: Boolean = false,
+        revalidate: Boolean = true,
+    ): ApiResult<List<SiapLecturer>> =
+        cached(CacheKeys.LECTURERS, ListSerializer(SiapLecturer.serializer()), force, revalidate) {
             refresher.safe(serviceStale = true) { api.lecturers() }
         }
 
-    suspend fun absen(force: Boolean = false): ApiResult<List<SiapAbsen>> =
-        cached("absen", ListSerializer(SiapAbsen.serializer()), force) {
+    suspend fun absen(
+        force: Boolean = false,
+        revalidate: Boolean = true,
+    ): ApiResult<List<SiapAbsen>> =
+        cached(CacheKeys.ABSEN, ListSerializer(SiapAbsen.serializer()), force, revalidate) {
             refresher.safe(serviceStale = true) { api.absen() }
         }
 
@@ -197,7 +245,11 @@ class SsoRepository(
         try {
             recoveryCoordinator?.clear()
         } finally {
+            // Cancel refreshes and wipe the cache FIRST; only then drop the
+            // observable state, so an in-flight publish that already passed its
+            // generation check cannot land after the reset.
             cacheCoordinator.clear()
+            states.values.forEach { it.value = null }
         }
     }
 
@@ -266,6 +318,15 @@ class SsoRepository(
         key: String,
         serializer: KSerializer<T>,
         force: Boolean,
+        revalidate: Boolean = true,
         block: suspend () -> ApiResult<T>,
-    ): ApiResult<T> = cacheCoordinator.cached(key, serializer, force, block)
+    ): ApiResult<T> =
+        cacheCoordinator.cached(
+            key = key,
+            serializer = serializer,
+            force = force,
+            revalidate = revalidate,
+            onValue = { result -> states[key]?.value = result },
+            block = block,
+        )
 }

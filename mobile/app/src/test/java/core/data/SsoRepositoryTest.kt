@@ -27,14 +27,18 @@ import ac.undip.sso.core.network.SsoApi
 import ac.undip.sso.core.network.UpstreamSessionRenewalResponse
 import ac.undip.sso.core.network.UpstreamSessionService
 import kotlin.io.encoding.Base64
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlinx.serialization.SerializationException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -529,6 +533,90 @@ class SsoRepositoryTest {
 
         assertTrue(result is ApiResult.Error && result.message.contains("YoDips Android"))
         assertEquals(0, captures)
+    }
+
+    // ────────────── Observable cached state (instant screen re-entry) ──────────────
+
+    @Test
+    fun `successful load publishes the observable state for its key`() = runBlocking {
+        val profile = SiapProfile(nama = "OBS", nim = "1234")
+        val api = FakeApi().apply { profileStub = { profile } }
+        val repo = SsoRepository(api)
+
+        repo.profile()
+
+        assertEquals(ApiResult.Success(profile), repo.state<SiapProfile>(CacheKeys.PROFILE)?.value)
+    }
+
+    @Test
+    fun `rare data serves the stale cache without any background network call`() = runBlocking {
+        val cachedProfile = SiapProfile(nama = "CACHED", nim = "0000")
+        var networkCalls = 0
+        val api = FakeApi().apply {
+            profileStub = {
+                networkCalls++
+                SiapProfile(nama = "FRESH-NET", nim = "9999")
+            }
+        }
+        val repo = SsoRepository(api, SingleStaleCache(ApiResult.Success(cachedProfile)))
+
+        val result = repo.profile() // cache-only: no revalidation scheduled
+
+        assertEquals("CACHED", (result as ApiResult.Success).data.nama)
+        // A would-be background refresh runs on the IO dispatcher; give it a
+        // bounded window to prove it was never scheduled.
+        withTimeoutOrNull(300) {
+            while (networkCalls == 0) delay(10)
+        }
+        assertEquals(0, networkCalls)
+        assertEquals("CACHED", (repo.state<SiapProfile>(CacheKeys.PROFILE)?.value as? ApiResult.Success)?.data?.nama)
+    }
+
+    @Test
+    fun `a failed load publishes its error so a re-entered screen can surface it`() = runBlocking {
+        val api = FakeApi().apply { profileStub = { throw IOException("ECONNREFUSED") } }
+        val repo = SsoRepository(api)
+
+        repo.profile()
+
+        assertTrue(repo.state<SiapProfile>(CacheKeys.PROFILE)?.value is ApiResult.Error)
+    }
+
+    @Test
+    fun `logout clears the observable state`() = runBlocking {
+        val api = FakeApi().apply { profileStub = { SiapProfile(nama = "OBS", nim = "1234") } }
+        val repo = SsoRepository(api)
+        repo.profile()
+        assertTrue(repo.state<SiapProfile>(CacheKeys.PROFILE)?.value is ApiResult.Success)
+
+        repo.clearForLogout()
+
+        assertNull(repo.state<SiapProfile>(CacheKeys.PROFILE)?.value)
+    }
+
+    @Test
+    fun `dynamic cache keys expose no observable state`() {
+        assertNull(SsoRepository(FakeApi()).state<SiapProfile>("course-content-1"))
+    }
+
+    @Test
+    fun `a load completing after logout never republishes the observable state`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val api = FakeApi().apply {
+            profileStub = {
+                gate.await()
+                SiapProfile(nama = "LATE", nim = "0001")
+            }
+        }
+        val repo = SsoRepository(api)
+
+        val pending = async { repo.profile(force = true) }
+        yield() // let the request reach the gate
+        repo.clearForLogout()
+        gate.complete(Unit)
+        pending.await()
+
+        assertNull(repo.state<SiapProfile>(CacheKeys.PROFILE)?.value)
     }
 }
 

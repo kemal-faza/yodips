@@ -1,9 +1,11 @@
 package ac.undip.sso.ui.feature
 
+import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapProfile
-import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
+import ac.undip.sso.ui.common.SkeletonBlock
+import ac.undip.sso.ui.common.SkeletonGroup
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.ThemeController
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DarkMode
@@ -82,18 +85,52 @@ fun ProfileScreen(
                 onRefresh = { repo.profile(force = true) },
                 modifier = Modifier.weight(1f),
                 emptyMessage = "Profil belum tersedia",
+                state = repo.state(CacheKeys.PROFILE),
+                loading = { ProfileSkeleton() },
             ) { p ->
-                ProfileContent(p, onLogout)
+                ProfileContent(p)
+            }
+            // Tombol Logout adalah komponen bawaan aplikasi, bukan data backend:
+            // selalu tampil, tidak ikut skeleton/menunggu muat profil.
+            Button(
+                onClick = onLogout,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                Text("Logout")
+            }
+        }
+    }
+}
+
+/**
+ * Bentuk halaman Profil selama muat pertama: satu kartu identitas + dua kartu
+ * grup field. Hanya area data backend yang di-skeleton — header dan tombol
+ * Logout tetap tampil (lihat [ProfileScreen]).
+ */
+@Composable
+private fun ProfileSkeleton() {
+    SkeletonGroup {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            SkeletonBlock(Modifier.fillMaxWidth().height(176.dp), shape = RoundedCornerShape(12.dp))
+            repeat(2) {
+                SkeletonBlock(Modifier.fillMaxWidth().height(168.dp), shape = RoundedCornerShape(12.dp))
             }
         }
     }
 }
 
 @Composable
-private fun ProfileContent(
-    p: SiapProfile,
-    onLogout: () -> Unit,
-) {
+private fun ProfileContent(p: SiapProfile) {
     var showNamaIbu by remember { mutableStateOf(false) }
     val groups =
         listOf(
@@ -176,14 +213,6 @@ private fun ProfileContent(
 
         groups.forEach { group ->
             FieldGroup(group, maskShown = showNamaIbu, onToggleMask = { showNamaIbu = !showNamaIbu })
-        }
-
-        Button(
-            onClick = onLogout,
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Logout")
         }
     }
 }

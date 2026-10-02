@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -44,6 +45,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -51,6 +54,13 @@ import kotlinx.coroutines.launch
  * Content) for every data screen. Screens pass their repository call as [load]
  * and render [content]; a failed source renders an inline error with retry
  * instead of blocking the whole screen (§ per-source resilience).
+ *
+ * [state] is an optional observable latest result from the repository (keyed
+ * cache source). When provided, the first frame is seeded with the cached value
+ * — a screen re-entered in the same process renders real content immediately
+ * instead of a skeleton, and silent stale-while-revalidate refreshes update it
+ * in place. The [load] block is still executed (cheap on a cache hit) so
+ * dependent joins and background revalidation keep running.
  *
  * The loading branch renders [loading] (a skeleton by default) instead of a
  * centered spinner: a cold load can take many seconds, and a skeleton keeps the
@@ -62,13 +72,16 @@ fun <T> LoadableData(
     modifier: Modifier = Modifier,
     emptyMessage: String = "Belum ada data",
     refreshTrigger: Int = 0,
+    state: StateFlow<ApiResult<T>?>? = null,
     loading: @Composable () -> Unit = { ListSkeleton() },
     content: @Composable (T) -> Unit,
 ) {
     var attempt by remember { mutableIntStateOf(0) }
-    var result by remember { mutableStateOf<ApiResult<T>?>(null) }
+    val fallback = remember { MutableStateFlow<ApiResult<T>?>(null) }
+    val result by (state ?: fallback).collectAsState()
     LaunchedEffect(attempt, refreshTrigger) {
-        result = load()
+        val loaded = load()
+        if (state == null) fallback.value = loaded
     }
     when (val r = result) {
         null -> loading()
@@ -117,6 +130,10 @@ private fun <T> isEmpty(data: T): Boolean =
  * Anti-spam: [minRefreshIntervalMs] is the minimum gap between two refreshes;
  * pulls faster than that are ignored, so accidental repeated pulls can't
  * hammer the backend. Never sets [isRefreshing] when a pull is throttled.
+ *
+ * [state] works like in [LoadableData]: cached content renders in the first
+ * frame on re-entry; a pull-to-refresh ([onRefresh], cache-bypassing) publishes
+ * its result through the same repository state.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -126,18 +143,21 @@ fun <T> RefreshableLoadableData(
     modifier: Modifier = Modifier,
     emptyMessage: String = "Belum ada data",
     minRefreshIntervalMs: Long = REFRESH_COOLDOWN_MS,
+    state: StateFlow<ApiResult<T>?>? = null,
     loading: @Composable () -> Unit = { ListSkeleton() },
     content: @Composable (T) -> Unit,
 ) {
     var attempt by remember { mutableIntStateOf(0) }
-    var result by remember { mutableStateOf<ApiResult<T>?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val lastRefreshAt = remember { arrayOf(0L) }
+    val fallback = remember { MutableStateFlow<ApiResult<T>?>(null) }
+    val result by (state ?: fallback).collectAsState()
 
     LaunchedEffect(attempt) {
         if (attempt > 0) isRefreshing = true
-        result = load()
+        val loaded = load()
+        if (state == null) fallback.value = loaded
         isRefreshing = false
     }
 
@@ -149,7 +169,8 @@ fun <T> RefreshableLoadableData(
             lastRefreshAt[0] = now
             isRefreshing = true
             scope.launch {
-                result = onRefresh()
+                val refreshed = onRefresh()
+                if (state == null) fallback.value = refreshed
                 isRefreshing = false
             }
         },

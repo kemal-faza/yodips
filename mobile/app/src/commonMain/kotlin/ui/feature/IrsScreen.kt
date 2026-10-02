@@ -1,5 +1,6 @@
 package ac.undip.sso.ui.feature
 
+import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.nowMs
 import ac.undip.sso.core.network.ApiResult
@@ -8,6 +9,8 @@ import ac.undip.sso.core.network.SiapIrsMataKuliah
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.REFRESH_COOLDOWN_MS
+import ac.undip.sso.ui.common.SkeletonBlock
+import ac.undip.sso.ui.common.SkeletonGroup
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -127,7 +131,13 @@ fun IrsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 // Semester — derived from the profile (the IRS payload itself carries no label).
-                LoadableData(load = { repo.profile() }, emptyMessage = "", refreshTrigger = refreshTick) { profile ->
+                LoadableData(
+                    load = { repo.profile() },
+                    emptyMessage = "",
+                    refreshTrigger = refreshTick,
+                    state = repo.state(CacheKeys.PROFILE),
+                    loading = { IrsSemesterSkeleton() },
+                ) { profile ->
                     val ordinal = semesterOrdinal(profile.angkatan, profile.semesterBerjalan)
                     AppCard(
                         level = AppElevation.Lifted,
@@ -152,7 +162,10 @@ fun IrsScreen(
 
                 LoadableData(
                     load = {
-                        when (val r = repo.lecturers()) {
+                        // Halaman IRS = data jarang berubah: join lookup dibaca
+                        // cache-only juga, supaya masuk halaman tidak memicu
+                        // request background. Pull-to-refresh yang meng-force.
+                        when (val r = repo.lecturers(revalidate = false)) {
                             is ApiResult.Success -> {
                                 lecturerByKode =
                                     r.data.filter { it.dosen.isNotBlank() }.associate { it.kode to it.dosen }
@@ -162,7 +175,7 @@ fun IrsScreen(
                                 Unit
                             }
                         }
-                        when (val r = repo.jadwal()) {
+                        when (val r = repo.jadwal(revalidate = false)) {
                             is ApiResult.Success -> {
                                 jadwalByNama = r.data
                                     .filter { it.matakuliah.isNotBlank() && it.tanggal.isNotBlank() }
@@ -174,7 +187,7 @@ fun IrsScreen(
                                 Unit
                             }
                         }
-                        when (val r = repo.absen()) {
+                        when (val r = repo.absen(revalidate = false)) {
                             is ApiResult.Success -> {
                                 absenByNama = r.data.associate { it.nama.trim().lowercase() to it }
                                 // Join by kode MIK lebih tahan terhadap perbedaan
@@ -192,6 +205,8 @@ fun IrsScreen(
                     },
                     emptyMessage = "Belum ada IRS",
                     refreshTrigger = refreshTick,
+                    state = repo.state(CacheKeys.IRS),
+                    loading = { IrsSkeleton() },
                 ) { irs ->
                     val mks = dedupeIrsMk(irs.mataKuliah)
                     AppCard(Modifier.fillMaxWidth()) {
@@ -215,6 +230,45 @@ fun IrsScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Skeleton satu kartu untuk bagian semester (data profil) di atas IRS. */
+@Composable
+private fun IrsSemesterSkeleton() {
+    SkeletonGroup {
+        SkeletonBlock(
+            Modifier
+                .fillMaxWidth()
+                .height(84.dp),
+            shape = RoundedCornerShape(12.dp),
+        )
+    }
+}
+
+/** Skeleton daftar IRS: kartu ringkasan + tiga kartu mata kuliah. */
+@Composable
+private fun IrsSkeleton() {
+    SkeletonGroup {
+        Column(
+            Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SkeletonBlock(
+                Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(12.dp),
+            )
+            repeat(3) {
+                SkeletonBlock(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(118.dp),
+                    shape = RoundedCornerShape(12.dp),
+                )
             }
         }
     }
