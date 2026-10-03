@@ -94,6 +94,39 @@ class LoginFlowTest {
         assertTrue(siapTicketUrl(ticket).endsWith(ticket))
     }
 
+    // --- isLoginInteractionAllowed ---
+    @Test
+    fun `login interaction is allowed only on credential pages`() {
+        // Nothing loaded yet: there is no page to block.
+        assertTrue(isLoginInteractionAllowed(null))
+        // Microsoft sign-in pages (email/password, MFA, "stay signed in").
+        assertTrue(
+            isLoginInteractionAllowed(
+                "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=opaque",
+            ),
+        )
+        assertTrue(isLoginInteractionAllowed("https://login.microsoftonline.com/kmsi"))
+        // The SSO credential form itself.
+        assertTrue(isLoginInteractionAllowed("https://sso.undip.ac.id/auth/user/login"))
+        // The SSO auth bridge: some markup renders LOGIN as a link to it.
+        assertTrue(isLoginInteractionAllowed("https://sso.undip.ac.id/sso/auth_v2"))
+    }
+
+    @Test
+    fun `login interaction is locked on every automatic cascade page`() {
+        // SSO dashboard after the Microsoft round-trip.
+        assertFalse(isLoginInteractionAllowed("https://sso.undip.ac.id/pages/dashboard"))
+        // Ticket bootstrap + authenticated Kulon pages.
+        assertFalse(isLoginInteractionAllowed("https://kulon2.undip.ac.id/auth/oidc/?t=secret"))
+        assertFalse(isLoginInteractionAllowed("https://kulon2.undip.ac.id/my/"))
+        // SIAP ticket + authenticated SIAP pages.
+        assertFalse(isLoginInteractionAllowed("https://siap.undip.ac.id/sso/login?t=secret"))
+        assertFalse(isLoginInteractionAllowed("https://siap.undip.ac.id/pages/mhs/dashboard"))
+        // Non-allowlisted hosts, including SSO lookalikes, are never interactive.
+        assertFalse(isLoginInteractionAllowed("https://evil.example/auth/user/login"))
+        assertFalse(isLoginInteractionAllowed("https://sso.undip.ac.id.evil.example/auth/user/login"))
+    }
+
     // --- ssoLoginCompleted ---
     @Test
     fun `guest cookie on SSO login page without microsoft roundtrip does NOT advance`() {

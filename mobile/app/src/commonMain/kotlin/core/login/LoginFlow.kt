@@ -115,6 +115,31 @@ fun isMicrosoftAuthorize(url: String?): Boolean {
 }
 
 /**
+ * Whether the login WebView may accept user interaction on [url].
+ *
+ * The login screen is deliberately isolated: the user may only interact with a
+ * credential page — the Microsoft sign-in pages and the SSO login form itself.
+ * Every other page belongs to the automatic redirect cascade
+ * (Microsoft/SSO → Kulon → SIAP → handoff); the screen covers those with a
+ * blocking overlay so the user cannot derail a redirect half-way.
+ *
+ * The SSO auth bridge (`/sso/...`, e.g. `/sso/auth_v2`) stays interactive too:
+ * some campus markup renders the LOGIN control as a link to that bridge instead
+ * of a form submit, and blocking it would make the manual sign-in unreachable.
+ *
+ * `null` (nothing loaded yet) counts as allowed: there is no page to block and
+ * the overlay must not flash before the first load.
+ */
+fun isLoginInteractionAllowed(url: String?): Boolean {
+    val u = url ?: return true
+    if (isMicrosoftAuthorize(u)) return true
+    if (isSsoLoginPage(u)) return true
+    if (!isSsoHost(u)) return false
+    val path = u.substringAfter("://sso.undip.ac.id", "").substringBefore('?').substringBefore('#')
+    return path.startsWith("/sso/")
+}
+
+/**
  * Whether the SSO hop is actually complete and we may advance to Kulon.
  *
  * The SSO page drops a guest `ci_session_sso` the moment it loads, and for an
