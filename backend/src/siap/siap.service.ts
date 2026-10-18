@@ -424,7 +424,7 @@ export class SiapService {
 
   /**
    * Web `get_khs` HTML for ONE semester (cookie-path POST — same shape as
-   * fetchLecturers' `get_irs`). It is the ONLY source of the per-matkul
+   * fetchLecturersLegacy' `get_irs`). It is the ONLY source of the per-matkul
    * `detailId` (`id_irs#nim#kode`) that `get_detail_nilai` requires: the API
    * `v2/lihat_khs` rows carry only `id_irs`. A semester whose rows have no
    * `.get_detail_khs` icon yields [] → its `nilai` rows simply get no
@@ -554,30 +554,119 @@ export class SiapService {
   }
 
   /**
-   * Lecturer per course, scraped from the SIAP IRS semester tables.
-   * The `/irs/mhs/irs` page is AJAX-driven: each semester's table loads only
-   * when its collapser is expanded via `POST /irs/mhs/irs/get_irs` with
-   * `ta`/`smt_ambil`/`smt` params (verified live 2026-08-12). The response is an
-   * 8-column table: NO, KODE, MATA KULIAH, KELAS, SKS, RUANG, STATUS, NAMA DOSEN
-   * — parsed by parseIrsTable (KODE col 1 + NAMA DOSEN col 7).
-   *
-   * NOTE (regression 2026-09-06): migrasi 7b40110 sempat mengarahkan method ini
-   * ke API `v2/lihat_irs` (JSON) — TAPI payload API itu TIDAK menyertakan
-   * `nama_dosen` (verified live: respons `/api/siap/irs` tanpa field dosen,
-   * `getLecturers` = []). Satu-satunya sumber nama dosen adalah halaman
-   * `get_irs` (cookie-path) — dikembalikan ke sini.
-   *
-   * We iterate every semester (from the profile's angkatan + semester label, the
-   * same count getKhs uses) so that approved past semesters contribute lecturers
-   * too. Unapproved semesters return a "belum disetujui" placeholder which parses
-   * to nothing. Results are deduped by kode (a course code repeats across
-   * semesters; the first approved occurrence wins).
+   * Lecturer per course. Two paths live here during the A2 migration:
+   *   - `fetchLecturersLegacy` (production): per-semester `POST get_irs` HTML
+   *     scrape via the web cookie — the only source proven live so far.
+   *   - `fetchLecturersDetailed` (candidate): SIAP API `v2/lihat_irs` over the
+   *     token path, cookie-free, with one mint per batch, one re-mint + retry
+   *     for `api-credential` rejections, and per-semester resilience.
+   * The API path was reverted once (2026-09-06) because `nama_dosen` was absent
+   * from that payload; it is NOT promoted to production until the dev comparison
+   * harness proves set equality on a live session.
    */
   private async fetchLecturers(
     ref: SessionRef,
   ): Promise<{ kode: string; dosen: string }[]> {
+    return this.fetchLecturersLegacy(ref);
+  }
+
+  private async fetchLecturersDetailed(ref: SessionRef): Promise<{
+    items: { kode: string; dosen: string }[];
+    failedSemesters: number[];
+    emptyApiDosen: string[];
+  }> {
     this.requireRef(ref);
-    const siapCookie = await this.requireSiapCookieForSession(ref);
+    const profile = await this.getProfile(ref);
+    const count = currentSemesterCount(
+      profile.angkatan,
+      profile.semesterBerjalan,
+    );
+    const semesters = Array.from({ length: count }, (_, i) => i + 1);
+
+    const runBatch = (token: string, nim: string, targets: number[]) =>
+      mapWithConcurrency(targets, 4, async (smt) => {
+        const ta = Number(profile.angkatan) + Math.floor((smt - 1) / 2);
+        const smtWithinYear = smt % 2 === 1 ? 1 : 2;
+        try {
+          const rows = await this.apiUpstream.fetch<
+            Array<Record<string, unknown>>
+          >(
+            'v2/lihat_irs',
+            token,
+            {
+              ta: String(ta),
+              smt_ambil: String(smt),
+              smt: String(smtWithinYear),
+            },
+            nim,
+          );
+          return {
+            smt,
+            rows: Array.isArray(rows) ? rows : [],
+            failed: false as const,
+          };
+        } catch (e) {
+          return {
+            smt,
+            rows: [] as Array<Record<string, unknown>>,
+            failed: true as const,
+            credential:
+              e instanceof StaleUpstreamError && e.reason === 'api-credential',
+          };
+        }
+      });
+
+    let ctx = await this.upstream.getApiContextForSession(ref);
+    let results = await runBatch(ctx.token, ctx.nim, semesters);
+
+    // One re-mint, then retry ONLY the semesters the upstream rejected for
+    // credentials. Read-only path: a retry cannot double-apply anything
+    // (contrast the QR write path).
+    const rejected = results
+      .filter((r) => r.failed && r.credential)
+      .map((r) => r.smt);
+    if (rejected.length > 0) {
+      if (this.cache) {
+        await this.cache.del(cacheKeyForSession(ref, 'siap', 'token'));
+      }
+      ctx = await this.upstream.getApiContextForSession(ref);
+      const retried = new Map(
+        (await runBatch(ctx.token, ctx.nim, rejected)).map((r) => [r.smt, r]),
+      );
+      results = results.map((r) => retried.get(r.smt) ?? r);
+    }
+
+    const entries = new Map<string, string>();
+    const emptyApiDosen: string[] = [];
+    for (const { rows } of results) {
+      for (const mk of parseApiIrs(rows)) {
+        if (!mk.kode) continue;
+        if (!mk.dosen) {
+          emptyApiDosen.push(mk.kode);
+          continue;
+        }
+        if (!entries.has(mk.kode)) entries.set(mk.kode, mk.dosen);
+      }
+    }
+    return {
+      items: Array.from(entries, ([kode, dosen]) => ({ kode, dosen })),
+      failedSemesters: results.filter((r) => r.failed).map((r) => r.smt),
+      emptyApiDosen,
+    };
+  }
+
+  /**
+   * Cookie scrape path (HTML `get_irs`) — the production path until the A2
+   * equality gate passes. `cookieOverride` is used only by the dev comparison
+   * harness to simulate a stale cookie; it is never taken from a request.
+   */
+  private async fetchLecturersLegacy(
+    ref: SessionRef,
+    cookieOverride?: string,
+  ): Promise<{ kode: string; dosen: string }[]> {
+    this.requireRef(ref);
+    const siapCookie =
+      cookieOverride ?? (await this.requireSiapCookieForSession(ref));
     const profile = await this.fetchProfileData(ref);
     const count = currentSemesterCount(
       profile.angkatan,
@@ -587,9 +676,9 @@ export class SiapService {
     const entries = new Map<string, string>();
     const url = `${this.baseUrl}/irs/mhs/irs/get_irs`;
     // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
-    // order preserved so ascending-smt dedup order is unchanged. Rejected
-    // semesters (stale/upstream) are skipped so one bad semester does not wipe
-    // out every lecturer (same resilience as the pre-API-migration version).
+    // order preserved so ascending-smt dedup order is unchanged. NOTE: a
+    // rejected semester rejects the whole call (Promise.all in
+    // mapWithConcurrency) — the caller treats a failure as "no lecturers".
     const htmlBySmt = await mapWithConcurrency(
       Array.from({ length: count }, (_, i) => i + 1),
       4,
@@ -601,10 +690,7 @@ export class SiapService {
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
-            // Cookie-path page: the stored SIAP session cookie rides as an
-            // explicit header (same pattern as getKehadiran/markKehadiran).
             Cookie: siapCookie,
-            // Same CI is_ajax_request() guard as getJadwal / getNotifications.
             'X-Requested-With': 'XMLHttpRequest',
           },
           body,

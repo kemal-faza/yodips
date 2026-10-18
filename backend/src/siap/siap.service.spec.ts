@@ -739,6 +739,307 @@ describe('SiapService', () => {
     });
   });
 
+  describe('fetchLecturersDetailed (token path)', () => {
+    const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
+    const cache = {
+      get: jest.fn(),
+      getStale: jest.fn(),
+      set: jest.fn(),
+      del: jest.fn(),
+    };
+
+    function tokenSvc(store: any = STORE): SiapService {
+      return makeRealSeamService(apiMock, cache, store);
+    }
+
+    function detailed(svc: SiapService) {
+      return (svc as any).fetchLecturersDetailed(ref('u1'));
+    }
+
+    function noCookieStore() {
+      const session = {
+        identity: NIM,
+        emailSso: EMAIL,
+        sessionGeneration: TEST_GEN,
+        capturedAt: Date.now(),
+      };
+      return {
+        get: jest.fn().mockResolvedValue(session),
+        getIfGeneration: jest.fn().mockResolvedValue(session),
+        set: jest.fn(),
+      };
+    }
+
+    /** v2/lihat_irs rows per smt_ambil. */
+    function routeRows(rows: Record<string, Array<Record<string, unknown>>>) {
+      apiMock.fetch.mockImplementation(
+        async (endpoint: string, _token: string, form: Record<string, string>) => {
+          if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+          if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+          if (endpoint === 'v2/lihat_irs') return rows[form.smt_ambil] ?? [];
+          return [];
+        },
+      );
+    }
+
+    const irsCalls = () =>
+      apiMock.fetch.mock.calls.filter((c) => c[0] === 'v2/lihat_irs');
+
+    beforeEach(() => {
+      apiMock.mintToken.mockReset();
+      apiMock.fetch.mockReset();
+      cache.get.mockReset();
+      cache.getStale.mockReset();
+      cache.del.mockReset();
+      apiMock.mintToken.mockResolvedValue({ token: 'T', data: {} });
+      // `getProfile` reads through `getStale` (NOT `get`) — serve the profile
+      // from the "cache" so `fetchProfileData` is never called. Otherwise the
+      // profile fetch consumes the first mint and the semester batch runs on
+      // T2, so a rejection planted for T1 never fires.
+      cache.get.mockResolvedValue(null);
+      cache.getStale.mockImplementation(
+        async (key: string, fetcher: () => Promise<unknown>) =>
+          key.endsWith(':siap:profile')
+            ? {
+                value: {
+                  angkatan: '2024',
+                  semesterBerjalan: '2026/2027 Ganjil',
+                },
+                stale: false,
+              }
+            : { value: await fetcher(), stale: false },
+      );
+    });
+
+    it('maps v2/lihat_irs rows per semester for both odd and even semesters', async () => {
+      routeRows({
+        '5': [
+          {
+            kode_mk: 'MIK1624503',
+            nama_mk: 'Sistem Informasi',
+            sks_mk: '3',
+            nama_dosen: 'Dosen X',
+          },
+        ],
+      });
+
+      const out = await detailed(tokenSvc());
+
+      expect(out.items).toEqual([{ kode: 'MIK1624503', dosen: 'Dosen X' }]);
+      expect(apiMock.fetch).toHaveBeenCalledWith(
+        'v2/lihat_irs',
+        'T',
+        { ta: '2026', smt_ambil: '5', smt: '1' },
+        NIM,
+      );
+      expect(apiMock.fetch).toHaveBeenCalledWith(
+        'v2/lihat_irs',
+        'T',
+        { ta: '2024', smt_ambil: '2', smt: '2' },
+        NIM,
+      );
+      expect(irsCalls()).toHaveLength(5);
+    });
+
+    it('works without a web cookie and never touches the cookie page', async () => {
+      routeRows({
+        '4': [
+          {
+            kode_mk: 'MIK1624502',
+            nama_mk: 'Basis Data',
+            sks_mk: '3',
+            nama_dosen: 'Dosen Y',
+          },
+        ],
+      });
+
+      const out = await detailed(tokenSvc(noCookieStore()));
+
+      expect(out.items).toEqual([{ kode: 'MIK1624502', dosen: 'Dosen Y' }]);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('still serves profile, IRS and lecturers when the record cookie is stale', async () => {
+      // Sentinel cookie but `emailSso` + generation preserved: this is the
+      // scenario A2 actually fixes (record made while the cookie was valid,
+      // cookie dead upstream). It cannot be produced from a handoff — the
+      // handoff only stores `emailSso` together with a VALID cookie
+      // (auth.service.ts:114-131) — so it is proved here, not live.
+      const staleRecord = {
+        identity: NIM,
+        emailSso: EMAIL,
+        siapCookie: 'sia_app_session=stale-simulation',
+        sessionGeneration: TEST_GEN,
+        capturedAt: Date.now(),
+      };
+      const staleStore = {
+        get: jest.fn().mockResolvedValue(staleRecord),
+        getIfGeneration: jest.fn().mockResolvedValue(staleRecord),
+        set: jest.fn(),
+      };
+      // Exercise the real profile fetch (including the cookie scrape fallback)
+      // instead of serving it from the cache.
+      cache.getStale.mockImplementation(
+        async (_key: string, fetcher: () => Promise<unknown>) => ({
+          value: await fetcher(),
+          stale: false,
+        }),
+      );
+      routeRows({
+        '5': [
+          {
+            kode_mk: 'MIK1624503',
+            nama_mk: 'Sistem Informasi',
+            sks_mk: '3',
+            nama_dosen: 'Dosen X',
+          },
+        ],
+      });
+      apiMock.fetch.mockImplementation(
+        async (endpoint: string, _token: string, form: Record<string, string>) => {
+          if (endpoint === 'data_mahasiswa') {
+            return { nama: 'Budi', nim: NIM, tahun_masuk: '2024', sso_email: EMAIL };
+          }
+          if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+          if (endpoint === 'v2/lihat_irs') {
+            return [
+              {
+                kode_mk: 'MIK1624503',
+                nama_mk: 'Sistem Informasi',
+                sks_mk: '3',
+                nama_dosen: 'Dosen X',
+              },
+            ];
+          }
+          return [];
+        },
+      );
+      // The cookie-path profile scrape cannot succeed with a stale cookie.
+      (global.fetch as jest.Mock).mockRejectedValue(new Error('stale session'));
+
+      const svc = tokenSvc(staleStore);
+      const profile = await svc.getProfile(ref('u1'));
+      const irs = await svc.getIrs(ref('u1'));
+      const out = await detailed(svc);
+
+      expect(profile.nama).toBe('Budi');
+      expect(irs.mataKuliah[0]).toMatchObject({ kode: 'MIK1624503' });
+      expect(out.items).toEqual([{ kode: 'MIK1624503', dosen: 'Dosen X' }]);
+      expect(out.failedSemesters).toEqual([]);
+    });
+
+    it('skips a failing semester and reports it without dropping the rest', async () => {
+      apiMock.fetch.mockImplementation(
+        async (endpoint: string, _token: string, form: Record<string, string>) => {
+          if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+          if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+          if (form?.smt_ambil === '3') throw new Error('upstream 500');
+          if (endpoint === 'v2/lihat_irs') {
+            return [
+              {
+                kode_mk: 'MIK1624509',
+                nama_mk: 'Jaringan',
+                sks_mk: '3',
+                nama_dosen: 'Dosen Z',
+              },
+            ];
+          }
+          return [];
+        },
+      );
+
+      const out = await detailed(tokenSvc());
+
+      expect(out.items).toEqual([{ kode: 'MIK1624509', dosen: 'Dosen Z' }]);
+      expect(out.failedSemesters).toEqual([3]);
+    });
+
+    it('re-mints once and retries only the credential-rejected semester', async () => {
+      let minted = 0;
+      apiMock.mintToken.mockImplementation(async () => {
+        minted += 1;
+        return { token: `T${minted}`, data: {} };
+      });
+      apiMock.fetch.mockImplementation(
+        async (endpoint: string, token: string, form: Record<string, string>) => {
+          if (endpoint === 'data_mahasiswa') return { tahun_masuk: '2024' };
+          if (endpoint === 'semester_aktif') return { nm_smt: '2026/2027 Ganjil' };
+          if (endpoint === 'v2/lihat_irs') {
+            if (form.smt_ambil === '2' && token === 'T1') {
+              throw new StaleUpstreamError('Siap', 'api-credential', 'token basi');
+            }
+            return [
+              {
+                kode_mk: 'MIK1624502',
+                nama_mk: 'Basis Data',
+                sks_mk: '3',
+                nama_dosen: 'Dosen Y',
+              },
+            ];
+          }
+          return [];
+        },
+      );
+
+      const out = await detailed(tokenSvc());
+
+      expect(out.items).toEqual([{ kode: 'MIK1624502', dosen: 'Dosen Y' }]);
+      expect(out.failedSemesters).toEqual([]);
+      expect(apiMock.mintToken).toHaveBeenCalledTimes(2);
+      expect(irsCalls()).toHaveLength(6);
+      expect(
+        irsCalls().filter((c) => (c[2] as any).smt_ambil === '2'),
+      ).toHaveLength(2);
+    });
+
+    it('never lets an empty nama_dosen overwrite a real one', async () => {
+      routeRows({
+        '2': [
+          {
+            kode_mk: 'MIK1624502',
+            nama_mk: 'Basis Data',
+            sks_mk: '3',
+            nama_dosen: 'Dosen Y',
+          },
+        ],
+        '4': [
+          { kode_mk: 'MIK1624502', nama_mk: 'Basis Data', sks_mk: '3', nama_dosen: '' },
+          { kode_mk: 'MIK1624504', nama_mk: 'Tanpa Dosen', sks_mk: '2', nama_dosen: '' },
+        ],
+      });
+
+      const out = await detailed(tokenSvc());
+
+      expect(out.items).toEqual([{ kode: 'MIK1624502', dosen: 'Dosen Y' }]);
+      expect(out.emptyApiDosen).toEqual(['MIK1624502', 'MIK1624504']);
+    });
+
+    it('keeps the lowest semester when a code appears twice', async () => {
+      routeRows({
+        '2': [
+          {
+            kode_mk: 'MIK1624502',
+            nama_mk: 'Basis Data',
+            sks_mk: '3',
+            nama_dosen: 'Dosen Bawah',
+          },
+        ],
+        '4': [
+          {
+            kode_mk: 'MIK1624502',
+            nama_mk: 'Basis Data',
+            sks_mk: '3',
+            nama_dosen: 'Dosen Atas',
+          },
+        ],
+      });
+
+      const out = await detailed(tokenSvc());
+
+      expect(out.items).toEqual([{ kode: 'MIK1624502', dosen: 'Dosen Bawah' }]);
+    });
+  });
+
   describe('getNotifications', () => {
     const apiMock = { mintToken: jest.fn(), fetch: jest.fn() };
     function notifSvc(): SiapService {
