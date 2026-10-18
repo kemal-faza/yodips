@@ -194,6 +194,78 @@ describe('SiapUpstreamSession.getKhsContextForSession', () => {
   });
 });
 
+describe('SiapUpstreamSession.getApiContextForSession', () => {
+  it('resolves API identity and token without a web cookie', async () => {
+    const store = new FakeStore(
+      new Map([
+        [NIM, { identity: NIM, emailSso: EMAIL, sessionGeneration: DEFAULT_GEN }],
+      ]),
+    );
+    const { seam, api } = makeSeam({ store });
+
+    await expect(
+      seam.getApiContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+    ).resolves.toEqual({ emailSso: EMAIL, nim: NIM, token: 'T1' });
+    expect(api.mintToken).toHaveBeenCalledWith(EMAIL, NIM);
+  });
+
+  it('never returns the stored web cookie', async () => {
+    const store = new FakeStore(
+      new Map([
+        [
+          NIM,
+          {
+            identity: NIM,
+            emailSso: EMAIL,
+            siapCookie: 'sia_app_session=stale',
+            sessionGeneration: DEFAULT_GEN,
+          },
+        ],
+      ]),
+    );
+    const { seam } = makeSeam({ store });
+
+    const ctx = await seam.getApiContextForSession({
+      sub: NIM,
+      sessionGeneration: DEFAULT_GEN,
+    });
+    expect(ctx).toEqual({ emailSso: EMAIL, nim: NIM, token: 'T1' });
+    expect('siapCookie' in ctx).toBe(false);
+  });
+
+  it('fails with no-emailSso when the live record has no identity source', async () => {
+    const store = new FakeStore(
+      new Map([[NIM, { identity: NIM, sessionGeneration: DEFAULT_GEN }]]),
+    );
+    const { seam, api } = makeSeam({ store });
+
+    await expect(
+      seam.getApiContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+    ).rejects.toMatchObject({ reason: 'no-emailSso' });
+    expect(api.mintToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps SESSION_DEAD for a dead session record', async () => {
+    const store = new FakeStore(
+      new Map([
+        [
+          NIM,
+          { identity: NIM, emailSso: EMAIL, sessionGeneration: 'e'.repeat(32) },
+        ],
+      ]),
+    );
+    const { seam, api } = makeSeam({ store });
+
+    await expect(
+      seam.getApiContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+    ).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(api.mintToken).not.toHaveBeenCalled();
+  });
+});
+
 describe('SiapUpstreamSession.getContext', () => {
   it('resolves identity from session store + mints token once', async () => {
     const { seam, api } = makeSeam({});

@@ -249,6 +249,19 @@ export class SiapUpstreamSession {
   }
 
   /**
+   * Token-facing read for SIAP API endpoints that never need the web cookie.
+   * Same exact-generation snapshot as getContextForSession (a B-replacement is
+   * still SESSION_DEAD); only the cookie requirement is dropped. Identity still
+   * requires `emailSso`, so a record written without a valid SIAP cookie fails
+   * with no-emailSso exactly as before.
+   */
+  async getApiContextForSession(ref: SessionRef): Promise<SiapSessionContext> {
+    const session = await readLiveSession(this.store, ref);
+    if (!session) throw sessionDead();
+    return this.resolveScoped(ref, session);
+  }
+
+  /**
    * KHS is read from the SIAP API; its optional detail-id scrape is the only
    * part that needs the web cookie. Resolve the same exact-generation API
    * identity/token without requiring that cookie, while still requiring a
