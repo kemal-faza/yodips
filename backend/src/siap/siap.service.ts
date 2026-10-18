@@ -587,9 +587,10 @@ export class SiapService {
     const entries = new Map<string, string>();
     const url = `${this.baseUrl}/irs/mhs/irs/get_irs`;
     // Bounded 4-way concurrency: upstream SIAP is the bottleneck, not CPU;
-    // order preserved so ascending-smt dedup order is unchanged. Rejected
-    // semesters (stale/upstream) are skipped so one bad semester does not wipe
-    // out every lecturer (same resilience as the pre-API-migration version).
+    // order preserved so ascending-smt dedup order is unchanged. NOTE: a
+    // rejected semester (stale/upstream) rejects the WHOLE call — Promise.all
+    // in mapWithConcurrency, no partial result. The rejection propagates out
+    // of getLecturers (Kulon's merge catches it and omits lecturers).
     const htmlBySmt = await mapWithConcurrency(
       Array.from({ length: count }, (_, i) => i + 1),
       4,
