@@ -120,7 +120,8 @@ export class SiapController {
   /**
    * Dev-only equality harness for the A2 migration: runs BOTH the legacy cookie
    * scrape and the token path on the same session and returns the set diff.
-   * Fails closed in production; removed once the equality gate passes.
+   * Allowlisted to development/test — any other value (including an unset
+   * NODE_ENV) fails closed; removed once the equality gate passes.
    */
   @Get('dev/lecturers-compare')
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
@@ -128,7 +129,8 @@ export class SiapController {
     @Req() req: AuthedRequest,
     @Query('staleSim') staleSim?: string,
   ) {
-    if ((this.config.get<string>('NODE_ENV') ?? '') === 'production') {
+    const env = this.config.get<string>('NODE_ENV') ?? '';
+    if (env !== 'development' && env !== 'test') {
       throw new HttpException(
         { message: 'Hanya tersedia di development' },
         HttpStatus.FORBIDDEN,

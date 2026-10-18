@@ -146,6 +146,42 @@ describe('SiapController', () => {
     ).rejects.toMatchObject({ status: 403 });
   });
 
+  it('fails closed on the dev compare route when NODE_ENV is unset', async () => {
+    const unsetRef = await Test.createTestingModule({
+      controllers: [SiapController],
+      providers: [
+        { provide: SiapService, useValue: mockSiap },
+        { provide: ConfigService, useValue: { get: () => undefined } },
+      ],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    const unsetController = unsetRef.get(SiapController);
+
+    await expect(
+      unsetController.devCompareLecturers({ user } as any, undefined),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('fails closed on the dev compare route in a non-dev environment', async () => {
+    const stagingRef = await Test.createTestingModule({
+      controllers: [SiapController],
+      providers: [
+        { provide: SiapService, useValue: mockSiap },
+        { provide: ConfigService, useValue: { get: () => 'staging' } },
+      ],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    const stagingController = stagingRef.get(SiapController);
+
+    await expect(
+      stagingController.devCompareLecturers({ user } as any, undefined),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
   it('routes the dev compare request with the stale-simulation flag', async () => {
     mockSiap.compareLecturers.mockResolvedValue({ staleSim: true });
     await controller.devCompareLecturers({ user } as any, '1');
