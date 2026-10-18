@@ -74,6 +74,7 @@ function makeSeamMock(overrides: Record<string, unknown> = {}): any {
       .fn()
       .mockResolvedValue(canned),
     getContextForSession: jest.fn().mockResolvedValue(canned),
+    getApiContextForSession: jest.fn().mockResolvedValue(canned),
     getKhsContextForSession: jest.fn().mockResolvedValue(canned),
     getContextForCurrent: jest.fn().mockResolvedValue(canned),
     getCookieForSession: jest.fn().mockResolvedValue('sia_app_session=TEST'),
@@ -333,6 +334,41 @@ describe('SiapService', () => {
         swrWindow('SIAP_JADWAL'),
       );
     });
+
+    it('serves the API profile without a web cookie', async () => {
+      const session = {
+        identity: NIM,
+        emailSso: EMAIL,
+        sessionGeneration: TEST_GEN,
+        capturedAt: Date.now(),
+      };
+      const noCookieStore = {
+        get: jest.fn().mockResolvedValue(session),
+        getIfGeneration: jest.fn().mockResolvedValue(session),
+        set: jest.fn(),
+      };
+      const api = {
+        mintToken: jest.fn().mockResolvedValue({ token: 'T', data: {} }),
+        fetch: jest
+          .fn()
+          .mockResolvedValueOnce({
+            nama: 'Budi',
+            nim: NIM,
+            tahun_masuk: '2024',
+            sso_email: EMAIL,
+          })
+          .mockResolvedValueOnce({ nm_smt: '2026/2027 Ganjil' }),
+      };
+
+      const out = await makeRealSeamService(
+        api as any,
+        undefined,
+        noCookieStore,
+      ).getProfile(ref('u1'));
+
+      expect(out.nama).toBe('Budi');
+      expect(api.mintToken).toHaveBeenCalledWith(EMAIL, NIM);
+    });
   });
 
   describe('getIrs', () => {
@@ -457,6 +493,45 @@ describe('SiapService', () => {
       await irsSvc().getIrs(ref('u1'));
       expect(apiMock.mintToken).toHaveBeenCalledTimes(1); // single batch token, no re-mint
       expect(endpoints).toContain('data_mahasiswa'); // angkatan from the batch
+    });
+
+    it('serves IRS without a web cookie', async () => {
+      const session = {
+        identity: NIM,
+        emailSso: EMAIL,
+        sessionGeneration: TEST_GEN,
+        capturedAt: Date.now(),
+      };
+      const noCookieStore = {
+        get: jest.fn().mockResolvedValue(session),
+        getIfGeneration: jest.fn().mockResolvedValue(session),
+        set: jest.fn(),
+      };
+      apiMock.fetch.mockImplementation(
+        async (endpoint: string) =>
+          endpoint === 'v2/lihat_irs'
+            ? [
+                {
+                  kode_mk: 'MIK1624503',
+                  nama_mk: 'Sistem Informasi',
+                  sks_mk: '5',
+                  nama_dosen: 'Dosen X',
+                },
+              ]
+            : [],
+      );
+
+      const out = await makeRealSeamService(
+        apiMock,
+        cache,
+        noCookieStore,
+      ).getIrs(ref('u1'));
+
+      expect(out.mataKuliah[0]).toMatchObject({
+        kode: 'MIK1624503',
+        dosen: 'Dosen X',
+      });
+      expect(apiMock.mintToken).toHaveBeenCalledWith(EMAIL, NIM);
     });
   });
 

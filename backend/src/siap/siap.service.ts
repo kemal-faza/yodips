@@ -250,7 +250,7 @@ export class SiapService {
 
   private async fetchProfileData(ref: SessionRef): Promise<SiapProfile> {
     this.requireRef(ref);
-    const ctx = await this.upstream.getContextForSession(ref);
+    const ctx = await this.upstream.getApiContextForSession(ref);
     const data = await this.apiUpstream.fetch<Record<string, unknown>>(
       'data_mahasiswa',
       ctx.token,
@@ -362,7 +362,7 @@ export class SiapService {
    */
   private async fetchIrs(ref: SessionRef): Promise<SiapIrs> {
     this.requireRef(ref);
-    let ctx = await this.upstream.getContextForSession(ref);
+    let ctx = await this.upstream.getApiContextForSession(ref);
     const fetchBatch = async <T>(
       endpoint: string,
       form?: Record<string, string>,
@@ -396,7 +396,7 @@ export class SiapService {
     } catch (e) {
       if (e instanceof StaleUpstreamError && e.reason === 'api-credential') {
         if (this.cache) await this.cache.del(cacheKeyForSession(ref, 'siap', 'token'));
-        ctx = await this.upstream.getContextForSession(ref); // re-mint
+        ctx = await this.upstream.getApiContextForSession(ref); // re-mint
         const irs = await build();
         return irs;
       }
