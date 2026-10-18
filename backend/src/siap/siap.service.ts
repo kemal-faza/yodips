@@ -13,6 +13,7 @@ import {
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { mapWithConcurrency } from '../common/map-with-concurrency';
+import { ERROR_CODES } from '../common/error-codes';
 import { SiapUpstreamSession } from './siap-upstream.session';
 import { SiapApiUpstream } from './siap-api';
 import {
@@ -71,6 +72,40 @@ export type {
 export interface SiapSessionCheck {
   valid: boolean;
   reason: 'ok' | 'no-cookie' | 'stale';
+}
+
+export interface LecturersCompare {
+  legacy:
+    | { ok: true; items: { kode: string; dosen: string }[]; durationMs: number }
+    | { ok: false; reason: 'no-cookie' | 'error'; durationMs: number };
+  token:
+    | {
+        ok: true;
+        items: { kode: string; dosen: string }[];
+        failedSemesters: number[];
+        durationMs: number;
+      }
+    | { ok: false; reason: 'error'; durationMs: number };
+  /**
+   * What the PRODUCTION entry point (`getLecturers`, i.e. `GET /api/siap/lecturers`)
+   * actually serves right now — proves the wiring and the lecturers cache, not
+   * just the internal candidate method.
+   */
+  production:
+    | { ok: true; items: { kode: string; dosen: string }[]; durationMs: number }
+    | { ok: false; reason: 'error'; durationMs: number };
+  counts: { legacy: number; token: number; production: number };
+  /** Semua diff dihitung terhadap sisi `token` sebagai himpunan referensi. */
+  onlyLegacy: string[];
+  onlyToken: string[];
+  onlyProduction: string[];
+  /** Kode yang ada di `token` TAPI tidak dilayani produksi — subset = dosen hilang. */
+  missingProduction: string[];
+  differentDosen: { kode: string; legacy: string; token: string }[];
+  differentDosenProduction: { kode: string; production: string; token: string }[];
+  /** Informatif: kode yang baris v2/lihat_irs-nya punya `nama_dosen` kosong. */
+  emptyApiDosen: string[];
+  staleSim: boolean;
 }
 
 @Injectable()
@@ -704,6 +739,119 @@ export class SiapService {
       }
     }
     return Array.from(entries, ([kode, dosen]) => ({ kode, dosen }));
+  }
+
+  /**
+   * Dev-only A2 harness: the legacy scrape, the token candidate, AND the
+   * production entry point on one live session. Per-side `durationMs` exists so
+   * cold/warm can be compared without `time`-ing the whole CLI (which would mix
+   * in CDP + handoff).
+   */
+  async compareLecturers(
+    ref: SessionRef,
+    opts: { staleSim?: boolean } = {},
+  ): Promise<LecturersCompare> {
+    this.requireRef(ref);
+    const staleSim = opts.staleSim === true;
+
+    const legacyStart = Date.now();
+    let legacy: LecturersCompare['legacy'];
+    try {
+      const items = await this.fetchLecturersLegacy(
+        ref,
+        staleSim ? 'sia_app_session=stale-simulation' : undefined,
+      );
+      legacy = { ok: true, items, durationMs: Date.now() - legacyStart };
+    } catch (e) {
+      const isNoCookie =
+        e instanceof HttpException &&
+        e.getStatus() === 401 &&
+        (e.getResponse() as { code?: string })?.code === ERROR_CODES.SESSION_DEAD;
+      legacy = {
+        ok: false,
+        reason: isNoCookie ? 'no-cookie' : 'error',
+        durationMs: Date.now() - legacyStart,
+      };
+    }
+
+    const tokenStart = Date.now();
+    let token: LecturersCompare['token'];
+    let emptyApiDosen: string[] = [];
+    try {
+      const detailed = await this.fetchLecturersDetailed(ref);
+      emptyApiDosen = detailed.emptyApiDosen;
+      token = {
+        ok: true,
+        items: detailed.items,
+        failedSemesters: detailed.failedSemesters,
+        durationMs: Date.now() - tokenStart,
+      };
+    } catch {
+      token = { ok: false, reason: 'error', durationMs: Date.now() - tokenStart };
+    }
+
+    const productionStart = Date.now();
+    let production: LecturersCompare['production'];
+    try {
+      const items = await this.getLecturers(ref);
+      production = {
+        ok: true,
+        items,
+        durationMs: Date.now() - productionStart,
+      };
+    } catch {
+      production = {
+        ok: false,
+        reason: 'error',
+        durationMs: Date.now() - productionStart,
+      };
+    }
+
+    const toMap = (items: { kode: string; dosen: string }[]) =>
+      new Map(items.map((i) => [i.kode, i.dosen]));
+    const legacyMap = toMap(legacy.ok ? legacy.items : []);
+    const tokenMap = toMap(token.ok ? token.items : []);
+    const productionMap = toMap(production.ok ? production.items : []);
+    const diffAgainstToken = (side: Map<string, string>) => ({
+      only: [...side.keys()].filter((k) => !tokenMap.has(k)).sort(),
+      different: [...side.keys()]
+        .filter((k) => tokenMap.has(k) && tokenMap.get(k) !== side.get(k))
+        .sort()
+        .map((k) => ({ kode: k, side: side.get(k)!, token: tokenMap.get(k)! })),
+    });
+    const legacyDiff = diffAgainstToken(legacyMap);
+    const productionDiff = diffAgainstToken(productionMap);
+
+    return {
+      legacy,
+      token,
+      production,
+      counts: {
+        legacy: legacyMap.size,
+        token: tokenMap.size,
+        production: productionMap.size,
+      },
+      onlyLegacy: legacyDiff.only,
+      onlyToken: [...tokenMap.keys()].filter((k) => !legacyMap.has(k)).sort(),
+      onlyProduction: productionDiff.only,
+      // Arah sebaliknya WAJIB diperiksa: produksi yang merupakan subset token
+      // berarti ada dosen yang hilang di jalur yang benar-benar dipakai klien.
+      missingProduction: [...tokenMap.keys()]
+        .filter((k) => !productionMap.has(k))
+        .sort(),
+      differentDosen: legacyDiff.different.map((d) => ({
+        kode: d.kode,
+        legacy: d.side,
+        token: d.token,
+      })),
+      differentDosenProduction: productionDiff.different.map((d) => ({
+        kode: d.kode,
+        production: d.side,
+        token: d.token,
+      })),
+      emptyApiDosen,
+      staleSim,
+    };
   }
 
   async getLecturers(ref: SessionRef): Promise<{ kode: string; dosen: string }[]> {

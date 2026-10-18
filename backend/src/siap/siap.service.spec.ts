@@ -7,6 +7,7 @@ import { InMemoryDataCache } from '../cache/in-memory-data.cache';
 import { CachePolicy, swrWindow } from '../cache/cache-policy';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { cacheKeyForCurrent, cacheKeyForSession } from '../session/session-scope';
+import { sessionDead } from '../session/live-session';
 import type { SiapApiUpstream } from './siap-api';
 import type { TelemetryRuntime } from '../observability/telemetry';
 
@@ -2398,5 +2399,129 @@ describe('API-backed methods', () => {
       'siap:session_probe',
       'siap-api:jadwal',
     ]);
+  });
+
+  describe('compareLecturers', () => {
+    it('reports the set diff between the legacy and token paths', async () => {
+      const svc = makeAuthedSiapSvc();
+      jest.spyOn(svc as any, 'fetchLecturersLegacy').mockResolvedValue([
+        { kode: 'MIK1', dosen: 'Dosen X' },
+        { kode: 'MIK2', dosen: 'Dosen Y' },
+      ]);
+      jest.spyOn(svc as any, 'fetchLecturersDetailed').mockResolvedValue({
+        items: [
+          { kode: 'MIK1', dosen: 'Dosen X' },
+          { kode: 'MIK3', dosen: 'Dosen Z' },
+        ],
+        failedSemesters: [],
+        emptyApiDosen: ['MIK4'],
+      });
+
+      const out = await svc.compareLecturers(ref('u1'));
+
+      expect(out.counts).toEqual({ legacy: 2, token: 2, production: 2 });
+      expect(out.onlyLegacy).toEqual(['MIK2']);
+      expect(out.onlyToken).toEqual(['MIK3']);
+      // `production` is NOT mocked here, so it goes through `getLecturers` →
+      // `fetchLecturers` → the spied `fetchLecturersLegacy`: production equals
+      // legacy, which is exactly the point of this case. Both diffs are taken
+      // against the `token` set (per the interface contract), so the token-side
+      // asymmetry shows up here too — the wiring is proven by `counts`.
+      expect(out.onlyProduction).toEqual(['MIK2']);
+      expect(out.missingProduction).toEqual(['MIK3']);
+      expect(out.differentDosen).toEqual([]);
+      expect(out.differentDosenProduction).toEqual([]);
+      expect(out.emptyApiDosen).toEqual(['MIK4']);
+      expect(out.staleSim).toBe(false);
+      expect(out.legacy.durationMs).toEqual(expect.any(Number));
+      expect(out.token.durationMs).toEqual(expect.any(Number));
+      expect(out.production.durationMs).toEqual(expect.any(Number));
+    });
+
+    it('maps a missing cookie on the legacy side without throwing', async () => {
+      const svc = makeAuthedSiapSvc();
+      jest
+        .spyOn(svc as any, 'fetchLecturersLegacy')
+        .mockRejectedValue(sessionDead());
+      jest.spyOn(svc as any, 'fetchLecturersDetailed').mockResolvedValue({
+        items: [{ kode: 'MIK1', dosen: 'Dosen X' }],
+        failedSemesters: [],
+        emptyApiDosen: [],
+      });
+
+      const out = await svc.compareLecturers(ref('u1'));
+
+      expect(out.legacy).toMatchObject({ ok: false, reason: 'no-cookie' });
+      expect(out.token.ok).toBe(true);
+    });
+
+    it('reports the production entry point diverging from the token set', async () => {
+      const svc = makeAuthedSiapSvc();
+      jest.spyOn(svc as any, 'fetchLecturersLegacy').mockResolvedValue([
+        { kode: 'MIK1', dosen: 'Dosen X' },
+      ]);
+      jest.spyOn(svc as any, 'fetchLecturersDetailed').mockResolvedValue({
+        items: [{ kode: 'MIK1', dosen: 'Dosen X' }],
+        failedSemesters: [],
+        emptyApiDosen: [],
+      });
+      // Production still scrapes (or serves a stale payload) while the candidate
+      // reports a different set: the gate must see this.
+      jest
+        .spyOn(svc as any, 'getLecturers')
+        .mockResolvedValue([{ kode: 'MIK9', dosen: 'Dosen Lama' }]);
+
+      const out = await svc.compareLecturers(ref('u1'));
+
+      expect(out.counts.production).toBe(1);
+      expect(out.onlyProduction).toEqual(['MIK9']);
+      expect(out.missingProduction).toEqual(['MIK1']);
+      expect(out.production.ok).toBe(true);
+    });
+
+    it('flags a production set that is a strict subset of the token set', async () => {
+      // Both candidate and legacy agree, so onlyLegacy/onlyToken stay empty —
+      // without the token-minus-production diff this would look "setara" even
+      // though production loses a lecturer.
+      const svc = makeAuthedSiapSvc();
+      jest.spyOn(svc as any, 'fetchLecturersLegacy').mockResolvedValue([
+        { kode: 'MIK1', dosen: 'Dosen X' },
+        { kode: 'MIK2', dosen: 'Dosen Y' },
+      ]);
+      jest.spyOn(svc as any, 'fetchLecturersDetailed').mockResolvedValue({
+        items: [
+          { kode: 'MIK1', dosen: 'Dosen X' },
+          { kode: 'MIK2', dosen: 'Dosen Y' },
+        ],
+        failedSemesters: [],
+        emptyApiDosen: [],
+      });
+      jest
+        .spyOn(svc as any, 'getLecturers')
+        .mockResolvedValue([{ kode: 'MIK1', dosen: 'Dosen X' }]);
+
+      const out = await svc.compareLecturers(ref('u1'));
+
+      expect(out.onlyProduction).toEqual([]);
+      expect(out.differentDosenProduction).toEqual([]);
+      expect(out.missingProduction).toEqual(['MIK2']);
+    });
+
+    it('reports the production entry point failing', async () => {
+      const svc = makeAuthedSiapSvc();
+      jest.spyOn(svc as any, 'fetchLecturersLegacy').mockResolvedValue([]);
+      jest.spyOn(svc as any, 'fetchLecturersDetailed').mockResolvedValue({
+        items: [],
+        failedSemesters: [],
+        emptyApiDosen: [],
+      });
+      jest
+        .spyOn(svc as any, 'getLecturers')
+        .mockRejectedValue(new Error('wiring broken'));
+
+      const out = await svc.compareLecturers(ref('u1'));
+
+      expect(out.production).toMatchObject({ ok: false, reason: 'error' });
+    });
   });
 });

@@ -6,9 +6,12 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Throttle } from '@nestjs/throttler';
 import { SiapService } from './siap.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionRef, isSessionRef } from '../session/session-store';
@@ -29,7 +32,10 @@ function requireSessionRef(req: AuthedRequest): SessionRef {
 @UseGuards(JwtAuthGuard)
 @Controller('api/siap')
 export class SiapController {
-  constructor(private readonly siapService: SiapService) {}
+  constructor(
+    private readonly siapService: SiapService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Get('profile')
   async getProfile(@Req() req: AuthedRequest) {
@@ -109,5 +115,27 @@ export class SiapController {
       );
     }
     return this.siapService.markNotification(requireSessionRef(req), id);
+  }
+
+  /**
+   * Dev-only equality harness for the A2 migration: runs BOTH the legacy cookie
+   * scrape and the token path on the same session and returns the set diff.
+   * Fails closed in production; removed once the equality gate passes.
+   */
+  @Get('dev/lecturers-compare')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  async devCompareLecturers(
+    @Req() req: AuthedRequest,
+    @Query('staleSim') staleSim?: string,
+  ) {
+    if ((this.config.get<string>('NODE_ENV') ?? '') === 'production') {
+      throw new HttpException(
+        { message: 'Hanya tersedia di development' },
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    return this.siapService.compareLecturers(requireSessionRef(req), {
+      staleSim: staleSim === '1',
+    });
   }
 }

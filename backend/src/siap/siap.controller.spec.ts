@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { SiapController } from './siap.controller';
 import { SiapService } from './siap.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ConfigService } from '@nestjs/config';
 
 /**
  * After the generation-qualified consolidation the controller is a thin router:
@@ -24,13 +25,17 @@ describe('SiapController', () => {
     getKehadiran: jest.fn(),
     getNilaiDetail: jest.fn(),
     markKehadiran: jest.fn(),
+    compareLecturers: jest.fn(),
   };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
       controllers: [SiapController],
-      providers: [{ provide: SiapService, useValue: mockSiap }],
+      providers: [
+        { provide: SiapService, useValue: mockSiap },
+        { provide: ConfigService, useValue: { get: () => 'test' } },
+      ],
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
@@ -121,5 +126,31 @@ describe('SiapController', () => {
     await expect(
       controller.markKehadiran({ user } as any, {} as any),
     ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('fails closed on the dev compare route in production', async () => {
+    const prodRef = await Test.createTestingModule({
+      controllers: [SiapController],
+      providers: [
+        { provide: SiapService, useValue: mockSiap },
+        { provide: ConfigService, useValue: { get: () => 'production' } },
+      ],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    const prodController = prodRef.get(SiapController);
+
+    await expect(
+      prodController.devCompareLecturers({ user } as any, undefined),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('routes the dev compare request with the stale-simulation flag', async () => {
+    mockSiap.compareLecturers.mockResolvedValue({ staleSim: true });
+    await controller.devCompareLecturers({ user } as any, '1');
+    expect(mockSiap.compareLecturers).toHaveBeenCalledWith(REF, {
+      staleSim: true,
+    });
   });
 });
