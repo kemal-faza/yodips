@@ -2438,6 +2438,40 @@ describe('API-backed methods', () => {
       expect(out.production.durationMs).toEqual(expect.any(Number));
     });
 
+    it('reports a non-empty dosen diff on both sides when the codes agree', async () => {
+      // Same key on all three sides, three different names: only the per-key
+      // name comparison can surface this, and `gateVerdict` in
+      // tools/capture-client/compare-lecturers.mjs treats BOTH diff fields as a
+      // pass condition — an empty-array-only suite would green-light the gate.
+      const svc = makeAuthedSiapSvc();
+      jest.spyOn(svc as any, 'fetchLecturersLegacy').mockResolvedValue([
+        { kode: 'MIK1', dosen: 'Dosen X' },
+      ]);
+      jest.spyOn(svc as any, 'fetchLecturersDetailed').mockResolvedValue({
+        items: [{ kode: 'MIK1', dosen: 'Dosen Y' }],
+        failedSemesters: [],
+        emptyApiDosen: [],
+      });
+      // Production is the real public entry point (`GET /api/siap/lecturers`).
+      jest
+        .spyOn(svc, 'getLecturers')
+        .mockResolvedValue([{ kode: 'MIK1', dosen: 'Dosen Z' }]);
+
+      const out = await svc.compareLecturers(ref('u1'));
+
+      expect(out.counts).toEqual({ legacy: 1, token: 1, production: 1 });
+      expect(out.onlyLegacy).toEqual([]);
+      expect(out.onlyToken).toEqual([]);
+      expect(out.onlyProduction).toEqual([]);
+      expect(out.missingProduction).toEqual([]);
+      expect(out.differentDosen).toEqual([
+        { kode: 'MIK1', legacy: 'Dosen X', token: 'Dosen Y' },
+      ]);
+      expect(out.differentDosenProduction).toEqual([
+        { kode: 'MIK1', production: 'Dosen Z', token: 'Dosen Y' },
+      ]);
+    });
+
     it('maps a missing cookie on the legacy side without throwing', async () => {
       const svc = makeAuthedSiapSvc();
       jest
@@ -2522,6 +2556,39 @@ describe('API-backed methods', () => {
       const out = await svc.compareLecturers(ref('u1'));
 
       expect(out.production).toMatchObject({ ok: false, reason: 'error' });
+    });
+
+    it('passes the stale-sim cookie override to the legacy scrape only when asked', async () => {
+      // The override exists so the dev harness can force a stale-cookie run; the
+      // flag must reach both the report AND the legacy scrape's second argument.
+      const svc = makeAuthedSiapSvc();
+      const legacy = jest
+        .spyOn(svc as any, 'fetchLecturersLegacy')
+        .mockResolvedValue([{ kode: 'MIK1', dosen: 'Dosen X' }]);
+      jest.spyOn(svc as any, 'fetchLecturersDetailed').mockResolvedValue({
+        items: [{ kode: 'MIK1', dosen: 'Dosen X' }],
+        failedSemesters: [],
+        emptyApiDosen: [],
+      });
+      // Production resolves through its own entry point; mock it so the `legacy`
+      // call log holds exactly the two compare-side calls asserted below.
+      jest.spyOn(svc, 'getLecturers').mockResolvedValue([]);
+
+      const withStale = await svc.compareLecturers(ref('u1'), {
+        staleSim: true,
+      });
+
+      expect(withStale.staleSim).toBe(true);
+      expect(legacy).toHaveBeenNthCalledWith(
+        1,
+        ref('u1'),
+        'sia_app_session=stale-simulation',
+      );
+
+      const withoutStale = await svc.compareLecturers(ref('u1'));
+
+      expect(withoutStale.staleSim).toBe(false);
+      expect(legacy.mock.calls[1][1]).toBeUndefined();
     });
   });
 });
