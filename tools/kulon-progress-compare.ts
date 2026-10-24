@@ -1,8 +1,10 @@
 /**
  * Alat baca-saja: bandingkan nilai 'progress' dari payload batch timeline Kulon
  * dengan progress yang dihitung jalur produksi (core_courseformat_get_state ->
- * fallback /course/view.php -> parseSectionProgress). Cookie hanya dibaca dari
- * env/file dan tidak pernah dicetak atau ditulis ke artefak.
+ * fallback /course/view.php -> parseSectionProgress), plus pertanyaan kedua:
+ * apakah progress dari data get_state yang di-JSON.parse sama dengan hasil scrape
+ * HTML. Cookie hanya dibaca dari env/file dan tidak pernah dicetak atau ditulis ke
+ * artefak.
  *
  * Catatan build: parser produksi dimuat saat runtime lewat loadProductionParsers(),
  * bukan import statis. Import relatif ke luar tools/ ikut masuk program tsc,
@@ -44,6 +46,16 @@ const CLASSIFICATIONS: Classification[] = [
   'scrape-error',
 ];
 
+export type StateVsHtml = 'equal' | 'differ' | 'state-unavailable' | 'html-missing' | 'both-missing';
+
+const STATE_VS_HTML: StateVsHtml[] = [
+  'equal',
+  'differ',
+  'state-unavailable',
+  'html-missing',
+  'both-missing',
+];
+
 export interface ComparisonInput {
   courseId: number;
   timelineStatus: TimelineStatus;
@@ -52,18 +64,32 @@ export interface ComparisonInput {
   source: RowSource;
   /** true bila objek course timeline punya kunci 'hasprogress' bernilai true. */
   hasProgress: boolean;
+  /** Progress dari data get_state yang di-JSON.parse; undefined bila jalur state gagal. */
+  stateProgress: number | undefined;
+  /** Alasan singkat jalur state gagal (maks 120 karakter), null bila state tersedia. */
+  stateReason: string | null;
 }
 
 export interface ComparedRow extends ComparisonInput {
   classification: Classification;
+  stateVsHtml: StateVsHtml;
 }
 
 export type ClassificationCounts = { [key in Classification]: number };
+
+export type StateVsHtmlCounts = { [key in StateVsHtml]: number };
+
+export interface StateVsHtmlSummary {
+  total: number;
+  counts: StateVsHtmlCounts;
+  byStatus: { inprogress: StateVsHtmlCounts; past: StateVsHtmlCounts };
+}
 
 export interface ProgressSummary {
   total: number;
   counts: ClassificationCounts;
   byStatus: { inprogress: ClassificationCounts; past: ClassificationCounts };
+  stateVsHtml: StateVsHtmlSummary;
 }
 
 export interface CompareDeps {
@@ -167,6 +193,35 @@ function emptyCounts(): ClassificationCounts {
   };
 }
 
+function emptyStateCounts(): StateVsHtmlCounts {
+  return {
+    equal: 0,
+    differ: 0,
+    'state-unavailable': 0,
+    'html-missing': 0,
+    'both-missing': 0,
+  };
+}
+
+/**
+ * Urutan klasifikasi state vs HTML (eksplisit, deterministik):
+ * 1. state undefined + HTML undefined -> both-missing.
+ * 2. state undefined + HTML angka -> state-unavailable.
+ * 3. state angka + HTML undefined -> html-missing.
+ * 4. dua angka sama -> equal (hanya bila keduanya angka).
+ * 5. selain itu -> differ.
+ */
+export function classifyStateVsHtml(
+  stateProgress: number | undefined,
+  productionProgress: number | undefined,
+): StateVsHtml {
+  if (stateProgress === undefined) {
+    return productionProgress === undefined ? 'both-missing' : 'state-unavailable';
+  }
+  if (productionProgress === undefined) return 'html-missing';
+  return stateProgress === productionProgress ? 'equal' : 'differ';
+}
+
 /**
  * Urutan klasifikasi (eksplisit, deterministik):
  * 1. source 'error' -> scrape-error.
@@ -192,15 +247,31 @@ function classify(input: ComparisonInput): Classification {
 /** Klasifikasi murni + ringkasan; baris selalu urut menaik berdasarkan courseId. */
 export function compareProgress(inputs: ComparisonInput[]): CompareProgressResult {
   const rows: ComparedRow[] = inputs
-    .map((input) => ({ ...input, classification: classify(input) }))
+    .map((input) => ({
+      ...input,
+      classification: classify(input),
+      stateVsHtml: classifyStateVsHtml(input.stateProgress, input.productionProgress),
+    }))
     .sort((left, right) => left.courseId - right.courseId);
   const counts = emptyCounts();
   const byStatus = { inprogress: emptyCounts(), past: emptyCounts() };
+  const stateCounts = emptyStateCounts();
+  const stateByStatus = { inprogress: emptyStateCounts(), past: emptyStateCounts() };
   for (const row of rows) {
     counts[row.classification] += 1;
     byStatus[row.timelineStatus][row.classification] += 1;
+    stateCounts[row.stateVsHtml] += 1;
+    stateByStatus[row.timelineStatus][row.stateVsHtml] += 1;
   }
-  return { rows, summary: { total: rows.length, counts, byStatus } };
+  return {
+    rows,
+    summary: {
+      total: rows.length,
+      counts,
+      byStatus,
+      stateVsHtml: { total: rows.length, counts: stateCounts, byStatus: stateByStatus },
+    },
+  };
 }
 
 function readCookie(deps: CompareDeps): string {
@@ -279,12 +350,20 @@ function readTimelineProgress(record: Record<string, unknown>): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+interface StateFetch {
+  content: CourseContentView;
+  /** 'data' entri setelah JSON.parse (Kulon nyata mengirim string JSON). */
+  raw: Record<string, unknown>;
+  /** true bila 'data' datang sebagai string — produksi menolak bentuk itu dan pindah ke HTML. */
+  dataWasString: boolean;
+}
+
 async function fetchCourseState(
   fetchImpl: FetchLike,
   cookie: string,
   sesskey: string,
   courseId: number,
-): Promise<CourseContentView> {
+): Promise<StateFetch> {
   // Index WAJIB 0: index non-nol menghasilkan objek ber-kunci, bukan array posisional.
   const entries: BatchEntry[] = [{ index: 0, methodname: STATE_METHOD, args: { courseid: courseId } }];
   const response = await ajaxBatch(fetchImpl, cookie, sesskey, entries);
@@ -298,13 +377,38 @@ async function fetchCourseState(
   }
   // Produksi membaca 'data' entri (bukan amplop {error, data}) — lihat
   // kulon-upstream.session.ts ajax() yang mengembalikan first.data.
-  const raw = readEntryData(mapped.results[0]);
+  const entryData = readEntryData(mapped.results[0]);
+  // Kulon nyata mengirim 'data' sebagai STRING JSON. Produksi hanya menerima objek
+  // (kulon.service.ts:1045-1047), jadi string selalu jatuh ke fallback HTML; di sini
+  // string tetap di-parse supaya nilainya bisa dibandingkan.
+  const dataWasString = typeof entryData === 'string';
+  let raw: unknown = entryData;
+  if (typeof entryData === 'string') {
+    try {
+      raw = JSON.parse(entryData) as unknown;
+    } catch {
+      // Pesan asli JSON.parse memuat potongan balasan (bisa HTML halaman login):
+      // jangan pernah diteruskan ke laporan.
+      throw new Error('get_state data bukan JSON yang valid');
+    }
+  }
   // Produksi menolak 200 yang tidak berbentuk state (kulon.service.ts:1045-1047)
   // supaya fallback HTML tetap jalan.
   if (raw === null || typeof raw !== 'object' || !Array.isArray((raw as { section?: unknown }).section)) {
     throw new Error('bentuk state tidak dikenali');
   }
-  return loadProductionParsers().mapCourseStateJson(raw, courseId);
+  return {
+    content: loadProductionParsers().mapCourseStateJson(raw, courseId),
+    raw: raw as Record<string, unknown>,
+    dataWasString,
+  };
+}
+
+/** Pesan galat jadi satu baris pendek; tidak pernah memuat cookie atau isi balasan. */
+function shortReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const oneLine = message.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 120 ? oneLine.slice(0, 120) : oneLine;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -338,21 +442,26 @@ async function compareCourse(
   const timelineProgress = readTimelineProgress(course.record);
   const hasProgress = course.record.hasprogress === true;
   const isPast = course.timelineStatus === 'past';
+  const parsers = loadProductionParsers();
   const base = {
     courseId: course.id,
     timelineStatus: course.timelineStatus,
     timelineProgress,
     hasProgress,
   };
+  let stateProgress: number | undefined;
+  let stateReason: string | null = null;
   try {
-    const content = await fetchCourseState(deps.fetchImpl, cookie, sesskey, course.id);
-    return {
-      ...base,
-      productionProgress: loadProductionParsers().parseSectionProgress(content.sections, now, { isPast }),
-      source: 'state',
-    };
-  } catch {
-    // State JSON gagal: fallback HTML, sama seperti fetchCourseContent produksi.
+    const state = await fetchCourseState(deps.fetchImpl, cookie, sesskey, course.id);
+    stateProgress = parsers.parseSectionProgress(state.content.sections, now, { isPast });
+    // Semantik produksi utuh: 'data' objek dipakai produksi -> sumber 'state';
+    // 'data' string ditolak produksi -> produksi tetap jalur HTML.
+    if (!state.dataWasString) {
+      return { ...base, productionProgress: stateProgress, source: 'state', stateProgress, stateReason };
+    }
+  } catch (error) {
+    // State JSON gagal: catat alasan lalu fallback HTML, sama seperti fetchCourseContent produksi.
+    stateReason = shortReason(error);
   }
   try {
     const page = await fetchHtmlPage(deps.fetchImpl, cookie, '/course/view.php?id=' + course.id);
@@ -360,14 +469,16 @@ async function compareCourse(
     if (page.status < 200 || page.status >= 300) {
       throw new Error('HTML course/view.php status ' + page.status);
     }
-    const content = loadProductionParsers().parseContentHtml(page.html, course.id);
+    const content = parsers.parseContentHtml(page.html, course.id);
     return {
       ...base,
-      productionProgress: loadProductionParsers().parseSectionProgress(content.sections, now, { isPast }),
+      productionProgress: parsers.parseSectionProgress(content.sections, now, { isPast }),
       source: 'html',
+      stateProgress,
+      stateReason,
     };
   } catch {
-    return { ...base, productionProgress: undefined, source: 'error' };
+    return { ...base, productionProgress: undefined, source: 'error', stateProgress, stateReason };
   }
 }
 
@@ -377,17 +488,24 @@ function progressCell(value: number | null | undefined): string {
   return String(value);
 }
 
+function reasonCell(value: string | null): string {
+  if (value === null) return '-';
+  return value.replace(/\|/g, '/');
+}
+
 function renderCompareReport(compared: CompareProgressResult): string {
   const { rows, summary } = compared;
   const inprogressTotal = rows.filter((row) => row.timelineStatus === 'inprogress').length;
   const pastTotal = rows.filter((row) => row.timelineStatus === 'past').length;
   const hasProgressCount = rows.filter((row) => row.hasProgress).length;
+  const stateVsHtml = summary.stateVsHtml;
   const lines: string[] = [
     '# Kulon: progress timeline vs scrape produksi (2026-10-24)',
     '',
     'Alat baca-saja. Per kursus: timelineProgress dari payload batch timeline Kulon,',
-    'productionProgress dari jalur produksi (core_courseformat_get_state -> fallback',
-    '/course/view.php -> parseSectionProgress). Cookie tidak pernah ditulis ke laporan ini.',
+    'stateProgress dari data core_courseformat_get_state yang di-JSON.parse (Kulon nyata',
+    'mengirim string), productionProgress dari jalur produksi (string state ditolak ->',
+    'fallback /course/view.php -> parseSectionProgress). Cookie tidak pernah ditulis ke laporan ini.',
     '',
     '## Pertanyaan adopsi',
     '',
@@ -419,11 +537,83 @@ function renderCompareReport(compared: CompareProgressResult): string {
       summary.total +
       '.',
     '',
-    '## Ringkasan klasifikasi',
+    '## Pertanyaan adopsi 2 - bisakah get_state menggantikan scrape HTML?',
     '',
-    '| klasifikasi | inprogress | past | total |',
+    '- Kursus dengan state == html (equal): ' +
+      stateVsHtml.counts.equal +
+      ' dari ' +
+      stateVsHtml.total +
+      ' (inprogress ' +
+      stateVsHtml.byStatus.inprogress.equal +
+      ', past ' +
+      stateVsHtml.byStatus.past.equal +
+      ').',
+    '- Kursus yang berbeda (differ): ' +
+      stateVsHtml.counts.differ +
+      ' dari ' +
+      stateVsHtml.total +
+      ' (inprogress ' +
+      stateVsHtml.byStatus.inprogress.differ +
+      ', past ' +
+      stateVsHtml.byStatus.past.differ +
+      ').',
+    '- Kursus yang state-nya tidak tersedia (state-unavailable): ' +
+      stateVsHtml.counts['state-unavailable'] +
+      ' dari ' +
+      stateVsHtml.total +
+      ' (inprogress ' +
+      stateVsHtml.byStatus.inprogress['state-unavailable'] +
+      ', past ' +
+      stateVsHtml.byStatus.past['state-unavailable'] +
+      ').',
+    '- Kursus yang HTML-nya tidak tersedia (html-missing): ' +
+      stateVsHtml.counts['html-missing'] +
+      ' dari ' +
+      stateVsHtml.total +
+      ' (inprogress ' +
+      stateVsHtml.byStatus.inprogress['html-missing'] +
+      ', past ' +
+      stateVsHtml.byStatus.past['html-missing'] +
+      ').',
+    '- Kursus yang keduanya tidak tersedia (both-missing): ' +
+      stateVsHtml.counts['both-missing'] +
+      ' dari ' +
+      stateVsHtml.total +
+      ' (inprogress ' +
+      stateVsHtml.byStatus.inprogress['both-missing'] +
+      ', past ' +
+      stateVsHtml.byStatus.past['both-missing'] +
+      ').',
+    '',
+    '| klasifikasi stateVsHtml | inprogress | past | total |',
     '| --- | --- | --- | --- |',
   ];
+  for (const key of STATE_VS_HTML) {
+    lines.push(
+      '| ' +
+        key +
+        ' | ' +
+        stateVsHtml.byStatus.inprogress[key] +
+        ' | ' +
+        stateVsHtml.byStatus.past[key] +
+        ' | ' +
+        stateVsHtml.counts[key] +
+        ' |',
+    );
+  }
+  lines.push('');
+  lines.push(
+    'Kesetaraan di semua ' +
+      stateVsHtml.total +
+      ' kursus adalah prasyarat untuk menggantikan ' +
+      stateVsHtml.total +
+      ' GET HTML + ' +
+      stateVsHtml.total +
+      ' POST get_state yang terbuang dengan satu POST get_state batch.',
+  );
+  lines.push('', '## Ringkasan klasifikasi', '');
+  lines.push('| klasifikasi | inprogress | past | total |');
+  lines.push('| --- | --- | --- | --- |');
   for (const classification of CLASSIFICATIONS) {
     lines.push(
       '| ' +
@@ -438,8 +628,11 @@ function renderCompareReport(compared: CompareProgressResult): string {
     );
   }
   lines.push('', '## Tabel per kursus', '');
-  lines.push('| courseId | timelineStatus | timelineProgress | productionProgress | source | classification |');
-  lines.push('| --- | --- | --- | --- | --- | --- |');
+  lines.push(
+    '| courseId | timelineStatus | timelineProgress | productionProgress | source | classification |' +
+      ' stateProgress | stateVsHtml | stateReason |',
+  );
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
   for (const row of rows) {
     lines.push(
       '| ' +
@@ -454,6 +647,12 @@ function renderCompareReport(compared: CompareProgressResult): string {
         row.source +
         ' | ' +
         row.classification +
+        ' | ' +
+        progressCell(row.stateProgress) +
+        ' | ' +
+        row.stateVsHtml +
+        ' | ' +
+        reasonCell(row.stateReason) +
         ' |',
     );
   }
@@ -493,6 +692,13 @@ function summaryLines(summary: ProgressSummary): string[] {
     'inprogress equal: ' + summary.byStatus.inprogress.equal,
     'inprogress differ: ' + summary.byStatus.inprogress.differ,
     'past coerced: ' + summary.byStatus.past['past-coerced'],
+    'stateVsHtml equal: ' + summary.stateVsHtml.counts.equal,
+    'stateVsHtml differ: ' + summary.stateVsHtml.counts.differ,
+    'stateVsHtml state-unavailable: ' + summary.stateVsHtml.counts['state-unavailable'],
+    'stateVsHtml html-missing: ' + summary.stateVsHtml.counts['html-missing'],
+    'stateVsHtml both-missing: ' + summary.stateVsHtml.counts['both-missing'],
+    'inprogress state equal: ' + summary.stateVsHtml.byStatus.inprogress.equal,
+    'past state equal: ' + summary.stateVsHtml.byStatus.past.equal,
   ];
 }
 
