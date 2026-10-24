@@ -442,3 +442,166 @@ describe('KulonUpstreamSession.getContext', () => {
     });
   });
 });
+
+describe('KulonUpstreamSession.ajaxMany', () => {
+  const BATCH_URL =
+    'https://kulon2.undip.ac.id/lib/ajax/service.php?sesskey=sk';
+
+  afterEach(() => jest.restoreAllMocks());
+
+  function okBatch(payload: unknown, headers?: Headers): Response {
+    return {
+      ok: true,
+      status: 200,
+      url: BATCH_URL,
+      headers,
+      json: async () => payload,
+    } as unknown as Response;
+  }
+
+  const twoRequests = [
+    { methodname: 'core_courseformat_get_state', args: { courseid: 1 } },
+    { methodname: 'core_courseformat_get_state', args: { courseid: 2 } },
+  ];
+
+  it('indexes every entry 0..N-1 itself, ignoring caller-supplied indexes', async () => {
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        okBatch([
+          { error: false, data: 'first' },
+          { error: false, data: 'second' },
+        ]),
+      );
+    const seam = new KulonUpstreamSession(undefined as never);
+    const requests = [
+      { methodname: 'core_courseformat_get_state', args: { courseid: 1 }, index: 9 },
+      { methodname: 'core_courseformat_get_state', args: { courseid: 2 } },
+    ];
+
+    await seam.ajaxMany('cookie', 'sk', requests);
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(BATCH_URL);
+    expect(init.method).toBe('POST');
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers.Cookie).toBe('cookie');
+    expect(JSON.parse(String(init.body))).toEqual([
+      { index: 0, methodname: 'core_courseformat_get_state', args: { courseid: 1 } },
+      { index: 1, methodname: 'core_courseformat_get_state', args: { courseid: 2 } },
+    ]);
+  });
+
+  it('maps positional results, keeping a string payload verbatim and entry errors typed', async () => {
+    const stateString = '{"section":[{"number":0,"title":"General"}]}';
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      okBatch([
+        { error: false, data: stateString },
+        { error: true, exception: { errorcode: 'invalidparameter', message: 'Invalid course id' } },
+      ]),
+    );
+    const seam = new KulonUpstreamSession(undefined as never);
+
+    const batch = await seam.ajaxMany('cookie', 'sk', twoRequests);
+
+    expect(batch.status).toBe(200);
+    expect(batch.results).toEqual([
+      { error: false, errorcode: null, message: null, data: stateString },
+      { error: true, errorcode: 'invalidparameter', message: 'Invalid course id', data: undefined },
+    ]);
+  });
+
+  it('returns a shorter-than-requested response as a prefix instead of throwing', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(okBatch([{ error: false, data: 'only-entry' }]));
+    const seam = new KulonUpstreamSession(undefined as never);
+
+    const batch = await seam.ajaxMany('cookie', 'sk', [
+      ...twoRequests,
+      { methodname: 'core_courseformat_get_state', args: { courseid: 3 } },
+    ]);
+
+    expect(batch.results).toHaveLength(1);
+    expect(batch.results[0]).toEqual({
+      error: false,
+      errorcode: null,
+      message: null,
+      data: 'only-entry',
+    });
+  });
+
+  it('preserves the ajax() dead-session classification for non-ok responses', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 401,
+      url: 'https://kulon2.undip.ac.id/login/index.php',
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(undefined as never);
+
+    await expect(seam.ajaxMany('cookie', 'sk', twoRequests)).rejects.toMatchObject({
+      reason: 'http-not-ok',
+    });
+    await expect(seam.ajaxMany('cookie', 'sk', twoRequests)).rejects.toBeInstanceOf(
+      StaleUpstreamError,
+    );
+  });
+
+  it('classifies a login redirect as a typed stale error', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/login/index.php',
+      json: async () => [],
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(undefined as never);
+
+    await expect(seam.ajaxMany('cookie', 'sk', twoRequests)).rejects.toMatchObject({
+      reason: 'login-redirect',
+    });
+  });
+
+  it('classifies an unparseable body as malformed-json', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: BATCH_URL,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON');
+      },
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(undefined as never);
+
+    await expect(seam.ajaxMany('cookie', 'sk', twoRequests)).rejects.toMatchObject({
+      reason: 'malformed-json',
+    });
+  });
+
+  it('classifies an html body as html-content-type', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: BATCH_URL,
+      headers: new Headers({ 'content-type': 'text/html; charset=utf-8' }),
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON');
+      },
+    } as unknown as Response);
+    const seam = new KulonUpstreamSession(undefined as never);
+
+    await expect(seam.ajaxMany('cookie', 'sk', twoRequests)).rejects.toMatchObject({
+      reason: 'html-content-type',
+    });
+  });
+
+  it('classifies a non-array batch body as an api-endpoint failure', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(okBatch({ 0: { error: false, data: 1 } }));
+    const seam = new KulonUpstreamSession(undefined as never);
+
+    await expect(seam.ajaxMany('cookie', 'sk', twoRequests)).rejects.toMatchObject({
+      reason: 'api-endpoint',
+    });
+  });
+});

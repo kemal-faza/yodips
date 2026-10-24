@@ -68,6 +68,32 @@ function httpErrorResult<T>(
   return { ok: false, error, outcome: 'http_error', reason: 'http-not-ok', status };
 }
 
+/** One entry of a batched AJAX request; the seam owns the wire `index`. */
+export interface KulonAjaxBatchRequest {
+  methodname: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * One positional batch result. `data` is preserved verbatim: Kulon answers a
+ * batch entry's payload as a JSON STRING (observed 41 KB for one course state).
+ */
+export interface KulonAjaxBatchEntry {
+  error: boolean;
+  errorcode: string | null;
+  message: string | null;
+  data: unknown;
+}
+
+export interface KulonAjaxBatchResponse {
+  status: number;
+  /**
+   * PREFIX of the requested entries: Moodle truncates the response at the FIRST
+   * failing entry, so later results are simply absent.
+   */
+  results: KulonAjaxBatchEntry[];
+}
+
 /** Fingerprint binding a sesskey entry to the exact session cookie material. */
 function sesskeyFingerprint(cookie: string): string {
   return createHash('sha256').update(cookie).digest('hex').slice(0, SESSKEY_FP_LEN);
@@ -82,6 +108,27 @@ export function parseSesskey(html: string): string {
 
 function hasSesskeyMarker(html: string): boolean {
   return /name="sesskey"/.test(html);
+}
+
+/** Normalise one raw batch entry without ever throwing on an odd shape. */
+function toBatchEntry(raw: unknown): KulonAjaxBatchEntry {
+  const entry =
+    typeof raw === 'object' && raw !== null
+      ? (raw as {
+          error?: boolean;
+          errorcode?: string;
+          exception?: { message?: string; errorcode?: string };
+          data?: unknown;
+        })
+      : undefined;
+  const errorcode = entry?.exception?.errorcode ?? entry?.errorcode;
+  const message = entry?.exception?.message;
+  return {
+    error: entry?.error === true,
+    errorcode: typeof errorcode === 'string' ? errorcode : null,
+    message: typeof message === 'string' ? message : null,
+    data: entry?.data,
+  };
 }
 
 /**
@@ -373,6 +420,93 @@ export class KulonUpstreamSession {
           );
         }
         return { ok: true, value: first.data, outcome: 'ok', status: res.status };
+        },
+      );
+    } catch (error) {
+      const transportReason = getTimedFetchTransportReason(error);
+      if (transportReason) {
+        throw new StaleUpstreamError('Kulon', transportReason);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Batched variant of `ajax()`: ONE POST carrying every entry.
+   *
+   * The seam assigns the 0-based `index` itself — Moodle answers a keyed object
+   * instead of an array for any other index, so a caller-supplied index is
+   * ignored on purpose. Error classification mirrors `ajax()` exactly
+   * (non-OK / login redirect / parse failure). A response shorter than the
+   * request is returned AS IS (a prefix) rather than thrown: Moodle truncates
+   * at the first failing entry and the caller falls back for the missing tail.
+   */
+  async ajaxMany(
+    sessionCookie: string,
+    sesskey: string,
+    requests: KulonAjaxBatchRequest[],
+  ): Promise<KulonAjaxBatchResponse> {
+    try {
+      return await timedFetch(
+        this.runtime,
+        KULON_ROUTE_CONTEXTS.ajax,
+        `${KULON_BASE_URL}/lib/ajax/service.php?sesskey=${encodeURIComponent(sesskey)}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: sessionCookie,
+          },
+          body: JSON.stringify(
+            requests.map((request, index) => ({
+              index,
+              methodname: request.methodname,
+              args: request.args,
+            })),
+          ),
+        },
+        async (res): Promise<UpstreamAttemptResult<KulonAjaxBatchResponse>> => {
+          if (!res.ok) {
+            return httpErrorResult(
+              new StaleUpstreamError('Kulon', 'http-not-ok', undefined, res),
+              res.status,
+            );
+          }
+          if (isLoginRedirect(res.url)) {
+            return staleResult(
+              new StaleUpstreamError('Kulon', 'login-redirect', undefined, res),
+              'login-redirect',
+              res.status,
+            );
+          }
+          let data: unknown;
+          try {
+            data = await res.json();
+          } catch {
+            const reason = /text\/html/i.test(res.headers?.get?.('content-type') ?? '')
+              ? 'html-content-type'
+              : 'malformed-json';
+            return {
+              ok: false,
+              error: new StaleUpstreamError('Kulon', reason, undefined, res),
+              outcome: 'parse_error',
+              reason,
+              status: res.status,
+            };
+          }
+          if (!Array.isArray(data)) {
+            return staleResult(
+              new StaleUpstreamError('Kulon', 'api-endpoint'),
+              'api-endpoint',
+              res.status,
+            );
+          }
+          return {
+            ok: true,
+            value: { status: res.status, results: data.map(toBatchEntry) },
+            outcome: 'ok',
+            status: res.status,
+          };
         },
       );
     } catch (error) {
