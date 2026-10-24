@@ -9,6 +9,7 @@ import {
   collectDiagnostics,
   collectTimeline,
   diagnosticEntries,
+  EVENTS_METHOD,
   measureCandidateAssignments,
   measureCandidateCourses,
   measureSubmissionStatus,
@@ -175,4 +176,41 @@ test('buildCoverage melaporkan selisih cmid dua arah per kursus', () => {
   assert.deepEqual(coverage[0].assignOnlyHtml, [12]);
   assert.deepEqual(coverage[0].assignOnlyWs, [99]);
   assert.deepEqual(coverage[0].quizOnlyHtml, []);
+});
+
+test('collectDiagnostics memetakan presfiks batch terpotong lalu menyisir sisanya satu per satu', async () => {
+  const { fetchImpl, calls } = sequence([
+    {
+      body: JSON.stringify([
+        { error: true, errorcode: 'servicenotavailable', exception: { message: 'x' } },
+        { error: true, errorcode: 'servicenotavailable' },
+      ]),
+    },
+    { body: JSON.stringify([{ error: false, data: { section: [] } }]) },
+    { body: JSON.stringify([{ error: false, data: { events: [] } }]) },
+  ]);
+  const result = await collectDiagnostics(fetchImpl, 'c', 'K1', [1, 2], null);
+  assert.equal(result.shape, 'positional');
+  assert.equal(result.entries.length, 4);
+  assert.equal(result.entries[0].methodname, ASSIGN_METHOD);
+  assert.equal(result.entries[0].error, true);
+  assert.equal(result.entries[2].methodname, EVENTS_METHOD);
+  assert.equal(result.entries[2].error, false);
+  assert.equal(result.entries[3].error, false);
+  assert.equal(calls.length, 3);
+});
+
+test('collectDiagnostics menandai entri tak terpetakan sebagai NOT_TESTED, bukan sukses', async () => {
+  const { fetchImpl } = sequence([
+    { body: JSON.stringify([{ error: true, errorcode: 'servicenotavailable' }]) },
+    { body: '<html>login</html>' },
+    { body: '<html>login</html>' },
+    { body: '<html>login</html>' },
+  ]);
+  const result = await collectDiagnostics(fetchImpl, 'c', 'K1', [1, 2], null);
+  assert.equal(result.shape, 'positional');
+  assert.equal(result.entries.length, 4);
+  assert.equal(result.entries[1].error, true);
+  assert.equal(result.entries[1].errorcode, 'NOT_TESTED');
+  assert.equal(result.entries[3].errorcode, 'NOT_TESTED');
 });

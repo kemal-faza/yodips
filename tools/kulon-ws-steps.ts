@@ -118,9 +118,33 @@ export async function collectDiagnostics(
   const entries = diagnosticEntries(courseIds, userid);
   const response = await ajaxBatch(fetchImpl, cookie, sesskey, entries);
   const mapped = mapBatchResponse(response.body, entries.length);
-  if (mapped.shape === 'shape-unknown') return { shape: mapped.shape, entries: [], raw: response.body };
+  // Kulon memotong batch pada method pertama yang tidak tersedia: body adalah
+  // presfiks valid yang lebih pendek. Sisa entri disisir satu panggilan per entri.
+  const prefix = Array.isArray(response.body) ? response.body : [];
+  const truncated = mapped.shape === 'shape-unknown' && prefix.length > 0 && prefix.length < entries.length;
+  if (mapped.shape === 'shape-unknown' && !truncated) {
+    return { shape: mapped.shape, entries: [], raw: response.body };
+  }
+  const shape = mapped.shape === 'shape-unknown' ? 'positional' : mapped.shape;
+  const results: unknown[] = mapped.shape === 'shape-unknown' ? prefix.slice() : mapped.results;
+  if (truncated) {
+    for (let index = results.length; index < entries.length; index += 1) {
+      const entry = entries[index];
+      const single = await ajaxBatch(fetchImpl, cookie, sesskey, [entry]);
+      const one = mapBatchResponse(single.body, 1);
+      if (one.shape === 'shape-unknown') {
+        results.push({
+          error: true,
+          errorcode: 'NOT_TESTED',
+          exception: { message: 'respons batch terpotong; panggilan tunggal juga gagal dipetakan' },
+        });
+      } else {
+        results.push(one.results[0]);
+      }
+    }
+  }
   const entriesOut: DiagnosticEntry[] = entries.map((entry, index) => {
-    const parsed = readEntryError(mapped.results[index]);
+    const parsed = readEntryError(results[index]);
     return {
       methodname: entry.methodname,
       error: parsed.error,
@@ -128,7 +152,7 @@ export async function collectDiagnostics(
       message: parsed.message,
     };
   });
-  return { shape: mapped.shape, entries: entriesOut, raw: response.body };
+  return { shape, entries: entriesOut, raw: response.body };
 }
 
 export interface Measurement {
