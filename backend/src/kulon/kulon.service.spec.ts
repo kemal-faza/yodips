@@ -6,7 +6,13 @@ import { ConfigModule } from '@nestjs/config';
 import { KulonService } from './kulon.service';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { KulonUpstreamSession } from './kulon-upstream.session';
-import { parseMoodleDate, parseQuizIndex } from './kulon-parse';
+import {
+  mapCourseStateJson,
+  parseContentHtml,
+  parseMoodleDate,
+  parseQuizIndex,
+  parseSectionProgress,
+} from './kulon-parse';
 import { swrWindow } from '../cache/cache-policy';
 import { TELEMETRY_RUNTIME, type TelemetryRuntime } from '../observability/telemetry';
 import { NestTelemetrySink } from '../observability/nest-telemetry.sink';
@@ -28,6 +34,7 @@ const NO_STORE: SessionStore = {
 import type {
   KulonAssignment,
   KulonAssignmentDetail,
+  KulonCourse,
   KulonCourseContent,
 } from './kulon-parse';
 
@@ -286,6 +293,8 @@ function makeAuthedKulonSvc(opts: { cache?: any; siap?: any } = {}): KulonServic
     getContextForCurrent: (sub?: string) => real.getContextForCurrent(sub),
     ajax: (...args: Parameters<KulonUpstreamSession['ajax']>) =>
       real.ajax(...args),
+    ajaxMany: (...args: Parameters<KulonUpstreamSession['ajaxMany']>) =>
+      real.ajaxMany(...args),
     checkSessionValid: (cookie: string) => real.checkSessionValid(cookie),
   };
   return new KulonService(
@@ -883,20 +892,25 @@ describe('KulonService', () => {
         ok: true,
         json: async () => [{ error: false, data: { courses: [] } }],
       })
-      // post-timeline content scrape: both dated sections end in a future month
-      // relative to any run date -> progress 0. getCourseContent is JSON-first,
-      // so first content fetch = service.php JSON attempt (no json() -> TypeError
-      // -> HTML fallback), second = /course/view.php scrape.
+      // progress transport: ONE batched get_state POST. Both dated sections end
+      // in a future month relative to the run date -> progress 0. Kulon sends
+      // each entry's data as a JSON string.
       .mockResolvedValueOnce({
         ok: true,
-        text: async () => '',
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        text: async () =>
-          '<li id="section-0" data-sectionname="General"></li>' +
-          '<li id="section-1" data-sectionname="1 November - 8 November"></li>' +
-          '<li id="section-2" data-sectionname="15 November - 22 November"></li>',
+        json: async () => [
+          {
+            error: false,
+            data: JSON.stringify({
+              course: { id: '1' },
+              section: [
+                { number: 0, id: '100', title: 'General' },
+                { number: 1, id: '101', title: '1 November - 8 November' },
+                { number: 2, id: '102', title: '15 November - 22 November' },
+              ],
+              cm: [],
+            }),
+          },
+        ],
       });
     const courses = await svc.getCourses(ref('u1'));
     expect((courses.find((c) => c.id === 1) as { progress?: number } | undefined)?.progress).toBe(0);
@@ -1523,5 +1537,299 @@ describe('getCourseState', () => {
     expect(allCmid).not.toContain(126796);
     expect(allCmid).not.toContain(128338);
     expect(allCmid).toContain(105222); // quiz, kept via module exception
+  });
+});
+
+describe('Courses progress via one batched get_state POST', () => {
+  const COURSE_STATE_METHOD = 'core_courseformat_get_state';
+  type TimelineRow = { id: number; fullname: string; shortname: string; idnumber: string };
+  type BatchBodyEntry = {
+    index: number;
+    methodname: string;
+    args: { courseid?: number; classification?: string };
+  };
+
+  const TIMELINE: Record<string, TimelineRow[]> = {
+    all: [
+      { id: 1, fullname: 'Course A', shortname: 'CA', idnumber: '1' },
+      { id: 2, fullname: 'Course B', shortname: 'CB', idnumber: '2' },
+      { id: 3, fullname: 'Course C', shortname: 'CC', idnumber: '3' },
+    ],
+    inprogress: [
+      { id: 1, fullname: 'Course A', shortname: 'CA', idnumber: '1' },
+      { id: 3, fullname: 'Course C', shortname: 'CC', idnumber: '3' },
+    ],
+    hidden: [],
+  };
+
+  /** Live Kulon shape: every entry's `data` is a JSON STRING, not an object. */
+  function statePayload(courseId: number, titles: string[]): string {
+    return JSON.stringify({
+      course: { id: String(courseId) },
+      section: titles.map((title, number) => ({
+        number,
+        id: String(courseId * 100 + number),
+        title,
+      })),
+      cm: [],
+    });
+  }
+
+  /** Dated section so the HTML fallback path yields a measurable progress. */
+  const DATED_SCRAPE_HTML =
+    '<li id="section-0" data-sectionname="General"></li>' +
+    '<li id="section-1" data-sectionname="2 March - 9 March"></li>';
+
+  function okJson(url: string, payload: unknown): Response {
+    return { ok: true, status: 200, url, json: async () => payload } as unknown as Response;
+  }
+
+  /**
+   * Wire-level router: answers timeline POSTs, the batched get_state POST, the
+   * per-course single get_state POST, and the /course/view.php scrape. Tests can
+   * therefore assert WHICH transport production chose, not just the numbers.
+   */
+  function routedKulonFetch(routes: {
+    timeline?: Record<string, TimelineRow[]>;
+    batch: (entries: BatchBodyEntry[]) => unknown[];
+    singleState?: (courseId: number) => unknown;
+    html?: (courseId: number) => string | undefined;
+  }): jest.Mock {
+    return jest.fn(async (url: string, init?: RequestInit) => {
+      const target = String(url);
+      if (target.includes('/lib/ajax/service.php')) {
+        const entries = JSON.parse(String(init?.body ?? '[]')) as BatchBodyEntry[];
+        if (entries.length > 1) return okJson(target, routes.batch(entries));
+        const entry = entries[0];
+        if (entry?.methodname === COURSE_STATE_METHOD) {
+          return okJson(target, [
+            { error: false, data: routes.singleState?.(Number(entry.args.courseid)) },
+          ]);
+        }
+        const classification = String(entry?.args.classification ?? '');
+        return okJson(target, [
+          { error: false, data: { courses: (routes.timeline ?? {})[classification] ?? [] } },
+        ]);
+      }
+      const html = routes.html?.(Number(/[?&]id=(\d+)/.exec(target)?.[1]));
+      return html === undefined
+        ? ({ ok: false, status: 500, url: target } as unknown as Response)
+        : ({ ok: true, status: 200, url: target, text: async () => html } as unknown as Response);
+    });
+  }
+
+  function transports(fetchMock: jest.Mock) {
+    const calls = fetchMock.mock.calls.map(([url, init]) => ({
+      url: String(url),
+      init: (init ?? {}) as RequestInit,
+    }));
+    const posts = calls
+      .filter((c) => c.url.includes('/lib/ajax/service.php'))
+      .map((c) => JSON.parse(String(c.init.body ?? '[]')) as BatchBodyEntry[]);
+    return {
+      total: calls.length,
+      batchBodies: posts.filter((entries) => entries.length > 1),
+      pageGets: calls
+        .filter((c) => c.url.includes('/course/view.php'))
+        .map((c) => c.url),
+    };
+  }
+
+  function progressOf(courses: KulonCourse[], courseId: number): number | undefined {
+    return (courses.find((c) => c.id === courseId) as { progress?: number } | undefined)
+      ?.progress;
+  }
+
+  /** Progress the REAL parsers produce from a state payload. */
+  function stateProgress(courseId: number, titles: string[], isPast: boolean) {
+    const raw = JSON.parse(statePayload(courseId, titles));
+    return parseSectionProgress(mapCourseStateJson(raw, courseId).sections, new Date(), {
+      isPast,
+    });
+  }
+
+  beforeEach(() => {
+    global.fetch = jest.fn();
+  });
+
+  afterEach(() => {
+    (global.fetch as jest.Mock).mockReset();
+  });
+
+  it('gets every progress value from ONE batched POST and no /course/view.php GET', async () => {
+    const fetchMock = routedKulonFetch({
+      timeline: TIMELINE,
+      batch: () => [
+        { error: false, data: statePayload(1, ['General', '9 February - 15 February']) },
+        { error: false, data: statePayload(2, ['General', '2 March - 9 March']) },
+        { error: false, data: statePayload(3, ['General', 'Materi Umum']) },
+      ],
+      singleState: () => {
+        throw new Error('per-course get_state must not run');
+      },
+      html: () => {
+        throw new Error('per-course /course/view.php must not run');
+      },
+    });
+    global.fetch = fetchMock as any;
+    const svc = makeAuthedKulonSvc();
+
+    const courses = await svc.getCourses(ref('u1'));
+
+    const { total, batchBodies, pageGets } = transports(fetchMock);
+    // Exactly ONE batched POST: merged order, 0-based indexes, one entry per course.
+    expect(batchBodies).toEqual([
+      [
+        { index: 0, methodname: COURSE_STATE_METHOD, args: { courseid: 1 } },
+        { index: 1, methodname: COURSE_STATE_METHOD, args: { courseid: 2 } },
+        { index: 2, methodname: COURSE_STATE_METHOD, args: { courseid: 3 } },
+      ],
+    ]);
+    expect(pageGets).toEqual([]);
+    // 3 timeline classifications + the single batch POST, nothing else.
+    expect(total).toBe(4);
+
+    // Values equal parseSectionProgress over the state sections (real parsers).
+    const inprogress = stateProgress(1, ['General', '9 February - 15 February'], false);
+    expect(inprogress).toBeDefined();
+    expect(progressOf(courses, 1)).toBe(inprogress);
+    // Past course: dated sections coerce to 100 regardless of the run date.
+    expect(progressOf(courses, 2)).toBe(100);
+    // No dated section in either path -> progress stays absent.
+    expect(progressOf(courses, 3)).toBeUndefined();
+  });
+
+  it('falls back to the per-course HTML path for the truncated tail (1 of 3 results)', async () => {
+    const fetchMock = routedKulonFetch({
+      timeline: TIMELINE,
+      batch: () => [
+        { error: false, data: statePayload(1, ['General', '9 February - 15 February']) },
+      ],
+      singleState: (courseId) => statePayload(courseId, ['General']),
+      html: () => DATED_SCRAPE_HTML,
+    });
+    global.fetch = fetchMock as any;
+    const svc = makeAuthedKulonSvc();
+
+    const courses = await svc.getCourses(ref('u1'));
+
+    const { pageGets } = transports(fetchMock);
+    // Only the two courses missing from the prefix are scraped.
+    expect(pageGets).toHaveLength(2);
+    expect(pageGets.some((url) => url.includes('id=2'))).toBe(true);
+    expect(pageGets.some((url) => url.includes('id=3'))).toBe(true);
+    expect(pageGets.some((url) => url.includes('id=1'))).toBe(false);
+    // Course 1 keeps the batch value; 2/3 come from the scrape (2 is past -> 100).
+    expect(progressOf(courses, 1)).toBe(
+      stateProgress(1, ['General', '9 February - 15 February'], false),
+    );
+    expect(progressOf(courses, 2)).toBe(100);
+    expect(progressOf(courses, 3)).toBe(
+      parseSectionProgress(parseContentHtml(DATED_SCRAPE_HTML, 3).sections, undefined, {
+        isPast: false,
+      }),
+    );
+  });
+
+  it('falls back only for the course whose batch entry errored', async () => {
+    const fetchMock = routedKulonFetch({
+      timeline: TIMELINE,
+      batch: () => [
+        { error: false, data: statePayload(1, ['General', '9 February - 15 February']) },
+        { error: true, exception: { errorcode: 'invalidparameter', message: 'Invalid course id' } },
+        { error: false, data: statePayload(3, ['General', 'Materi Umum']) },
+      ],
+      singleState: (courseId) => statePayload(courseId, ['General']),
+      html: () => DATED_SCRAPE_HTML,
+    });
+    global.fetch = fetchMock as any;
+    const svc = makeAuthedKulonSvc();
+
+    const courses = await svc.getCourses(ref('u1'));
+
+    const { pageGets } = transports(fetchMock);
+    expect(pageGets).toHaveLength(1);
+    expect(pageGets[0]).toContain('id=2');
+    expect(progressOf(courses, 1)).toBe(
+      stateProgress(1, ['General', '9 February - 15 February'], false),
+    );
+    expect(progressOf(courses, 2)).toBe(100); // past course via the scrape
+    expect(progressOf(courses, 3)).toBeUndefined(); // resolved, no dated section
+  });
+
+  it('falls back for an entry whose state payload is unparseable or section-less', async () => {
+    const fetchMock = routedKulonFetch({
+      timeline: TIMELINE,
+      batch: () => [
+        // Not JSON at all (the guarded JSON.parse branch).
+        { error: false, data: '<html>Service unavailable</html>' },
+        // Parses, but is not course-format state (no section array).
+        { error: false, data: JSON.stringify({ course: { id: '2' } }) },
+        { error: false, data: statePayload(3, ['General', 'Materi Umum']) },
+      ],
+      singleState: (courseId) => statePayload(courseId, ['General']),
+      html: () => DATED_SCRAPE_HTML,
+    });
+    global.fetch = fetchMock as any;
+    const svc = makeAuthedKulonSvc();
+
+    const courses = await svc.getCourses(ref('u1'));
+
+    const { pageGets } = transports(fetchMock);
+    expect(pageGets).toHaveLength(2);
+    expect(pageGets.some((url) => url.includes('id=1'))).toBe(true);
+    expect(pageGets.some((url) => url.includes('id=2'))).toBe(true);
+    expect(progressOf(courses, 1)).toBe(100); // past course via the scrape
+    expect(progressOf(courses, 2)).toBe(100);
+    expect(progressOf(courses, 3)).toBeUndefined(); // resolved, no dated section
+  });
+
+  it('falls back to the HTML path for ALL courses when the batch call itself fails', async () => {
+    const fetchMock = routedKulonFetch({
+      timeline: TIMELINE,
+      batch: () => {
+        throw new Error('connection reset');
+      },
+      singleState: (courseId) => statePayload(courseId, ['General']),
+      // Course 1's scrape fails too: progress must be omitted, never fatal.
+      html: (courseId) => (courseId === 1 ? undefined : DATED_SCRAPE_HTML),
+    });
+    global.fetch = fetchMock as any;
+    const svc = makeAuthedKulonSvc();
+
+    const courses = await svc.getCourses(ref('u1'));
+
+    const { pageGets } = transports(fetchMock);
+    expect(pageGets).toHaveLength(3);
+    expect(courses.map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    expect(progressOf(courses, 1)).toBeUndefined(); // failed scrape is non-fatal
+    expect(progressOf(courses, 2)).toBe(100);
+    expect(progressOf(courses, 3)).toBe(
+      parseSectionProgress(parseContentHtml(DATED_SCRAPE_HTML, 3).sections, undefined, {
+        isPast: false,
+      }),
+    );
+  });
+
+  it('makes ZERO get_state calls when withProgress is false', async () => {
+    const fetchMock = routedKulonFetch({
+      timeline: TIMELINE,
+      batch: () => {
+        throw new Error('a batch must never be sent without progress');
+      },
+    });
+    global.fetch = fetchMock as any;
+    const svc = makeAuthedKulonSvc();
+
+    const list = await svc.getCourseList(ref('u1'));
+    const summary = await svc.getCourseSummary(ref('u1'));
+
+    const { total, batchBodies, pageGets } = transports(fetchMock);
+    expect(list).toHaveLength(3);
+    expect(summary).toHaveLength(3);
+    expect(batchBodies).toEqual([]);
+    expect(pageGets).toEqual([]);
+    // Only the 3 timeline classifications per call — no progress transport at all.
+    expect(total).toBe(6);
   });
 });

@@ -16,6 +16,7 @@ import {
   KulonUpstreamSession,
   KULON_ROUTE_CONTEXTS,
   parseSesskey as parseSesskeyHtml,
+  type KulonAjaxBatchEntry,
 } from './kulon-upstream.session';
 import type {
   KulonAssignment,
@@ -576,44 +577,16 @@ export class KulonService {
       ...c,
       timelineStatus: inprogressIds.has(c.id) ? 'inprogress' : 'past',
     }));
-    // Batch-parallel course-progress scrape. Each course's /course/view.php feeds
-    // parseSectionProgress. Failures per course are non-fatal (progress omitted).
-    // Skipped when withProgress:false — the assignments aggregation output does
-    // not carry progress, so per-course fetches would be pure wasted upstream work.
-    let mergedWithProgress: KulonCourse[] = merged;
-    if (opts.withProgress !== false) {
-      const settled = await mapWithConcurrency(
-        merged,
-        COURSE_PROGRESS_CONCURRENCY,
-        async (c) => {
-          try {
-            return {
-              status: 'fulfilled' as const,
-              value: {
-                id: c.id,
-                progress: parseSectionProgress(
-                  (await this.fetchCourseContent(sessionCookie, sesskey, c.id, scope))
-                    .sections,
-                  undefined,
-                  { isPast: c.timelineStatus === 'past' },
-                ),
-              },
-            };
-          } catch (reason) {
-            return { status: 'rejected' as const, reason };
-          }
-        },
-      );
-      const progressById = new Map<number, number>();
-      for (const r of settled) {
-        if (r.status === 'fulfilled' && r.value.progress != null) {
-          progressById.set(r.value.id, r.value.progress);
-        }
-      }
-      mergedWithProgress = merged.map((c) =>
-        progressById.has(c.id) ? { ...c, progress: progressById.get(c.id) } : c,
-      );
-    }
+    // Course progress for the Courses screen: ONE batched get_state POST for
+    // every merged course, with the per-course /course/view.php scrape kept as
+    // the fallback for a truncated batch, an entry error, or a batch failure.
+    // Per-course failures stay non-fatal (progress omitted). Skipped when
+    // withProgress:false — the assignments aggregation output does not carry
+    // progress, so any progress transport would be pure wasted upstream work.
+    const mergedWithProgress: KulonCourse[] =
+      opts.withProgress !== false
+        ? await this.mergeCourseProgress(sessionCookie, sesskey, scope, merged)
+        : merged;
     // Best-effort lecturer merge by MIK code (shortname). Missing SIAP cookie /
     // empty IRS -> lecturer simply omitted. Failures are non-fatal. Skipped on
     // internal calls (assignments aggregation) to keep poll cycles lean.
@@ -639,6 +612,118 @@ export class KulonService {
     // Payload persistence belongs exclusively to DataCache.getStale's refresh
     // owner. Internal progress-less calls still read, but never write.
     return result;
+  }
+
+  /**
+   * Courses-screen progress from ONE batched `core_courseformat_get_state` POST.
+   *
+   * Kulon answers each entry's `data` as a JSON STRING (not an object), so it is
+   * parsed here before `mapCourseStateJson`. A course whose entry is missing
+   * (Moodle truncates the response at the first failing entry), errored, or
+   * unparseable stays on the existing per-course scrape path; a batch transport
+   * failure puts EVERY course back there (today's behaviour).
+   */
+  private async mergeCourseProgress(
+    sessionCookie: string,
+    sesskey: string,
+    scope: KulonScope | undefined,
+    courses: KulonCourse[],
+  ): Promise<KulonCourse[]> {
+    if (courses.length === 0) return courses;
+    const progressById = new Map<number, number>();
+    let scraped: KulonCourse[] = [];
+    try {
+      const { results } = await this.upstream.ajaxMany(
+        sessionCookie,
+        sesskey,
+        courses.map((c) => ({
+          methodname: 'core_courseformat_get_state',
+          args: { courseid: c.id },
+        })),
+      );
+      courses.forEach((course, index) => {
+        const progress = this.progressFromStateEntry(results[index], course);
+        if (progress === undefined) scraped.push(course);
+        else if (progress !== null) progressById.set(course.id, progress);
+      });
+    } catch {
+      scraped = courses;
+    }
+    if (scraped.length > 0) {
+      const fallback = await this.scrapeCourseProgress(sessionCookie, sesskey, scope, scraped);
+      for (const [id, progress] of fallback) progressById.set(id, progress);
+    }
+    return courses.map((course) =>
+      progressById.has(course.id) ? { ...course, progress: progressById.get(course.id) } : course,
+    );
+  }
+
+  /**
+   * Progress from ONE batch entry: a number is a measured value, `null` means
+   * the course resolved but has no dated section to measure, and `undefined`
+   * means unresolved (absent/errored/malformed) so the caller must fall back.
+   */
+  private progressFromStateEntry(
+    entry: KulonAjaxBatchEntry | undefined,
+    course: KulonCourse,
+  ): number | null | undefined {
+    if (!entry || entry.error) return undefined;
+    try {
+      const raw = typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
+      if (!Array.isArray((raw as { section?: unknown } | null | undefined)?.section)) {
+        return undefined;
+      }
+      return (
+        parseSectionProgress(mapCourseStateJson(raw, course.id).sections, new Date(), {
+          isPast: course.timelineStatus === 'past',
+        }) ?? null
+      );
+    } catch {
+      // Malformed payload: fall back to the per-course scrape instead of
+      // failing the whole Courses fetch.
+      return undefined;
+    }
+  }
+
+  /**
+   * Existing per-course progress path: one course-content fetch (JSON-first,
+   * /course/view.php fallback) per course, bounded by
+   * COURSE_PROGRESS_CONCURRENCY. A failing course simply gets no progress.
+   */
+  private async scrapeCourseProgress(
+    sessionCookie: string,
+    sesskey: string,
+    scope: KulonScope | undefined,
+    courses: KulonCourse[],
+  ): Promise<Map<number, number>> {
+    const settled = await mapWithConcurrency(
+      courses,
+      COURSE_PROGRESS_CONCURRENCY,
+      async (c) => {
+        try {
+          return {
+            status: 'fulfilled' as const,
+            value: {
+              id: c.id,
+              progress: parseSectionProgress(
+                (await this.fetchCourseContent(sessionCookie, sesskey, c.id, scope)).sections,
+                undefined,
+                { isPast: c.timelineStatus === 'past' },
+              ),
+            },
+          };
+        } catch (reason) {
+          return { status: 'rejected' as const, reason };
+        }
+      },
+    );
+    const progressById = new Map<number, number>();
+    for (const r of settled) {
+      if (r.status === 'fulfilled' && r.value.progress != null) {
+        progressById.set(r.value.id, r.value.progress);
+      }
+    }
+    return progressById;
   }
 
   async fetchTimelineCourses(
