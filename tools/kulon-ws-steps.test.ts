@@ -13,6 +13,7 @@ import {
   measureCandidateAssignments,
   measureCandidateCourses,
   measureSubmissionStatus,
+  STATE_METHOD,
   timelineEntries,
 } from './kulon-ws-steps';
 
@@ -198,6 +199,16 @@ test('collectDiagnostics memetakan presfiks batch terpotong lalu menyisir sisany
   assert.equal(result.entries[2].error, false);
   assert.equal(result.entries[3].error, false);
   assert.equal(calls.length, 3);
+  // Kulon membalas panggilan tunggal ber-index N sebagai objek berkunci "N",
+  // jadi tiap sisiran harus mulai dari index 0 agar tetap terpetakan sebagai array.
+  const firstSingle = JSON.parse(calls[1].body) as Array<{ index: number; methodname: string }>;
+  const secondSingle = JSON.parse(calls[2].body) as Array<{ index: number; methodname: string }>;
+  assert.equal(firstSingle.length, 1);
+  assert.equal(firstSingle[0].index, 0);
+  assert.equal(firstSingle[0].methodname, EVENTS_METHOD);
+  assert.equal(secondSingle.length, 1);
+  assert.equal(secondSingle[0].index, 0);
+  assert.equal(secondSingle[0].methodname, STATE_METHOD);
 });
 
 test('collectDiagnostics menandai entri tak terpetakan sebagai NOT_TESTED, bukan sukses', async () => {

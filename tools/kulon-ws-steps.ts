@@ -130,7 +130,8 @@ export async function collectDiagnostics(
   if (truncated) {
     for (let index = results.length; index < entries.length; index += 1) {
       const entry = entries[index];
-      const single = await ajaxBatch(fetchImpl, cookie, sesskey, [entry]);
+      // Index harus 0: panggilan tunggal ber-index N dibalas objek berkunci {N: ...}, bukan array.
+      const single = await ajaxBatch(fetchImpl, cookie, sesskey, [{ index: 0, methodname: entry.methodname, args: entry.args }]);
       const one = mapBatchResponse(single.body, 1);
       if (one.shape === 'shape-unknown') {
         results.push({
