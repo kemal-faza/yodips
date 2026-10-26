@@ -343,109 +343,19 @@ export class KulonUpstreamSession {
     }
   }
 
-  /** Kulon's session-based AJAX API with shared stale/transient classification. */
-  async ajax(
-    sessionCookie: string,
-    sesskey: string,
-    methodname: string,
-    args: Record<string, unknown>,
-  ): Promise<unknown> {
-    try {
-      return await timedFetch(
-        this.runtime,
-        KULON_ROUTE_CONTEXTS.ajax,
-        `${KULON_BASE_URL}/lib/ajax/service.php?sesskey=${encodeURIComponent(sesskey)}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Cookie: sessionCookie,
-          },
-          body: JSON.stringify([{ index: 0, methodname, args }]),
-        },
-        async (res): Promise<UpstreamAttemptResult<unknown>> => {
-        if (!res.ok) {
-          return httpErrorResult(
-            new StaleUpstreamError('Kulon', 'http-not-ok', undefined, res),
-            res.status,
-          );
-        }
-        if (isLoginRedirect(res.url)) {
-          return staleResult(
-            new StaleUpstreamError('Kulon', 'login-redirect', undefined, res),
-            'login-redirect',
-            res.status,
-          );
-        }
-        let data: unknown;
-        try {
-          data = await res.json();
-        } catch {
-          const reason = /text\/html/i.test(res.headers?.get?.('content-type') ?? '')
-            ? 'html-content-type'
-            : 'malformed-json';
-          return {
-            ok: false,
-            error: new StaleUpstreamError('Kulon', reason, undefined, res),
-            outcome: 'parse_error',
-            reason,
-            status: res.status,
-          };
-        }
-        const firstValue = Array.isArray(data) ? data[0] : undefined;
-        const first =
-          typeof firstValue === 'object' && firstValue !== null
-            ? (firstValue as {
-                error?: boolean;
-                exception?: { message?: string };
-                data?: unknown;
-              })
-            : undefined;
-        if (!first) {
-          return staleResult(
-            new StaleUpstreamError('Kulon', 'api-endpoint'),
-            'api-endpoint',
-            res.status,
-          );
-        }
-        if (first.error) {
-          return staleResult(
-            new StaleUpstreamError(
-              'Kulon',
-              'api-endpoint',
-              `Kulon method ${methodname} error: ${first.exception?.message ?? 'unknown'}`,
-            ),
-            'api-endpoint',
-            res.status,
-          );
-        }
-        return { ok: true, value: first.data, outcome: 'ok', status: res.status };
-        },
-      );
-    } catch (error) {
-      const transportReason = getTimedFetchTransportReason(error);
-      if (transportReason) {
-        throw new StaleUpstreamError('Kulon', transportReason);
-      }
-      throw error;
-    }
-  }
-
   /**
-   * Batched variant of `ajax()`: ONE POST carrying every entry.
-   *
-   * The seam assigns the 0-based `index` itself — Moodle answers a keyed object
-   * instead of an array for any other index, so a caller-supplied index is
-   * ignored on purpose. Error classification mirrors `ajax()` exactly
-   * (non-OK / login redirect / parse failure). A response shorter than the
-   * request is returned AS IS (a prefix) rather than thrown: Moodle truncates
-   * at the first failing entry and the caller falls back for the missing tail.
+   * ONE POST to Kulon's session-based AJAX endpoint, plus the error
+   * classification every caller must share: non-OK, login redirect, and an
+   * unparseable body (an HTML page is reported differently from malformed JSON).
+   * `interpret` owns only what genuinely differs between `ajax()` and
+   * `ajaxMany()` — the response shape — so the two can no longer drift apart.
    */
-  async ajaxMany(
+  private async postAjax<T>(
     sessionCookie: string,
     sesskey: string,
-    requests: KulonAjaxBatchRequest[],
-  ): Promise<KulonAjaxBatchResponse> {
+    payload: unknown,
+    interpret: (data: unknown, status: number) => UpstreamAttemptResult<T>,
+  ): Promise<T> {
     try {
       return await timedFetch(
         this.runtime,
@@ -457,15 +367,9 @@ export class KulonUpstreamSession {
             'Content-Type': 'application/json',
             Cookie: sessionCookie,
           },
-          body: JSON.stringify(
-            requests.map((request, index) => ({
-              index,
-              methodname: request.methodname,
-              args: request.args,
-            })),
-          ),
+          body: JSON.stringify(payload),
         },
-        async (res): Promise<UpstreamAttemptResult<KulonAjaxBatchResponse>> => {
+        async (res): Promise<UpstreamAttemptResult<T>> => {
           if (!res.ok) {
             return httpErrorResult(
               new StaleUpstreamError('Kulon', 'http-not-ok', undefined, res),
@@ -494,19 +398,7 @@ export class KulonUpstreamSession {
               status: res.status,
             };
           }
-          if (!Array.isArray(data)) {
-            return staleResult(
-              new StaleUpstreamError('Kulon', 'api-endpoint'),
-              'api-endpoint',
-              res.status,
-            );
-          }
-          return {
-            ok: true,
-            value: { status: res.status, results: data.map(toBatchEntry) },
-            outcome: 'ok',
-            status: res.status,
-          };
+          return interpret(data, res.status);
         },
       );
     } catch (error) {
@@ -516,5 +408,90 @@ export class KulonUpstreamSession {
       }
       throw error;
     }
+  }
+
+  /** Kulon's session-based AJAX API: one method call, one entry on the wire. */
+  async ajax(
+    sessionCookie: string,
+    sesskey: string,
+    methodname: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.postAjax(
+      sessionCookie,
+      sesskey,
+      [{ index: 0, methodname, args }],
+      (data, status) => {
+        const firstValue = Array.isArray(data) ? data[0] : undefined;
+        const first =
+          typeof firstValue === 'object' && firstValue !== null
+            ? (firstValue as {
+                error?: boolean;
+                exception?: { message?: string };
+                data?: unknown;
+              })
+            : undefined;
+        if (!first) {
+          return staleResult(
+            new StaleUpstreamError('Kulon', 'api-endpoint'),
+            'api-endpoint',
+            status,
+          );
+        }
+        if (first.error) {
+          return staleResult(
+            new StaleUpstreamError(
+              'Kulon',
+              'api-endpoint',
+              `Kulon method ${methodname} error: ${first.exception?.message ?? 'unknown'}`,
+            ),
+            'api-endpoint',
+            status,
+          );
+        }
+        return { ok: true, value: first.data, outcome: 'ok', status };
+      },
+    );
+  }
+
+  /**
+   * Batched variant of `ajax()`: ONE POST carrying every entry.
+   *
+   * The seam assigns the 0-based `index` itself — Moodle answers a keyed object
+   * instead of an array for any other index, so a caller-supplied index is
+   * ignored on purpose. Error classification is shared with `ajax()` through
+   * `postAjax` instead of being mirrored by hand. A response shorter than the
+   * request is returned AS IS (a prefix) rather than thrown: Moodle truncates at
+   * the first failing entry and the caller falls back for the missing tail.
+   */
+  async ajaxMany(
+    sessionCookie: string,
+    sesskey: string,
+    requests: KulonAjaxBatchRequest[],
+  ): Promise<KulonAjaxBatchResponse> {
+    return this.postAjax(
+      sessionCookie,
+      sesskey,
+      requests.map((request, index) => ({
+        index,
+        methodname: request.methodname,
+        args: request.args,
+      })),
+      (data, status) => {
+        if (!Array.isArray(data)) {
+          return staleResult(
+            new StaleUpstreamError('Kulon', 'api-endpoint'),
+            'api-endpoint',
+            status,
+          );
+        }
+        return {
+          ok: true,
+          value: { status, results: data.map(toBatchEntry) },
+          outcome: 'ok',
+          status,
+        };
+      },
+    );
   }
 }
