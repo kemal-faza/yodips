@@ -30,7 +30,6 @@ import kotlinx.serialization.json.Json
 class KtorSsoApi(
     private val client: HttpClient,
     private val baseUrl: String,
-    private val authTokenProvider: () -> String?,
 ) : SsoApi {
     private val root = baseUrl.trimEnd('/')
     private val json = Json {

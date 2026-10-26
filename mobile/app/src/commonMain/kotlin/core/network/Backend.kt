@@ -40,7 +40,6 @@ object Backend {
                 }
             },
             baseUrl = API_BASE,
-            authTokenProvider = { authToken },
         )
     }
 

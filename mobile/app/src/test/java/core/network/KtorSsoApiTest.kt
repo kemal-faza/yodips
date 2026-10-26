@@ -3,9 +3,6 @@ package ac.undip.sso.core.network
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
-import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.request.header
-import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.runBlocking
@@ -20,12 +17,8 @@ class KtorSsoApiTest {
         assertRequest: suspend (io.ktor.client.request.HttpRequestData) -> Unit = {},
     ): HttpClient =
         HttpClient(MockEngine) {
-            defaultRequest {
-                header(HttpHeaders.Authorization, "Bearer test-jwt")
-            }
             engine {
                 addHandler { request ->
-                    assertEquals("Bearer test-jwt", request.headers[HttpHeaders.Authorization])
                     assertRequest(request)
                     respond(ByteReadChannel(body), status)
                 }
@@ -33,7 +26,7 @@ class KtorSsoApiTest {
         }
 
     private fun api(client: HttpClient): KtorSsoApi =
-        KtorSsoApi(client, baseUrl = "https://be.test/", authTokenProvider = { "test-jwt" })
+        KtorSsoApi(client, baseUrl = "https://be.test/")
 
     @Test
     fun `profile parses envelope-free DTO`() = runBlocking {
