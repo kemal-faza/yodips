@@ -1,6 +1,5 @@
 package ac.undip.sso.ui.login
 
-import ac.undip.sso.BuildConfig
 import ac.undip.sso.core.login.KulonCaptureFailure
 import ac.undip.sso.core.login.KulonLandingMarker
 import ac.undip.sso.core.login.KulonCaptureOutcome
@@ -40,20 +39,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
-import java.security.MessageDigest
 
 private const val TAG = "KulonTicketProbe"
-private const val KULON_ORIGIN = "https://kulon2.undip.ac.id/"
 private const val PROBE_TIMEOUT_MS = 45_000L
 
 /**
- * Read-only direct-ticket discovery harness. This is intentionally absent from
- * release UI, shares the app CookieManager, and never hands cookies to the API.
+ * Read-only direct-ticket discovery harness. It lives in the DEBUG source set, so
+ * it never reaches a release APK (R8 is off, so unreferenced code is not stripped —
+ * the file has to be excluded at the source-set level). It shares the app
+ * CookieManager and never hands cookies to the API.
  */
 @Composable
 internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
-    if (!BuildConfig.DEBUG) return
-
     var visible by remember { mutableStateOf(false) }
     var outcomeText by remember { mutableStateOf("belum dijalankan") }
     var probeText by remember { mutableStateOf("probe belum dijalankan") }
@@ -300,26 +297,3 @@ internal fun DebugKulonTicketProbe(modifier: Modifier = Modifier) {
         }
     }
 }
-
-/** Hash only for an in-memory equality check; the cookie value is never retained or logged. */
-internal fun fingerprintMoodleSessionCookieHeader(cookieHeader: String?): String? {
-    val sessionCookies = cookieHeader
-        ?.split(';')
-        ?.mapNotNull { part ->
-            val cookie = part.trim()
-            val equalsAt = cookie.indexOf('=')
-            if (equalsAt < 0) return@mapNotNull null
-            val name = cookie.substring(0, equalsAt).trim()
-            val value = cookie.substring(equalsAt + 1).trim()
-            if (name.startsWith("MoodleSession") && value.isNotEmpty()) "$name=$value" else null
-        }
-        ?.sorted()
-        ?.takeIf { it.isNotEmpty() }
-        ?: return null
-    return MessageDigest.getInstance("SHA-256")
-        .digest(sessionCookies.joinToString(";").toByteArray())
-        .joinToString("") { byte -> "%02x".format(byte) }
-}
-
-private fun moodleSessionFingerprint(cookieManager: CookieManager): String? =
-    fingerprintMoodleSessionCookieHeader(cookieManager.getCookie(KULON_ORIGIN))
