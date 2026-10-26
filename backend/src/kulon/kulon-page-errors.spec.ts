@@ -26,10 +26,6 @@ type KulonServiceInternals = {
     cmid: number,
     assignmentId: number,
   ) => Promise<KulonAssignmentDetail>;
-  contentFromHTML: (
-    cookie: string,
-    courseId: number,
-  ) => Promise<KulonCourseContent>;
   fetchCourses: (
     cookie: string,
     sesskey: string,
@@ -58,6 +54,25 @@ function loginRedirectResponse() {
 
 function loginPageHtml(): string {
   return '<html><body id="page-login-index"><form id="login" action="/login/index.php"><input name="username"></form></body></html>';
+}
+
+/**
+ * The HTML course-content leg belongs to the course-content owner: `getContent`
+ * tries the JSON state first and falls back to the page fetch, which is exactly
+ * the classification these specs assert.
+ */
+function courseContentOwner(service: KulonService) {
+  return (
+    service as unknown as {
+      courseContent: {
+        getContent: (
+          cookie: string,
+          sesskey: string,
+          courseId: number,
+        ) => Promise<KulonCourseContent>;
+      };
+    }
+  ).courseContent;
 }
 
 describe('Kulon page transport error classification', () => {
@@ -115,7 +130,7 @@ describe('Kulon page transport error classification', () => {
     const service = new KulonService(NO_STORE);
 
     await expect(
-      internals(service).contentFromHTML('cookie', 9371),
+      courseContentOwner(service).getContent('cookie', 'sesskey', 9371),
     ).rejects.toMatchObject({ reason: 'http-not-ok', status: 502 });
   });
 
@@ -152,8 +167,8 @@ describe('Kulon page transport error classification', () => {
     });
     const service = new KulonService(NO_STORE);
 
-    const error = await internals(service)
-      .contentFromHTML('cookie', 9371)
+    const error = await courseContentOwner(service)
+      .getContent('cookie', 'sesskey', 9371)
       .catch((value: unknown) => value);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe(message);

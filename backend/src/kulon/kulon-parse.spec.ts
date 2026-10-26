@@ -1,8 +1,11 @@
 import 'reflect-metadata';
+import fs from 'fs';
+import path from 'path';
 import {
   deriveSectionLabel,
   extractCourseCode,
   extractFileType,
+  mapCourseStateJson,
   parseAssignmentIndex,
   parseSectionProgress,
   parseSemester,
@@ -190,5 +193,45 @@ describe('parseSectionProgress', () => {
       now,
       { isPast: false },
     )).toBe(0);
+  });
+});
+
+describe('mapCourseStateJson', () => {
+  it('maps the captured core_courseformat_get_state payload into sections/items', () => {
+    const state = JSON.parse(
+      fs.readFileSync(
+        path.join(__dirname, '../../test/fixtures/kulon/courseformat-state.json'),
+        'utf8',
+      ),
+    );
+    // The parser owns the mapping contract; the JSON-string decoding contract is
+    // covered at the service boundary (getCourseContent).
+    const content = mapCourseStateJson(state, 15452);
+    expect(content.courseId).toBe(15452);
+    // Section 0 = General (forum Announcements + file kontrak).
+    const gen = content.sections.find((s) => s.id === 0);
+    expect(gen?.label).toBe('General');
+    expect(gen?.items.map((i) => i.kind)).toEqual(['forum', 'file']);
+    // Section ordinal 1: date-range title -> Pertemuan 1 + dateRange; file + quiz.
+    const s1 = content.sections.find((s) => s.id === 1);
+    expect(s1?.label).toBe('Pertemuan 1');
+    expect(s1?.dateRange).toBe('9 February - 15 February');
+    const fileItem = s1?.items.find((i) => i.kind === 'file');
+    expect(fileItem?.fileType).toBe('other'); // no f/<type> or extension in fixture url
+    expect(s1?.items.map((i) => i.kind).sort()).toEqual(['file', 'quiz']);
+    // Section 12: custom title preserved; assign kept.
+    const s12 = content.sections.find((s) => s.id === 12);
+    expect(s12?.label).toBe('Pertemuan 11 - Branch and Bound');
+    const assignItem = s12?.items.find((i) => i.kind === 'assign');
+    expect(assignItem?.name).toBe('Tugas BnB');
+    expect(assignItem?.cmid).toBe(128341);
+    // Stealth + uservisible:false resource cm (128338) is excluded by the inclusion
+    // rule (uservisible:false, module=resource). 126796 is also absent, but that is
+    // because its sectionnumber 11 has no matching section in the fixture (dropped by
+    // the owner lookup) — the uservisible rule is genuinely exercised by 128338.
+    const allCmid = content.sections.flatMap((s) => s.items.map((i) => i.cmid));
+    expect(allCmid).not.toContain(126796);
+    expect(allCmid).not.toContain(128338);
+    expect(allCmid).toContain(105222); // quiz, kept via module exception
   });
 });

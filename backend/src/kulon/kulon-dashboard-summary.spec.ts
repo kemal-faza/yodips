@@ -43,6 +43,18 @@ function makeCache() {
   } as unknown as DataCache;
 }
 
+/**
+ * The course-content/progress policy lives in its own owner now, so the spies
+ * below target that collaborator instead of a private KulonService method.
+ */
+function courseContentOwner(service: KulonService) {
+  return (
+    service as unknown as {
+      courseContent: { getContent: (...args: never[]) => Promise<unknown> };
+    }
+  ).courseContent;
+}
+
 describe('KulonService dashboard course summary', () => {
   it('provides a list payload without progress or lecturer fan-out', async () => {
     const cache = makeCache();
@@ -62,7 +74,7 @@ describe('KulonService dashboard course summary', () => {
       },
     ];
     jest.spyOn(service, 'fetchTimelineCourses').mockResolvedValue(courses as any);
-    const progress = jest.spyOn(service as any, 'fetchCourseContent');
+    const progress = jest.spyOn(courseContentOwner(service), 'getContent');
 
     await expect(service.getCourseList(ref())).resolves.toEqual(courses);
 
@@ -117,7 +129,7 @@ describe('KulonService dashboard course summary', () => {
       },
     ];
     jest.spyOn(service, 'fetchTimelineCourses').mockResolvedValue(courses as any);
-    const progress = jest.spyOn(service as any, 'fetchCourseContent');
+    const progress = jest.spyOn(courseContentOwner(service), 'getContent');
 
     await expect(service.getCourseSummary(ref())).resolves.toEqual([
       { ...courses[0], lecturer: 'Dr. X' },
@@ -196,7 +208,7 @@ describe('KulonService dashboard course summary', () => {
     );
     let active = 0;
     let maximum = 0;
-    jest.spyOn(service as any, 'fetchCourseContent').mockImplementation(async (_cookie: string, _sesskey: string, courseId: number) => {
+    jest.spyOn(courseContentOwner(service), 'getContent').mockImplementation(async (_cookie: string, _sesskey: string, courseId: number) => {
       active += 1;
       maximum = Math.max(maximum, active);
       await new Promise((resolve) => setImmediate(resolve));

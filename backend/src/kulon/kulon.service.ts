@@ -1,13 +1,17 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createKeyedSingleFlight } from '../common/single-flight';
-import { mapWithConcurrency } from '../common/map-with-concurrency';
 import { DataCache } from '../cache/data-cache';
 import { swrWindow } from '../cache/cache-policy';
 import { SiapService } from '../siap/siap.service';
+import { KulonCourseContentProvider } from './kulon-course-content';
+import {
+  kulonCacheKey,
+  normalizeKulonScope,
+  type KulonScope,
+} from './kulon-scope';
 import { SessionStore, SessionRef, isSessionRef } from '../session/session-store';
 import { sessionDead } from '../session/live-session';
 import {
-  cacheKeyForCurrent,
   cacheKeyForSession,
   flightKeyForCurrent,
   flightKeyForSession,
@@ -16,7 +20,6 @@ import {
   KulonUpstreamSession,
   KULON_ROUTE_CONTEXTS,
   parseSesskey as parseSesskeyHtml,
-  type KulonAjaxBatchEntry,
 } from './kulon-upstream.session';
 import type {
   KulonAssignment,
@@ -26,17 +29,13 @@ import type {
   KulonSessionCheck,
 } from './kulon-parse';
 import {
-  decodeCourseState,
   extractCourseCode,
   extractCourseModuleId,
   extractDescription,
   extractFiles,
   extractName,
-  mapCourseStateJson,
   parseAssignmentIndex,
-  parseContentHtml,
   parseQuizIndex,
-  parseSectionProgress,
   parseSemester,
   parseSubmissionFromHtml,
 } from './kulon-parse';
@@ -56,10 +55,6 @@ import {
 } from '../observability/telemetry';
 import type { UpstreamReason } from '../observability/telemetry-contract';
 
-type KulonScope =
-  | { kind: 'session'; ref: SessionRef }
-  | { kind: 'current'; sub: string };
-
 export type KulonRenewalValidation =
   | { kind: 'valid'; identity: string }
   | { kind: 'invalid' }
@@ -76,19 +71,6 @@ type TimelineCourses = {
   inprogress: Omit<KulonCourse, 'timelineStatus'>[];
   hidden: Omit<KulonCourse, 'timelineStatus'>[];
 };
-
-const COURSE_PROGRESS_CONCURRENCY = 4;
-
-function normalizeKulonScope(scope?: KulonScope | string): KulonScope | undefined {
-  if (typeof scope === 'string') return { kind: 'current', sub: scope };
-  return scope;
-}
-
-function kulonCacheKey(scope: KulonScope, ...parts: string[]): string {
-  return scope.kind === 'session'
-    ? cacheKeyForSession(scope.ref, 'kulon', ...parts)
-    : cacheKeyForCurrent(scope.sub, 'kulon', ...parts);
-}
 
 function httpErrorResult<T>(error: unknown, status: number): UpstreamAttemptResult<T> {
   return { ok: false, error, outcome: 'http_error', reason: 'http-not-ok', status };
@@ -133,6 +115,8 @@ export class KulonService {
   private readonly baseUrl = 'https://kulon2.undip.ac.id';
   /** One session seam: probe + sesskey + AJAX transport + stale classification. */
   private readonly upstream: KulonUpstreamSession;
+  /** Owner of course-content + progress policy (JSON-first, HTML fallback). */
+  private readonly courseContent: KulonCourseContentProvider;
   private readonly runtime: TelemetryRuntime;
 
   constructor(
@@ -151,6 +135,12 @@ export class KulonService {
     this.upstream =
       upstream ??
       new KulonUpstreamSession(sessionStore, cache, this.runtime);
+    this.courseContent = new KulonCourseContentProvider(
+      this.upstream,
+      (url, cookie, notFoundCode, route) =>
+        this.fetchKulonPage(url, cookie, notFoundCode, route),
+      cache,
+    );
   }
 
   private readonly cache?: DataCache;
@@ -586,7 +576,7 @@ export class KulonService {
     // progress, so any progress transport would be pure wasted upstream work.
     const mergedWithProgress: KulonCourse[] =
       opts.withProgress !== false
-        ? await this.mergeCourseProgress(sessionCookie, sesskey, scope, merged)
+        ? await this.courseContent.mergeProgress(sessionCookie, sesskey, scope, merged)
         : merged;
     // Best-effort lecturer merge by MIK code (shortname). Missing SIAP cookie /
     // empty IRS -> lecturer simply omitted. Failures are non-fatal. Skipped on
@@ -613,116 +603,6 @@ export class KulonService {
     // Payload persistence belongs exclusively to DataCache.getStale's refresh
     // owner. Internal progress-less calls still read, but never write.
     return result;
-  }
-
-  /**
-   * Courses-screen progress from ONE batched `core_courseformat_get_state` POST.
-   *
-   * Kulon answers each entry's `data` as a JSON STRING (not an object), so it is
-   * parsed here before `mapCourseStateJson`. A course whose entry is missing
-   * (Moodle truncates the response at the first failing entry), errored, or
-   * unparseable stays on the existing per-course scrape path; a batch transport
-   * failure puts EVERY course back there (today's behaviour).
-   */
-  private async mergeCourseProgress(
-    sessionCookie: string,
-    sesskey: string,
-    scope: KulonScope | undefined,
-    courses: KulonCourse[],
-  ): Promise<KulonCourse[]> {
-    if (courses.length === 0) return courses;
-    const progressById = new Map<number, number>();
-    let scraped: KulonCourse[] = [];
-    try {
-      const { results } = await this.upstream.ajaxMany(
-        sessionCookie,
-        sesskey,
-        courses.map((c) => ({
-          methodname: 'core_courseformat_get_state',
-          args: { courseid: c.id },
-        })),
-      );
-      courses.forEach((course, index) => {
-        const progress = this.progressFromStateEntry(results[index], course);
-        if (progress === undefined) scraped.push(course);
-        else if (progress !== null) progressById.set(course.id, progress);
-      });
-    } catch {
-      scraped = courses;
-    }
-    if (scraped.length > 0) {
-      const fallback = await this.scrapeCourseProgress(sessionCookie, sesskey, scope, scraped);
-      for (const [id, progress] of fallback) progressById.set(id, progress);
-    }
-    return courses.map((course) =>
-      progressById.has(course.id) ? { ...course, progress: progressById.get(course.id) } : course,
-    );
-  }
-
-  /**
-   * Progress from ONE batch entry: a number is a measured value, `null` means
-   * the course resolved but has no dated section to measure, and `undefined`
-   * means unresolved (absent/errored/malformed) so the caller must fall back.
-   */
-  private progressFromStateEntry(
-    entry: KulonAjaxBatchEntry | undefined,
-    course: KulonCourse,
-  ): number | null | undefined {
-    if (!entry || entry.error) return undefined;
-    try {
-      // Same decoder as the course-content path: `data` is a JSON string, and a
-      // malformed payload falls back to the per-course scrape instead of failing
-      // the whole Courses fetch.
-      const raw = decodeCourseState(entry.data);
-      return (
-        parseSectionProgress(mapCourseStateJson(raw, course.id).sections, new Date(), {
-          isPast: course.timelineStatus === 'past',
-        }) ?? null
-      );
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Existing per-course progress path: one course-content fetch (JSON-first,
-   * /course/view.php fallback) per course, bounded by
-   * COURSE_PROGRESS_CONCURRENCY. A failing course simply gets no progress.
-   */
-  private async scrapeCourseProgress(
-    sessionCookie: string,
-    sesskey: string,
-    scope: KulonScope | undefined,
-    courses: KulonCourse[],
-  ): Promise<Map<number, number>> {
-    const settled = await mapWithConcurrency(
-      courses,
-      COURSE_PROGRESS_CONCURRENCY,
-      async (c) => {
-        try {
-          return {
-            status: 'fulfilled' as const,
-            value: {
-              id: c.id,
-              progress: parseSectionProgress(
-                (await this.fetchCourseContent(sessionCookie, sesskey, c.id, scope)).sections,
-                undefined,
-                { isPast: c.timelineStatus === 'past' },
-              ),
-            },
-          };
-        } catch (reason) {
-          return { status: 'rejected' as const, reason };
-        }
-      },
-    );
-    const progressById = new Map<number, number>();
-    for (const r of settled) {
-      if (r.status === 'fulfilled' && r.value.progress != null) {
-        progressById.set(r.value.id, r.value.progress);
-      }
-    }
-    return progressById;
   }
 
   async fetchTimelineCourses(
@@ -1089,45 +969,6 @@ export class KulonService {
     return detail;
   }
 
-  /**
-   * Fetch the HTML of a course page and parse it into sections/items.
-   * Transport only — the two-pass parsing lives in parseContentHtml.
-   */
-  private async contentFromHTML(
-    cookie: string,
-    courseId: number,
-  ): Promise<KulonCourseContent> {
-    const html = await this.fetchKulonPage(
-      `${this.baseUrl}/course/view.php?id=${courseId}`,
-      cookie,
-      'COURSE_NOT_FOUND',
-      KULON_ROUTE_CONTEXTS.courseContent,
-    );
-    return parseContentHtml(html, courseId);
-  }
-
-  /**
-   * Fetch the Moodle course-format state as JSON (core_courseformat_get_state) and
-   * map it into KulonCourseContent. This is the JSON alternative to the more fragile
-   * HTML scrape contentFromHTML. A cm inclusion rule lives in the parser.
-   */
-  private async getCourseState(
-    cookie: string,
-    sesskey: string,
-    courseId: number,
-  ): Promise<KulonCourseContent> {
-    const raw = await this.upstream.ajax(
-      cookie,
-      sesskey,
-      'core_courseformat_get_state',
-      { courseid: courseId },
-    );
-    // `data` arrives as a JSON string; decodeCourseState owns that contract and
-    // throws on anything that isn't course-format state, so getCourseContent
-    // falls back to the HTML scrape instead of returning an empty course.
-    return mapCourseStateJson(decodeCourseState(raw), courseId);
-  }
-
   async getCourseContent(
     ref: SessionRef,
     courseId: number,
@@ -1136,46 +977,6 @@ export class KulonService {
       throw sessionDead();
     }
     const { cookie, sesskey } = await this.requireKulonAjaxForSession(ref);
-    return this.fetchCourseContent(cookie, sesskey, courseId, { kind: 'session', ref });
-  }
-
-  /** Content fetch without session resolution (caller owns the session). */
-  private async fetchCourseContent(
-    cookie: string,
-    sesskey: string,
-    courseId: number,
-    scopeInput?: KulonScope | string,
-  ): Promise<KulonCourseContent> {
-    const scope = normalizeKulonScope(scopeInput);
-    if (scope && this.cache) {
-      const { value } = await this.cache.getStale<KulonCourseContent>(
-        kulonCacheKey(scope, 'course-content', String(courseId)),
-        () => this.fetchCourseContentFresh(cookie, sesskey, courseId),
-        swrWindow('KULON_COURSE_CONTENT'),
-      );
-      return value;
-    }
-    return this.fetchCourseContentFresh(cookie, sesskey, courseId);
-  }
-
-  /**
-   * Fresh course-content fetch + parse (JSON-first, HTML fallback). Caller owns
-   * the session. Payload persistence belongs to DataCache.getStale's refresh owner.
-   */
-  private async fetchCourseContentFresh(
-    cookie: string,
-    sesskey: string,
-    courseId: number,
-  ): Promise<KulonCourseContent> {
-    // JSON-first via core_courseformat_get_state; fall back to the HTML scrape on
-    // ANY error (method disabled, session quirks, even a missing res.json() on a
-    // stubbed response) so a JSON regression never breaks course content.
-    let content: KulonCourseContent;
-    try {
-      content = await this.getCourseState(cookie, sesskey, courseId);
-    } catch {
-      content = await this.contentFromHTML(cookie, courseId);
-    }
-    return content;
+    return this.courseContent.getContent(cookie, sesskey, courseId, { kind: 'session', ref });
   }
 }
