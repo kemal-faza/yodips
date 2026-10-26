@@ -634,6 +634,31 @@ export function parseContentHtml(
   return { courseId, sections };
 }
 
+/** Shape of the `data` field of a `core_courseformat_get_state` AJAX entry. */
+export interface CourseStateJson {
+  course?: { id?: string | number };
+  section?: any[];
+  cm?: any[];
+}
+
+/**
+ * Decode the `data` field of a `core_courseformat_get_state` AJAX entry.
+ *
+ * Kulon answers `data` as a JSON STRING, not an object — the single reason this
+ * lives in one place instead of being re-derived per caller. A caller may also
+ * hand over an already decoded object (fixtures, a future Moodle shape), so both
+ * are accepted. A 200 that doesn't shape as course-format state (HTML error
+ * page, malformed body, empty object) THROWS so the caller falls back to the
+ * HTML scrape instead of rendering an empty course.
+ */
+export function decodeCourseState(data: unknown): CourseStateJson {
+  const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+  if (!Array.isArray((parsed as CourseStateJson | null | undefined)?.section)) {
+    throw new Error('core_courseformat_get_state returned no section array');
+  }
+  return parsed as CourseStateJson;
+}
+
 /**
  * Map the Moodle course-format state JSON (core_courseformat_get_state) into
  * KulonCourseContent. `kind` derives from `cm.module` (lowercase), NOT

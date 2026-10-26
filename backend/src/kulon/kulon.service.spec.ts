@@ -453,6 +453,39 @@ describe('getCourseContent (HTML fixture)', () => {
   });
 });
 
+describe('getCourseContent (JSON-first contract)', () => {
+  it('maps a JSON-STRING `data` payload and never pays for the HTML fallback', async () => {
+    const svc = makeAuthedKulonSvc();
+    // Real Kulon answers `data` as the fixture TEXT, not a decoded object. This is
+    // the shape that used to fail the `Array.isArray(raw.section)` guard, so every
+    // course-content cache miss burned one POST and then fell back to HTML.
+    const stateText = fs.readFileSync(
+      path.join(__dirname, '../../test/fixtures/kulon/courseformat-state.json'),
+      'utf8',
+    );
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/lib/ajax/service.php?sesskey=sk',
+      json: async () => [{ error: false, data: stateText }],
+      // Present so a fallback would SUCCEED and surface as the call-count
+      // assertion below, instead of a confusing "text is not a function".
+      text: async () => '',
+    });
+    global.fetch = fetchMock as any;
+
+    const content = await svc.getCourseContent(ref('u1'), 15452);
+
+    expect(content.sections.find((s) => s.id === 0)?.label).toBe('General');
+    expect(content.sections.find((s) => s.id === 12)?.label).toBe(
+      'Pertemuan 11 - Branch and Bound',
+    );
+    // The wasted /course/view.php GET must not happen.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('service.php');
+  });
+});
+
 describe('KulonService', () => {
   let svc: KulonService;
   beforeEach(() => {
@@ -1506,7 +1539,8 @@ describe('getCourseState', () => {
       status: 200,
       url: 'https://kulon2.undip.ac.id/lib/ajax/service.php?sesskey=sk',
       json: async () => [
-        { error: false, data: state },
+        // Real upstream shape: `data` is a JSON string, not a decoded object.
+        { error: false, data: JSON.stringify(state) },
       ],
     });
     // getCourseState is private -> access via (svc as any), matching existing spec pattern.
@@ -1575,10 +1609,13 @@ describe('Courses progress via one batched get_state POST', () => {
     });
   }
 
-  /** Dated section so the HTML fallback path yields a measurable progress. */
+  /** Section titles carrying a date range, in BOTH the HTML and state shapes. */
+  const DATED_TITLES = ['General', '2 March - 9 March'];
+
+  /** Dated section so the per-course fallback yields a measurable progress. */
   const DATED_SCRAPE_HTML =
-    '<li id="section-0" data-sectionname="General"></li>' +
-    '<li id="section-1" data-sectionname="2 March - 9 March"></li>';
+    `<li id="section-0" data-sectionname="${DATED_TITLES[0]}"></li>` +
+    `<li id="section-1" data-sectionname="${DATED_TITLES[1]}"></li>`;
 
   function okJson(url: string, payload: unknown): Response {
     return { ok: true, status: 200, url, json: async () => payload } as unknown as Response;
@@ -1629,6 +1666,15 @@ describe('Courses progress via one batched get_state POST', () => {
     return {
       total: calls.length,
       batchBodies: posts.filter((entries) => entries.length > 1),
+      // Courses that entered the per-course fallback, read from its single-entry
+      // get_state POST. Asserting this instead of the HTML leg keeps the test on
+      // the POLICY (which courses fall back) and off the fallback's transport.
+      fallbackCourseIds: posts
+        .filter(
+          (entries) =>
+            entries.length === 1 && entries[0]?.methodname === COURSE_STATE_METHOD,
+        )
+        .map((entries) => Number(entries[0].args?.courseid)),
       pageGets: calls
         .filter((c) => c.url.includes('/course/view.php'))
         .map((c) => c.url),
@@ -1699,13 +1745,13 @@ describe('Courses progress via one batched get_state POST', () => {
     expect(progressOf(courses, 3)).toBeUndefined();
   });
 
-  it('falls back to the per-course HTML path for the truncated tail (1 of 3 results)', async () => {
+  it('falls back to the per-course path for the truncated tail (1 of 3 results)', async () => {
     const fetchMock = routedKulonFetch({
       timeline: TIMELINE,
       batch: () => [
         { error: false, data: statePayload(1, ['General', '9 February - 15 February']) },
       ],
-      singleState: (courseId) => statePayload(courseId, ['General']),
+      singleState: (courseId) => statePayload(courseId, DATED_TITLES),
       html: () => DATED_SCRAPE_HTML,
     });
     global.fetch = fetchMock as any;
@@ -1713,22 +1759,17 @@ describe('Courses progress via one batched get_state POST', () => {
 
     const courses = await svc.getCourses(ref('u1'));
 
-    const { pageGets } = transports(fetchMock);
-    // Only the two courses missing from the prefix are scraped.
-    expect(pageGets).toHaveLength(2);
-    expect(pageGets.some((url) => url.includes('id=2'))).toBe(true);
-    expect(pageGets.some((url) => url.includes('id=3'))).toBe(true);
-    expect(pageGets.some((url) => url.includes('id=1'))).toBe(false);
-    // Course 1 keeps the batch value; 2/3 come from the scrape (2 is past -> 100).
+    const { fallbackCourseIds, pageGets } = transports(fetchMock);
+    // Only the two courses missing from the prefix enter the fallback.
+    expect(fallbackCourseIds.sort((a, b) => a - b)).toEqual([2, 3]);
+    // The JSON leg answers, so the wasted HTML GET never happens.
+    expect(pageGets).toHaveLength(0);
+    // Course 1 keeps the batch value; 2/3 come from the per-course path (2 is past -> 100).
     expect(progressOf(courses, 1)).toBe(
       stateProgress(1, ['General', '9 February - 15 February'], false),
     );
     expect(progressOf(courses, 2)).toBe(100);
-    expect(progressOf(courses, 3)).toBe(
-      parseSectionProgress(parseContentHtml(DATED_SCRAPE_HTML, 3).sections, undefined, {
-        isPast: false,
-      }),
-    );
+    expect(progressOf(courses, 3)).toBe(stateProgress(3, DATED_TITLES, false));
   });
 
   it('falls back only for the course whose batch entry errored', async () => {
@@ -1739,7 +1780,7 @@ describe('Courses progress via one batched get_state POST', () => {
         { error: true, exception: { errorcode: 'invalidparameter', message: 'Invalid course id' } },
         { error: false, data: statePayload(3, ['General', 'Materi Umum']) },
       ],
-      singleState: (courseId) => statePayload(courseId, ['General']),
+      singleState: (courseId) => statePayload(courseId, DATED_TITLES),
       html: () => DATED_SCRAPE_HTML,
     });
     global.fetch = fetchMock as any;
@@ -1747,13 +1788,13 @@ describe('Courses progress via one batched get_state POST', () => {
 
     const courses = await svc.getCourses(ref('u1'));
 
-    const { pageGets } = transports(fetchMock);
-    expect(pageGets).toHaveLength(1);
-    expect(pageGets[0]).toContain('id=2');
+    const { fallbackCourseIds, pageGets } = transports(fetchMock);
+    expect(fallbackCourseIds).toEqual([2]);
+    expect(pageGets).toHaveLength(0);
     expect(progressOf(courses, 1)).toBe(
       stateProgress(1, ['General', '9 February - 15 February'], false),
     );
-    expect(progressOf(courses, 2)).toBe(100); // past course via the scrape
+    expect(progressOf(courses, 2)).toBe(100); // past course via the fallback
     expect(progressOf(courses, 3)).toBeUndefined(); // resolved, no dated section
   });
 
@@ -1767,7 +1808,7 @@ describe('Courses progress via one batched get_state POST', () => {
         { error: false, data: JSON.stringify({ course: { id: '2' } }) },
         { error: false, data: statePayload(3, ['General', 'Materi Umum']) },
       ],
-      singleState: (courseId) => statePayload(courseId, ['General']),
+      singleState: (courseId) => statePayload(courseId, DATED_TITLES),
       html: () => DATED_SCRAPE_HTML,
     });
     global.fetch = fetchMock as any;
@@ -1775,23 +1816,26 @@ describe('Courses progress via one batched get_state POST', () => {
 
     const courses = await svc.getCourses(ref('u1'));
 
-    const { pageGets } = transports(fetchMock);
-    expect(pageGets).toHaveLength(2);
-    expect(pageGets.some((url) => url.includes('id=1'))).toBe(true);
-    expect(pageGets.some((url) => url.includes('id=2'))).toBe(true);
-    expect(progressOf(courses, 1)).toBe(100); // past course via the scrape
+    const { fallbackCourseIds, pageGets } = transports(fetchMock);
+    expect(fallbackCourseIds.sort((a, b) => a - b)).toEqual([1, 2]);
+    expect(pageGets).toHaveLength(0);
+    expect(progressOf(courses, 1)).toBe(100); // past course via the fallback
     expect(progressOf(courses, 2)).toBe(100);
     expect(progressOf(courses, 3)).toBeUndefined(); // resolved, no dated section
   });
 
-  it('falls back to the HTML path for ALL courses when the batch call itself fails', async () => {
+  it('falls back to the per-course path for ALL courses when the batch call itself fails', async () => {
     const fetchMock = routedKulonFetch({
       timeline: TIMELINE,
       batch: () => {
         throw new Error('connection reset');
       },
-      singleState: (courseId) => statePayload(courseId, ['General']),
-      // Course 1's scrape fails too: progress must be omitted, never fatal.
+      singleState: (courseId) =>
+        // Course 1's JSON leg is unusable AND its HTML leg 500s: progress must be
+        // omitted, never fatal.
+        courseId === 1
+          ? '<html>Service unavailable</html>'
+          : statePayload(courseId, DATED_TITLES),
       html: (courseId) => (courseId === 1 ? undefined : DATED_SCRAPE_HTML),
     });
     global.fetch = fetchMock as any;
@@ -1799,10 +1843,13 @@ describe('Courses progress via one batched get_state POST', () => {
 
     const courses = await svc.getCourses(ref('u1'));
 
-    const { pageGets } = transports(fetchMock);
-    expect(pageGets).toHaveLength(3);
+    const { fallbackCourseIds, pageGets } = transports(fetchMock);
+    expect(fallbackCourseIds.sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    // Only the course whose JSON leg failed reaches the HTML leg.
+    expect(pageGets).toHaveLength(1);
+    expect(pageGets[0]).toContain('id=1');
     expect(courses.map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
-    expect(progressOf(courses, 1)).toBeUndefined(); // failed scrape is non-fatal
+    expect(progressOf(courses, 1)).toBeUndefined(); // failed fallback is non-fatal
     expect(progressOf(courses, 2)).toBe(100);
     expect(progressOf(courses, 3)).toBe(
       parseSectionProgress(parseContentHtml(DATED_SCRAPE_HTML, 3).sections, undefined, {

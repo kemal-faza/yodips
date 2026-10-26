@@ -26,6 +26,7 @@ import type {
   KulonSessionCheck,
 } from './kulon-parse';
 import {
+  decodeCourseState,
   extractCourseCode,
   extractCourseModuleId,
   extractDescription,
@@ -669,18 +670,16 @@ export class KulonService {
   ): number | null | undefined {
     if (!entry || entry.error) return undefined;
     try {
-      const raw = typeof entry.data === 'string' ? JSON.parse(entry.data) : entry.data;
-      if (!Array.isArray((raw as { section?: unknown } | null | undefined)?.section)) {
-        return undefined;
-      }
+      // Same decoder as the course-content path: `data` is a JSON string, and a
+      // malformed payload falls back to the per-course scrape instead of failing
+      // the whole Courses fetch.
+      const raw = decodeCourseState(entry.data);
       return (
         parseSectionProgress(mapCourseStateJson(raw, course.id).sections, new Date(), {
           isPast: course.timelineStatus === 'past',
         }) ?? null
       );
     } catch {
-      // Malformed payload: fall back to the per-course scrape instead of
-      // failing the whole Courses fetch.
       return undefined;
     }
   }
@@ -1117,20 +1116,16 @@ export class KulonService {
     sesskey: string,
     courseId: number,
   ): Promise<KulonCourseContent> {
-    const raw = (await this.upstream.ajax(
+    const raw = await this.upstream.ajax(
       cookie,
       sesskey,
       'core_courseformat_get_state',
       { courseid: courseId },
-    )) as { course?: any; section?: any[]; cm?: any[] };
-    // A 200 that doesn't shape as course-format state (e.g. an HTML error page, a
-    // malformed body, or a method that returns an empty object) must NOT be treated
-    // as a valid empty course — throw so getCourseContent falls back to the HTML
-    // scrape instead of silently returning no content.
-    if (!Array.isArray(raw?.section)) {
-      throw new Error('core_courseformat_get_state returned no section array');
-    }
-    return mapCourseStateJson(raw, courseId);
+    );
+    // `data` arrives as a JSON string; decodeCourseState owns that contract and
+    // throws on anything that isn't course-format state, so getCourseContent
+    // falls back to the HTML scrape instead of returning an empty course.
+    return mapCourseStateJson(decodeCourseState(raw), courseId);
   }
 
   async getCourseContent(
