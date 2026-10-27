@@ -29,7 +29,16 @@ import {
 import type { HandoffRaw, Service, OutboundStatus } from "./core/contract.js";
 import { createLifecycleCoordinator } from "./core/single-flight.js";
 import { createSerializedFlowRunner } from "./core/flow-runner.js";
-import { performHandoff, performLogout, performStatus } from "./core/lifecycle.js";
+import {
+  classifyRenewalNavigation,
+  isAllowedRenewalTarget,
+  performHandoff,
+  performLogout,
+  performStatus,
+  performUpstreamRenewal,
+  type RenewableService,
+  type RenewalOutcome,
+} from "./core/lifecycle.js";
 
 const SERVER_KEY = "serverUrl";
 const STATE_KEY = "ssoLoginState";
@@ -102,6 +111,122 @@ async function getFlowCookies(
 async function getServerUrl(): Promise<string> {
   const res = await chrome.storage.sync.get(SERVER_KEY);
   return (res[SERVER_KEY] as string) || DEFAULT_SERVER_URL;
+}
+
+const activeRenewalCancels = new Set<() => void>();
+const renewalFlights = new Map<string, Promise<{ status: RenewalOutcome }>>();
+
+/** Read only the browser store belonging to the requesting app tab. */
+async function readRenewalCookie(service: RenewableService, appTabId: number): Promise<string> {
+  const stores = await chrome.cookies.getAllCookieStores();
+  const store = stores.find((candidate) => candidate.tabIds.includes(appTabId));
+  if (!store) throw new Error('Cookie store unavailable');
+  const cookies = await chrome.cookies.getAll({ storeId: store.id });
+  const body = buildHandoffBody(cookies);
+  return service === 'kulon' ? body.kulonCookie : body.siapCookie;
+}
+
+/** A background tab is closed as soon as the ticket lands or interaction is required. */
+async function captureRenewalTicket(
+  service: RenewableService,
+  appTabId: number,
+  interactive: boolean,
+): Promise<'ready' | 'interaction-required' | 'unavailable'> {
+  let tabId: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let resolveResult: (value: 'ready' | 'interaction-required' | 'unavailable') => void = () => {};
+  let settled = false;
+  let retriedAfterSso = false;
+  const ticketUrl = () => service === 'kulon' ? buildKulonTicketUrl() : buildSiapTicketUrl();
+  const result = new Promise<'ready' | 'interaction-required' | 'unavailable'>((resolve) => {
+    resolveResult = resolve;
+  });
+  const finish = (value: 'ready' | 'interaction-required' | 'unavailable') => {
+    if (settled) return;
+    settled = true;
+    resolveResult(value);
+  };
+  const cancel = () => finish('unavailable');
+  const inspect = (id: number, url: string | undefined, complete: boolean) => {
+    if (id !== tabId) return;
+    if (interactive && complete && !retriedAfterSso && url) {
+      try {
+        const target = new URL(url);
+        if (target.origin === 'https://sso.undip.ac.id' && target.pathname.replace(/\/+$/, '') === '/pages/dashboard') {
+          retriedAfterSso = true;
+          void chrome.tabs.update(id, { url: ticketUrl() }).catch(cancel);
+          return;
+        }
+      } catch { /* classify invalid URLs below */ }
+    }
+    const outcome = classifyRenewalNavigation(service, url, complete);
+    if (interactive && outcome === 'interaction-required') return;
+    if (outcome !== 'pending') finish(outcome);
+  };
+  const onUpdated = (id: number, change: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+    inspect(id, change.url ?? tab.url, change.status === 'complete');
+  };
+  const onRemoved = (id: number) => {
+    if (id !== tabId) return;
+    tabId = undefined;
+    cancel();
+  };
+  chrome.tabs.onUpdated.addListener(onUpdated);
+  chrome.tabs.onRemoved.addListener(onRemoved);
+  activeRenewalCancels.add(cancel);
+  timer = setTimeout(cancel, interactive ? 5 * 60_000 : 30_000);
+  try {
+    const appTab = await Promise.race([chrome.tabs.get(appTabId), result.then(() => null)]);
+    if (!appTab || settled) return await result;
+    const create = chrome.tabs.create({
+      windowId: appTab.windowId,
+      active: interactive,
+      url: ticketUrl(),
+    }).then((tab) => {
+      if (settled) {
+        if (tab.id != null) void chrome.tabs.remove(tab.id).catch(() => {});
+        return null;
+      }
+      tabId = tab.id;
+      return tab;
+    });
+    const tab = await Promise.race([create, result.then(() => null)]);
+    if (!tab) return await result;
+    if (tabId == null) return 'unavailable';
+    if (!settled) {
+      const current = await Promise.race([chrome.tabs.get(tabId), result.then(() => null)]);
+      if (current) {
+        inspect(tabId, current.url, current.status === 'complete');
+      }
+    }
+    return await result;
+  } catch {
+    return 'unavailable';
+  } finally {
+    if (timer) clearTimeout(timer);
+    activeRenewalCancels.delete(cancel);
+    chrome.tabs.onUpdated.removeListener(onUpdated);
+    chrome.tabs.onRemoved.removeListener(onRemoved);
+    if (tabId != null) void chrome.tabs.remove(tabId).catch(() => {});
+  }
+}
+
+async function postRenewal(
+  backend: string,
+  service: RenewableService,
+  cookie: string,
+  token: string,
+): Promise<{ status: number }> {
+  const res = await fetch(`${backend.replace(/\/+$/, '')}/api/auth/upstream-session/renew`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ service, cookie }),
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.status !== 200) return { status: res.status };
+  const data = await res.json().catch(() => null);
+  return { status: data?.service === service && data?.status === 'renewed' ? 200 : 502 };
 }
 async function fetchHandoff(url: string, body: unknown): Promise<HandoffRaw> {
   let res: Response;
@@ -432,6 +557,7 @@ chrome.runtime.onMessageExternal.addListener(
     let messageEpoch: number;
     if (action === "logout") {
       lifecycle.invalidate();
+      for (const cancel of activeRenewalCancels) cancel();
       messageEpoch = lifecycle.currentEpoch();
     } else {
       messageEpoch =
@@ -504,6 +630,41 @@ chrome.runtime.onMessageExternal.addListener(
               }),
           );
           return void sendResponse(response);
+        }
+        if (action === "renew") {
+          const input = message as { service?: unknown; token?: unknown; interactive?: unknown };
+          const service = input.service;
+          const token = input.token;
+          const interactive = input.interactive === true;
+          const backend = await getServerUrl();
+          if (
+            appTabId == null ||
+            (service !== 'kulon' && service !== 'siap') ||
+            typeof token !== 'string' || token.length === 0 || token.length > 8192 ||
+            !isAllowedRenewalTarget(sender.url ?? '', backend)
+          ) {
+            return void sendResponse({ status: 'unavailable' });
+          }
+          const flightKey = `${appTabId}:${service}:${messageEpoch}:${interactive}`;
+          let flight = renewalFlights.get(flightKey);
+          if (!flight) {
+            flight = performUpstreamRenewal({
+              service,
+              token,
+              requestEpoch: messageEpoch,
+              currentEpoch: lifecycle.currentEpoch,
+              deps: {
+                readCookie: () => readRenewalCookie(service, appTabId),
+                renew: (target, cookie, jwt) => postRenewal(backend, target, cookie, jwt),
+                captureTicket: (target) => captureRenewalTicket(target, appTabId, interactive),
+              },
+            });
+            renewalFlights.set(flightKey, flight);
+            void flight.finally(() => {
+              if (renewalFlights.get(flightKey) === flight) renewalFlights.delete(flightKey);
+            });
+          }
+          return void sendResponse(await flight);
         }
         if (action === "status") {
           // Self-healing poll: return the last completed handoff result when

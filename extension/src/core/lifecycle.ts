@@ -155,3 +155,96 @@ export async function performStatus({
   const state = await deps.getState();
   return pollStatusForEpoch(requestEpoch, currentEpoch(), cached, state);
 }
+
+export type RenewableService = 'kulon' | 'siap';
+export type RenewalOutcome = 'recovered' | 'interaction-required' | 'unavailable' | 'conflict' | 'cancelled';
+
+/** Only an upstream landing may trigger cookie validation; login stays interactive. */
+export function classifyRenewalNavigation(
+  service: RenewableService,
+  rawUrl: string | undefined,
+  complete: boolean,
+): 'pending' | 'ready' | 'interaction-required' | 'unavailable' {
+  if (!rawUrl || rawUrl === 'about:blank') return 'pending';
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+    const microsoftHosts = [
+      'login.microsoftonline.com', 'login.live.com', 'account.microsoft.com', 'login.microsoft.com',
+      'msftauth.net', 'aadcdn.msauth.net', 'aadsignin.microsoftonline.com', 'sts.microsoftonline.com',
+      'login.msa.akadns.net', 'graph.microsoft.com',
+    ];
+    if (url.protocol === 'https:' && microsoftHosts.some((name) => host === name || host.endsWith(`.${name}`))) {
+      return complete ? 'interaction-required' : 'pending';
+    }
+    if (url.origin === 'https://sso.undip.ac.id') {
+      return /\/login(?:\/|$)/i.test(url.pathname) ? 'interaction-required' : 'pending';
+    }
+    const origin = service === 'kulon' ? 'https://kulon2.undip.ac.id' : 'https://siap.undip.ac.id';
+    if (url.origin !== origin) return 'unavailable';
+    if (service === 'siap' && url.pathname === '/sso/login') return 'pending';
+    if (/\/login(?:\/|$)/i.test(url.pathname)) return 'interaction-required';
+    if (service === 'kulon' && url.pathname.startsWith('/auth/')) return 'pending';
+    return complete ? 'ready' : 'pending';
+  } catch {
+    return 'unavailable';
+  }
+}
+
+/** Do not forward a web JWT to a backend selected by an unrelated origin. */
+export function isAllowedRenewalTarget(appUrl: string, backendUrl: string): boolean {
+  try {
+    const app = new URL(appUrl);
+    const backend = new URL(backendUrl);
+    if (backend.username || backend.password || backend.search || backend.hash || backend.pathname !== '/') return false;
+    if (app.origin === 'https://sso.crunchy.my.id') {
+      return backend.origin === 'https://backend.crunchy.my.id';
+    }
+    const localApp = app.origin === 'http://localhost:5173' || app.origin === 'http://127.0.0.1:5173';
+    const localBackend = backend.origin === 'http://localhost:3000' || backend.origin === 'http://127.0.0.1:3000';
+    return localApp && localBackend;
+  } catch {
+    return false;
+  }
+}
+
+/** One bounded renewal attempt, fenced against logout or a replacement login. */
+export async function performUpstreamRenewal(input: {
+  service: RenewableService;
+  token: string;
+  requestEpoch: number;
+  currentEpoch: () => number;
+  deps: {
+    readCookie: (service: RenewableService) => Promise<string>;
+    renew: (service: RenewableService, cookie: string, token: string) => Promise<{ status: number }>;
+    captureTicket: (service: RenewableService) => Promise<'ready' | 'interaction-required' | 'unavailable'>;
+  };
+}): Promise<{ status: RenewalOutcome }> {
+  const { service, token, deps } = input;
+  const cancelled = () => input.requestEpoch !== input.currentEpoch();
+  try {
+    if (!token || cancelled()) return { status: 'cancelled' };
+    const cookie = await deps.readCookie(service);
+    if (cancelled()) return { status: 'cancelled' };
+    if (cookie) {
+      const response = await deps.renew(service, cookie, token);
+      if (cancelled()) return { status: 'cancelled' };
+      if (response.status === 200) return { status: 'recovered' };
+      if (response.status === 409) return { status: 'conflict' };
+      if (response.status !== 422) return { status: 'unavailable' };
+    }
+
+    const captured = await deps.captureTicket(service);
+    if (cancelled()) return { status: 'cancelled' };
+    if (captured !== 'ready') return { status: captured };
+    const nextCookie = await deps.readCookie(service);
+    if (cancelled()) return { status: 'cancelled' };
+    if (!nextCookie) return { status: 'unavailable' };
+    const response = await deps.renew(service, nextCookie, token);
+    if (cancelled()) return { status: 'cancelled' };
+    if (response.status === 200) return { status: 'recovered' };
+    return { status: response.status === 409 ? 'conflict' : 'unavailable' };
+  } catch {
+    return { status: cancelled() ? 'cancelled' : 'unavailable' };
+  }
+}
