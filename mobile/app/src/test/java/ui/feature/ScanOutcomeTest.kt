@@ -132,4 +132,20 @@ class ScanOutcomeTest {
         assertFalse(out.success)
         assertEquals("Coba lagi.", out.message)
     }
+
+    @Test
+    fun `SESSION_RECOVERED shows the recovery message instead of prompting re-login`() {
+        val message = "Sesi SIAP pulih. Silakan scan ulang hanya jika presensi sebelumnya belum tercatat."
+        val out = scanOutcome(ApiResult.Error(401, message, ErrorType.SESSION_RECOVERED))
+        assertFalse(out.success)
+        assertEquals(message, out.message)
+        assertFalse(out.message.contains("login ulang", ignoreCase = true))
+    }
+
+    @Test
+    fun `STALE_SESSION still prompts re-login`() {
+        val out = scanOutcome(ApiResult.Error(401, "stale", ErrorType.STALE_SESSION))
+        assertFalse(out.success)
+        assertTrue(out.message.contains("login ulang", ignoreCase = true))
+    }
 }

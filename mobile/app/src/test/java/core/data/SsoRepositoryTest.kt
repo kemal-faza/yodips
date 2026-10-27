@@ -434,7 +434,9 @@ class SsoRepositoryTest {
         assertTrue(result is ApiResult.Error)
         assertEquals(1, submissions)
         assertEquals(1, captures)
-        assertTrue((result as ApiResult.Error).message.contains("pulih", ignoreCase = true))
+        val error = result as ApiResult.Error
+        assertEquals(ErrorType.SESSION_RECOVERED, error.type)
+        assertTrue(error.message.contains("belum tercatat", ignoreCase = true))
     }
 
     @Test

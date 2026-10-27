@@ -26,4 +26,7 @@ enum class ErrorType {
     NOT_FOUND,
     SERVER, // 5xx or unexpected upstream/parsing failure
     UPSTREAM, // a real (non-session) business error surfaced by an upstream service
+    // Request gagal dengan hasil belum pasti: sesi layanan sudah dipulihkan,
+    // tetapi request TIDAK boleh diasumsikan gagal (bisa saja sudah diproses).
+    SESSION_RECOVERED,
 }

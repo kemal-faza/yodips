@@ -254,8 +254,15 @@ class SsoRepository(
             ?: SessionRecoveryOutcome.UNSUPPORTED
         if (outcome == SessionRecoveryOutcome.RECOVERED) {
             // The original QR POST is never replayed: let the user decide whether
-            // to send a fresh scan after the session has been restored.
-            return ApiResult.Error(stale.code, "Sesi SIAP pulih. Silakan scan ulang untuk presensi.", stale.type)
+            // to send a fresh scan after the session has been restored. The
+            // previous attempt may still have been recorded (a 200 with an
+            // unparsable body is reported as a stale 401), so the copy must not
+            // claim the submission definitely failed.
+            return ApiResult.Error(
+                stale.code,
+                "Sesi SIAP pulih. Silakan scan ulang hanya jika presensi sebelumnya belum tercatat.",
+                ErrorType.SESSION_RECOVERED,
+            )
         }
         return recoveryError(stale, outcome, UpstreamSessionService.SIAP)
     }

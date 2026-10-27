@@ -108,6 +108,7 @@ internal fun errorStateTitle(type: ErrorType): String =
     when (type) {
         ErrorType.UNAUTHORIZED -> "Sesi berakhir"
         ErrorType.STALE_SESSION -> "Sesi SIAP/Kulon perlu diperbarui"
+        ErrorType.SESSION_RECOVERED -> "Sesi sudah dipulihkan"
         ErrorType.RECOVERY_UNSUPPORTED -> "Pemulihan perlu dilanjutkan di Android"
         else -> "Tidak dapat memuat data"
     }

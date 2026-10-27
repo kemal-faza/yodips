@@ -60,6 +60,10 @@ fun scanOutcome(
                     ScanOutcome(false, "Sesi SIAP kedaluwarsa. Silakan login ulang.")
                 }
 
+                ErrorType.SESSION_RECOVERED -> {
+                    ScanOutcome(false, result.message)
+                }
+
                 ErrorType.RECOVERY_UNSUPPORTED -> {
                     ScanOutcome(false, result.message)
                 }
