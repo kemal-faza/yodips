@@ -1,5 +1,6 @@
 package ac.undip.sso.core.scan
 
+import ac.undip.sso.core.network.UserMessages
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -78,14 +79,16 @@ object QrScanner {
         // Decoder jsQR - dynamic import di-cache browser, murah dipanggil ulang.
         val decoder = try {
             awaitJs(jsImportJsQr())
-        } catch (e: Throwable) {
-            return QrScanResult.Error("Gagal menyiapkan pembaca QR: ${e.message}")
+        } catch (_: Throwable) {
+            return QrScanResult.Error(UserMessages.SCANNER_SETUP)
         }
 
         val camera = try {
             startCamera(region)
         } catch (e: Throwable) {
-            return QrScanResult.Error(e.message ?: "Kamera tidak tersedia.")
+            // startCamera's JS layer throws already-humanized copy per error
+            // class; the catalog only covers a blank/unexpected throw.
+            return QrScanResult.Error(e.message?.takeIf { it.isNotBlank() } ?: UserMessages.SCANNER_UNAVAILABLE)
         }
 
         try {
@@ -115,8 +118,8 @@ object QrScanner {
     suspend fun scanFromFile(): QrScanResult {
         val decoder = try {
             awaitJs(jsImportJsQr())
-        } catch (e: Throwable) {
-            return QrScanResult.Error("Gagal menyiapkan pembaca QR: ${e.message}")
+        } catch (_: Throwable) {
+            return QrScanResult.Error(UserMessages.SCANNER_SETUP)
         }
         return try {
             val text = awaitJs(jsDecodeFile(decoder))?.toString()
@@ -125,8 +128,8 @@ object QrScanner {
             } else {
                 QrScanResult.Success(text.trim())
             }
-        } catch (e: Throwable) {
-            QrScanResult.Error(e.message ?: "Gagal membaca foto.")
+        } catch (_: Throwable) {
+            QrScanResult.Error(UserMessages.PHOTO_UNREADABLE)
         }
     }
 
@@ -255,10 +258,10 @@ private external fun jsErrText(err: JsAny?): JsString?
         "if (name === 'NotAllowedError' || name === 'SecurityError') onError('Izin kamera ditolak. Izinkan akses kamera di browser lalu coba lagi, atau gunakan input manual.');" +
         "else if (name === 'NotFoundError' || name === 'OverconstrainedError') onError('Kamera tidak ditemukan pada perangkat ini. Gunakan input manual.');" +
         "else if (name === 'NotReadableError') onError('Kamera sedang dipakai aplikasi lain. Tutup aplikasi itu lalu coba lagi.');" +
-        "else onError('Kamera gagal dimulai (' + name + '). Gunakan input manual.');" +
+        "else onError('" + UserMessages.SCANNER_START + "');" +
         "});" +
         "} catch (err) {" +
-        "onError('Kamera gagal dimulai: ' + (err && err.message ? err.message : err));" +
+        "onError('" + UserMessages.SCANNER_START + "');" +
         "}" +
         "}",
 )

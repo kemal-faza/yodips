@@ -4,6 +4,7 @@ import ac.undip.sso.appBaseUrl
 import ac.undip.sso.core.data.TokenStoreLike
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.BackendCodes
+import ac.undip.sso.core.network.UserMessages
 import ac.undip.sso.core.network.createPlatformClient
 import ac.undip.sso.core.scan.QrScanResult
 import ac.undip.sso.core.scan.QrScanner
@@ -149,21 +150,21 @@ fun LoginScreen(
                         val err = try {
                             json.decodeFromString<PairErrorResponse>(text)
                         } catch (_: Exception) {
-                            PairErrorResponse("Gagal terhubung ke server", "NETWORK_ERROR")
+                            PairErrorResponse("", "NETWORK_ERROR")
                         }
                         error = when (err.code) {
                             BackendCodes.INVALID_CODE -> "Kode tidak valid atau sudah pernah dipakai."
                             BackendCodes.EXPIRED_CODE -> "Kode sudah kedaluwarsa. Minta kode baru."
                             BackendCodes.SESSION_DEAD -> "Sesi asal sudah berakhir. Login ulang di perangkat utama."
-                            else -> err.message.ifBlank { "Gagal terhubung ke server" }
+                            else -> UserMessages.PAIR_FAILED
                         }
                     }
                 } finally {
                     client.close()
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 code = ""
-                error = "Gagal terhubung ke server: ${e.message}"
+                error = UserMessages.NETWORK
             } finally {
                 busy = false
             }
