@@ -1,6 +1,8 @@
 package ac.undip.sso.core.session
 
 import ac.undip.sso.core.data.TokenStoreLike
+import ac.undip.sso.core.network.UpstreamSessionService
+import ac.undip.sso.core.network.jwtSessionGeneration
 import ac.undip.sso.core.data.CookieUpdateResult
 import android.content.Context
 import androidx.datastore.core.DataStore
@@ -52,16 +54,35 @@ class TokenStore(
         }
     }
 
-    /**
-     * Replace only Kulon's encrypted cookie in one DataStore transaction.
-     * JWT and SIAP credentials are left untouched if encryption or persistence
-     * fails; DataStore's edit transaction rolls the whole update back.
-     */
-    override suspend fun updateKulonCookie(cookie: String): CookieUpdateResult {
+    override suspend fun replaceTokenIfCurrent(expected: String?, replacement: String): Boolean {
+        var updated = false
+        dataStore.edit { prefs ->
+            if (expected != null && decryptOrNull(prefs[Keys.JWT]) == expected) {
+                prefs[Keys.JWT] = cipher.encrypt(replacement)
+                updated = true
+            }
+        }
+        return updated
+    }
+
+    /** Guard the cookie write and JWT generation in the same DataStore transaction. */
+    override suspend fun updateUpstreamCookie(
+        service: UpstreamSessionService,
+        cookie: String,
+        expectedGeneration: String,
+    ): CookieUpdateResult {
         if (cookie.isBlank()) return CookieUpdateResult.FAILED
         return try {
-            dataStore.edit { it[Keys.KULON_COOKIE] = cipher.encrypt(cookie) }
-            CookieUpdateResult.UPDATED
+            var result = CookieUpdateResult.SESSION_CHANGED
+            dataStore.edit { prefs ->
+                val jwt = decryptOrNull(prefs[Keys.JWT])
+                if (jwt != null && jwtSessionGeneration(jwt) == expectedGeneration) {
+                    val key = if (service == UpstreamSessionService.SIAP) Keys.SIAP_COOKIE else Keys.KULON_COOKIE
+                    prefs[key] = cipher.encrypt(cookie)
+                    result = CookieUpdateResult.UPDATED
+                }
+            }
+            result
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {

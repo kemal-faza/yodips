@@ -6,6 +6,7 @@ import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.ErrorType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -63,6 +64,30 @@ class SessionRefresherTest {
             SessionRefresher.RefreshResult.DEAD_SESSION,
             refresher.tryRefresh(),
         )
+    }
+
+    @Test
+    fun `old refresh failure after a new login cannot expire the new session`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        var dialogs = 0
+        val refresher = SessionRefresher(
+            scope = backgroundScope,
+            refreshToken = {
+                started.complete(Unit)
+                finish.await()
+                throw ApiHttpException(401, "SESSION_DEAD", BackendCodes.SESSION_DEAD)
+            },
+            tokenStore = null,
+            onSessionExpired = { dialogs++ },
+        )
+        val request = async { refresher.safe(serviceStale = true) { throw http401() } }
+        started.await()
+        refresher.clearForLogout()
+        refresher.resumeForNewSession()
+        finish.complete(Unit)
+        request.await()
+        assertEquals(0, dialogs)
     }
 
     @Test
@@ -125,7 +150,7 @@ class SessionRefresherTest {
     }
 
     @Test
-    fun `successful refresh rotates the stored token with current cookies`() = runTest {
+    fun `successful refresh updates only the token so a concurrent cookie renewal is not overwritten`() = runTest {
         val store = FakeStore()
         val refresher = SessionRefresher(
             scope = backgroundScope,
@@ -134,7 +159,7 @@ class SessionRefresherTest {
             onSessionExpired = {},
         )
         refresher.tryRefresh()
-        assertEquals(Triple("rotated-jwt", "siap-c", "kulon-c"), store.saved)
+        assertEquals(Triple("rotated-jwt", null, null), store.saved)
     }
 
     // ---------- safe(): dialog policy (fix relogin-loop) ----------

@@ -1,6 +1,7 @@
 package ac.undip.sso.core.session
 
 import ac.undip.sso.core.data.CookieUpdateResult
+import ac.undip.sso.core.network.UpstreamSessionService
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
@@ -18,6 +19,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
+import kotlin.io.encoding.Base64
 
 /**
  * TokenStore persists the JWT + session cookies through a TokenCipher so
@@ -30,6 +32,10 @@ import org.junit.Test
  * that same instance.
  */
 class TokenStoreTest {
+    private fun jwt(generation: String): String {
+        val payload = Base64.UrlSafe.encode("{\"sessionGeneration\":\"$generation\"}".encodeToByteArray())
+        return "a.$payload.c"
+    }
     private fun dataStore(file: File): DataStore<Preferences> =
         PreferenceDataStoreFactory.create(
             scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
@@ -55,17 +61,53 @@ class TokenStoreTest {
     }
 
     @Test
-    fun `updateKulonCookie encrypts new cookie and preserves token and siap cookie`() = runBlocking {
+    fun `upstream renewal encrypts the cookie and preserves token and the other cookie`() = runBlocking {
         val ds = dataStore(File.createTempFile("tok", ".preferences_pb"))
         val s = tokenStore(ds)
-        s.save("jwt-A", "siap-1", "kulon-2")
+        val generation = "a".repeat(32)
+        s.save(jwt(generation), "siap-1", "kulon-2")
 
-        assertEquals(CookieUpdateResult.UPDATED, s.updateKulonCookie("kulon-3"))
+        assertEquals(CookieUpdateResult.UPDATED, s.updateUpstreamCookie(UpstreamSessionService.KULON, "kulon-3", generation))
 
-        assertEquals("jwt-A", s.currentToken())
+        assertEquals(jwt(generation), s.currentToken())
         assertEquals("siap-1", s.siapCookie.first())
         assertEquals("kulon-3", s.kulonCookie.first())
         assertNotEquals("kulon-3", ds.data.first()[stringPreferencesKey("kulon_cookie")])
+    }
+
+    @Test
+    fun `a late cookie renewal cannot overwrite credentials of a newer session`() = runBlocking {
+        val ds = dataStore(File.createTempFile("tok", ".preferences_pb"))
+        val s = tokenStore(ds)
+        val generationA = "a".repeat(32)
+        val generationB = "b".repeat(32)
+        s.save(jwt(generationB), "siap-b", "kulon-b")
+        assertEquals(CookieUpdateResult.SESSION_CHANGED,
+            s.updateUpstreamCookie(UpstreamSessionService.SIAP, "siap-old-a", generationA))
+        assertEquals("siap-b", s.siapCookie.first())
+        assertEquals("kulon-b", s.kulonCookie.first())
+        assertEquals(jwt(generationB), s.currentToken())
+    }
+
+    @Test
+    fun `token rotation compares the stored token atomically and preserves cookies`() = runBlocking {
+        val ds = dataStore(File.createTempFile("tok", ".preferences_pb"))
+        val s = tokenStore(ds)
+        s.save("new-login", "siap", "kulon")
+        assertEquals(false, s.replaceTokenIfCurrent("old-login", "old-refresh"))
+        assertEquals("new-login", s.currentToken())
+        assertEquals(true, s.replaceTokenIfCurrent("new-login", "new-refresh"))
+        assertEquals("new-refresh", s.currentToken())
+        assertEquals("siap", s.siapCookie.first())
+        assertEquals("kulon", s.kulonCookie.first())
+    }
+
+    @Test
+    fun `token rotation cannot create a session after its token was cleared`() = runBlocking {
+        val ds = dataStore(File.createTempFile("tok", ".preferences_pb"))
+        val s = tokenStore(ds)
+        assertEquals(false, s.replaceTokenIfCurrent(null, "late-refresh"))
+        assertNull(s.currentToken())
     }
 
     @Test

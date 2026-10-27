@@ -39,8 +39,18 @@ interface TokenStoreLike {
     val siapCookie: Flow<String?>
     val kulonCookie: Flow<String?>
     suspend fun save(token: String, siap: String?, kulon: String?)
-    /** Atomically replace only the Kulon cookie; unsupported stores do no write. */
-    suspend fun updateKulonCookie(cookie: String): CookieUpdateResult = CookieUpdateResult.UNSUPPORTED
+    /** Rotate only if no later login has replaced the token. */
+    suspend fun replaceTokenIfCurrent(expected: String?, replacement: String): Boolean {
+        if (currentToken() != expected) return false
+        save(replacement, null, null)
+        return true
+    }
+    /** Replace one cookie only while the stored JWT still names this generation. */
+    suspend fun updateUpstreamCookie(
+        service: UpstreamSessionService,
+        cookie: String,
+        expectedGeneration: String,
+    ): CookieUpdateResult = CookieUpdateResult.UNSUPPORTED
     suspend fun currentToken(): String?
     suspend fun clear()
 }
@@ -49,6 +59,7 @@ enum class CookieUpdateResult {
     UPDATED,
     UNSUPPORTED,
     FAILED,
+    SESSION_CHANGED,
 }
 
 /**
@@ -74,6 +85,7 @@ class SsoRepository(
     refreshToken: suspend () -> String = { Backend.refresh() },
     directTicketCapture: DirectTicketCapture? = null,
 ) {
+    private val supportsSiapRecovery = directTicketCapture != null
     // Stale-while-revalidate refreshes must not block callers nor outlive a
     // screen: a supervised IO scope owned by the repository.
     private val refreshScope = CoroutineScope(SupervisorJob() + ioDispatcher)
@@ -129,7 +141,7 @@ class SsoRepository(
         revalidate: Boolean = false,
     ): ApiResult<SiapProfile> =
         cached(CacheKeys.PROFILE, SiapProfile.serializer(), force, revalidate) {
-            refresher.safe(serviceStale = true) { api.profile() }
+            upstreamRead(UpstreamSessionService.SIAP) { api.profile() }
         }
 
     /** GET /api/auth/me — status sesi upstream (dipakai deteksi dini saat boot:
@@ -154,7 +166,7 @@ class SsoRepository(
         revalidate: Boolean = false,
     ): ApiResult<SiapIrs> =
         cached(CacheKeys.IRS, SiapIrs.serializer(), force, revalidate) {
-            refresher.safe(serviceStale = true) { api.irs() }
+            upstreamRead(UpstreamSessionService.SIAP) { api.irs() }
         }
 
     suspend fun khs(
@@ -162,13 +174,13 @@ class SsoRepository(
         revalidate: Boolean = false,
     ): ApiResult<SiapKhs> =
         cached(CacheKeys.KHS, SiapKhs.serializer(), force, revalidate) {
-            refresher.safe(serviceStale = true) { api.khs() }
+            upstreamRead(UpstreamSessionService.SIAP) { api.khs() }
         }
 
     /** Rincian nilai per komponen satu matkul — JANGAN di-cache (data nilai
      *  bisa berubah pasca-pengumuman; endpoint ringan). */
     suspend fun nilaiDetail(id: String): ApiResult<SiapNilaiDetail> =
-        refresher.safe(serviceStale = true) { api.nilaiDetail(id) }
+        upstreamRead(UpstreamSessionService.SIAP) { api.nilaiDetail(id) }
 
     /**
      * Dynamic (per-meeting) data: SWR by default. Callers joining it into a
@@ -180,12 +192,12 @@ class SsoRepository(
         revalidate: Boolean = true,
     ): ApiResult<List<SiapJadwal>> =
         cached(CacheKeys.JADWAL, ListSerializer(SiapJadwal.serializer()), force, revalidate) {
-            refresher.safe(serviceStale = true) { api.jadwal() }
+            upstreamRead(UpstreamSessionService.SIAP) { api.jadwal() }
         }
 
     suspend fun assignments(force: Boolean = false): ApiResult<List<KulonAssignment>> =
         cached(CacheKeys.ASSIGNMENTS, ListSerializer(KulonAssignment.serializer()), force) {
-            kulonRead { api.assignments() }
+            upstreamRead(UpstreamSessionService.KULON) { api.assignments() }
         }
 
     /** Detail satu tugas — JANGAN di-cache (isi bisa berubah sering, dan payload kecil). */
@@ -193,25 +205,25 @@ class SsoRepository(
         assignmentId: Long,
         cmid: Long,
     ): ApiResult<KulonAssignmentDetail> =
-        kulonRead {
+        upstreamRead(UpstreamSessionService.KULON) {
             api.assignmentDetail(assignmentId, cmid)
         }
 
     suspend fun courses(force: Boolean = false): ApiResult<List<KulonCourse>> =
         cached(CacheKeys.COURSES, ListSerializer(KulonCourse.serializer()), force) {
-            kulonRead { api.courses() }
+            upstreamRead(UpstreamSessionService.KULON) { api.courses() }
         }
 
     /** Lightweight course list for task filtering; omits progress/lecturer work. */
     suspend fun courseList(force: Boolean = false): ApiResult<List<KulonCourse>> =
         cached(CacheKeys.COURSES_LIST, ListSerializer(KulonCourse.serializer()), force) {
-            kulonRead { api.courses(list = true) }
+            upstreamRead(UpstreamSessionService.KULON) { api.courses(list = true) }
         }
 
     /** Konten course (sections + items) — di-cache per course, back/forth tanpa refetch. */
     suspend fun courseContent(courseId: Long, force: Boolean = false): ApiResult<KulonCourseContent> =
         cached("course-content-$courseId", KulonCourseContent.serializer(), force) {
-            kulonRead { api.courseContent(courseId) }
+            upstreamRead(UpstreamSessionService.KULON) { api.courseContent(courseId) }
         }
 
     suspend fun lecturers(
@@ -219,7 +231,7 @@ class SsoRepository(
         revalidate: Boolean = true,
     ): ApiResult<List<SiapLecturer>> =
         cached(CacheKeys.LECTURERS, ListSerializer(SiapLecturer.serializer()), force, revalidate) {
-            refresher.safe(serviceStale = true) { api.lecturers() }
+            upstreamRead(UpstreamSessionService.SIAP) { api.lecturers() }
         }
 
     suspend fun absen(
@@ -227,11 +239,26 @@ class SsoRepository(
         revalidate: Boolean = true,
     ): ApiResult<List<SiapAbsen>> =
         cached(CacheKeys.ABSEN, ListSerializer(SiapAbsen.serializer()), force, revalidate) {
-            refresher.safe(serviceStale = true) { api.absen() }
+            upstreamRead(UpstreamSessionService.SIAP) { api.absen() }
         }
 
-    suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> =
-        refresher.safe(retryable = false, serviceStale = true) { api.markKehadiran(KehadiranRequest(token)) }
+    suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> {
+        val generation = tokenStore?.currentToken()?.let(::jwtSessionGeneration)
+        val result = refresher.safe(retryable = false, serviceStale = true) {
+            api.markKehadiran(KehadiranRequest(token))
+        }
+        val stale = result as? ApiResult.Error ?: return result
+        if (stale.type != ErrorType.STALE_SESSION || !supportsSiapRecovery || generation == null ||
+            tokenStore.currentToken()?.let(::jwtSessionGeneration) != generation) return stale
+        val outcome = recoveryCoordinator?.recover(generation, UpstreamSessionService.SIAP)
+            ?: SessionRecoveryOutcome.UNSUPPORTED
+        if (outcome == SessionRecoveryOutcome.RECOVERED) {
+            // The original QR POST is never replayed: let the user decide whether
+            // to send a fresh scan after the session has been restored.
+            return ApiResult.Error(stale.code, "Sesi SIAP pulih. Silakan scan ulang untuk presensi.", stale.type)
+        }
+        return recoveryError(stale, outcome, UpstreamSessionService.SIAP)
+    }
 
     /** Registrasi token push ke backend (idempotent di server -> retryable). */
     suspend fun registerPushDevice(token: String): ApiResult<PushDeviceResponse> =
@@ -243,6 +270,7 @@ class SsoRepository(
     /** Cancel ticket recovery and clear user-scoped memory/disk cache on logout. */
     suspend fun clearForLogout() {
         try {
+            refresher.clearForLogout()
             recoveryCoordinator?.clear()
         } finally {
             // Cancel refreshes and wipe the cache FIRST; only then drop the
@@ -254,31 +282,34 @@ class SsoRepository(
     }
 
     suspend fun resumeForNewSession() {
+        refresher.resumeForNewSession()
         recoveryCoordinator?.resumeForNewSession()
     }
 
-    private suspend fun <T> kulonRead(block: suspend () -> T): ApiResult<T> {
+    private suspend fun <T> upstreamRead(service: UpstreamSessionService, block: suspend () -> T): ApiResult<T> {
         val generationBeforeRequest = tokenStore?.currentToken()?.let(::jwtSessionGeneration)
         val initial = refresher.safe(serviceStale = true, block = block)
         val stale = initial as? ApiResult.Error ?: return initial
         if (stale.type != ErrorType.STALE_SESSION) return initial
+        // PWA has no cookie-capture adapter; preserve its existing behavior.
+        if (service == UpstreamSessionService.SIAP && !supportsSiapRecovery) return initial
 
-        val generation = generationBeforeRequest ?: return recoveryError(stale, SessionRecoveryOutcome.UNSUPPORTED)
+        val generation = generationBeforeRequest ?: return recoveryError(stale, SessionRecoveryOutcome.UNSUPPORTED, service)
         // A logout or a replacement login may cross the upstream response. Do
         // not open a ticket or apply its result to a different local session.
         if (tokenStore.currentToken()?.let(::jwtSessionGeneration) != generation) {
-            return ApiResult.Error(stale.code, "Sesi berubah. Muat ulang data Kulon.", stale.type)
+            return ApiResult.Error(stale.code, "Sesi berubah. Muat ulang data ${service.name}.", stale.type)
         }
 
-        val outcome = recoveryCoordinator?.recover(generation, UpstreamSessionService.KULON)
+        val outcome = recoveryCoordinator?.recover(generation, service)
             ?: SessionRecoveryOutcome.UNSUPPORTED
-        if (outcome != SessionRecoveryOutcome.RECOVERED) return recoveryError(stale, outcome)
+        if (outcome != SessionRecoveryOutcome.RECOVERED) return recoveryError(stale, outcome, service)
 
         // Recovery is intentionally non-recursive. The recovered cookie is
         // persisted before this one final read; a second stale response is
         // returned to the screen and cannot trigger another ticket flow.
         if (tokenStore.currentToken()?.let(::jwtSessionGeneration) != generation) {
-            return ApiResult.Error(stale.code, "Sesi berubah. Muat ulang data Kulon.", stale.type)
+            return ApiResult.Error(stale.code, "Sesi berubah. Muat ulang data ${service.name}.", stale.type)
         }
         return refresher.safe(retryable = false, serviceStale = true, block = block)
     }
@@ -286,6 +317,7 @@ class SsoRepository(
     private fun recoveryError(
         previous: ApiResult.Error,
         outcome: SessionRecoveryOutcome,
+        service: UpstreamSessionService,
     ): ApiResult.Error = when (outcome) {
         SessionRecoveryOutcome.RECOVERED -> previous
         SessionRecoveryOutcome.SESSION_DEAD -> {
@@ -297,17 +329,17 @@ class SsoRepository(
         SessionRecoveryOutcome.SESSION_CHANGED ->
             ApiResult.Error(previous.code, "Sesi berubah. Muat ulang data Kulon.", previous.type)
         SessionRecoveryOutcome.INTERACTION_REQUIRED ->
-            ApiResult.Error(previous.code, "Login Microsoft diperlukan untuk memulihkan sesi Kulon.", previous.type)
+            ApiResult.Error(previous.code, "Login Microsoft diperlukan untuk memulihkan sesi ${service.name}.", previous.type)
         SessionRecoveryOutcome.CONFLICT ->
-            ApiResult.Error(409, "Sesi Kulon berubah di perangkat lain. Muat ulang data.", previous.type)
+            ApiResult.Error(409, "Sesi ${service.name} berubah di perangkat lain. Muat ulang data.", previous.type)
         SessionRecoveryOutcome.NETWORK_FAILURE ->
-            ApiResult.Error(null, "Jaringan gagal saat memulihkan sesi Kulon.", ErrorType.NETWORK)
+            ApiResult.Error(null, "Jaringan gagal saat memulihkan sesi ${service.name}.", ErrorType.NETWORK)
         SessionRecoveryOutcome.UPSTREAM_INVALID ->
-            ApiResult.Error(previous.code, "Ticket Kulon tidak menghasilkan sesi yang valid.", previous.type)
+            ApiResult.Error(previous.code, "Ticket ${service.name} tidak menghasilkan sesi yang valid.", previous.type)
         SessionRecoveryOutcome.UNSUPPORTED ->
             ApiResult.Error(
                 previous.code,
-                "Pemulihan Kulon tidak tersedia di platform ini. Lanjutkan lewat YoDips Android.",
+                "Pemulihan ${service.name} tidak tersedia di platform ini. Lanjutkan lewat YoDips Android.",
                 ErrorType.RECOVERY_UNSUPPORTED,
             )
         SessionRecoveryOutcome.PERSISTENCE_FAILURE ->

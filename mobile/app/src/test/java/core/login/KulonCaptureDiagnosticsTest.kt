@@ -19,6 +19,10 @@ class KulonCaptureDiagnosticsTest {
             classifyKulonCaptureNavigation("https://kulon2.undip.ac.id/auth/oidc/?t=secret-ticket"),
         )
         assertEquals(
+            KulonCaptureOutcome.CAPTURE_IN_PROGRESS,
+            classifyKulonCaptureNavigation("https://sso.undip.ac.id/sso/auth_v2"),
+        )
+        assertEquals(
             KulonCaptureOutcome.INTERACTION_REQUIRED,
             classifyKulonCaptureNavigation("https://kulon2.undip.ac.id/login/index.php?return=secret"),
         )
@@ -30,6 +34,13 @@ class KulonCaptureDiagnosticsTest {
             KulonCaptureOutcome.INTERACTION_REQUIRED,
             classifyKulonCaptureNavigation("https://sso.undip.ac.id/auth/user/login?ticket=secret"),
         )
+    }
+
+    @Test
+    fun `Microsoft may redirect silently before a completed page needs interaction`() {
+        val url = "https://login.microsoftonline.com/tenant/oauth2/authorize"
+        assertEquals(false, shouldPauseCaptureForInteraction(url, pageFinished = false))
+        assertEquals(true, shouldPauseCaptureForInteraction(url, pageFinished = true))
     }
 
     @Test

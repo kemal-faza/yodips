@@ -2,6 +2,7 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiHttpException
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranRequest
@@ -56,8 +57,8 @@ private class FakeTokenStore(
         saved = Triple(token, siap, kulon)
     }
     override suspend fun currentToken(): String? = saved?.first
-    override suspend fun updateKulonCookie(cookie: String): CookieUpdateResult {
-        updatedKulonCookie = cookie
+    override suspend fun updateUpstreamCookie(service: UpstreamSessionService, cookie: String, expectedGeneration: String): CookieUpdateResult {
+        if (service == UpstreamSessionService.KULON) updatedKulonCookie = cookie
         return CookieUpdateResult.UPDATED
     }
     override suspend fun clear() { saved = null }
@@ -414,6 +415,29 @@ class SsoRepositoryTest {
     }
 
     @Test
+    fun `stale attendance recovers SIAP without replaying the QR submission`() = runBlocking {
+        val token = jwtWithGeneration("0123456789abcdef0123456789abcdef")
+        val store = FakeTokenStore().apply { saved = Triple(token, "old-siap", "kulon-cookie") }
+        var submissions = 0
+        var captures = 0
+        val api = FakeApi().apply {
+            markKehadiranStub = { submissions++; throw ApiHttpException(401, "stale") }
+            renewalStub = { service, _ -> UpstreamSessionRenewalResponse(service, "renewed") }
+        }
+        val repo = SsoRepository(api = api, tokenStore = store, refreshToken = { token },
+            directTicketCapture = DirectTicketCapture { service ->
+                assertEquals(UpstreamSessionService.SIAP, service)
+                captures++
+                DirectTicketCaptureResult.Authenticated("sia_app_session=new")
+            })
+        val result = repo.markKehadiran("qr")
+        assertTrue(result is ApiResult.Error)
+        assertEquals(1, submissions)
+        assertEquals(1, captures)
+        assertTrue((result as ApiResult.Error).message.contains("pulih", ignoreCase = true))
+    }
+
+    @Test
     fun `concurrent 401s trigger only one refresh POST`() = runBlocking {
         var refreshCalls = 0
         var calls = 0
@@ -442,6 +466,83 @@ class SsoRepositoryTest {
             }
         assertTrue(r1 is ApiResult.Success || r2 is ApiResult.Success)
         assertEquals(1, refreshCalls)
+    }
+
+    @Test
+    fun `refresh finishing after logout cannot restore the token`() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<String>()
+        val store = FakeTokenStore().apply { saved = Triple("old-jwt", null, null) }
+        val api = FakeApi().apply { profileStub = { throw ApiHttpException(401, "expired") } }
+        val repo = SsoRepository(api = api, tokenStore = store,
+            refreshToken = { started.complete(Unit); release.await() })
+        Backend.authToken = "old-jwt"
+        try {
+            val pending = async { repo.profile(force = true) }
+            started.await()
+            repo.clearForLogout()
+            store.clear()
+            Backend.authToken = null
+            release.complete("new-jwt")
+            pending.await()
+            assertNull(store.currentToken())
+            assertNull(Backend.authToken)
+        } finally {
+            Backend.authToken = null
+        }
+    }
+
+    @Test
+    fun `a late refresh cannot overwrite a newly saved login`() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<String>()
+        val store = FakeTokenStore().apply { saved = Triple("old-jwt", null, null) }
+        val api = FakeApi().apply { profileStub = { throw ApiHttpException(401, "expired") } }
+        val repo = SsoRepository(api = api, tokenStore = store,
+            refreshToken = { started.complete(Unit); release.await() })
+        Backend.authToken = "old-jwt"
+        try {
+            val pending = async { repo.profile(force = true) }
+            started.await()
+            store.save("new-login", null, null)
+            Backend.authToken = "new-login"
+            release.complete("old-refresh")
+            pending.await()
+            assertEquals("new-login", store.currentToken())
+            assertEquals("new-login", Backend.authToken)
+        } finally {
+            Backend.authToken = null
+        }
+    }
+
+    @Test
+    fun `stale SIAP read recovers the SIAP cookie and retries the read once`() = runBlocking {
+        val token = jwtWithGeneration("0123456789abcdef0123456789abcdef")
+        val store = FakeTokenStore().apply { saved = Triple(token, "old-siap", "kulon-cookie") }
+        var calls = 0
+        var captures = 0
+        val expected = SiapProfile(nama = "Fresh", nim = "1234")
+        val api = FakeApi().apply {
+            profileStub = {
+                calls++
+                if (calls <= 2) throw ApiHttpException(401, "stale")
+                expected
+            }
+            renewalStub = { service, cookie ->
+                assertEquals(UpstreamSessionService.SIAP, service)
+                assertEquals("sia_app_session=new", cookie)
+                UpstreamSessionRenewalResponse(service, "renewed")
+            }
+        }
+        val repo = SsoRepository(api = api, tokenStore = store, refreshToken = { token },
+            directTicketCapture = DirectTicketCapture { service ->
+                assertEquals(UpstreamSessionService.SIAP, service)
+                captures++
+                DirectTicketCaptureResult.Authenticated("sia_app_session=new")
+            })
+        assertEquals(ApiResult.Success(expected), repo.profile(force = true))
+        assertEquals(3, calls)
+        assertEquals(1, captures)
     }
 
     @Test

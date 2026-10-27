@@ -35,10 +35,12 @@ class SessionRecoveryCoordinatorTest {
             if (kulon != null) _kulon.value = kulon
         }
 
-        override suspend fun updateKulonCookie(cookie: String): CookieUpdateResult {
+        override suspend fun updateUpstreamCookie(service: UpstreamSessionService, cookie: String, expectedGeneration: String): CookieUpdateResult {
             updateCalls++
             beforeUpdate()
-            if (updateResult == CookieUpdateResult.UPDATED) _kulon.value = cookie
+            if (updateResult == CookieUpdateResult.UPDATED) {
+                if (service == UpstreamSessionService.SIAP) _siap.value = cookie else _kulon.value = cookie
+            }
             return updateResult
         }
 
@@ -49,6 +51,24 @@ class SessionRecoveryCoordinatorTest {
             _siap.value = null
             _kulon.value = null
         }
+    }
+
+    @Test
+    fun `SIAP recovery renews the backend and preserves the Kulon credential`() = runTest {
+        val store = FakeTokenStore()
+        var renewedService: UpstreamSessionService? = null
+        val coordinator = SessionRecoveryCoordinator(
+            capture = DirectTicketCapture { DirectTicketCaptureResult.Authenticated("sia_app_session=new") },
+            renewal = UpstreamSessionRenewal { service, _ ->
+                renewedService = service
+                UpstreamSessionRenewalResponse(service, "renewed")
+            },
+            tokenStore = store,
+        )
+        assertEquals(SessionRecoveryOutcome.RECOVERED, coordinator.recover("verified-subject", UpstreamSessionService.SIAP))
+        assertEquals(UpstreamSessionService.SIAP, renewedService)
+        assertEquals("sia_app_session=new", store.siapCookie.first())
+        assertEquals("kulon-old", store.kulonCookie.first())
     }
 
     @Test
@@ -312,7 +332,7 @@ class SessionRecoveryCoordinatorTest {
     }
 
     @Test
-    fun `unsupported service and unsupported local store do not claim recovery succeeded`() = runTest {
+    fun `unsupported local store does not claim recovery succeeded`() = runTest {
         val store = FakeTokenStore()
         var captureCalls = 0
         val coordinator = SessionRecoveryCoordinator(
@@ -324,14 +344,9 @@ class SessionRecoveryCoordinatorTest {
             tokenStore = store,
         )
 
-        assertEquals(
-            SessionRecoveryOutcome.UNSUPPORTED,
-            coordinator.recover(identity = "verified-subject", service = UpstreamSessionService.SIAP),
-        )
-        assertEquals(0, captureCalls)
-
         store.updateResult = CookieUpdateResult.UNSUPPORTED
         assertEquals(SessionRecoveryOutcome.UNSUPPORTED, coordinator.recover(identity = "verified-subject"))
+        assertEquals(1, captureCalls)
         assertEquals("kulon-old", store.kulonCookie.first())
     }
 }

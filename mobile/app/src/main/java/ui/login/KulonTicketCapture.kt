@@ -7,15 +7,18 @@ import ac.undip.sso.core.login.KulonLandingMarker
 import ac.undip.sso.core.login.LoginUrls
 import ac.undip.sso.core.login.classifyKulonCaptureNavigation
 import ac.undip.sso.core.login.classifyKulonRecoveryLanding
+import ac.undip.sso.core.login.classifySiapCaptureNavigation
 import ac.undip.sso.core.login.generateSsoTicket
 import ac.undip.sso.core.login.isAllowedLoginHost
 import ac.undip.sso.core.login.isMicrosoftAuthorize
 import ac.undip.sso.core.login.kulonTicketUrl
+import ac.undip.sso.core.login.siapTicketUrl
 import ac.undip.sso.core.login.parseKulonLandingMarkerResult
 import ac.undip.sso.core.login.resumeKulonInteractionUrl
 import ac.undip.sso.core.login.shouldStartKulonTicketAfterSso
 import ac.undip.sso.core.login.ssoLoginCompleted
 import ac.undip.sso.core.login.ssoRecoveryLoginCompleted
+import ac.undip.sso.core.login.shouldPauseCaptureForInteraction
 import ac.undip.sso.core.network.UpstreamSessionService
 import android.graphics.Bitmap
 import android.net.Uri
@@ -33,7 +36,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +61,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 private const val KULON_ORIGIN = "https://kulon2.undip.ac.id/"
+private const val SIAP_ORIGIN = "https://siap.undip.ac.id/"
 private const val SSO_ORIGIN = "https://sso.undip.ac.id"
 private const val TICKET_CAPTURE_TIMEOUT_MS = 5 * 60 * 1000L
 /**
@@ -99,90 +102,63 @@ private val SSO_AUTHENTICATED_DASHBOARD_MARKERS_PROBE =
         }
     })()
     """.trimIndent()
+private val SIAP_LANDING_MARKERS_PROBE =
+    """
+    (function(){
+        var login = !!document.querySelector('input[type="password"], form[action*="login"]');
+        return login ? 'login' : (document.getElementById('tabmhs_profile') ? 'profile' : 'unknown');
+    })()
+    """.trimIndent()
 
 private fun isSsoRecoveryDashboardCandidate(url: String?): Boolean {
     val landing = url?.substringBefore('#')?.substringBefore('?')?.removeSuffix("/") ?: return false
     return landing == "$SSO_ORIGIN/pages/dashboard"
 }
 
-/** Bridges the suspend recovery call to a user-confirmed Android WebView flow. */
+/** Bridges a recovery attempt to the Android WebView flow. */
 internal class KulonTicketCaptureBridge : DirectTicketCapture {
-    internal enum class Stage { WAITING_FOR_USER, CAPTURING }
+    internal enum class Stage { CAPTURING }
 
-    internal class Request internal constructor() {
+    internal class Request internal constructor(val service: UpstreamSessionService) {
         private val completion = CompletableDeferred<DirectTicketCaptureResult>()
-        private val mutableStage = MutableStateFlow(Stage.WAITING_FOR_USER)
+        private val mutableStage = MutableStateFlow(Stage.CAPTURING)
         val stage: StateFlow<Stage> = mutableStage.asStateFlow()
-
-        fun start() {
-            mutableStage.value = Stage.CAPTURING
-        }
 
         fun finish(result: DirectTicketCaptureResult) {
             completion.complete(result)
         }
 
         internal suspend fun await(): DirectTicketCaptureResult = completion.await()
-        internal val isCompleted: Boolean get() = completion.isCompleted
     }
 
     private val mutex = Mutex()
-    private var activeRequest: Request? = null
     private val mutableRequest = MutableStateFlow<Request?>(null)
     val request: StateFlow<Request?> = mutableRequest.asStateFlow()
 
     override suspend fun capture(service: UpstreamSessionService): DirectTicketCaptureResult {
-        if (service != UpstreamSessionService.KULON) return DirectTicketCaptureResult.Unsupported
-        val request = mutex.withLock {
-            activeRequest?.takeUnless { it.isCompleted } ?: Request().also {
-                activeRequest = it
-                mutableRequest.value = it
-            }
-        }
-        return try {
-            request.await()
-        } finally {
-            mutex.withLock {
-                if (activeRequest === request) {
-                    activeRequest = null
-                    mutableRequest.value = null
-                }
+        return mutex.withLock {
+            val request = Request(service)
+            mutableRequest.value = request
+            try {
+                request.await()
+            } finally {
+                if (mutableRequest.value === request) mutableRequest.value = null
             }
         }
     }
 }
 
-/** A visible CTA is required before the WebView or Microsoft login can open. */
+/** Start the ticket automatically; Microsoft interaction remains user initiated. */
 @Composable
 internal fun KulonTicketCaptureOverlay(bridge: KulonTicketCaptureBridge) {
     val request by bridge.request.collectAsState()
     val pending = request ?: return
-    val stage by pending.stage.collectAsState()
-
-    when (stage) {
-        KulonTicketCaptureBridge.Stage.WAITING_FOR_USER ->
-            AlertDialog(
-                onDismissRequest = { pending.finish(DirectTicketCaptureResult.InteractionRequired) },
-                title = { Text("Sesi Kulon perlu diperbarui") },
-                text = {
-                    Text("YoDips akan membuka Kulon untuk memulihkan sesi. Jika SSO meminta login Microsoft, kamu bisa melanjutkan di sini.")
-                },
-                confirmButton = {
-                    TextButton(onClick = pending::start) { Text("Pulihkan Kulon") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { pending.finish(DirectTicketCaptureResult.InteractionRequired) }) {
-                        Text("Nanti")
-                    }
-                },
-            )
-        KulonTicketCaptureBridge.Stage.CAPTURING ->
-            KulonTicketCaptureDialog(request = pending)
-    }
+    KulonTicketCaptureDialog(request = pending)
 }
 
 @Composable
 private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) {
+    val serviceName = if (request.service == UpstreamSessionService.SIAP) "SIAP" else "Kulon"
     var webView by remember { mutableStateOf<WebView?>(null) }
     var finished by remember { mutableStateOf(false) }
     var awaitingMicrosoft by remember { mutableStateOf(false) }
@@ -212,7 +188,8 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
         pendingInteractionUrl = null
         busy = true
         navigationToken += 1
-        view.loadUrl(kulonTicketUrl(generateSsoTicket()))
+        val ticket = generateSsoTicket()
+        view.loadUrl(if (request.service == UpstreamSessionService.SIAP) siapTicketUrl(ticket) else kulonTicketUrl(ticket))
     }
 
     fun continueWithMicrosoft() {
@@ -259,7 +236,7 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    Text("Pemulihan Kulon", style = MaterialTheme.typography.titleMedium)
+                    Text("Pemulihan $serviceName", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = { finish(DirectTicketCaptureResult.InteractionRequired) }) {
                         Text("Tutup")
@@ -267,14 +244,14 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                 }
                 if (awaitingMicrosoft) {
                     Text(
-                        "SSO meminta interaksi. Lanjutkan hanya jika kamu ingin masuk ke Microsoft untuk Kulon.",
+                        "SSO meminta interaksi. Lanjutkan jika kamu ingin masuk ke Microsoft untuk $serviceName.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Button(onClick = ::continueWithMicrosoft) { Text("Lanjutkan login Microsoft") }
                 } else if (busy) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CircularProgressIndicator()
-                        Text("Memeriksa sesi Kulon…", style = MaterialTheme.typography.bodySmall)
+                        Text("Memeriksa sesi $serviceName…", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 AndroidView(
@@ -352,18 +329,24 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                                             // into Kulon once Microsoft completes, with
                                             // no SSO page of its own to detect. Mint the
                                             // ticket here like a completed SSO hop would.
-                                            if (inspectLanding && shouldStartKulonTicketAfterSso(url)) {
+                                            if (inspectLanding && (shouldStartKulonTicketAfterSso(url) ||
+                                                (request.service == UpstreamSessionService.SIAP &&
+                                                    classifySiapCaptureNavigation(url) == KulonCaptureOutcome.LANDING_CANDIDATE))) {
                                                 startTicket(view)
                                             }
                                             return
                                         }
 
-                                        when (classifyKulonCaptureNavigation(url)) {
+                                        val captureNavigation = if (request.service == UpstreamSessionService.SIAP)
+                                            classifySiapCaptureNavigation(url) else classifyKulonCaptureNavigation(url)
+                                        when (captureNavigation) {
                                             KulonCaptureOutcome.INTERACTION_REQUIRED -> {
-                                                pendingInteractionUrl = resumeKulonInteractionUrl(url)
-                                                awaitingMicrosoft = true
-                                                busy = false
-                                                view.stopLoading()
+                                                if (shouldPauseCaptureForInteraction(url, inspectLanding)) {
+                                                    pendingInteractionUrl = resumeKulonInteractionUrl(url)
+                                                    awaitingMicrosoft = true
+                                                    busy = false
+                                                    view.stopLoading()
+                                                }
                                             }
                                             KulonCaptureOutcome.EXTERNAL_HOST -> {
                                                 finish(DirectTicketCaptureResult.Unsupported)
@@ -376,12 +359,25 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                                             KulonCaptureOutcome.LANDING_CANDIDATE -> {
                                                 if (inspectLanding) {
                                                     val token = navigationToken
-                                                    view.evaluateJavascript(KULON_LANDING_MARKERS_PROBE) { raw ->
+                                                    val probe = if (request.service == UpstreamSessionService.SIAP)
+                                                        SIAP_LANDING_MARKERS_PROBE else KULON_LANDING_MARKERS_PROBE
+                                                    view.evaluateJavascript(probe) { raw ->
                                                         if (
                                                             finished ||
                                                             webView !== view ||
                                                             token != navigationToken
                                                         ) {
+                                                            return@evaluateJavascript
+                                                        }
+                                                        if (request.service == UpstreamSessionService.SIAP) {
+                                                            val marker = raw?.trim()?.removeSurrounding("\"")
+                                                            val cookie = cookies.getCookie(SIAP_ORIGIN)
+                                                            when {
+                                                                marker == "login" -> { awaitingMicrosoft = true; busy = false }
+                                                                marker == "profile" && !cookie.isNullOrBlank() ->
+                                                                    finish(DirectTicketCaptureResult.Authenticated(cookie))
+                                                                else -> finish(DirectTicketCaptureResult.UpstreamInvalid)
+                                                            }
                                                             return@evaluateJavascript
                                                         }
                                                         val marker = parseKulonLandingMarkerResult(raw)
@@ -421,6 +417,7 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                                         favicon: Bitmap?,
                                     ) {
                                         super.onPageStarted(view, url, favicon)
+                                        navigationToken += 1
                                         view?.let { handleNavigation(it, url, inspectLanding = false) }
                                     }
 
@@ -432,11 +429,11 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
 
                                     override fun shouldOverrideUrlLoading(
                                         view: WebView?,
-                                        request: WebResourceRequest?,
+                                        webRequest: WebResourceRequest?,
                                     ): Boolean {
                                         if (finished) return true
-                                        val target = request?.url?.toString()
-                                        val host = request?.url?.host.orEmpty()
+                                        val target = webRequest?.url?.toString()
+                                        val host = webRequest?.url?.host.orEmpty()
                                         if (!isAllowedLoginHost(host)) {
                                             finish(DirectTicketCaptureResult.Unsupported)
                                             return true
@@ -445,8 +442,11 @@ private fun KulonTicketCaptureDialog(request: KulonTicketCaptureBridge.Request) 
                                             if (isMicrosoftAuthorize(target)) seenMicrosoft = true
                                             return false
                                         }
-                                        if (classifyKulonCaptureNavigation(target) ==
-                                            KulonCaptureOutcome.INTERACTION_REQUIRED
+                                        val navigation = if (request.service == UpstreamSessionService.SIAP)
+                                            classifySiapCaptureNavigation(target) else classifyKulonCaptureNavigation(target)
+                                        if (navigation ==
+                                            KulonCaptureOutcome.INTERACTION_REQUIRED &&
+                                            shouldPauseCaptureForInteraction(target, pageFinished = false)
                                         ) {
                                             pendingInteractionUrl = resumeKulonInteractionUrl(target)
                                             awaitingMicrosoft = true

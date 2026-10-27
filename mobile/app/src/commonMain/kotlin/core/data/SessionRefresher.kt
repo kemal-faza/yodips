@@ -11,7 +11,8 @@ import ac.undip.sso.nowMs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerializationException
 
 /** HTTP status → coarse [ErrorType] for every non-401 backend failure. */
@@ -60,6 +61,21 @@ class SessionRefresher(
     }
 
     private val refreshFlight = SessionFlight<RefreshResult>()
+    private val lifecycleMutex = Mutex()
+    private var lifecycleEpoch = 0L
+    private var active = true
+
+    /** Fence any outstanding refresh before logout clears persisted credentials. */
+    suspend fun clearForLogout() = lifecycleMutex.withLock {
+        active = false
+        lifecycleEpoch += 1
+    }
+
+    /** A newly established login owns a new refresh epoch. */
+    suspend fun resumeForNewSession() = lifecycleMutex.withLock {
+        lifecycleEpoch += 1
+        active = true
+    }
 
     /**
      * Single-flight refresh: concurrent 401s share one in-flight refresh, so N
@@ -70,11 +86,15 @@ class SessionRefresher(
      * published from inside that job to every joiner.
      */
     suspend fun tryRefresh(): RefreshResult {
-        val claim = refreshFlight.claim(REFRESH_IDENTITY)
+        val (requestEpoch, expectedToken) = lifecycleMutex.withLock {
+            if (!active) return RefreshResult.REJECTED
+            lifecycleEpoch to tokenStore?.currentToken()
+        }
+        val claim = refreshFlight.claim("$REFRESH_IDENTITY:$requestEpoch")
         if (!claim.isOwner) return refreshFlight.join(claim)
         return scope.async {
             try {
-                performRefresh().also { refreshFlight.release(claim, it) }
+                performRefresh(requestEpoch, expectedToken).also { refreshFlight.release(claim, it) }
             } catch (e: Throwable) {
                 refreshFlight.fail(claim, e)
                 throw e
@@ -103,15 +123,26 @@ class SessionRefresher(
         return tryRefresh()
     }
 
-    private suspend fun performRefresh(): RefreshResult {
+    private suspend fun performRefresh(requestEpoch: Long, expectedToken: String?): RefreshResult {
         return try {
+            if (!lifecycleMutex.withLock { active && lifecycleEpoch == requestEpoch }) {
+                return RefreshResult.REJECTED
+            }
             val newJwt = refreshToken()
-            Backend.authToken = newJwt
-            val siap = tokenStore?.let { runCatching { it.siapCookie.first() }.getOrNull() }
-            val kulon = tokenStore?.let { runCatching { it.kulonCookie.first() }.getOrNull() }
-            tokenStore?.save(newJwt, siap, kulon)
-            RefreshResult.SUCCESS
+            lifecycleMutex.withLock {
+                if (!active || lifecycleEpoch != requestEpoch) return@withLock RefreshResult.REJECTED
+                // Compare and rotate without replaying a cookie snapshot: a
+                // newer login or concurrent cookie renewal must survive.
+                if (tokenStore != null && !tokenStore.replaceTokenIfCurrent(expectedToken, newJwt)) {
+                    return@withLock RefreshResult.REJECTED
+                }
+                Backend.authToken = newJwt
+                RefreshResult.SUCCESS
+            }
         } catch (e: ApiHttpException) {
+            if (!lifecycleMutex.withLock { active && lifecycleEpoch == requestEpoch }) {
+                return RefreshResult.REJECTED
+            }
             when {
                 e.status == 401 && e.code == BackendCodes.SESSION_DEAD ->
                     RefreshResult.DEAD_SESSION
@@ -145,11 +176,15 @@ class SessionRefresher(
         serviceStale: Boolean = false,
         block: suspend () -> T,
     ): ApiResult<T> {
+        val requestEpoch = lifecycleMutex.withLock { lifecycleEpoch }
+        suspend fun expireIfCurrent() = lifecycleMutex.withLock {
+            if (active && lifecycleEpoch == requestEpoch) onSessionExpired()
+        }
         return try {
             ApiResult.Success(block())
         } catch (e: ApiHttpException) {
             if (e.status == 401 && e.code == BackendCodes.SESSION_DEAD) {
-                onSessionExpired()
+                expireIfCurrent()
                 return ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
             }
             val stale = serviceStale || isServiceStaleCode(e.code)
@@ -164,7 +199,7 @@ class SessionRefresher(
                             ApiResult.Success(block())
                         } catch (e2: ApiHttpException) {
                             if (e2.status == 401 && e2.code == BackendCodes.SESSION_DEAD) {
-                                onSessionExpired()
+                                expireIfCurrent()
                                 return ApiResult.Error(e2.status, e2.message, ErrorType.UNAUTHORIZED)
                             }
                             val t = typeForHttp(e2.status)
@@ -184,7 +219,7 @@ class SessionRefresher(
                         }
                     }
                     RefreshResult.DEAD_SESSION -> {
-                        onSessionExpired()
+                        expireIfCurrent()
                         ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
                     }
                     RefreshResult.REJECTED -> {
@@ -204,7 +239,7 @@ class SessionRefresher(
             // IOException is JVM-only; wasmJs uses Exception for network failures.
             if (e is ApiHttpException) {
                 if (e.status == 401 && e.code == BackendCodes.SESSION_DEAD) {
-                    onSessionExpired()
+                    expireIfCurrent()
                     return ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
                 }
                 val t = typeForHttp(e.status)

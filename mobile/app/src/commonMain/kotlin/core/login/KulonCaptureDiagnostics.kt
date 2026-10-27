@@ -125,6 +125,33 @@ fun classifyKulonCaptureNavigation(url: String?): KulonCaptureOutcome {
         return KulonCaptureOutcome.INTERACTION_REQUIRED
     }
 
+    if (parts.host == "sso.undip.ac.id") return KulonCaptureOutcome.CAPTURE_IN_PROGRESS
+
+    return KulonCaptureOutcome.UNKNOWN_PATH
+}
+
+/** Let Microsoft redirects finish before deciding that user interaction is needed. */
+fun shouldPauseCaptureForInteraction(url: String?, pageFinished: Boolean): Boolean =
+    !isMicrosoftAuthorize(url) || pageFinished
+
+/** Classify SIAP's ticket and dashboard without trusting a cookie by presence alone. */
+fun classifySiapCaptureNavigation(url: String?): KulonCaptureOutcome {
+    val parts = safeUrlParts(url) ?: return KulonCaptureOutcome.EXTERNAL_HOST
+    if (parts.scheme != "https" || !isAllowedLoginHost(parts.host)) return KulonCaptureOutcome.EXTERNAL_HOST
+    if (isMicrosoftAuthorize(url)) return KulonCaptureOutcome.INTERACTION_REQUIRED
+    val path = parts.path.lowercase().trimEnd('/').ifEmpty { "/" }
+    if (parts.host == "siap.undip.ac.id") {
+        return when (path) {
+            "/sso/login" -> KulonCaptureOutcome.CAPTURE_IN_PROGRESS
+            "/pages/mhs/dashboard" -> KulonCaptureOutcome.LANDING_CANDIDATE
+            "/login", "/auth/user/login" -> KulonCaptureOutcome.INTERACTION_REQUIRED
+            else -> KulonCaptureOutcome.UNKNOWN_PATH
+        }
+    }
+    if (parts.host == "sso.undip.ac.id" && path.endsWith("/login")) {
+        return KulonCaptureOutcome.INTERACTION_REQUIRED
+    }
+    if (parts.host == "sso.undip.ac.id") return KulonCaptureOutcome.CAPTURE_IN_PROGRESS
     return KulonCaptureOutcome.UNKNOWN_PATH
 }
 

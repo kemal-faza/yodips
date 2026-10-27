@@ -1,7 +1,6 @@
 package ac.undip.sso.core.session
 
 import ac.undip.sso.core.data.TokenStoreLike
-import ac.undip.sso.core.data.CookieUpdateResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,8 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * [TokenStoreLike] shape is shared with Android, where cookies ARE persisted
  * encrypted in DataStore); `save()` ignores the cookie arguments entirely.
  * Legacy cookie keys from a previous PWA release are neither read nor written
- * and no refresh path re-writes them (see [SessionRefresher], which only
- * re-saves whatever the flows return — null here).
+ * and no refresh path re-writes them; refresh updates the JWT only.
  */
 internal interface WasmTokenStorage {
     fun get(key: String): String?
@@ -56,10 +54,6 @@ class TokenStore private constructor(
             _jwt.value = jwt
         }
     }
-
-    /** Upstream cookies are never persisted or exposed by the WASM token store. */
-    override suspend fun updateKulonCookie(cookie: String): CookieUpdateResult =
-        CookieUpdateResult.UNSUPPORTED
 
     override suspend fun currentToken(): String? = _jwt.value
 

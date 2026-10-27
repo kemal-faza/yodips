@@ -83,7 +83,6 @@ class SessionRecoveryCoordinator(
         identity: String,
         service: UpstreamSessionService = UpstreamSessionService.KULON,
     ): SessionRecoveryOutcome {
-        if (service != UpstreamSessionService.KULON) return SessionRecoveryOutcome.UNSUPPORTED
         if (identity.isBlank()) return SessionRecoveryOutcome.AUTH_REJECTED
 
         val key = FlightKey(identity, service)
@@ -99,7 +98,7 @@ class SessionRecoveryCoordinator(
             val job = recoveryScope.launch(start = CoroutineStart.LAZY) {
                 try {
                     val outcome = try {
-                        recoverOwned(service, ownerEpoch)
+                        recoverOwned(identity, service, ownerEpoch)
                     } catch (e: CancellationException) {
                         flights.fail(flight, e)
                         throw e
@@ -158,6 +157,7 @@ class SessionRecoveryCoordinator(
     }
 
     private suspend fun recoverOwned(
+        identity: String,
         service: UpstreamSessionService,
         ownerEpoch: Long,
     ): SessionRecoveryOutcome {
@@ -194,20 +194,24 @@ class SessionRecoveryCoordinator(
             return SessionRecoveryOutcome.UPSTREAM_INVALID
         }
 
-        return persistCookieIfCurrent(ownerEpoch, cookie)
+        return persistCookieIfCurrent(ownerEpoch, identity, service, cookie)
     }
 
     /** Serialize the final credential write against explicit logout. */
     private suspend fun persistCookieIfCurrent(
         ownerEpoch: Long,
+        identity: String,
+        service: UpstreamSessionService,
         cookie: String,
     ): SessionRecoveryOutcome = jobsMutex.withLock {
         if (clearing || epoch != ownerEpoch) return SessionRecoveryOutcome.SESSION_CHANGED
         try {
-            when (tokenStore.updateKulonCookie(cookie)) {
+            val updated = tokenStore.updateUpstreamCookie(service, cookie, identity)
+            when (updated) {
                 CookieUpdateResult.UPDATED -> SessionRecoveryOutcome.RECOVERED
                 CookieUpdateResult.UNSUPPORTED -> SessionRecoveryOutcome.UNSUPPORTED
                 CookieUpdateResult.FAILED -> SessionRecoveryOutcome.PERSISTENCE_FAILURE
+                CookieUpdateResult.SESSION_CHANGED -> SessionRecoveryOutcome.SESSION_CHANGED
             }
         } catch (e: CancellationException) {
             throw e
