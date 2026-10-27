@@ -53,8 +53,14 @@ export class StaleUpstreamError extends HttpException {
     res?: Response,
   ) {
     const label = SERVICE_DISPLAY[service] ?? service;
+    // A transient upstream outage is NOT a dead session. The status already
+    // says 502, but the copy used to say "Session … expired" — telling the
+    // user to re-login for a problem a retry would fix.
     const message =
-      customMessage ?? `Session ${label} expired. Silakan login ulang via SSO`;
+      customMessage ??
+      (isTransientStale(reason, res)
+        ? `Layanan ${label} sedang tidak bisa diakses. Coba lagi nanti.`
+        : `Sesi ${label} berakhir. Silakan login ulang lewat SSO.`);
     super({ message }, statusForStaleReason(reason, res));
     this.reason = reason;
   }
@@ -63,17 +69,21 @@ export class StaleUpstreamError extends HttpException {
 /** Reason codes whose failure is transient (upstream trouble, not the session). */
 const TRANSIENT_STALE_REASONS = new Set(['fetch-threw', 'api-endpoint']);
 
+/** True when the failure is an upstream outage rather than dead-session evidence. */
+function isTransientStale(reason: string, res?: Response): boolean {
+  if (TRANSIENT_STALE_REASONS.has(reason)) return true;
+  return (
+    reason === 'http-not-ok' &&
+    res !== undefined &&
+    res.status >= HttpStatus.INTERNAL_SERVER_ERROR
+  );
+}
+
 /** 401 only for genuine dead-session evidence; 502 for transient upstream. */
 function statusForStaleReason(reason: string, res?: Response): HttpStatus {
-  if (TRANSIENT_STALE_REASONS.has(reason)) return HttpStatus.BAD_GATEWAY;
-  if (
-    reason === 'http-not-ok' &&
-    res &&
-    res.status >= HttpStatus.INTERNAL_SERVER_ERROR
-  ) {
-    return HttpStatus.BAD_GATEWAY;
-  }
-  return HttpStatus.UNAUTHORIZED;
+  return isTransientStale(reason, res)
+    ? HttpStatus.BAD_GATEWAY
+    : HttpStatus.UNAUTHORIZED;
 }
 
 /**
