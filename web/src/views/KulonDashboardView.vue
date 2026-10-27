@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue';
 import { useKulonStore } from '../stores/kulon';
 import { useKulonSession } from '../composables/useKulonSession';
-import { useAuthStore } from '../stores/auth';
 import AssignmentCard from '../components/AssignmentCard.vue';
 import DetailPanel from '../components/DetailPanel.vue';
 import PaginationBar from '../components/PaginationBar.vue';
@@ -17,8 +16,7 @@ import type { Assignment } from '../types';
 const PAGE_SIZE = 20;
 
 const store = useKulonStore();
-const auth = useAuthStore();
-const { sessionExpired, error, extract, relogin, clear } = useKulonSession();
+const { sessionExpired, error, recovering, extract, relogin, clear } = useKulonSession();
 
 const search = ref('');
 const page = ref(1);
@@ -149,10 +147,10 @@ load();
 
     <!-- Session Expired Alert -->
     <Alert v-else-if="sessionExpired" class="mt-4 gap-2 border-gold/40 bg-gold/20 p-6 text-center">
-      <AlertTitle class="font-semibold text-foreground">Session login kedaluwarsa</AlertTitle>
+      <AlertTitle class="font-semibold text-foreground">Sesi Kulon belum pulih</AlertTitle>
       <AlertDescription class="text-sm text-muted-foreground">{{ error }}</AlertDescription>
-      <Button class="mt-4 justify-self-center cursor-pointer" :disabled="auth.checking" @click="relogin">
-        {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
+      <Button class="mt-4 justify-self-center cursor-pointer" :disabled="recovering" @click="relogin">
+        {{ recovering ? 'Memulihkan sesi…' : 'Coba lagi' }}
       </Button>
     </Alert>
 

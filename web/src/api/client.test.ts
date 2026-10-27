@@ -3,6 +3,8 @@ import { getCourses, getCourseList, capture } from './client';
 import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
 
 const { getCachedMock } = vi.hoisted(() => ({ getCachedMock: vi.fn() }));
+const { recoverUpstreamMock } = vi.hoisted(() => ({ recoverUpstreamMock: vi.fn() }));
+vi.mock('../lib/upstream-renewal', () => ({ recoverUpstreamSession: recoverUpstreamMock }));
 vi.mock('./cache', () => ({
   getCached: getCachedMock,
   invalidate: vi.fn(),
@@ -53,6 +55,7 @@ describe('api client', () => {
   beforeEach(() => {
     localStorage.clear();
     mockRequest.mockReset();
+    recoverUpstreamMock.mockReset().mockResolvedValue('unavailable');
     // Re-import the module fresh so it picks up the mocked axios create.
     vi.resetModules();
   });
@@ -142,6 +145,37 @@ describe('api client', () => {
     };
     await expect(onRejected(error)).rejects.toMatchObject(error);
     expect(localStorage.getItem('sso_token')).toBe('new-jwt'); // refreshed, kept
+  });
+
+  it('retries a Kulon GET once after successful in-place recovery', async () => {
+    localStorage.setItem('sso_token', 'old-jwt');
+    recoverUpstreamMock.mockResolvedValueOnce('recovered');
+    mockRequest.mockResolvedValueOnce({ data: { accessToken: 'new-jwt' } })
+      .mockResolvedValueOnce({ data: [{ id: 1 }] });
+    await vi.resetModules();
+    await import('./client');
+    const response = await responseHandlers.onRejected!({
+      response: { status: 401, data: { message: 'Session Kulon expired' } },
+      config: { method: 'get', url: '/api/kulon/assignments' },
+    });
+    expect(response.data).toEqual([{ id: 1 }]);
+    expect(recoverUpstreamMock).toHaveBeenCalledWith('kulon');
+    expect(mockRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry SIAP attendance POST even if recovery is available', async () => {
+    localStorage.setItem('sso_token', 'old-jwt');
+    recoverUpstreamMock.mockResolvedValueOnce('recovered');
+    mockRequest.mockResolvedValueOnce({ data: { accessToken: 'new-jwt' } });
+    await vi.resetModules();
+    await import('./client');
+    const error = {
+      response: { status: 401, data: { message: 'SIAP session expired' } },
+      config: { method: 'post', url: '/api/siap/kehadiran' },
+    };
+    await expect(responseHandlers.onRejected!(error)).rejects.toMatchObject(error);
+    expect(mockRequest).toHaveBeenCalledTimes(1);
+    expect(recoverUpstreamMock).toHaveBeenCalledWith('siap');
   });
 
   it('SIAP 401 after successful refresh = upstream stale: keeps token, view handles', async () => {

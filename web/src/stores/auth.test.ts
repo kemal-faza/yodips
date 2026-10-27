@@ -234,7 +234,7 @@ describe('auth store', () => {
     expect(store.hasKulon).toBe(true);
   });
 
-  it('fetchMe returns incomplete, wipes the token and does not keep user on incomplete session', async () => {
+  it('fetchMe retains the JWT when only upstream sessions are incomplete', async () => {
     localStorage.setItem('sso_token', 'jwt-x');
     (api.me as any).mockResolvedValue({
       sub: 'n', authenticated: true, hasSso: false, hasMicrosoft: false,
@@ -244,11 +244,36 @@ describe('auth store', () => {
     store.token = 'jwt-x';
     const status = await store.fetchMe();
     expect(status).toBe('incomplete');
-    expect(store.token).toBeNull();
-    expect(localStorage.getItem('sso_token')).toBeNull();
+    expect(store.token).toBe('jwt-x');
+    expect(localStorage.getItem('sso_token')).toBe('jwt-x');
   });
 
-  it('A incomplete session clears Kulon data before relogin as B while keeping device preferences', async () => {
+  it('renews only the stale service through the extension and keeps the JWT', async () => {
+    localStorage.setItem('sso_token', 'jwt-x');
+    const sent: unknown[] = [];
+    (globalThis as any).chrome = {
+      runtime: {
+        lastError: null,
+        sendMessage: (_id: string, msg: unknown, cb: (value: unknown) => void) => {
+          sent.push(msg);
+          cb({ status: 'recovered' });
+        },
+      },
+    };
+    (api.me as any).mockResolvedValue({ sub: 'n', authenticated: true, hasSso: true,
+      hasMicrosoft: false, hasKulon: true, hasSiap: true, complete: true });
+    const store = useAuthStore();
+    store.token = 'jwt-x';
+    store.hasKulon = false;
+    store.hasSiap = true;
+    await (store as any).recoverUpstreamSessions();
+    expect(sent).toEqual([{ action: 'renew', service: 'kulon', token: 'jwt-x' }]);
+    expect(store.token).toBe('jwt-x');
+    expect(store.hasKulon).toBe(true);
+    delete (globalThis as any).chrome;
+  });
+
+  it('a new login clears the previous user data even after an incomplete session', async () => {
     const auth = useAuthStore();
     const kulon = useKulonStore();
     auth.token = 'jwt-a';
@@ -262,8 +287,8 @@ describe('auth store', () => {
     });
 
     expect(await auth.fetchMe()).toBe('incomplete');
-    expect(kulon.assignments).toEqual([]);
-    expect(kulon.courses).toEqual([]);
+    expect(kulon.assignments).toEqual([{ id: 1 }]);
+    expect(kulon.courses).toEqual([{ id: 2 }]);
     expect(kulon.hidden).toEqual([9]);
 
     (api.capture as any).mockResolvedValue({
@@ -272,6 +297,8 @@ describe('auth store', () => {
     });
     await auth.login();
     expect(auth.token).toBe('jwt-b');
+    expect(kulon.assignments).toEqual([]);
+    expect(kulon.courses).toEqual([]);
     (api.getAllAssignments as any).mockResolvedValue([{ id: 3 }]);
     await kulon.ensureAssignments();
     expect(kulon.assignments).toEqual([{ id: 3 }]);
@@ -848,7 +875,7 @@ describe('reauth (auto-recover expired session)', () => {
     vi.clearAllMocks();
   });
 
-  it('fetchMe on incomplete clears JWT+fotoUrl but does NOT call logout (cookies kept)', async () => {
+  it('fetchMe on incomplete retains JWT and does not call logout', async () => {
     (api.me as any).mockResolvedValue({
       sub: 'n', authenticated: true, hasSso: true, hasMicrosoft: false,
       hasKulon: false, hasSiap: false, complete: false,
@@ -859,7 +886,7 @@ describe('reauth (auto-recover expired session)', () => {
     const spyLogout = vi.spyOn(store, 'logout');
     const status = await store.fetchMe();
     expect(status).toBe('incomplete');
-    expect(store.token).toBeNull();
+    expect(store.token).toBe('jwt-x');
     expect(store.fotoUrl).toBeNull();
     expect(spyLogout).not.toHaveBeenCalled();
   });

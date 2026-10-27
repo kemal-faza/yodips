@@ -6,6 +6,12 @@ import { buildRouter } from '../router';
 import AppLayout from './AppLayout.vue';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
+import { resetUpstreamRecoveryState, upstreamRecoveryState } from '../lib/upstream-renewal';
+
+vi.mock('../config/extension', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../config/extension')>()),
+  EXTENSION_ID: 'test-extension-id',
+}));
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
 vi.mock('../stores/theme', () => ({ useThemeStore: vi.fn() }));
@@ -37,6 +43,7 @@ describe('AppLayout', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    resetUpstreamRecoveryState();
     mockStores();
   });
 
@@ -97,5 +104,29 @@ describe('AppLayout', () => {
     const w = mount(AppLayout, { global: { plugins: [router] } });
     await w.find('[data-test="notification-toggle"]').trigger('click');
     expect(w.text()).toContain('Notifikasi');
+  });
+
+  it('offers service login and keeps the existing session while the extension renews it', async () => {
+    const fetchMe = vi.fn().mockResolvedValue('ok');
+    mockStores({ token: 'jwt-a', fetchMe, sessionVersion: 0 });
+    localStorage.setItem('sso_token', 'jwt-a');
+    const sendMessage = vi.fn((_id, _msg, callback) => callback({ status: 'recovered' }));
+    vi.stubGlobal('chrome', { runtime: { sendMessage, lastError: null } });
+    upstreamRecoveryState.siap = true;
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/');
+    await flushPromises();
+    const w = mount(AppLayout, { global: { plugins: [router] } });
+    expect(w.find('[data-test="upstream-login-siap"]').text()).toContain('SIAP');
+    await w.find('[data-test="upstream-login-siap"] button').trigger('click');
+    await flushPromises();
+    expect(sendMessage).toHaveBeenCalledWith('test-extension-id',
+      { action: 'renew', service: 'siap', token: 'jwt-a', interactive: true }, expect.any(Function));
+    expect(localStorage.getItem('sso_token')).toBe('jwt-a');
+    expect(w.find('[data-test="upstream-login-siap"]').exists()).toBe(false);
+    expect(fetchMe).toHaveBeenCalled();
+    w.unmount();
+    vi.unstubAllGlobals();
+    localStorage.clear();
   });
 });

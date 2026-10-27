@@ -22,6 +22,19 @@ beforeEach(() => {
 });
 
 describe('useExtension', () => {
+  it('sends the selected service and current JWT for in-place renewal', async () => {
+    const runtime = mockChrome(true, (msg) => msg.action === 'renew' ? { status: 'recovered' } : null);
+    await expect((useExtension() as any).renewSession('kulon', 'jwt-test')).resolves.toBe('recovered');
+    expect(runtime.sendMessage).toHaveBeenCalledWith('test-extension-id', {
+      action: 'renew', service: 'kulon', token: 'jwt-test',
+    }, expect.any(Function));
+  });
+
+  it('does not accept malformed renewal responses as recovery', async () => {
+    mockChrome(true, () => ({ status: 'ok' }));
+    await expect((useExtension() as any).renewSession('siap', 'jwt-test')).resolves.toBe('unavailable');
+  });
+
   it('sendHandoff returns the started payload', async () => {
     const res = await useExtension().sendHandoff();
     expect(res).toEqual({ status: 'started', mode: 'auto' });

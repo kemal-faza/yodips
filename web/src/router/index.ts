@@ -68,10 +68,7 @@ export function buildRouter(history: RouterHistory): Router {
     verified = true;
     const status = await store.fetchMe();
     if (status === 'incomplete') {
-      const result = await store.attemptReauth();
-      if (result !== 'recovered') {
-        await router.replace({ name: 'login', query: { reason: 'incomplete' } });
-      }
+      await store.recoverUpstreamSessions();
     } else if (status === 'invalid') {
       await router.replace({ name: 'login' });
     }

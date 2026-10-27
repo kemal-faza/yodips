@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useKulonStore } from '../stores/kulon';
-import { useAuthStore } from '../stores/auth';
 import { useKulonSession } from '../composables/useKulonSession';
 import { isCacheStaleError } from '../api/cache';
 import DetailPanel from '../components/DetailPanel.vue';
@@ -26,8 +25,7 @@ import type { CourseContentItem, Assignment, CourseSection, KulonCourseContent }
 const route = useRoute();
 const router = useRouter();
 const store = useKulonStore();
-const auth = useAuthStore();
-const { sessionExpired, error, extract, relogin, clear } = useKulonSession();
+const { sessionExpired, error, recovering, extract, relogin, clear } = useKulonSession();
 
 const loading = ref(false);
 const selected = ref<Assignment | null>(null);
@@ -271,9 +269,10 @@ load();
 
     <!-- Session Expired Alert -->
     <Alert v-else-if="sessionExpired" class="border-gold/40 bg-gold/20 p-6 text-center">
-      <AlertDescription class="font-semibold text-foreground">Session login kedaluwarsa</AlertDescription>
-      <Button class="mt-3 cursor-pointer" :disabled="auth.checking" @click="relogin">
-        {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
+      <AlertDescription class="font-semibold text-foreground">Sesi Kulon belum pulih</AlertDescription>
+      <p v-if="error" class="mt-2 text-sm text-muted-foreground">{{ error }}</p>
+      <Button class="mt-3 cursor-pointer" :disabled="recovering" @click="relogin">
+        {{ recovering ? 'Memulihkan sesi…' : 'Coba lagi' }}
       </Button>
     </Alert>
 

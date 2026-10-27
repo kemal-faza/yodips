@@ -37,16 +37,11 @@ describe('router guard', () => {
     expect(router.currentRoute.value.name).toBe('privacy');
   });
 
-  it('proceeds immediately (non-blocking) and reauths on incomplete', async () => {
+  it('proceeds immediately and requests in-place recovery on incomplete', async () => {
     const store = {
       isAuthenticated: true,
-      // mirror the real fetchMe: on 'incomplete' it wipes the token
-      // (clearSessionState), which flips isAuthenticated false.
-      fetchMe: vi.fn(async () => {
-        store.isAuthenticated = false;
-        return 'incomplete';
-      }),
-      attemptReauth: vi.fn().mockResolvedValue('recovered'),
+      fetchMe: vi.fn().mockResolvedValue('incomplete'),
+      recoverUpstreamSessions: vi.fn().mockResolvedValue('recovered'),
       logout: vi.fn(),
     };
     (useAuthStore as any).mockReturnValue(store);
@@ -54,25 +49,22 @@ describe('router guard', () => {
     await router.push('/');
     await flushPromises();
     expect(router.currentRoute.value.name).toBe('dashboard');
-    expect(store.attemptReauth).toHaveBeenCalled();
+    expect(store.recoverUpstreamSessions).toHaveBeenCalled();
   });
 
-  it('falls back to /login?reason=incomplete when reauth fails', async () => {
+  it('keeps the session and dashboard when upstream recovery is unavailable', async () => {
     const store = {
       isAuthenticated: true,
-      fetchMe: vi.fn(async () => {
-        store.isAuthenticated = false;
-        return 'incomplete';
-      }),
-      attemptReauth: vi.fn().mockResolvedValue('failed'),
+      fetchMe: vi.fn().mockResolvedValue('incomplete'),
+      recoverUpstreamSessions: vi.fn().mockResolvedValue('unavailable'),
       logout: vi.fn(),
     };
     (useAuthStore as any).mockReturnValue(store);
     const router = buildRouter(createMemoryHistory());
     await router.push('/');
     await flushPromises();
-    expect(router.currentRoute.value.path).toBe('/login');
-    expect(router.currentRoute.value.query.reason).toBe('incomplete');
+    expect(router.currentRoute.value.name).toBe('dashboard');
+    expect(store.isAuthenticated).toBe(true);
   });
 
   it('allows authenticated user to dashboard', async () => {

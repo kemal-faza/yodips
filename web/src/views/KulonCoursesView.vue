@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useKulonStore } from '../stores/kulon';
-import { useAuthStore } from '../stores/auth';
 import { useKulonSession } from '../composables/useKulonSession';
 import { groupCoursesBySemester, semesterProgress } from '../utils/kulon';
 import CourseCard from '../components/CourseCard.vue';
@@ -12,9 +11,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ChevronDown, ChevronRight } from '@lucide/vue';
 
 const store = useKulonStore();
-const auth = useAuthStore();
 const router = useRouter();
-const { sessionExpired, error, extract, relogin, clear } = useKulonSession();
+const { sessionExpired, error, recovering, extract, relogin, clear } = useKulonSession();
 const loading = ref(false);
 const pastExpanded = ref(false);
 
@@ -53,9 +51,10 @@ load();
     </div>
 
     <Alert v-else-if="sessionExpired" class="border-gold/40 bg-gold/20 p-6 text-center">
-      <AlertDescription class="font-semibold text-foreground">Session login kedaluwarsa</AlertDescription>
-      <Button class="mt-3 cursor-pointer" :disabled="auth.checking" @click="relogin">
-        {{ auth.checking ? 'Memeriksa session…' : 'Login Ulang' }}
+      <AlertDescription class="font-semibold text-foreground">Sesi Kulon belum pulih</AlertDescription>
+      <p v-if="error" class="mt-2 text-sm text-muted-foreground">{{ error }}</p>
+      <Button class="mt-3 cursor-pointer" :disabled="recovering" @click="relogin">
+        {{ recovering ? 'Memulihkan sesi…' : 'Coba lagi' }}
       </Button>
     </Alert>
 

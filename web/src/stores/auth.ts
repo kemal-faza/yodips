@@ -10,6 +10,7 @@ import {
 } from '../composables/useExtension';
 import { onTokenRefreshed } from '../lib/reauth';
 import { sessionLifetime } from '../lib/session-lifetime';
+import { recoverUpstreamSession, resetUpstreamRecoveryState } from '../lib/upstream-renewal';
 import { useKulonStore } from './kulon';
 
 const TOKEN_KEY = 'sso_token';
@@ -32,8 +33,8 @@ let tokenSyncStarted = false;
 
 /** Clear the user-scoped state WITHOUT touching the data cache or the session
  *  generation. The two wipe paths differ in how those move:
- *  - `clearSessionState()` (incomplete /me) clears the cache but keeps the
- *    session generation, so a silent re-capture can proceed.
+ *  - `clearSessionState()` clears the cache but keeps the session generation,
+ *    so an explicitly initiated re-capture can proceed.
  *  - `logout()` runs `sessionLifetime.wipeSession()` (advance generation +
  *    clear cache) before calling this. */
 function resetUserState(state: {
@@ -49,6 +50,7 @@ function resetUserState(state: {
   state.hasSiap = false;
   state.hasKulon = false;
   localStorage.removeItem(TOKEN_KEY);
+  resetUpstreamRecoveryState();
   useKulonStore().reset();
 }
 
@@ -159,10 +161,7 @@ export const useAuthStore = defineStore('auth', {
         this.hasSiap = this.user?.hasSiap ?? false;
         this.hasKulon = this.user?.hasKulon ?? false;
         this.fotoUrl = null;
-        if (this.user && this.user.complete === false) {
-          this.clearSessionState(); // keep browser cookies for silent re-capture
-          return 'incomplete';
-        }
+        if (this.user && this.user.complete === false) return 'incomplete';
         // Load the SIAP profile photo for the header avatar (best-effort; the
         // fallback letter stays when SIAP is unavailable or the fetch fails).
         if (this.hasSiap) {
@@ -202,6 +201,22 @@ export const useAuthStore = defineStore('auth', {
       }
       this.extensionError = 'Extension tidak terdeteksi atau tidak merespons.';
       return false;
+    },
+    /** Renew stale services in place; never replace or clear the YoDips JWT. */
+    async recoverUpstreamSessions(): Promise<'recovered' | 'unavailable'> {
+      const epoch = sessionLifetime.epoch();
+      if (!this.token || !sessionLifetime.isCurrent(epoch)) return 'unavailable';
+      const services: Array<'kulon' | 'siap'> = [];
+      if (!this.hasKulon) services.push('kulon');
+      if (!this.hasSiap) services.push('siap');
+      let recovered = false;
+      for (const service of services) {
+        const outcome = await recoverUpstreamSession(service);
+        if (!sessionLifetime.isCurrent(epoch)) return 'unavailable';
+        if (outcome === 'recovered' || outcome === 'conflict') recovered = true;
+      }
+      if (recovered && sessionLifetime.isCurrent(epoch)) await this.fetchMe();
+      return recovered ? 'recovered' : 'unavailable';
     },
     async loginViaExtension(): Promise<'ok' | 'started' | 'error' | 'not-installed'> {
       const attempt: AuthAttempt = { id: ++extensionLoginAttempt, epoch: sessionLifetime.epoch() };
@@ -271,6 +286,8 @@ export const useAuthStore = defineStore('auth', {
      *  caller's epoch stamp would no longer match (see ADR-0001). */
     beginSession() {
       clearCache();
+      useKulonStore().reset();
+      resetUpstreamRecoveryState();
       this.sessionVersion += 1;
     },
     /** Update the store's JWT after a silent refresh. Called by the axios
@@ -282,9 +299,7 @@ export const useAuthStore = defineStore('auth', {
       this.token = token;
       localStorage.setItem(TOKEN_KEY, token);
     },
-    /** Clear the JWT/user/foto state WITHOUT asking the extension to wipe
-     *  session cookies. Used when the server-side session is incomplete so
-     *  the still-valid browser cookies can be silently re-captured. */
+    /** Clear JWT/user/foto state without asking the extension to wipe cookies. */
     clearSessionState() {
       // Cache-only wipe: invalidate cached data and in-flight fetches, but keep
       // the session generation so an in-flight reauth poll is not cancelled

@@ -8,6 +8,8 @@ import NotificationPopover from '../components/ui/notification/NotificationPopov
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Menu, Moon, Sun } from '@lucide/vue';
+import { recoverUpstreamSession, upstreamRecoveryState } from '../lib/upstream-renewal';
+import type { UpstreamService } from '../composables/useExtension';
 
 const route = useRoute();
 const router = useRouter();
@@ -15,6 +17,26 @@ const auth = useAuthStore();
 const theme = useThemeStore();
 
 const mobileSidebarOpen = ref(false);
+const recoveryServices: UpstreamService[] = ['kulon', 'siap'];
+const interactiveRecovery = ref<UpstreamService | null>(null);
+const recoveryError = ref('');
+
+async function continueUpstreamLogin(service: UpstreamService) {
+  if (interactiveRecovery.value) return;
+  interactiveRecovery.value = service;
+  recoveryError.value = '';
+  try {
+    const result = await recoverUpstreamSession(service, true);
+    if (result === 'recovered' || result === 'conflict') {
+      await auth.fetchMe();
+      auth.sessionVersion += 1;
+    } else if (result === 'unavailable') {
+      recoveryError.value = 'Pemulihan belum berhasil. Periksa koneksi dan coba lagi.';
+    }
+  } finally {
+    interactiveRecovery.value = null;
+  }
+}
 
 const initial = computed(() => auth.user?.sub?.[0]?.toUpperCase() ?? 'U');
 
@@ -103,6 +125,19 @@ const pageTitle = computed(() => {
 
       <!-- Main Content Area -->
       <main class="flex-1 p-4 md:p-6 w-full">
+        <template v-for="service in recoveryServices" :key="service">
+          <div v-if="upstreamRecoveryState[service]" :data-test="`upstream-login-${service}`"
+            class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-4"
+            role="status">
+            <div>
+              <p>Sesi {{ service === 'siap' ? 'SIAP' : 'Kulon' }} memerlukan login SSO.</p>
+              <p v-if="recoveryError" class="text-sm text-muted-foreground">{{ recoveryError }}</p>
+            </div>
+            <Button size="sm" :disabled="interactiveRecovery !== null" @click="continueUpstreamLogin(service)">
+              {{ interactiveRecovery === service ? 'Menunggu login…' : 'Lanjutkan login' }}
+            </Button>
+          </div>
+        </template>
         <!-- Keyed by the auth session version: after a silent reauth recovers a
              fresh session, the mounted view remounts and re-runs its load with
              the new token instead of keeping its stale 401 error state. -->

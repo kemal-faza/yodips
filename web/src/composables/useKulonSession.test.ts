@@ -2,23 +2,26 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useKulonSession } from './useKulonSession';
 import { useAuthStore } from '../stores/auth';
+import { recoverUpstreamSession } from '../lib/upstream-renewal';
 
 vi.mock('../stores/auth', () => ({ useAuthStore: vi.fn() }));
-
-const pushMock = vi.fn();
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }));
+vi.mock('../lib/upstream-renewal', () => ({ recoverUpstreamSession: vi.fn() }));
 
 describe('useKulonSession', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    pushMock.mockReset();
   });
-  it('sets sessionExpired on 401/403', () => {
+  it('sets sessionExpired on a 401 without assuming interactive login is needed', () => {
     const { sessionExpired, extract } = useKulonSession();
     const msg = extract({ response: { status: 401, data: { message: 'Session Kulon expired' } } });
     expect(sessionExpired.value).toBe(true);
-    expect(msg).toBe('Session Kulon expired');
+    expect(msg).toBe('Sesi Kulon belum dapat digunakan. Coba pulihkan sesi.');
+  });
+  it('does not classify a 403 permission failure as a stale session', () => {
+    const { sessionExpired, extract } = useKulonSession();
+    expect(extract({ response: { status: 403, data: { message: 'Akses ditolak' } } })).toBe('Akses ditolak');
+    expect(sessionExpired.value).toBe(false);
   });
   it('returns generic message for unknown', () => {
     const { sessionExpired, extract } = useKulonSession();
@@ -33,18 +36,34 @@ describe('useKulonSession', () => {
     expect(sessionExpired.value).toBe(false);
     expect(error.value).toBeNull();
   });
-  it('relogin clears session state, resets local state, and navigates to /login', async () => {
+  it('retries the Kulon service without clearing the YoDips session', async () => {
     const clearSessionState = vi.fn();
-    (useAuthStore as any).mockReturnValue({ clearSessionState });
+    const fetchMe = vi.fn().mockResolvedValue('ok');
+    const store = { clearSessionState, fetchMe, sessionVersion: 0 };
+    (useAuthStore as any).mockReturnValue(store);
+    vi.mocked(recoverUpstreamSession).mockResolvedValue('recovered');
     const { relogin, sessionExpired, error, extract } = useKulonSession();
     extract({ response: { status: 401, data: { message: 'x' } } });
     expect(sessionExpired.value).toBe(true);
 
     await relogin();
 
-    expect(clearSessionState).toHaveBeenCalledTimes(1);
+    expect(recoverUpstreamSession).toHaveBeenCalledWith('kulon');
+    expect(clearSessionState).not.toHaveBeenCalled();
+    expect(fetchMe).toHaveBeenCalled();
+    expect(store.sessionVersion).toBe(1);
     expect(sessionExpired.value).toBe(false);
     expect(error.value).toBeNull();
-    expect(pushMock).toHaveBeenCalledWith({ name: 'login' });
+  });
+  it('keeps the session and offers retry when recovery is unavailable', async () => {
+    const clearSessionState = vi.fn();
+    (useAuthStore as any).mockReturnValue({ clearSessionState });
+    vi.mocked(recoverUpstreamSession).mockResolvedValue('unavailable');
+    const { relogin, sessionExpired, error, extract } = useKulonSession();
+    extract({ response: { status: 401 } });
+    await relogin();
+    expect(clearSessionState).not.toHaveBeenCalled();
+    expect(sessionExpired.value).toBe(true);
+    expect(error.value).toContain('coba lagi');
   });
 });

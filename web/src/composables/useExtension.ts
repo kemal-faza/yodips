@@ -14,6 +14,9 @@ export type ExtPollStatus =
     }
   | { status: 'error'; message: string };
 
+export type UpstreamService = 'kulon' | 'siap';
+export type UpstreamRenewalStatus = 'recovered' | 'interaction-required' | 'unavailable' | 'conflict' | 'cancelled';
+
 const BRIDGE_SOURCE = 'undip-sso-extension';
 const INVALID_RESPONSE = 'Extension mengirim respons tidak valid.';
 
@@ -73,6 +76,24 @@ function send(msg: Record<string, unknown>): Promise<unknown> {
  * No lifecycle hooks — safe to call from a store or any module.
  */
 export function useExtension() {
+  async function renewSession(service: UpstreamService, token: string, interactive = false): Promise<UpstreamRenewalStatus> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const response = await Promise.race([
+        send({ action: 'renew', service, token, ...(interactive ? { interactive: true } : {}) }),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), interactive ? 6 * 60_000 : 45_000); }),
+      ]);
+      if (!isRecord(response)) return 'unavailable';
+      const status = response.status;
+      return status === 'recovered' || status === 'interaction-required' || status === 'conflict' || status === 'cancelled'
+        ? status : 'unavailable';
+    } catch {
+      return 'unavailable';
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
   async function sendHandoff(): Promise<ExtOutboundStatus | 'not-installed'> {
     try {
       const response = await send({ action: 'handoff' });
@@ -122,5 +143,5 @@ export function useExtension() {
     return () => window.removeEventListener('message', handler);
   }
 
-  return { sendHandoff, readStatus, sendDone, logout, onResult };
+  return { sendHandoff, renewSession, readStatus, sendDone, logout, onResult };
 }

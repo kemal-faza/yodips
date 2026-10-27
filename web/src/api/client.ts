@@ -17,6 +17,7 @@ import type {
 } from '../types';
 import { emitReauthRequested, emitTokenRefreshed } from '../lib/reauth';
 import { sessionLifetime } from '../lib/session-lifetime';
+import { recoverUpstreamSession } from '../lib/upstream-renewal';
 import { createTokenRefresher } from './token-refresher';
 import { API, isServiceStale, parseErrorEnvelope } from './contract';
 import { getCached, invalidate } from './cache';
@@ -147,7 +148,19 @@ apiClient.interceptors.response.use(
         // token) settles before we treat it as fatal.
         const serviceStale = isServiceStale(url, parseErrorEnvelope(error?.response?.data).code);
         if (serviceStale) {
-          // Upstream session expired, JWT fine — keep token, view handles.
+          // Reads may retry once after recovery. Writes, especially attendance,
+          // are never replayed automatically.
+          const code = parseErrorEnvelope(error?.response?.data).code;
+          const service = code === 'KULON_STALE' || url.startsWith('/api/kulon')
+            ? 'kulon'
+            : code === 'SIAP_STALE' || url.startsWith('/api/siap') ? 'siap' : null;
+          if (service) {
+            const outcome = await recoverUpstreamSession(service);
+            if (outcome === 'recovered' && (method === 'get' || method === 'head') &&
+                sessionLifetime.isCurrent(epochAtEntry)) {
+              return apiClient.request({ ...error.config, _retried: true });
+            }
+          }
           return Promise.reject(error);
         }
         // Only retry idempotent requests; a POST must not be re-sent.
