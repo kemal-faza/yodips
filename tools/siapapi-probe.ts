@@ -13,11 +13,15 @@
  *   3. Endpoint absen API `absen/proses_absen/{tokenParam}` — apakah route
  *      merespons request dummy tanpa identitas atau kredensial?
  *
- * Driver CLI: `npx ts-node tools/siapapi-probe.ts <fetchers|absen>`.
+ * Driver CLI: `npx ts-node tools/siapapi-probe.ts <fetchers|qr-route|absen>`.
  *   - `fetchers` (default): probe GET tiap endpoint `.../index.php/<path>`,
  *     dump preview, tandai butuh-auth (401/403 vs 200/404/405).
+ *   - `qr-route`: OPTIONS read-only ke dua kandidat path absensi + tiga kontrol;
+ *     tanpa body, tanpa kredensial, `redirect: "manual"`. Verdict dihitung
+ *     diferensial (`classifyQrProbe`), bukan dari status semata.
  *   - `absen`: satu POST ke route singular dengan token all-zero dan
  *     `app_ver=24`; tidak menerima token, identitas, atau auth dari env.
+ *     Kategori legacy, bukan bagian dari `qr-route`.
  *
  * CATATAN: kandidat GET path di bawah berasal dari decompile. Probe absen
  * hanya memastikan route merespons; statusnya tidak membuktikan kontrak sukses.
@@ -31,6 +35,13 @@ export interface ProbeResponse {
   preview: string;
   bytes: number;
   hadBasicAuth?: boolean;
+  /** `Allow` header, the only signal that separates a real 405 from a 404. */
+  allow?: string | null;
+}
+
+export interface ProbeOptions {
+  /** Defaults to `follow`. QR categories must pass `manual`. */
+  redirect?: RequestRedirect;
 }
 
 const QR_TOKEN_PATH = /\/(?:absen|absensi)\/proses_absen\/([^/]+)/i;
@@ -112,12 +123,16 @@ export async function probe(
   method = "GET",
   extraHeaders: Record<string, string> = {},
   body?: string,
+  options: ProbeOptions = {},
 ): Promise<ProbeResponse> {
   let res: Response;
   try {
     res = await fetch(url, {
       method,
       ...(body === undefined ? {} : { body }),
+      // `follow` turns a 307/308 into a second request that keeps method and
+      // body; QR probes opt into `manual` so nothing leaves for another origin.
+      redirect: options.redirect ?? "follow",
       headers: {
         Accept: "application/json",
         ...extraHeaders,
@@ -134,6 +149,7 @@ export async function probe(
       preview: "FETCH_ERR: request failed",
       bytes: 0,
       hadBasicAuth: Boolean(extraHeaders.Authorization),
+      allow: null,
     };
   }
   let text: string;
@@ -148,6 +164,7 @@ export async function probe(
       preview: "BODY_READ_ERR: response body unavailable",
       bytes: Number(res.headers.get("content-length") ?? 0),
       hadBasicAuth: Boolean(extraHeaders.Authorization),
+      allow: res.headers.get("allow"),
     };
   }
   return {
@@ -158,14 +175,139 @@ export async function probe(
     preview: readPreview(text, url),
     bytes: Number(res.headers.get("content-length") ?? text.length),
     hadBasicAuth: Boolean(extraHeaders.Authorization),
+    allow: res.headers.get("allow"),
   };
 }
 
 declare const console: { log(...args: unknown[]): void };
 
+/** Fixed all-zero token; a live QR can never be supplied to this tool. */
+export const QR_PROBE_DUMMY_TOKEN = "00000000-0000-0000-0000-000000000000";
+
+export interface QrProbeTarget {
+  label: string;
+  url: string;
+}
+
+/**
+ * Read-only plan: OPTIONS only, so no write verb and no credential ever leave
+ * the process. `siap-api` origin is already allowed by the backend inventory.
+ */
+export function buildQrProbePlan(): {
+  candidates: QrProbeTarget[];
+  controls: QrProbeTarget[];
+} {
+  const token = QR_PROBE_DUMMY_TOKEN;
+  return {
+    candidates: [
+      { label: "plural", url: `${SIAPAPI_BASE}/index.php/absensi/proses_absen/${token}` },
+      { label: "singular", url: `${SIAPAPI_BASE}/index.php/absen/proses_absen/${token}` },
+    ],
+    controls: [
+      {
+        label: "control-sibling",
+        url: `${SIAPAPI_BASE}/index.php/absensi/proses_absen_tidak_ada/${token}`,
+      },
+      { label: "control-void", url: `${SIAPAPI_BASE}/index.php/__probe_void__/${token}` },
+      {
+        label: "control-prefix",
+        url: `${SIAPAPI_BASE}/index.php/absen/__probe_void__/${token}`,
+      },
+    ],
+  };
+}
+
+export interface ProbeObservation {
+  label: string;
+  status: number;
+  allow: string | null;
+  bodyFingerprint: string;
+}
+
+export type QrProbeVerdict = "absent" | "present" | "inconclusive";
+
+/**
+ * Differentially classify candidates against the controls. A status alone
+ * proves nothing: prefix middleware can answer 401 for unknown paths, and a
+ * version gate can answer 2xx. `present` therefore only means "this path
+ * behaves differently from a bogus one", never "the write route exists".
+ */
+export function classifyQrProbe(
+  candidates: ProbeObservation[],
+  controls: ProbeObservation[],
+): Record<string, QrProbeVerdict> {
+  const verdicts: Record<string, QrProbeVerdict> = {};
+  const blind = controls.length === 0 || controls.some((control) => control.status !== 404);
+
+  for (const candidate of candidates) {
+    if (blind) {
+      verdicts[candidate.label] = "inconclusive";
+      continue;
+    }
+    if (candidate.status === 404) {
+      verdicts[candidate.label] = "absent";
+      continue;
+    }
+    if (candidate.status < 300) {
+      const sameBody = controls.some(
+        (control) =>
+          control.bodyFingerprint.length > 0 &&
+          control.bodyFingerprint === candidate.bodyFingerprint,
+      );
+      verdicts[candidate.label] = sameBody ? "inconclusive" : "present";
+      continue;
+    }
+    if (candidate.status === 405) {
+      const allowed = (candidate.allow ?? "")
+        .split(",")
+        .map((entry) => entry.trim().toUpperCase());
+      verdicts[candidate.label] = allowed.includes("POST") ? "present" : "inconclusive";
+      continue;
+    }
+    if (candidate.status === 401 || candidate.status === 403) {
+      verdicts[candidate.label] = "present";
+      continue;
+    }
+    verdicts[candidate.label] = "inconclusive";
+  }
+
+  return verdicts;
+}
+
 if (require.main === module) {
   const category = process.argv[2] ?? "fetchers";
   (async () => {
+    if (category === "qr-route") {
+      const plan = buildQrProbePlan();
+      const role = new Map<string, "candidate" | "control">();
+      for (const target of plan.candidates) role.set(target.label, "candidate");
+      for (const target of plan.controls) role.set(target.label, "control");
+
+      const observations: ProbeObservation[] = [];
+      for (const target of [...plan.candidates, ...plan.controls]) {
+        const r = await probe(target.url, "OPTIONS", {}, undefined, { redirect: "manual" });
+        observations.push({
+          label: target.label,
+          status: r.status,
+          allow: r.allow ?? null,
+          bodyFingerprint: r.preview,
+        });
+        console.log(
+          `[${r.status}] OPTIONS ${r.url}\n` +
+            `    allow=${r.allow ?? "-"} ct=${r.contentType} preview=${r.preview}\n`,
+        );
+      }
+
+      const verdicts = classifyQrProbe(
+        observations.filter((o) => role.get(o.label) === "candidate"),
+        observations.filter((o) => role.get(o.label) === "control"),
+      );
+      for (const [label, verdict] of Object.entries(verdicts)) {
+        console.log(`verdict ${label}=${verdict}`);
+      }
+      return;
+    }
+
     if (category === "absen") {
       // Fixed all-zero token; never accept a live QR or identity/auth override.
       const dummyToken = "00000000-0000-0000-0000-000000000000";
