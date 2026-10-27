@@ -89,7 +89,7 @@ describe('auth store', () => {
     await store.login();
     expect(store.token).toBeNull();
     expect(store.isAuthenticated).toBe(false);
-    expect(store.error).toContain('Gagal login');
+    expect(store.error).toContain('Tidak dapat terhubung');
   });
 
   it('login shows a clear message on 429 (rate limit)', async () => {

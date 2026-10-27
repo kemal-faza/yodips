@@ -383,7 +383,7 @@ async function handleExtensionDone() {
           class="mt-4 border-warn/40 bg-warn/10 p-3"
         >
           <AlertDescription class="text-foreground">
-            Session login belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
+            Sesi loginmu belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
           </AlertDescription>
         </Alert>
         <Button

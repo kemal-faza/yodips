@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { DashboardService, type DashboardPayload } from './dashboard.service';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
+import { USER_MESSAGES } from '../common/user-messages';
 import type { SiapProfile } from '../siap/siap-parse';
 import type { KulonAssignment, KulonCourse } from '../kulon/kulon-parse';
 import type { TelemetryRuntime } from '../observability/telemetry';
@@ -141,12 +142,12 @@ describe('DashboardService', () => {
     expect(out.courses).toEqual([]);
     expect(out.errors.courses).toEqual({
       status: 500,
-      message: 'Terjadi kesalahan internal',
+      message: USER_MESSAGES.SERVER,
     });
     expect(JSON.stringify(out.errors)).not.toContain('internal secret');
   });
 
-  it('joins array messages from HttpException with a comma', async () => {
+  it('never echoes a validation array to the client', async () => {
     const svc = makeService({
       getIrs: jest
         .fn()
@@ -158,7 +159,7 @@ describe('DashboardService', () => {
         ),
     });
     const out = await svc.getDashboard(ref('u1'));
-    expect(out.errors.irs).toEqual({ status: 400, message: 'a, b' });
+    expect(out.errors.irs).toEqual({ status: 400, message: USER_MESSAGES.VALIDATION });
   });
 
   it('passes the exact SessionRef to every domain method (none drops generation)', async () => {

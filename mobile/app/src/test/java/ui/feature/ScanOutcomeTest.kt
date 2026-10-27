@@ -62,28 +62,28 @@ class ScanOutcomeTest {
     }
 
     @Test
-    fun `non-success status without message maps to QR Code Invalid caption`() {
+    fun `non-success status without message maps to Kode QR tidak valid caption`() {
         val out = scanOutcome(ApiResult.Success(KehadiranResponse(status = "error", message = null)))
         assertFalse(out.success)
-        assertEquals("QR Code Invalid", out.message)
+        assertEquals("Kode QR tidak valid atau sudah kedaluwarsa.", out.message)
     }
 
     @Test
-    fun `error status with different casing maps to QR Code Invalid`() {
+    fun `error status with different casing maps to Kode QR tidak valid`() {
         val out = scanOutcome(ApiResult.Success(KehadiranResponse(status = "Error", message = null)))
         assertFalse(out.success)
-        assertEquals("QR Code Invalid", out.message)
+        assertEquals("Kode QR tidak valid atau sudah kedaluwarsa.", out.message)
     }
 
     @Test
-    fun `Gagal status maps to QR Code Invalid`() {
+    fun `Gagal status maps to Kode QR tidak valid`() {
         val out = scanOutcome(ApiResult.Success(KehadiranResponse(status = "Gagal", message = null)))
         assertFalse(out.success)
-        assertEquals("QR Code Invalid", out.message)
+        assertEquals("Kode QR tidak valid atau sudah kedaluwarsa.", out.message)
     }
 
     @Test
-    fun `status success but expired message still maps to QR Code Invalid`() {
+    fun `status success but expired message still maps to Kode QR tidak valid`() {
         val out =
             scanOutcome(
                 ApiResult.Success(
@@ -91,7 +91,7 @@ class ScanOutcomeTest {
                 ),
             )
         assertFalse(out.success)
-        assertEquals("QR Code Invalid", out.message)
+        assertEquals("Kode QR tidak valid atau sudah kedaluwarsa.", out.message)
     }
 
     // Errors
@@ -110,10 +110,10 @@ class ScanOutcomeTest {
     }
 
     @Test
-    fun `UPSTREAM business rejection shows QR Code Invalid`() {
+    fun `UPSTREAM business rejection shows Kode QR tidak valid`() {
         val out = scanOutcome(ApiResult.Error(400, "", ErrorType.UPSTREAM))
         assertFalse(out.success)
-        assertEquals("QR Code Invalid", out.message)
+        assertEquals("Kode QR tidak valid atau sudah kedaluwarsa.", out.message)
     }
 
     @Test
@@ -123,7 +123,7 @@ class ScanOutcomeTest {
                 ApiResult.Error(400, "Gagal: QRcode tidak valid atau sudah expired", ErrorType.UPSTREAM),
             )
         assertFalse(out.success)
-        assertEquals("QR Code Invalid", out.message)
+        assertEquals("Kode QR tidak valid atau sudah kedaluwarsa.", out.message)
     }
 
     @Test

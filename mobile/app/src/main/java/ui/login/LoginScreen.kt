@@ -15,6 +15,7 @@ import ac.undip.sso.core.login.siapTicketUrl
 import ac.undip.sso.core.login.ssoLoginCompleted
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.HandoffResult
+import ac.undip.sso.core.network.UserMessages
 import ac.undip.sso.core.data.TokenStoreLike
 import android.annotation.SuppressLint
 import android.content.Context
@@ -477,7 +478,7 @@ fun LoginScreen(
                         if (done || request?.isForMainFrame != true) return
                         val code = errorResponse?.statusCode ?: 0
                         slog("onReceivedHttpError code=$code")
-                        fail("Halaman login merespons dengan error (HTTP $code). Silakan ulangi.")
+                        fail(UserMessages.LOGIN_PAGE)
                     }
                 }
             loadUrl(LoginUrls.SSO_LOGIN)

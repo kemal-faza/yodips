@@ -11,6 +11,8 @@ import { KulonService } from '../kulon/kulon.service';
 import { SessionRef, isSessionRef } from '../session/session-store';
 import { sessionDead } from '../session/live-session';
 import { ERROR_CODES } from '../common/error-codes';
+import { errorCopy } from '../common/error-copy';
+import { USER_MESSAGES } from '../common/user-messages';
 import {
   createNoopTelemetryRuntime,
   elapsedMs,
@@ -29,7 +31,10 @@ import type { KulonAssignment, KulonCourse } from '../kulon/kulon-parse';
 /** Which data slice failed and how — surfaced per-slice, never as an HTTP error. */
 export interface SliceError {
   status: number;
+  /** Human copy only; transport detail stays in the server log. */
   message: string;
+  /** Canonical backend code when the slice failure carried one. */
+  code?: string;
 }
 
 export type DashboardSliceName =
@@ -57,15 +62,16 @@ const EMPTY: Record<string, unknown> = {
 
 function sliceError(e: unknown): SliceError {
   if (e instanceof HttpException) {
-    const resp = e.getResponse(); // string | object
-    const raw =
-      typeof resp === 'string'
-        ? resp
-        : ((resp as { message?: unknown })?.message ?? resp);
-    const message = Array.isArray(raw) ? raw.join(', ') : String(raw);
-    return { status: e.getStatus(), message };
+    // Same projection as the global filter: validation arrays, framework
+    // defaults and raw upstream text never reach the client.
+    const copy = errorCopy(e.getStatus(), e.getResponse());
+    return {
+      status: e.getStatus(),
+      message: copy.message,
+      ...(copy.code === undefined ? {} : { code: copy.code }),
+    };
   }
-  return { status: 500, message: 'Terjadi kesalahan internal' };
+  return { status: 500, message: USER_MESSAGES.SERVER };
 }
 
 function isAuthenticatedFailure(e: unknown): boolean {

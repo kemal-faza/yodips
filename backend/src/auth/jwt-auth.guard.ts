@@ -4,6 +4,16 @@ import { ConfigService } from '@nestjs/config';
 import { SessionStore } from '../session/session-store';
 import { isSessionGeneration } from '../session/session-contract';
 import { readLiveSession, sessionDead } from '../session/live-session';
+import { USER_MESSAGES } from '../common/user-messages';
+
+/**
+ * A rejected request keeps the 401 status and the ABSENCE of a machine code
+ * (clients probe a refresh to tell "invalid JWT" from "upstream stale"), but
+ * the body copy is human — never the framework's bare `Unauthorized`.
+ */
+function unauthenticated(): UnauthorizedException {
+  return new UnauthorizedException({ message: USER_MESSAGES.SESSION_ENDED });
+}
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -20,7 +30,7 @@ export class JwtAuthGuard implements CanActivate {
     // Throw 401 (unauthenticated) instead of returning false (which Nest maps
     // to 403 Forbidden): clients key their silent-refresh / re-login flows off
     // the 401 status, and 401 is the semantically correct auth-failure code.
-    if (!token) throw new UnauthorizedException();
+    if (!token) throw unauthenticated();
     let payload: { sub?: unknown; sessionGeneration?: unknown; via?: unknown };
     try {
       payload = await this.jwt.verifyAsync(token, {
@@ -33,13 +43,13 @@ export class JwtAuthGuard implements CanActivate {
         audience: 'yodips-web',
       });
     } catch {
-      throw new UnauthorizedException(); // bare 401 (existing behavior)
+      throw unauthenticated(); // 401 without a code (existing behavior)
     }
     // Claim shape: non-empty string sub + 32-hex sessionGeneration.
     // A legacy/no-claim token fails here → bare 401.
     const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
     const generation = payload?.sessionGeneration;
-    if (!sub || !isSessionGeneration(generation)) throw new UnauthorizedException();
+    if (!sub || !isSessionGeneration(generation)) throw unauthenticated();
     // Presence read lives OUTSIDE the verify try so SESSION_DEAD is not
     // swallowed into a bare 401. The one guarded read: the exact token
     // generation must still be live — a B-replacement after mint is a miss

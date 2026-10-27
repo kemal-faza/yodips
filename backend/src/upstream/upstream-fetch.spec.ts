@@ -117,9 +117,17 @@ describe('StaleUpstreamError', () => {
     expect(e).toBeInstanceOf(HttpException);
     expect(e.getStatus()).toBe(HttpStatus.UNAUTHORIZED);
     expect((e.getResponse() as { message: string }).message).toContain(
-      'Session SIAP expired',
+      'Sesi SIAP berakhir',
     );
     expect(e.reason).toBe('login-redirect');
+  });
+
+  it('does not claim an expired session for a transient outage', () => {
+    const e = new StaleUpstreamError('Siap', 'fetch-threw');
+    expect(e.getStatus()).toBe(HttpStatus.BAD_GATEWAY);
+    expect((e.getResponse() as { message: string }).message).toBe(
+      'Layanan SIAP sedang tidak bisa diakses. Coba lagi nanti.',
+    );
   });
 
   it('carries a custom message when given (Kulon gangguan case)', () => {
@@ -761,7 +769,7 @@ describe('upstreamFetchText', () => {
         'https://kulon2.undip.ac.id/my/',
         {},
       ),
-    ).rejects.toThrow('Session Kulon expired. Silakan login ulang via SSO');
+    ).rejects.toThrow('Layanan Kulon sedang tidak bisa diakses. Coba lagi nanti.');
   });
 
   it('supports custom messages (Kulon gangguan wording)', async () => {

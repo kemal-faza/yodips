@@ -4,6 +4,7 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranResponse
+import ac.undip.sso.core.network.UserMessages
 import androidx.compose.runtime.Composable
 
 /**
@@ -39,7 +40,7 @@ fun scanOutcome(
                     message.contains("expired", ignoreCase = true) ||
                     message.contains("kedaluwarsa", ignoreCase = true) ||
                     message.contains("gagal", ignoreCase = true)
-            ScanOutcome(success = !explicitFailure, message = if (explicitFailure) "QR Code Invalid" else "Berhasil Absen")
+            ScanOutcome(success = !explicitFailure, message = if (explicitFailure) UserMessages.QR_INVALID else "Berhasil Absen")
         }
 
         is ApiResult.Error -> {
@@ -53,7 +54,7 @@ fun scanOutcome(
                 }
 
                 ErrorType.UPSTREAM -> {
-                    ScanOutcome(false, "QR Code Invalid")
+                    ScanOutcome(false, UserMessages.QR_INVALID)
                 }
 
                 ErrorType.STALE_SESSION -> {

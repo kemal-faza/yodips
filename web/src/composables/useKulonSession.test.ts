@@ -20,12 +20,12 @@ describe('useKulonSession', () => {
   });
   it('does not classify a 403 permission failure as a stale session', () => {
     const { sessionExpired, extract } = useKulonSession();
-    expect(extract({ response: { status: 403, data: { message: 'Akses ditolak' } } })).toBe('Akses ditolak');
+    expect(extract({ response: { status: 403, data: { message: 'Akses ditolak' } } })).toBe('Akunmu tidak punya akses ke data ini.');
     expect(sessionExpired.value).toBe(false);
   });
   it('returns generic message for unknown', () => {
     const { sessionExpired, extract } = useKulonSession();
-    expect(extract(new Error('boom'))).toBe('Terjadi kesalahan tidak diketahui.');
+    expect(extract(new Error('boom'))).toBe('Tidak dapat terhubung ke server. Periksa koneksimu lalu coba lagi.');
     expect(sessionExpired.value).toBe(false);
   });
   it('clear resets sessionExpired and error (regression)', () => {

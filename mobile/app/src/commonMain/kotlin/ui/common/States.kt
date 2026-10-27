@@ -2,6 +2,7 @@ package ac.undip.sso.ui.common
 
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
+import ac.undip.sso.core.network.UserMessages
 import ac.undip.sso.nowMs
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -103,15 +104,8 @@ fun <T> LoadableData(
     }
 }
 
-/** User-facing title for a failed source without conflating upstream and JWT sessions. */
-internal fun errorStateTitle(type: ErrorType): String =
-    when (type) {
-        ErrorType.UNAUTHORIZED -> "Sesi berakhir"
-        ErrorType.STALE_SESSION -> "Sesi SIAP/Kulon perlu diperbarui"
-        ErrorType.SESSION_RECOVERED -> "Sesi sudah dipulihkan"
-        ErrorType.RECOVERY_UNSUPPORTED -> "Pemulihan perlu dilanjutkan di Android"
-        else -> "Tidak dapat memuat data"
-    }
+/** User-facing heading for a failed source without conflating upstream and JWT sessions. */
+internal fun errorStateTitle(type: ErrorType): String = UserMessages.title(type)
 
 /** Heuristic: an empty collection / blank string counts as an empty state. */
 private fun <T> isEmpty(data: T): Boolean =

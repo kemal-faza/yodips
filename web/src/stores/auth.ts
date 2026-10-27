@@ -9,6 +9,7 @@ import {
   type ExtPollStatus,
 } from '../composables/useExtension';
 import { onTokenRefreshed } from '../lib/reauth';
+import { describeError } from '../lib/error-copy';
 import { sessionLifetime } from '../lib/session-lifetime';
 import { recoverUpstreamSession, resetUpstreamRecoveryState } from '../lib/upstream-renewal';
 import { useKulonStore } from './kulon';
@@ -145,7 +146,7 @@ export const useAuthStore = defineStore('auth', {
           this.error =
             'Terlalu banyak percobaan login. Tunggu sekitar 1 menit lalu coba lagi.';
         } else {
-          this.error = 'Gagal login: ' + ((e as Error).message ?? 'Terjadi kesalahan');
+          this.error = describeError(e, { fallback: 'Login belum berhasil. Coba lagi.' });
         }
       } finally {
         if (ownsAttempt(attempt, legacyLoginAttempt)) this.checking = false;

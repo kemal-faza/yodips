@@ -5,6 +5,7 @@ import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.ErrorType
+import ac.undip.sso.core.network.UserMessages
 import ac.undip.sso.core.network.isServiceStaleCode
 import ac.undip.sso.core.network.jwtExpiryEpochSeconds
 import ac.undip.sso.nowMs
@@ -185,13 +186,13 @@ class SessionRefresher(
         } catch (e: ApiHttpException) {
             if (e.status == 401 && e.code == BackendCodes.SESSION_DEAD) {
                 expireIfCurrent()
-                return ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
+                return failure(e.status, ErrorType.UNAUTHORIZED, e.code)
             }
             val stale = serviceStale || isServiceStaleCode(e.code)
             val staleType = if (stale) ErrorType.STALE_SESSION else ErrorType.UNAUTHORIZED
             if (e.status == 401) {
                 if (!retryable) {
-                    return ApiResult.Error(e.status, e.message, staleType)
+                    return failure(e.status, staleType, e.code)
                 }
                 when (tryRefresh()) {
                     RefreshResult.SUCCESS -> {
@@ -200,69 +201,64 @@ class SessionRefresher(
                         } catch (e2: ApiHttpException) {
                             if (e2.status == 401 && e2.code == BackendCodes.SESSION_DEAD) {
                                 expireIfCurrent()
-                                return ApiResult.Error(e2.status, e2.message, ErrorType.UNAUTHORIZED)
+                                return failure(e2.status, ErrorType.UNAUTHORIZED, e2.code)
                             }
                             val t = typeForHttp(e2.status)
                             // JWT segar PASTI lolos JwtAuthGuard → 401 pada
                             // retry = upstream stale (serviceStale). Endpoint
                             // non-upstream yang masih 401 = sesi bermasalah.
                             val staleRetry = serviceStale || isServiceStaleCode(e2.code)
-                            ApiResult.Error(
+                            failure(
                                 e2.status,
-                                e2.message,
                                 if (t == ErrorType.UNAUTHORIZED) {
                                     if (staleRetry) ErrorType.STALE_SESSION else ErrorType.UNAUTHORIZED
                                 } else {
                                     t
                                 },
+                                e2.code,
                             )
                         }
                     }
                     RefreshResult.DEAD_SESSION -> {
                         expireIfCurrent()
-                        ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
+                        failure(e.status, ErrorType.UNAUTHORIZED, e.code)
                     }
-                    RefreshResult.REJECTED -> {
-                        ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
-                    }
-                    RefreshResult.NETWORK_FAILURE -> {
-                        ApiResult.Error(null, "Tidak dapat terhubung ke server", ErrorType.NETWORK)
-                    }
+                    RefreshResult.REJECTED -> failure(e.status, ErrorType.UNAUTHORIZED, e.code)
+                    RefreshResult.NETWORK_FAILURE -> failure(null, ErrorType.NETWORK)
                 }
             } else {
-                ApiResult.Error(e.status, e.message, typeForHttp(e.status))
+                failure(e.status, typeForHttp(e.status), e.code)
             }
         } catch (e: SerializationException) {
-            ApiResult.Error(null, "Respons tidak dapat dibaca", ErrorType.SERVER)
+            ApiResult.Error(null, UserMessages.UNPARSEABLE, ErrorType.SERVER)
         } catch (e: Exception) {
-            // Network or generic error.
-            // IOException is JVM-only; wasmJs uses Exception for network failures.
-            if (e is ApiHttpException) {
-                if (e.status == 401 && e.code == BackendCodes.SESSION_DEAD) {
-                    expireIfCurrent()
-                    return ApiResult.Error(e.status, e.message, ErrorType.UNAUTHORIZED)
-                }
-                val t = typeForHttp(e.status)
-                val stale = serviceStale || isServiceStaleCode(e.code)
-                ApiResult.Error(
-                    e.status,
-                    e.message,
-                    if (t == ErrorType.UNAUTHORIZED) {
-                        if (stale) ErrorType.STALE_SESSION else ErrorType.UNAUTHORIZED
-                    } else {
-                        t
-                    },
-                )
-            } else {
-                val msg = e.message ?: "Terjadi kesalahan"
-                // Type hint: NETWORK for IOException-like messages, SERVER otherwise.
-                val isNetwork = msg.contains("connect", ignoreCase = true) ||
-                    msg.contains("ECONN", ignoreCase = true) ||
-                    msg.contains("timeout", ignoreCase = true) ||
-                    msg.contains("network", ignoreCase = true) ||
-                    msg.contains("resolve", ignoreCase = true)
-                ApiResult.Error(null, msg, if (isNetwork) ErrorType.NETWORK else ErrorType.SERVER)
-            }
+            // Network or generic error. IOException is JVM-only; wasmJs uses
+            // Exception for network failures. The message text only CLASSIFIES
+            // the failure — it is never rendered (see [failure]).
+            val msg = e.message.orEmpty()
+            val isNetwork = msg.contains("connect", ignoreCase = true) ||
+                msg.contains("econn", ignoreCase = true) ||
+                msg.contains("timeout", ignoreCase = true) ||
+                msg.contains("timed out", ignoreCase = true) ||
+                msg.contains("network", ignoreCase = true) ||
+                msg.contains("offline", ignoreCase = true) ||
+                msg.contains("unreachable", ignoreCase = true) ||
+                msg.contains("fetch", ignoreCase = true) ||
+                msg.contains("resolve", ignoreCase = true) ||
+                msg.contains("socket", ignoreCase = true)
+            val type = if (isNetwork) ErrorType.NETWORK else ErrorType.SERVER
+            ApiResult.Error(null, UserMessages.forError(type), type)
         }
     }
+
+    /**
+     * The only place that turns a transport outcome into an [ApiResult.Error]:
+     * `message` always comes from the copy catalog, never from the response.
+     */
+    private fun failure(
+        status: Int?,
+        type: ErrorType,
+        code: String? = null,
+    ): ApiResult.Error =
+        ApiResult.Error(status, UserMessages.forError(type, status, code), type)
 }

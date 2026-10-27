@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { getNotifications, markNotificationRead } from '../../../api/client';
 import type { SiapNotification } from '../../../types';
+import { describeError } from '../../../lib/error-copy';
 import { Bell, AlertTriangle, Clock, CircleCheck, Info, CheckCheck, X } from '@lucide/vue';
 
 const open = ref(false);
@@ -31,7 +32,7 @@ async function load() {
     const res = await getNotifications();
     items.value = res.items;
   } catch (e: any) {
-    error.value = e?.response?.data?.message ?? 'Gagal memuat notifikasi.';
+    error.value = describeError(e, { fallback: 'Gagal memuat notifikasi. Coba lagi.' });
   } finally {
     loading.value = false;
   }
