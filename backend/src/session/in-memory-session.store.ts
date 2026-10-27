@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CapturedSession } from './session-contract';
-import { isKulonCookieRenewal, sameCapturedSession, SessionStore } from './session-store';
+import { isUpstreamCookieRenewal, sameCapturedSession, SessionStore } from './session-store';
 import { evaluateRecord } from './session-record-policy';
 
 interface StoredRecord {
@@ -96,7 +96,7 @@ export class InMemorySessionStore extends SessionStore {
     }
     if (decision.kind !== 'live' || !record) return 'dead';
     if (!sameCapturedSession(record.session, expected)) return 'conflict';
-    if (!isKulonCookieRenewal(identity, generation, expected, replacement)) {
+    if (!isUpstreamCookieRenewal(identity, generation, expected, replacement)) {
       throw new Error('Invalid session renewal replacement');
     }
     record.session = replacement;

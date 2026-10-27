@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import Redis from 'ioredis';
 import { CapturedSession } from './session-contract';
-import { isKulonCookieRenewal, sameCapturedSession, SessionStore } from './session-store';
+import { isUpstreamCookieRenewal, sameCapturedSession, SessionStore } from './session-store';
 import { evaluateRecord } from './session-record-policy';
 
 const KEY_PREFIX = 'sso:session:';
@@ -196,7 +196,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     }
     if (decision.kind !== 'live') return 'dead';
     if (!sameCapturedSession(session, expected)) return 'conflict';
-    if (!isKulonCookieRenewal(identity, generation, expected, replacement)) {
+    if (!isUpstreamCookieRenewal(identity, generation, expected, replacement)) {
       throw new Error('Invalid session renewal replacement');
     }
 

@@ -248,6 +248,10 @@ export class SiapService {
     return this.upstream.checkSessionValid(siapCookie);
   }
 
+  async validateSessionCookieForRenewal(siapCookie: string) {
+    return this.upstream.validateSessionCookieForRenewal(siapCookie);
+  }
+
   private async fetchProfileData(ref: SessionRef): Promise<SiapProfile> {
     this.requireRef(ref);
     const ctx = await this.upstream.getApiContextForSession(ref);

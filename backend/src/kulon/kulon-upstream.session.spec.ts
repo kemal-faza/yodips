@@ -249,6 +249,13 @@ describe('KulonUpstreamSession.getContextForSession (B: generation-qualified TOC
     expect(ctx.sesskey).toBe('skA');
   });
 
+  it('reports a missing Kulon cookie as upstream stale while the backend session is live', async () => {
+    store.map.set('U1', { kulonCookie: '', sessionGeneration: GEN_A, capturedAt: Date.now() });
+    const seam = new KulonUpstreamSession(store, cache);
+    await expect(seam.getContextForSession({ sub: 'U1', sessionGeneration: GEN_A }))
+      .rejects.toMatchObject({ status: 401, reason: 'no-cookie' });
+  });
+
   it('replacement between guard and service read rejects SESSION_DEAD and never returns B cookie to an A-token', async () => {
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,

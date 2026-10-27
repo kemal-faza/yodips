@@ -22,6 +22,7 @@ import {
 import { readLiveSession, sessionDead } from '../session/live-session';
 import { createKeyedSingleFlight } from '../common/single-flight';
 import { SiapApiUpstream } from './siap-api';
+import { pickProfileValue, profileSection } from './siap-parse';
 import {
   createNoopTelemetryRuntime,
   TELEMETRY_RUNTIME,
@@ -34,6 +35,16 @@ export const SIAP_BASE_URL = 'https://siap.undip.ac.id';
 const SIAP_PROBE_PATH = '/pages/mhs/dashboard';
 /** Present on the authenticated dashboard, absent on a login page. */
 export const SIAP_AUTH_MARKER = 'tabmhs_profile';
+
+export type SiapRenewalValidation =
+  | { kind: 'valid'; identity: string }
+  | { kind: 'invalid' | 'unavailable' };
+
+class SiapRenewalProbeFailure extends Error {
+  constructor(readonly kind: 'invalid' | 'unavailable') {
+    super('SIAP renewal probe failed');
+  }
+}
 
 const SIAP_PROFILE_PAGE: UpstreamRouteContext = {
   service: 'siap',
@@ -203,6 +214,42 @@ export class SiapUpstreamSession {
     }
   }
 
+  /** Validate the authenticated dashboard and read the identity from the same response. */
+  async validateSessionCookieForRenewal(cookie: string): Promise<SiapRenewalValidation> {
+    if (!cookie) return { kind: 'invalid' };
+    try {
+      const identity = await timedFetch<string>(
+        this.runtime,
+        SIAP_SESSION_PROBE_CONTEXT,
+        `${SIAP_BASE_URL}${SIAP_PROBE_PATH}`,
+        { headers: { Cookie: cookie }, redirect: 'follow' },
+        async (res): Promise<UpstreamAttemptResult<string>> => {
+          if (!res.ok) {
+            return {
+              ok: false,
+              error: new SiapRenewalProbeFailure(res.status >= 500 || res.status === 429 ? 'unavailable' : 'invalid'),
+              outcome: 'http_error', reason: 'http-not-ok', status: res.status,
+            };
+          }
+          const html = isLoginRedirect(res.url) ? '' : await res.text();
+          const nim = /\bid\s*=\s*["']tabmhs_profile["']/i.test(html)
+            ? pickProfileValue(profileSection(html), 'NIM')?.trim()
+            : undefined;
+          if (!nim) {
+            return {
+              ok: false, error: new SiapRenewalProbeFailure('invalid'),
+              outcome: 'stale', reason: 'login-redirect', status: res.status,
+            };
+          }
+          return { ok: true, value: nim, outcome: 'ok', status: res.status };
+        },
+      );
+      return { kind: 'valid', identity };
+    } catch (error) {
+      return { kind: error instanceof SiapRenewalProbeFailure ? error.kind : 'unavailable' };
+    }
+  }
+
   /** Identity + token for a user. Identity: session store → cache (24 h) →
    *  scrape fallback (cached, NOT written back to the session store). Token:
    *  cache (10 min) → mint (single-flight). Missing siapCookie -> stale 401.
@@ -242,8 +289,9 @@ export class SiapUpstreamSession {
    */
   async getContextForSession(ref: SessionRef): Promise<SiapSessionContext> {
     const session = await readLiveSession(this.store, ref);
-    if (!session?.siapCookie) {
-      throw sessionDead();
+    if (!session) throw sessionDead();
+    if (!session.siapCookie) {
+      throw new StaleUpstreamError('Siap', 'no-cookie', 'SIAP session belum ada. Silakan login ulang via SSO');
     }
     return this.resolveScoped(ref, session);
   }
@@ -299,8 +347,9 @@ export class SiapUpstreamSession {
     nim: string;
   }> {
     const session = await readLiveSession(this.store, ref);
-    if (!session?.siapCookie) {
-      throw sessionDead();
+    if (!session) throw sessionDead();
+    if (!session.siapCookie) {
+      throw new StaleUpstreamError('Siap', 'no-cookie', 'SIAP session belum ada. Silakan login ulang via SSO');
     }
     const nim = session.identity ?? ref.sub;
     return { cookie: session.siapCookie, nim };

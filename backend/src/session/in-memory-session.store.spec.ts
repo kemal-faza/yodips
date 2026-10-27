@@ -212,6 +212,14 @@ describe('InMemorySessionStore (per-user, TTL)', () => {
   });
 
   describe('replaceIfUnchanged (upstream-cookie renewal CAS)', () => {
+    it('replaces only the SIAP cookie and retains the rest of the session', async () => {
+      const expected = { ...makeSession('a', 'MoodleSession=OLD'), siapCookie: 'sia_app_session=old' };
+      const replacement = { ...expected, siapCookie: 'sia_app_session=new' };
+      await store.set('a', expected);
+      await expect(store.replaceIfUnchanged('a', GEN_A, expected, replacement)).resolves.toBe('updated');
+      await expect(store.get('a')).resolves.toEqual(replacement);
+    });
+
     it('replaces only Kulon cookie and preserves identity, generation, capture time, and other session fields', async () => {
       const expected = {
         ...makeSession('a', 'MoodleSession=OLD'),

@@ -490,6 +490,16 @@ describe('RedisSessionStore', () => {
       expect(fake.kv.has('sso:session:u')).toBe(true);
     });
 
+    it('replaces only the SIAP cookie while preserving the full session snapshot', async () => {
+      const fake = makeStatefulClient();
+      const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');
+      const expected = { ...makeSession('u', 'MoodleSession=OLD', GEN_A), siapCookie: 'sia_app_session=old' };
+      const replacement = { ...expected, siapCookie: 'sia_app_session=new' };
+      await s.set('u', expected);
+      await expect(s.replaceIfUnchanged('u', GEN_A, expected, replacement)).resolves.toBe('updated');
+      await expect(s.getIfGeneration('u', GEN_A)).resolves.toEqual(replacement);
+    });
+
     it('replaces only Kulon cookie while preserving the full session snapshot fields', async () => {
       const fake = makeStatefulClient();
       const s = new RedisSessionStore(fake as unknown as Redis, 60_000, 'test-enc-key');

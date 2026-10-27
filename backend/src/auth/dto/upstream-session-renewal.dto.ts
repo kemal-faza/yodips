@@ -1,9 +1,9 @@
 import { IsIn, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
-/** Only the Kulon renewal flow is currently supported by this endpoint. */
+/** Renew one upstream cookie without replacing the YoDips session. */
 export class UpstreamSessionRenewalDto {
-  @IsIn(['kulon'])
-  service!: 'kulon';
+  @IsIn(['kulon', 'siap'])
+  service!: 'kulon' | 'siap';
 
   @IsString()
   @MinLength(1)

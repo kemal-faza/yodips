@@ -105,3 +105,24 @@ export function isKulonCookieRenewal(
     replacement.siapCookie === expected.siapCookie &&
     replacement.emailSso === expected.emailSso;
 }
+
+/** Permit exactly one changed upstream cookie while keeping the session binding. */
+export function isUpstreamCookieRenewal(
+  identity: string,
+  generation: string,
+  expected: CapturedSession,
+  replacement: CapturedSession,
+): boolean {
+  if (isKulonCookieRenewal(identity, generation, expected, replacement)) return true;
+  return expected.identity === identity &&
+    expected.sessionGeneration === generation &&
+    replacement.identity === identity &&
+    replacement.sessionGeneration === generation &&
+    replacement.siapCookie.trim().length > 0 &&
+    replacement.siapCookie !== expected.siapCookie &&
+    replacement.kulonCookie === expected.kulonCookie &&
+    replacement.capturedAt === expected.capturedAt &&
+    replacement.ssoCookie === expected.ssoCookie &&
+    replacement.microsoftCookie === expected.microsoftCookie &&
+    replacement.emailSso === expected.emailSso;
+}

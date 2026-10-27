@@ -248,8 +248,9 @@ export class KulonUpstreamSession {
    */
   async getContextForSession(ref: SessionRef): Promise<{ cookie: string; sesskey: string }> {
     const session = await readLiveSession(this.store, ref);
-    if (!session?.kulonCookie) {
-      throw sessionDead();
+    if (!session) throw sessionDead();
+    if (!session.kulonCookie) {
+      throw new StaleUpstreamError('Kulon', 'no-cookie', 'Kulon session belum ada. Silakan login ulang via SSO');
     }
     // Generation-scoped sesskey entry: an A flight/entry is never joined or
     // reused by a B generation, even when the cookie material is identical.

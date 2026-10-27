@@ -173,7 +173,7 @@ describe('SiapUpstreamSession.getKhsContextForSession', () => {
     expect(api.mintToken).not.toHaveBeenCalled();
   });
 
-  it('keeps the ordinary API and cookie paths bound to a web cookie', async () => {
+  it('reports missing SIAP cookie as upstream stale without killing the live backend session', async () => {
     const store = new FakeStore(
       new Map([
         [NIM, { identity: NIM, emailSso: EMAIL, sessionGeneration: DEFAULT_GEN }],
@@ -184,11 +184,11 @@ describe('SiapUpstreamSession.getKhsContextForSession', () => {
 
     await expect(seam.getContextForSession(ref)).rejects.toMatchObject({
       status: 401,
-      response: { code: 'SESSION_DEAD' },
+      reason: 'no-cookie',
     });
     await expect(seam.getCookieForSession(ref)).rejects.toMatchObject({
       status: 401,
-      response: { code: 'SESSION_DEAD' },
+      reason: 'no-cookie',
     });
     expect(api.mintToken).not.toHaveBeenCalled();
   });

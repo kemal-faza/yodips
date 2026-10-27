@@ -7,7 +7,7 @@ import {
   generateSessionGeneration,
   isSessionGeneration,
 } from '../session/session-contract';
-import { SessionStore } from '../session/session-store';
+import { sameCapturedSession, SessionStore } from '../session/session-store';
 import { readLiveSession, sessionDead } from '../session/live-session';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
@@ -198,14 +198,14 @@ export class AuthService {
   }
 
   /**
-   * Replace the Kulon cookie on the JWT's exact live generation. The cookie is
+   * Replace one upstream cookie on the JWT's exact live generation. The cookie is
    * validated read-only before the store's compare-and-swap; no identity or
    * generation is accepted from the request body.
    */
   async renewUpstreamSession(
     dto: UpstreamSessionRenewalDto,
     user: { sub?: unknown; sessionGeneration?: unknown },
-  ): Promise<{ service: 'kulon'; status: 'renewed' }> {
+  ): Promise<{ service: 'kulon' | 'siap'; status: 'renewed' }> {
     const sub =
       typeof user?.sub === 'string' && user.sub.length > 0 ? user.sub : null;
     const generation = user?.sessionGeneration;
@@ -217,38 +217,65 @@ export class AuthService {
     });
     if (!expected || expected.identity !== sub) throw sessionDead();
 
+    const service = dto?.service;
     if (
-      dto?.service !== 'kulon' ||
-      !isRenewableKulonCookie(dto.cookie) ||
-      dto.cookie === expected.kulonCookie
+      (service !== 'kulon' && service !== 'siap') ||
+      !isRenewableCookie(dto.cookie, service)
     ) {
-      throw upstreamSessionInvalid();
+      throw upstreamSessionInvalid(service);
     }
 
     let validation: Awaited<
       ReturnType<KulonService['validateSessionCookieForRenewal']>
     >;
     try {
-      validation = await this.kulon.validateSessionCookieForRenewal(dto.cookie);
+      validation = service === 'kulon'
+        ? await this.kulon.validateSessionCookieForRenewal(dto.cookie)
+        : await this.siap.validateSessionCookieForRenewal(dto.cookie);
     } catch {
-      throw upstreamUnavailable();
+      throw upstreamUnavailable(service);
     }
-    if (validation.kind === 'unavailable') throw upstreamUnavailable();
+    if (validation.kind === 'unavailable') throw upstreamUnavailable(service);
     if (validation.kind !== 'valid' || validation.identity !== sub) {
-      throw upstreamSessionInvalid();
+      throw upstreamSessionInvalid(service);
     }
 
-    const replacement = { ...expected, kulonCookie: dto.cookie };
-    const outcome = await this.sessionStore.replaceIfUnchanged(
+    // Some upstreams re-authenticate without rotating the cookie value. A
+    // validated no-op is safe only while the complete snapshot is still live.
+    if (dto.cookie === (service === 'kulon' ? expected.kulonCookie : expected.siapCookie)) {
+      const current = await readLiveSession(this.sessionStore, { sub, sessionGeneration: generation });
+      if (!current) throw sessionDead();
+      if (!sameSessionExceptOtherCookie(current, expected, service)) throw upstreamSessionConflict(service);
+      this.probeCache.delete(`${sub}:${service}:${dto.cookie}`);
+      return { service, status: 'renewed' };
+    }
+
+    const replacement = service === 'kulon'
+      ? { ...expected, kulonCookie: dto.cookie }
+      : { ...expected, siapCookie: dto.cookie };
+    let outcome = await this.sessionStore.replaceIfUnchanged(
       sub,
       generation,
       expected,
       replacement,
     );
+    if (outcome === 'conflict') {
+      const current = await readLiveSession(this.sessionStore, { sub, sessionGeneration: generation });
+      if (!current) throw sessionDead();
+      // A simultaneous renewal of the OTHER service can be merged once.
+      // Never overwrite a newer cookie for this service or a new session.
+      if (sameSessionExceptOtherCookie(current, expected, service)) {
+        const merged = service === 'kulon'
+          ? { ...current, kulonCookie: dto.cookie }
+          : { ...current, siapCookie: dto.cookie };
+        outcome = await this.sessionStore.replaceIfUnchanged(sub, generation, current, merged);
+      }
+    }
     if (outcome === 'dead') throw sessionDead();
-    if (outcome === 'conflict') throw upstreamSessionConflict();
+    if (outcome === 'conflict') throw upstreamSessionConflict(service);
 
-    return { service: 'kulon', status: 'renewed' };
+    this.probeCache.delete(`${sub}:${service}:${dto.cookie}`);
+    return { service, status: 'renewed' };
   }
 
   /**
@@ -392,7 +419,18 @@ export class AuthService {
   }
 }
 
-function isRenewableKulonCookie(cookie: unknown): cookie is string {
+function sameSessionExceptOtherCookie(
+  current: Parameters<typeof sameCapturedSession>[0],
+  expected: Parameters<typeof sameCapturedSession>[1],
+  service: 'kulon' | 'siap',
+): boolean {
+  const expectedWithOtherCookie = service === 'kulon'
+    ? { ...expected, siapCookie: current.siapCookie }
+    : { ...expected, kulonCookie: current.kulonCookie };
+  return sameCapturedSession(current, expectedWithOtherCookie);
+}
+
+function isRenewableCookie(cookie: unknown, service: 'kulon' | 'siap'): cookie is string {
   if (
     typeof cookie !== 'string' ||
     cookie.length === 0 ||
@@ -406,34 +444,37 @@ function isRenewableKulonCookie(cookie: unknown): cookie is string {
     if (separator < 0) return false;
     const name = part.slice(0, separator).trim();
     const value = part.slice(separator + 1).trim();
-    return /^MoodleSession(?:_[A-Za-z0-9-]+)?$/.test(name) && value.length > 0;
+    const matches = service === 'kulon'
+      ? /^MoodleSession(?:_[A-Za-z0-9-]+)?$/.test(name)
+      : /^(?:sia_|sipp|siapp|ciapp_)/i.test(name);
+    return matches && value.length > 0;
   });
 }
 
-function upstreamSessionInvalid(): HttpException {
+function upstreamSessionInvalid(service?: 'kulon' | 'siap'): HttpException {
   return new HttpException(
     {
-      message: 'Cookie sesi Kulon tidak valid',
+      message: `Cookie sesi ${service === 'siap' ? 'SIAP' : 'Kulon'} tidak valid`,
       code: ERROR_CODES.UPSTREAM_SESSION_INVALID,
     },
     HttpStatus.UNPROCESSABLE_ENTITY,
   );
 }
 
-function upstreamSessionConflict(): HttpException {
+function upstreamSessionConflict(service: 'kulon' | 'siap'): HttpException {
   return new HttpException(
     {
-      message: 'Sesi berubah saat pembaruan Kulon diproses',
+      message: `Sesi berubah saat pembaruan ${service === 'siap' ? 'SIAP' : 'Kulon'} diproses`,
       code: ERROR_CODES.UPSTREAM_SESSION_CONFLICT,
     },
     HttpStatus.CONFLICT,
   );
 }
 
-function upstreamUnavailable(): HttpException {
+function upstreamUnavailable(service: 'kulon' | 'siap'): HttpException {
   return new HttpException(
     {
-      message: 'Sesi Kulon tidak dapat diverifikasi saat ini',
+      message: `Sesi ${service === 'siap' ? 'SIAP' : 'Kulon'} tidak dapat diverifikasi saat ini`,
       code: ERROR_CODES.UPSTREAM_UNAVAILABLE,
     },
     HttpStatus.BAD_GATEWAY,
