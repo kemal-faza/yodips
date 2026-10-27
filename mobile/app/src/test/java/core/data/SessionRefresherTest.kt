@@ -4,6 +4,7 @@ import ac.undip.sso.core.network.ApiHttpException
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.ErrorType
+import ac.undip.sso.core.network.UserMessages
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CompletableDeferred
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.SerializationException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -306,5 +308,47 @@ class SessionRefresherTest {
         val result = r.ensureFresh(token = jwt(1_000_000), nowEpochSeconds = 1_000_000, leewaySeconds = 300)
         assertEquals(SessionRefresher.RefreshResult.DEAD_SESSION, result)
         assertEquals(0, dialogs)
+    }
+
+    // --- User copy boundary: transport text must never reach a screen. ---
+
+    @Test
+    fun `a raw 5xx body never becomes the user message`() = runTest {
+        val r = refresher(backgroundScope, { "fresh-jwt" }, {})
+        val out = r.safe<String> {
+            throw ApiHttpException(500, """{"message":"boom","statusCode":500}""")
+        }
+        val error = out as ApiResult.Error
+        assertEquals(ErrorType.SERVER, error.type)
+        assertEquals(UserMessages.SERVER, error.message)
+        assertFalse(error.message.contains("boom"))
+        assertFalse(error.message.contains("{"))
+    }
+
+    @Test
+    fun `throttling maps to the retry copy`() = runTest {
+        val r = refresher(backgroundScope, { "fresh-jwt" }, {})
+        val out = r.safe<String> { throw ApiHttpException(429, "ThrottlerException: Too Many Requests") }
+        val error = out as ApiResult.Error
+        assertEquals(ErrorType.UPSTREAM, error.type)
+        assertEquals(UserMessages.THROTTLED, error.message)
+    }
+
+    @Test
+    fun `a not-found response keeps the human not-found copy`() = runTest {
+        val r = refresher(backgroundScope, { "fresh-jwt" }, {})
+        val out = r.safe<String> { throw ApiHttpException(404, "Cannot GET /api/nope") }
+        val error = out as ApiResult.Error
+        assertEquals(ErrorType.NOT_FOUND, error.type)
+        assertEquals(UserMessages.NOT_FOUND, error.message)
+    }
+
+    @Test
+    fun `an IO failure maps to the network copy`() = runTest {
+        val r = refresher(backgroundScope, { "fresh-jwt" }, {})
+        val out = r.safe<String> { throw IOException("connect timed out") }
+        val error = out as ApiResult.Error
+        assertEquals(ErrorType.NETWORK, error.type)
+        assertEquals(UserMessages.NETWORK, error.message)
     }
 }

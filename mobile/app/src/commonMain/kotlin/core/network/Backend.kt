@@ -13,6 +13,9 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Singleton holding the network stack for the backend API.
@@ -81,18 +84,36 @@ object Backend {
             }
             val text = resp.bodyAsText()
             if (!resp.status.isSuccess()) {
-                return HandoffResult.Failure("Handoff gagal (HTTP ${resp.status.value}): ${text.take(200)}")
+                // Only the contract code crosses the boundary; the response
+                // body and the HTTP status never become user copy.
+                val code = errorCode(text)
+                return HandoffResult.Failure(
+                    UserMessages.forError(ErrorType.SERVER, resp.status.value, code),
+                )
             }
             try {
                 val parsed = SIAP_JSON.decodeFromString<HandoffResponse>(text)
                 HandoffResult.Success(parsed.accessToken)
-            } catch (e: Exception) {
-                HandoffResult.Failure("Respons handoff tidak valid: ${e.message}")
+            } catch (_: Exception) {
+                HandoffResult.Failure(UserMessages.UNPARSEABLE)
             }
-        } catch (e: Exception) {
-            HandoffResult.Failure("Tidak dapat terhubung ke server: ${e.message}")
+        } catch (_: Exception) {
+            HandoffResult.Failure(UserMessages.NETWORK)
         } finally {
             client.close()
         }
     }
 }
+
+/**
+ * Best-effort `{ code }` lift from an error body. Anything unparsable (proxy
+ * HTML, empty body, gateway page) yields null and the caller maps by status.
+ */
+private fun errorCode(text: String): String? =
+    runCatching {
+        Backend.apiJson
+            .parseToJsonElement(text)
+            .jsonObject["code"]
+            ?.jsonPrimitive
+            ?.contentOrNull
+    }.getOrNull()
