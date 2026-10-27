@@ -124,7 +124,7 @@ object QrScanner {
         return try {
             val text = awaitJs(jsDecodeFile(decoder))?.toString()
             if (text.isNullOrBlank()) {
-                QrScanResult.Error("Tidak ada QR yang terdeteksi pada foto.")
+                QrScanResult.Error(UserMessages.QR_NOT_FOUND)
             } else {
                 QrScanResult.Success(text.trim())
             }

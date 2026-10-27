@@ -14,6 +14,10 @@ Two things worth knowing:
 
 ## [Unreleased]
 
+- Android: gallery QR photos are retried at smaller sizes when the full-resolution
+  detector pass finds nothing (a 2160×3840 photo of a screen can defeat ML Kit),
+  and a failed read now shows a message instead of leaving the screen silent.
+
 ## [0.6.6] - 2026-09-20
 
 - Layered elevation on Android so surfaces read as 3D: card surfaces brighter than the background, shadows

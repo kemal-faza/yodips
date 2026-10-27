@@ -28,6 +28,7 @@ object UserMessages {
 
     // Pairing and QR surfaces.
     const val QR_INVALID = "Kode QR tidak valid atau sudah kedaluwarsa."
+    const val QR_NOT_FOUND = "Tidak ada QR yang terdeteksi pada foto. Coba foto lain atau scan langsung dengan kamera."
     const val PAIR_FAILED = "Gagal menghubungkan perangkatmu. Coba lagi."
     const val SCANNER_SETUP = "Kamera tidak dapat disiapkan. Coba lagi atau pilih foto dari galeri."
     const val SCANNER_UNAVAILABLE = "Kamera tidak tersedia di perangkat ini."
