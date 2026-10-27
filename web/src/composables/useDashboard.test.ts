@@ -89,8 +89,8 @@ describe('useDashboard (slice-aware)', () => {
 
     const d = useDashboard();
     await d.load();
-    expect(d.siapError.value).toBe('SIAP down');
-    expect(d.kulonError.value).toBe('Kulon down');
+    expect(d.siapError.value).toBe('Gagal memuat profil SIAP');
+    expect(d.kulonError.value).toBe('Gagal memuat tugas Kulon');
     expect(d.siap.value.irs).toEqual(irs);
     expect(d.kulon.value.courses).toEqual(courses);
     expect(d.siap.value.jadwal).toEqual([]);

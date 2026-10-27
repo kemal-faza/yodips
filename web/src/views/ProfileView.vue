@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue';
 import { getSiapProfile } from '../api/client';
 import type { SiapProfile } from '../types';
 import { useProfileGroups } from '../composables/useProfileGroups';
+import { describeError } from '../lib/error-copy';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,7 +26,7 @@ onMounted(async () => {
   try {
     profile.value = await getSiapProfile();
   } catch (e: any) {
-    error.value = e?.response?.data?.message ?? 'Gagal memuat profil.';
+    error.value = describeError(e, { fallback: 'Gagal memuat profil. Coba lagi.' });
   } finally {
     loading.value = false;
   }

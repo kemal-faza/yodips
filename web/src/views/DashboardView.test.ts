@@ -103,7 +103,7 @@ describe('DashboardView (academic dashboard)', () => {
     const router = buildRouter(createMemoryHistory());
     const w = mount(DashboardView, { global: { plugins: [router], stubs } });
     await flushPromises();
-    expect(w.text()).toContain('SIAP down');
+    expect(w.text()).toContain('Gagal memuat profil SIAP');
     expect(w.text()).toContain('Pengguna'); // header fallback still renders
   });
 

@@ -52,6 +52,17 @@ describe('NotificationPopover', () => {
     expect(api.markNotificationRead).toHaveBeenCalled();
   });
 
+  it('shows human copy instead of a raw server message on failure', async () => {
+    (api.getNotifications as any).mockRejectedValue({
+      response: { status: 500, data: { message: 'Internal server error' } },
+    });
+    const w = mount(NotificationPopover);
+    await flushPromises();
+    await w.find('button').trigger('click');
+    expect(w.text()).toContain('Server sedang bermasalah');
+    expect(w.text()).not.toContain('Internal server error');
+  });
+
   it('closes the panel on outside click', async () => {
     (api.getNotifications as any).mockResolvedValue({ count: 2, items });
     const w = mount(NotificationPopover);

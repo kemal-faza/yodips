@@ -8,6 +8,7 @@ import {
   getSiapProfile,
 } from '../api/client';
 import { isCacheStaleError } from '../api/cache';
+import { describeError } from '../lib/error-copy';
 import type { Assignment, Course, SiapIrs, SiapJadwal, SiapKhs, SiapProfile } from '../types';
 
 export interface SiapSource { profile: SiapProfile | null; khs: SiapKhs | null; irs: SiapIrs | null; jadwal: SiapJadwal[]; }
@@ -18,16 +19,6 @@ type SliceName = 'profile' | 'khs' | 'irs' | 'jadwal' | 'courses' | 'assignments
 const ALL_SLICES: readonly SliceName[] = [
   'profile', 'khs', 'irs', 'jadwal', 'courses', 'assignments',
 ];
-
-function messageFor(error: unknown, fallback: string): string {
-  const candidate = error as {
-    response?: { data?: { message?: unknown } };
-    message?: unknown;
-  } | null;
-  if (typeof candidate?.response?.data?.message === 'string') return candidate.response.data.message;
-  if (typeof candidate?.message === 'string') return candidate.message;
-  return fallback;
-}
 
 export function useDashboard() {
   const siap = ref<SiapSource>({ profile: null, khs: null, irs: null, jadwal: [] });
@@ -65,7 +56,7 @@ export function useDashboard() {
       // A logout/session wipe crossing this request is a typed cancellation,
       // not a user-facing upstream error.
       if (!isCacheStaleError(error) && slice !== 'jadwal') {
-        sliceErrors[slice] = messageFor(error, fallback);
+        sliceErrors[slice] = describeError(error, { fallback });
       }
     } finally {
       pending[source] -= 1;

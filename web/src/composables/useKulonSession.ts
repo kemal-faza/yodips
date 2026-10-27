@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { recoverUpstreamSession } from '../lib/upstream-renewal';
+import { describeError } from '../lib/error-copy';
 
 export function useKulonSession() {
   const auth = useAuthStore();
@@ -9,14 +10,12 @@ export function useKulonSession() {
   const recovering = ref(false);
 
   function extract(e: unknown): string {
-    const anyE = e as { response?: { status?: number; data?: { message?: string } }; message?: string };
-    const status = anyE.response?.status;
-    const serverMsg = anyE.response?.data?.message;
-    if (status === 401) {
+    const anyE = e as { response?: { status?: number } };
+    if (anyE.response?.status === 401) {
       sessionExpired.value = true;
       return 'Sesi Kulon belum dapat digunakan. Coba pulihkan sesi.';
     }
-    return serverMsg || 'Terjadi kesalahan tidak diketahui.';
+    return describeError(e, { fallback: 'Terjadi kesalahan tidak diketahui. Coba lagi.' });
   }
 
   async function relogin(): Promise<void> {

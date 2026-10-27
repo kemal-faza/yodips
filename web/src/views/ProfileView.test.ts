@@ -40,7 +40,7 @@ describe('ProfileView', () => {
     (api.getSiapProfile as any).mockRejectedValue(new Error('down'));
     const w = mount(ProfileView);
     await flushPromises();
-    expect(w.text()).toContain('Gagal');
+    expect(w.text()).toContain('Tidak dapat terhubung');
   });
 
   it('masks and reveals the Nama Ibu field', async () => {
