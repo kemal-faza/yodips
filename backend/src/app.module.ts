@@ -16,6 +16,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { PairingModule } from './pairing/pairing.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ObservabilityModule } from './observability/observability.module';
+import { KeepAliveModule } from './keepalive/keepalive.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { ObservabilityModule } from './observability/observability.module';
     KulonModule,
     SiapModule,
     NotificationsModule,
+    KeepAliveModule,
     PairingModule,
     DashboardModule,
   ],
