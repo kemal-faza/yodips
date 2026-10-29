@@ -1,9 +1,11 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.core.scan.CameraRegion
 import ac.undip.sso.core.scan.QrScanResult
 import ac.undip.sso.core.scan.QrScanner
+import ac.undip.sso.ui.common.StaleSessionState
 import ac.undip.sso.ui.navigation.LocalAppNavigation
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
@@ -23,7 +25,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @Composable
-internal actual fun ScanScreen(repo: SsoRepository) {
+internal actual fun ScanCamera(repo: SsoRepository) {
     var outcome by remember { mutableStateOf<ScanOutcome?>(null) }
     var cameraError by remember { mutableStateOf<String?>(null) }
     var scanningBusy by remember { mutableStateOf(false) }
@@ -87,11 +89,10 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         onDispose { jsUninstallBackBridge() }
     }
 
-    FeatureScreen(title = "Scan QR", onBack = { nav?.onNavigateDashboard() }) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .onGloballyPositioned { coords ->
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coords ->
                     if (region == null) {
                         val b = coords.boundsInWindow()
                         region = CameraRegion(
@@ -104,8 +105,7 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                 },
         ) {
             when {
-                cameraError != null -> {
-                    var manualToken by remember { mutableStateOf("") }
+                cameraError != null -> {                    var manualToken by remember { mutableStateOf("") }
                     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(cameraError!!, color = MaterialTheme.colorScheme.error)
                         Spacer(Modifier.height(8.dp))
@@ -155,35 +155,24 @@ internal actual fun ScanScreen(repo: SsoRepository) {
 
                 outcome != null -> {
                     val o = outcome!!
-                    AppCard(
-                        level = AppElevation.Floating,
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (o.success)
-                                MaterialTheme.colorScheme.primaryContainer
-                            else
-                                MaterialTheme.colorScheme.errorContainer,
-                        ),
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                if (o.success) "Absen Berhasil" else "Gagal",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(o.message)
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = {
-                                outcome = null
-                                startScan()
-                            }) {
-                                Text("Scan Lagi")
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = {
-                                outcome = null
-                                startGallery()
-                            }) {
-                                Text("Pilih dari Galeri")
+                    if (o.staleSession) {
+                        StaleSessionState(UpstreamSessionService.SIAP)
+                    } else {
+                        AppCard(
+                            level = AppElevation.Floating,
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (o.success) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.errorContainer,
+                            ),
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(if (o.success) "Absen Berhasil" else "Gagal", style = MaterialTheme.typography.titleMedium)
+                                Text(o.message)
+                                Spacer(Modifier.height(8.dp))
+                                Button(onClick = { outcome = null; startScan() }) { Text("Scan Lagi") }
+                                Spacer(Modifier.height(8.dp))
+                                Button(onClick = { outcome = null; startGallery() }) { Text("Pilih dari Galeri") }
                             }
                         }
                     }
@@ -195,7 +184,6 @@ internal actual fun ScanScreen(repo: SsoRepository) {
                 }
             }
         }
-    }
 }
 
 // ---------- bridge back device/browser (wasm) ----------

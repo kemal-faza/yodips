@@ -1,6 +1,8 @@
 package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
+import ac.undip.sso.core.network.UpstreamSessionService
+import ac.undip.sso.ui.common.StaleSessionState
 import android.Manifest
 import android.content.pm.PackageManager
 import android.util.Size
@@ -89,7 +91,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * and back cameras. The scan frame pulses with a subtle scale up/down loop.
  */
 @Composable
-internal actual fun ScanScreen(repo: SsoRepository) {
+internal actual fun ScanCamera(repo: SsoRepository) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -239,7 +241,10 @@ internal actual fun ScanScreen(repo: SsoRepository) {
         zoomRatio = (zoomRatio * delta).coerceIn(1f, maxZoom.coerceAtLeast(1f))
     }
 
-    FeatureScreen(title = "Scan QR") {
+    val staleSubmit = outcome?.staleSession == true
+    if (staleSubmit) {
+        StaleSessionState(UpstreamSessionService.SIAP)
+    } else {
         when {
             !permissionGranted -> {
                 Column(Modifier.fillMaxSize()) {

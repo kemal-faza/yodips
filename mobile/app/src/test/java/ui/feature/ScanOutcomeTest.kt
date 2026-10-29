@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranResponse
+import ac.undip.sso.core.network.MeResponse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -147,5 +148,19 @@ class ScanOutcomeTest {
         val out = scanOutcome(ApiResult.Error(401, "stale", ErrorType.STALE_SESSION))
         assertFalse(out.success)
         assertTrue(out.message.contains("login ulang", ignoreCase = true))
+    }
+
+    @Test
+    fun `stale session marks the outcome as stale`() {
+        val outcome = scanOutcome(
+            ApiResult.Error(401, "Sesi SIAP kedaluwarsa", ErrorType.STALE_SESSION),
+        )
+        assertTrue(outcome.staleSession)
+    }
+
+    @Test
+    fun `preflight allows the camera only when SIAP is valid`() {
+        assertTrue(scanAllowed(MeResponse(hasSiap = true)))
+        assertFalse(scanAllowed(MeResponse(hasSiap = false)))
     }
 }

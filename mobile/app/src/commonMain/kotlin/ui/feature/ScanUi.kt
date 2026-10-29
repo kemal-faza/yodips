@@ -4,8 +4,18 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.KehadiranResponse
+import ac.undip.sso.core.network.MeResponse
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.core.network.UserMessages
+import ac.undip.sso.ui.common.LoadableData
+import ac.undip.sso.ui.common.StaleSessionState
+import ac.undip.sso.ui.navigation.LocalAppNavigation
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 
 /**
  * Result of interpreting a presence (absen) attendance response, for surfacing
@@ -14,6 +24,7 @@ import androidx.compose.runtime.Composable
 data class ScanOutcome(
     val success: Boolean,
     val message: String,
+    val staleSession: Boolean = false,
 )
 
 /**
@@ -58,7 +69,7 @@ fun scanOutcome(
                 }
 
                 ErrorType.STALE_SESSION -> {
-                    ScanOutcome(false, "Sesi SIAP kedaluwarsa. Silakan login ulang.")
+                    ScanOutcome(false, "Sesi SIAP kedaluwarsa. Silakan login ulang.", staleSession = true)
                 }
 
                 ErrorType.SESSION_RECOVERED -> {
@@ -76,8 +87,37 @@ fun scanOutcome(
         }
     }
 
+/** Scan needs a valid SIAP session; Kulon/SSO alone cannot record attendance. */
+internal fun scanAllowed(me: MeResponse): Boolean = me.hasSiap
+
 /**
- * QR presence scanner entry point — platform actual provides CameraX.
+ * QR presence scanner entry point. The common preflight gates the platform
+ * camera on a live SIAP session so a stale session shows a re-login CTA
+ * instead of a camera that can only fail on submit.
  */
 @Composable
-internal expect fun ScanScreen(repo: SsoRepository)
+internal fun ScanScreen(repo: SsoRepository) {
+    val nav = LocalAppNavigation.current
+    FeatureScreen(
+        title = "Scan QR",
+        onBack = nav?.let { { it.onNavigateDashboard() } },
+    ) {
+        LoadableData(
+            load = { repo.sessionStatus() },
+            loading = {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            },
+        ) { me ->
+            if (scanAllowed(me)) {
+                ScanCamera(repo)
+            } else {
+                StaleSessionState(UpstreamSessionService.SIAP)
+            }
+        }
+    }
+}
+
+@Composable
+internal expect fun ScanCamera(repo: SsoRepository)
