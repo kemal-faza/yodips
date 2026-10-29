@@ -10,8 +10,6 @@ import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.normalizeNavTarget
 import ac.undip.sso.ui.login.DebugKulonTicketProbe
-import ac.undip.sso.ui.login.KulonTicketCaptureBridge
-import ac.undip.sso.ui.login.KulonTicketCaptureOverlay
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
 import ac.undip.sso.ui.theme.ThemeController
@@ -57,7 +55,6 @@ fun AppRoot(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val kulonTicketCapture = remember { KulonTicketCaptureBridge() }
 
     // Android 13+: POST_NOTIFICATIONS harus diminta runtime. Setelah login,
     // bukan saat splash — user baru peduli notifikasi setelah masuk app.
@@ -98,7 +95,7 @@ fun AppRoot(
     // `SessionRefresher.safe`). Meng-escalate-nya memaksa login ulang untuk
     // sesi yang sebenarnya sehat — inilah "harus login ulang padahal token
     // masih hidup".
-    val repo = remember(tokenStore, persistentCache, kulonTicketCapture) {
+    val repo = remember(tokenStore, persistentCache) {
         SsoRepository(
             persistent = persistentCache,
             tokenStore = tokenStore,
@@ -214,6 +211,4 @@ fun AppRoot(
             },
         )
     }
-
-    if (hasToken) KulonTicketCaptureOverlay(kulonTicketCapture)
 }
