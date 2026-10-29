@@ -2,8 +2,10 @@ package ac.undip.sso.ui.common
 
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.ErrorType
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.core.network.UserMessages
 import ac.undip.sso.nowMs
+import ac.undip.sso.ui.navigation.LocalRequireLogin
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -74,6 +76,7 @@ fun <T> LoadableData(
     emptyMessage: String = "Belum ada data",
     refreshTrigger: Int = 0,
     state: StateFlow<ApiResult<T>?>? = null,
+    staleService: UpstreamSessionService? = null,
     loading: @Composable () -> Unit = { ListSkeleton() },
     content: @Composable (T) -> Unit,
 ) {
@@ -99,13 +102,23 @@ fun <T> LoadableData(
         }
 
         is ApiResult.Error -> {
-            ErrorState(modifier, r.message, onRetry = { attempt++ }, errorType = r.type)
+            if (isStaleForService(r.type, staleService)) {
+                StaleSessionState(staleService!!, LocalRequireLogin.current, modifier)
+            } else {
+                ErrorState(modifier, r.message, onRetry = { attempt++ }, errorType = r.type)
+            }
         }
     }
 }
 
 /** User-facing heading for a failed source without conflating upstream and JWT sessions. */
 internal fun errorStateTitle(type: ErrorType): String = UserMessages.title(type)
+
+/** Only an upstream-stale error with a known owner screen gets the re-login CTA. */
+internal fun isStaleForService(
+    type: ErrorType,
+    staleService: UpstreamSessionService?,
+): Boolean = type == ErrorType.STALE_SESSION && staleService != null
 
 /** Heuristic: an empty collection / blank string counts as an empty state. */
 private fun <T> isEmpty(data: T): Boolean =
@@ -139,6 +152,7 @@ fun <T> RefreshableLoadableData(
     emptyMessage: String = "Belum ada data",
     minRefreshIntervalMs: Long = REFRESH_COOLDOWN_MS,
     state: StateFlow<ApiResult<T>?>? = null,
+    staleService: UpstreamSessionService? = null,
     loading: @Composable () -> Unit = { ListSkeleton() },
     content: @Composable (T) -> Unit,
 ) {
@@ -185,7 +199,11 @@ fun <T> RefreshableLoadableData(
             }
 
             is ApiResult.Error -> {
-                ErrorState(modifier, r.message, onRetry = { attempt++ }, errorType = r.type)
+                if (isStaleForService(r.type, staleService)) {
+                    StaleSessionState(staleService!!, LocalRequireLogin.current, modifier)
+                } else {
+                    ErrorState(modifier, r.message, onRetry = { attempt++ }, errorType = r.type)
+                }
             }
         }
     }
