@@ -5,6 +5,7 @@ import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonContentItem
 import ac.undip.sso.core.network.KulonCourseContent
 import ac.undip.sso.core.network.KulonSection
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
@@ -114,6 +115,7 @@ fun CourseDetailScreen(
         LoadableData(
             load = { repo.courseContent(courseId) },
             emptyMessage = "Mata kuliah tidak ditemukan.",
+            staleService = UpstreamSessionService.KULON,
         ) { content ->
             CourseContent(content, semester, onOpenAssignment)
         }

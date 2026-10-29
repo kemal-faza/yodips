@@ -4,13 +4,16 @@ import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.nowMs
 import ac.undip.sso.core.network.ApiResult
+import ac.undip.sso.core.network.ErrorType
 import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapIrsMataKuliah
 import ac.undip.sso.core.network.SiapJadwal
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.REFRESH_COOLDOWN_MS
 import ac.undip.sso.ui.common.SkeletonBlock
 import ac.undip.sso.ui.common.SkeletonGroup
+import ac.undip.sso.ui.common.StaleSessionState
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
 import androidx.compose.foundation.layout.Arrangement
@@ -99,6 +102,9 @@ fun IrsScreen(
     var jadwalByNama by remember { mutableStateOf(emptyMap<String, SiapJadwal>()) }
     var absenByNama by remember { mutableStateOf(emptyMap<String, SiapAbsen>()) }
     var absenByKode by remember { mutableStateOf(emptyMap<String, SiapAbsen>()) }
+    // A join source (absen/lecturers/jadwal) can be stale without the IRS list
+    // itself failing; surface one CTA instead of silently dropping that data.
+    var joinsStale by remember { mutableStateOf(false) }
     FeatureScreen("IRS", onBack = onBack) {
         var refreshTick by remember { mutableIntStateOf(0) }
         var isRefreshing by remember { mutableStateOf(false) }
@@ -162,6 +168,7 @@ fun IrsScreen(
 
                 LoadableData(
                     load = {
+                        joinsStale = false
                         // Halaman IRS = data jarang berubah: join lookup dibaca
                         // cache-only juga, supaya masuk halaman tidak memicu
                         // request background. Pull-to-refresh yang meng-force.
@@ -172,7 +179,7 @@ fun IrsScreen(
                             }
 
                             is ApiResult.Error -> {
-                                Unit
+                                if (r.type == ErrorType.STALE_SESSION) joinsStale = true
                             }
                         }
                         when (val r = repo.jadwal(revalidate = false)) {
@@ -184,7 +191,7 @@ fun IrsScreen(
                             }
 
                             is ApiResult.Error -> {
-                                Unit
+                                if (r.type == ErrorType.STALE_SESSION) joinsStale = true
                             }
                         }
                         when (val r = repo.absen(revalidate = false)) {
@@ -198,7 +205,7 @@ fun IrsScreen(
                             }
 
                             is ApiResult.Error -> {
-                                Unit
+                                if (r.type == ErrorType.STALE_SESSION) joinsStale = true
                             }
                         }
                         repo.irs()
@@ -206,8 +213,12 @@ fun IrsScreen(
                     emptyMessage = "Belum ada IRS",
                     refreshTrigger = refreshTick,
                     state = repo.state(CacheKeys.IRS),
+                    staleService = UpstreamSessionService.SIAP,
                     loading = { IrsSkeleton() },
                 ) { irs ->
+                    if (joinsStale) {
+                        StaleSessionState(UpstreamSessionService.SIAP)
+                    }
                     val mks = dedupeIrsMk(irs.mataKuliah)
                     AppCard(Modifier.fillMaxWidth()) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {

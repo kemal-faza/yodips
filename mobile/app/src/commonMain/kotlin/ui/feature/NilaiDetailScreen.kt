@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapNilaiDetail
 import ac.undip.sso.core.network.SiapNilaiKomponen
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
@@ -41,6 +42,7 @@ fun NilaiDetailScreen(
         LoadableData(
             load = { repo.nilaiDetail(nilaiId) },
             emptyMessage = "Detail nilai tidak tersedia.",
+            staleService = UpstreamSessionService.SIAP,
         ) { detail ->
             NilaiDetailContent(detail)
         }

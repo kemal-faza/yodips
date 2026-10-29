@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapNilai
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.common.SkeletonBlock
 import ac.undip.sso.ui.common.SkeletonGroup
@@ -42,6 +43,7 @@ fun KhsScreen(
             onRefresh = { repo.khs(force = true) },
             emptyMessage = "Belum ada KHS",
             state = repo.state(CacheKeys.KHS),
+            staleService = UpstreamSessionService.SIAP,
             loading = { KhsSkeleton() },
         ) { khs ->
             LazyColumn(

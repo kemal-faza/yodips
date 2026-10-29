@@ -4,6 +4,7 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonAssignmentDetail
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
@@ -72,6 +73,7 @@ fun AssignmentDetailScreen(
                 )
             },
             emptyMessage = "Detail tugas tidak tersedia.",
+            staleService = UpstreamSessionService.KULON,
         ) { detail ->
             Column(
                 Modifier

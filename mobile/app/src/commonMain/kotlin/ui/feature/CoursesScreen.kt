@@ -2,6 +2,7 @@ package ac.undip.sso.ui.feature
 
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.KulonCourse
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.theme.AppCard
 import ac.undip.sso.ui.theme.AppElevation
@@ -50,6 +51,7 @@ fun CoursesScreen(
         LoadableData(
             load = { repo.courses() },
             emptyMessage = "Belum ada mata kuliah yang diambil",
+            staleService = UpstreamSessionService.KULON,
         ) { courses ->
             CoursesContent(courses, onOpenCourse)
         }
