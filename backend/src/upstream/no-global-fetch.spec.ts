@@ -167,7 +167,11 @@ function isInsideTimedFetch(node: ts.Node, allowedFile: string): boolean {
   )
     return false;
   for (let parent = node.parent; parent; parent = parent.parent) {
-    if (ts.isFunctionLike(parent) && parent.name?.getText() === 'timedFetch')
+    if (
+      ts.isFunctionLike(parent) &&
+      (parent.name?.getText() === 'timedFetch' ||
+        parent.name?.getText() === 'rawUpstreamFetch')
+    )
       return true;
   }
   return false;

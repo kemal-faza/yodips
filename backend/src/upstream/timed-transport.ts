@@ -95,6 +95,19 @@ function normalizeAttemptResult(
 }
 
 /**
+ * One raw request for transports that must own redirect handling (manual
+ * redirects + per-hop Set-Cookie capture). Callers MUST validate the route
+ * and record their own telemetry; this is the sanctioned global-fetch seam
+ * for those low-level transports, kept in this audited file.
+ */
+export function rawUpstreamFetch(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  return fetch(url, init);
+}
+
+/**
  * Execute one upstream network attempt and record exactly one terminal event.
  * Response consumption is deliberately part of the attempt so parse/stale
  * outcomes cannot be recorded separately from their transport.

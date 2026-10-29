@@ -7,6 +7,7 @@ import {
   networkEvent,
   terminalUpstreamEvent,
 } from '../upstream/telemetry-events';
+import { rawUpstreamFetch } from '../upstream/timed-transport';
 
 export interface ProbeHop {
   status: number;
@@ -44,7 +45,7 @@ export async function probeWithRedirects(
 
   try {
     for (let hop = 0; hop < maxRequests; hop++) {
-      const res = await fetch(currentUrl, {
+      const res = await rawUpstreamFetch(currentUrl, {
         ...init,
         redirect: 'manual',
         signal,
