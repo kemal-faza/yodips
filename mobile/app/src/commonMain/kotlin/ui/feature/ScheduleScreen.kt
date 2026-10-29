@@ -5,6 +5,7 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapAbsen
 import ac.undip.sso.core.network.SiapJadwal
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.common.SkeletonBlock
 import ac.undip.sso.ui.common.SkeletonGroup
@@ -143,6 +144,7 @@ fun ScheduleScreen(repo: SsoRepository) {
                 repo.jadwal(force = true)
             },
             emptyMessage = "Belum ada jadwal.",
+            staleService = UpstreamSessionService.SIAP,
             loading = { ScheduleSkeleton() },
         ) { jadwal ->
             val byTanggal = eventsByTanggal(jadwal)

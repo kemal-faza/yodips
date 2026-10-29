@@ -21,6 +21,7 @@ import ac.undip.sso.ui.feature.ScheduleScreen
 import ac.undip.sso.ui.feature.TasksScreen
 import ac.undip.sso.ui.navigation.AppNavigation
 import ac.undip.sso.ui.navigation.LocalAppNavigation
+import ac.undip.sso.ui.navigation.LocalRequireLogin
 import ac.undip.sso.ui.theme.AppElevation
 import ac.undip.sso.ui.theme.Primary
 import ac.undip.sso.ui.theme.ThemeController
@@ -117,7 +118,7 @@ enum class Tab(
 fun AppShell(
     repo: SsoRepository,
     themeController: ThemeController,
-    onLogout: () -> Unit = {},
+    onLogout: () -> Unit,
     initialNavTarget: String? = null,
     onNavConsumed: () -> Unit = {},
     notificationHistory: NotificationHistoryStore? = null,
@@ -142,6 +143,7 @@ fun AppShell(
                 navigate(navController, Tab.Dashboard.route)
             },
         ),
+        LocalRequireLogin provides onLogout,
     ) {
         Scaffold(
             bottomBar = { ShellBottomBar(currentRoute) { route -> navigate(navController, route) } },

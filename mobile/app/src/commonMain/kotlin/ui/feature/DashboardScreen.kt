@@ -6,6 +6,7 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.SiapJadwal
 import ac.undip.sso.core.network.SiapProfile
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.common.SkeletonBlock
@@ -73,6 +74,7 @@ fun DashboardScreen(
         },
         emptyMessage = "Belum ada data",
         state = repo.state(CacheKeys.PROFILE),
+        staleService = UpstreamSessionService.SIAP,
         loading = { DashboardSkeleton() },
     ) { profile ->
         DashboardContent(profile, repo, onOpenIrs, onOpenKhs, onOpenNotifications, onOpenCourses, refreshTick)
@@ -176,6 +178,7 @@ private fun DashboardContent(
             load = { repo.jadwal(force = refreshTick > 0) },
             emptyMessage = "Belum ada jadwal",
             refreshTrigger = refreshTick,
+            staleService = UpstreamSessionService.SIAP,
         ) { jadwal ->
             UpcomingClasses(jadwal)
         }

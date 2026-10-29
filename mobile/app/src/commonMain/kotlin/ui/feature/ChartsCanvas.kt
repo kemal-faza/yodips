@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapKhs
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.theme.AppCard
 import androidx.compose.foundation.Canvas
@@ -68,6 +69,7 @@ internal fun AcademicCharts(repo: SsoRepository, refreshTick: Int) {
         emptyMessage = "Belum ada data nilai untuk grafik",
         refreshTrigger = refreshTick,
         state = repo.state(CacheKeys.KHS),
+        staleService = UpstreamSessionService.SIAP,
     ) { khs ->
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             LineChartCard(

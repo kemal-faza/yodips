@@ -3,6 +3,7 @@ package ac.undip.sso.ui.feature
 import ac.undip.sso.core.data.CacheKeys
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.SiapProfile
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.common.SkeletonBlock
 import ac.undip.sso.ui.common.SkeletonGroup
@@ -86,6 +87,7 @@ fun ProfileScreen(
                 modifier = Modifier.weight(1f),
                 emptyMessage = "Profil belum tersedia",
                 state = repo.state(CacheKeys.PROFILE),
+                staleService = UpstreamSessionService.SIAP,
                 loading = { ProfileSkeleton() },
             ) { p ->
                 ProfileContent(p)

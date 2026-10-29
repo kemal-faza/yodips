@@ -4,6 +4,7 @@ import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.core.network.KulonAssignment
 import ac.undip.sso.core.network.KulonCourse
+import ac.undip.sso.core.network.UpstreamSessionService
 import ac.undip.sso.ui.common.LoadableData
 import ac.undip.sso.ui.common.RefreshableLoadableData
 import ac.undip.sso.ui.common.SkeletonBlock
@@ -95,6 +96,7 @@ fun TasksScreen(
             load = { loadData(false) },
             onRefresh = { loadData(true) },
             emptyMessage = "Tidak ada tugas saat ini.",
+            staleService = UpstreamSessionService.KULON,
             loading = { TasksSkeleton() },
         ) { tasks ->
             var filter by remember { mutableStateOf<TaskBucket?>(TaskBucket.NEED) }
