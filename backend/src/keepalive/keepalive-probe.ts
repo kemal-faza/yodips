@@ -1,8 +1,5 @@
 export type KeepAliveProbeKind =
-  | 'no-cookie'
-  | 'invalid'
-  | 'transient'
-  | 'rate-limited';
+  'no-cookie' | 'invalid' | 'transient' | 'rate-limited';
 
 export type KeepAliveProbeResult =
   | { valid: true; setCookies: string[] }

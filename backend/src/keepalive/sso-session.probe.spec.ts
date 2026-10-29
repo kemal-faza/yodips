@@ -18,7 +18,9 @@ describe('SsoSessionProbe', () => {
         },
       }),
     );
-    const probe = new SsoSessionProbe(config({ SSO_BASE_URL: 'https://sso.undip.ac.id' }));
+    const probe = new SsoSessionProbe(
+      config({ SSO_BASE_URL: 'https://sso.undip.ac.id' }),
+    );
     await expect(probe.probe('ci_session_sso=OLD')).resolves.toEqual({
       valid: true,
       setCookies: ['ci_session_sso=NEW; Path=/'],
@@ -33,14 +35,20 @@ describe('SsoSessionProbe', () => {
       config({ SSO_LOGIN_URL: '', SSO_BASE_URL: 'https://sso.undip.ac.id/' }),
     );
     await probe.probe('ci_session_sso=OLD');
-    expect(fetchMock.mock.calls[0][0]).toBe('https://sso.undip.ac.id/auth/user/login');
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://sso.undip.ac.id/auth/user/login',
+    );
   });
 
   it('returns invalid on a 200 login page', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValue(
-      new Response('<form name="login"></form>', { status: 200 }),
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        new Response('<form name="login"></form>', { status: 200 }),
+      );
+    const probe = new SsoSessionProbe(
+      config({ SSO_BASE_URL: 'https://sso.undip.ac.id' }),
     );
-    const probe = new SsoSessionProbe(config({ SSO_BASE_URL: 'https://sso.undip.ac.id' }));
     await expect(probe.probe('ci_session_sso=OLD')).resolves.toEqual({
       valid: false,
       kind: 'invalid',
@@ -49,8 +57,12 @@ describe('SsoSessionProbe', () => {
   });
 
   it('returns rate-limited on 429', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 429 }));
-    const probe = new SsoSessionProbe(config({ SSO_BASE_URL: 'https://sso.undip.ac.id' }));
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(new Response('', { status: 429 }));
+    const probe = new SsoSessionProbe(
+      config({ SSO_BASE_URL: 'https://sso.undip.ac.id' }),
+    );
     await expect(probe.probe('ci_session_sso=OLD')).resolves.toEqual({
       valid: false,
       kind: 'rate-limited',

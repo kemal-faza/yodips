@@ -1,4 +1,7 @@
-import { recordTelemetry, type TelemetryRuntime } from '../observability/telemetry';
+import {
+  recordTelemetry,
+  type TelemetryRuntime,
+} from '../observability/telemetry';
 import {
   validateUpstreamAttempt,
   type UpstreamRouteContext,
@@ -82,14 +85,23 @@ export async function probeWithRedirects(
       break;
     }
 
-    const outcome = finalStatus >= 200 && finalStatus < 300 ? 'ok' : 'http_error';
+    const outcome =
+      finalStatus >= 200 && finalStatus < 300 ? 'ok' : 'http_error';
     recordTelemetry(
       runtime,
-      terminalUpstreamEvent(canonical, { outcome }, finalStatus, Date.now() - started),
+      terminalUpstreamEvent(
+        canonical,
+        { outcome },
+        finalStatus,
+        Date.now() - started,
+      ),
     );
     return hops;
   } catch (error) {
-    recordTelemetry(runtime, networkEvent(canonical, 'fetch-threw', Date.now() - started));
+    recordTelemetry(
+      runtime,
+      networkEvent(canonical, 'fetch-threw', Date.now() - started),
+    );
     throw error;
   }
 }

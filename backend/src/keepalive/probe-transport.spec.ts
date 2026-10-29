@@ -23,14 +23,12 @@ describe('probeWithRedirects', () => {
   });
 
   it('captures Set-Cookie from the redirect hop and stops at the landing path', async () => {
-    const fetchMock = jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(
-        response(302, {
-          location: '/pages/dashboard',
-          'set-cookie': 'ci_session_sso=NEW; Path=/',
-        }),
-      );
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      response(302, {
+        location: '/pages/dashboard',
+        'set-cookie': 'ci_session_sso=NEW; Path=/',
+      }),
+    );
 
     const hops = await probeWithRedirects(
       runtime,
@@ -39,7 +37,8 @@ describe('probeWithRedirects', () => {
       { method: 'GET', headers: { Cookie: 'ci_session_sso=OLD' } },
       {
         stopWhen: (hop) =>
-          !!hop.location && new URL(hop.location, hop.url).pathname === '/pages/dashboard',
+          !!hop.location &&
+          new URL(hop.location, hop.url).pathname === '/pages/dashboard',
       },
     );
 
@@ -85,7 +84,12 @@ describe('probeWithRedirects', () => {
 
     const hops = await probeWithRedirects(
       runtime,
-      { ...CONTEXT, service: 'kulon', operation: 'session_probe', route: 'GET /my/' },
+      {
+        ...CONTEXT,
+        service: 'kulon',
+        operation: 'session_probe',
+        route: 'GET /my/',
+      },
       'https://kulon2.undip.ac.id/my/',
       { method: 'GET', headers: { Cookie: 'MoodleSession=OLD' } },
     );
@@ -95,9 +99,9 @@ describe('probeWithRedirects', () => {
   });
 
   it('stops after four redirects (five requests)', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(
-      response(302, { location: '/loop' }),
-    );
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(response(302, { location: '/loop' }));
 
     const hops = await probeWithRedirects(
       runtime,

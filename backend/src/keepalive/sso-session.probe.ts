@@ -6,7 +6,10 @@ import {
   type TelemetryRuntime,
 } from '../observability/telemetry';
 import type { UpstreamRouteContext } from '../upstream/route-inventory';
-import { classifyProbeStatus, type KeepAliveProbeResult } from './keepalive-probe';
+import {
+  classifyProbeStatus,
+  type KeepAliveProbeResult,
+} from './keepalive-probe';
 import { probeWithRedirects } from './probe-transport';
 
 const SSO_LOGIN_CONTEXT: UpstreamRouteContext = {
@@ -61,7 +64,9 @@ export class SsoSessionProbe {
   private loginUrl(): string {
     const override = this.config.get<string>('SSO_LOGIN_URL')?.trim();
     if (override) return override;
-    const base = this.config.getOrThrow<string>('SSO_BASE_URL').replace(/\/$/, '');
+    const base = this.config
+      .getOrThrow<string>('SSO_BASE_URL')
+      .replace(/\/$/, '');
     return `${base}/auth/user/login`;
   }
 }
