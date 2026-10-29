@@ -30,6 +30,8 @@ import {
   type TelemetryRuntime,
 } from '../observability/telemetry';
 import type { UpstreamReason } from '../observability/telemetry-contract';
+import { classifyProbeStatus, type KeepAliveProbeResult } from '../keepalive/keepalive-probe';
+import { probeWithRedirects } from '../keepalive/probe-transport';
 
 export const KULON_BASE_URL = 'https://kulon2.undip.ac.id';
 const SESSKEY_FP_LEN = 16;
@@ -193,6 +195,34 @@ export class KulonUpstreamSession {
         return { ok: true, value: { valid: true, reason: 'ok' }, outcome: 'ok', status: res.status };
       },
     ).catch(() => ({ valid: false, reason: 'stale' as const }));
+  }
+
+  /**
+   * Cookie-rotation probe used by session keep-alive. It is intentionally
+   * separate from `checkSessionValid`: keep-alive needs the raw Set-Cookie
+   * headers from every redirect hop, while validity checks only need a boolean.
+   * A login page (no sesskey) is invalid even with a 200 status.
+   */
+  async probeForKeepAlive(cookie: string): Promise<KeepAliveProbeResult> {
+    if (!cookie) return { valid: false, kind: 'no-cookie', setCookies: [] };
+    try {
+      const hops = await probeWithRedirects(
+        this.runtime,
+        KULON_ROUTE_CONTEXTS.sessionProbe,
+        `${KULON_BASE_URL}/my/`,
+        { headers: { Cookie: cookie }, redirect: 'manual' },
+        { readBody: (hop) => hop.status >= 200 && hop.status < 300 },
+      );
+      const setCookies = hops.flatMap((hop) => hop.setCookies);
+      const final = hops[hops.length - 1];
+      if (!final) return { valid: false, kind: 'transient', setCookies };
+      const kind = classifyProbeStatus(final.status);
+      if (kind !== 'valid') return { valid: false, kind, setCookies };
+      if (final.body?.includes('sesskey')) return { valid: true, setCookies };
+      return { valid: false, kind: 'invalid', setCookies };
+    } catch {
+      return { valid: false, kind: 'transient', setCookies: [] };
+    }
   }
 
   /** Cookie + cached sesskey for a user. Cookie is ALWAYS read from the session

@@ -612,3 +612,49 @@ describe('KulonUpstreamSession.ajaxMany', () => {
     });
   });
 });
+
+describe('probeForKeepAlive', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('returns invalid when the page has no sesskey marker', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response('<html><body>login</body></html>', { status: 200 }),
+    );
+    const svc = new KulonUpstreamSession(undefined as never);
+    await expect(svc.probeForKeepAlive('MoodleSession=OLD')).resolves.toEqual({
+      valid: false,
+      kind: 'invalid',
+      setCookies: [],
+    });
+  });
+
+  it('returns rate-limited on 429', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 429 }));
+    const svc = new KulonUpstreamSession(undefined as never);
+    await expect(svc.probeForKeepAlive('MoodleSession=OLD')).resolves.toEqual({
+      valid: false,
+      kind: 'rate-limited',
+      setCookies: [],
+    });
+  });
+
+  it('returns transient on 503', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 503 }));
+    const svc = new KulonUpstreamSession(undefined as never);
+    await expect(svc.probeForKeepAlive('MoodleSession=OLD')).resolves.toEqual({
+      valid: false,
+      kind: 'transient',
+      setCookies: [],
+    });
+  });
+
+  it('returns transient on a network failure', async () => {
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('connection reset'));
+    const svc = new KulonUpstreamSession(undefined as never);
+    await expect(svc.probeForKeepAlive('MoodleSession=OLD')).resolves.toEqual({
+      valid: false,
+      kind: 'transient',
+      setCookies: [],
+    });
+  });
+});

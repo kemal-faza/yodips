@@ -643,3 +643,38 @@ describe('SiapUpstreamSession.fetchText', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('probeForKeepAlive', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('is valid when the dashboard carries the auth marker', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response('<div id="tabmhs_profile"></div>', { status: 200 }),
+    );
+    const { seam } = makeSeam({});
+    await expect(seam.probeForKeepAlive('sia_app_session=OLD')).resolves.toEqual({
+      valid: true,
+      setCookies: [],
+    });
+  });
+
+  it('is invalid on 401', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 401 }));
+    const { seam } = makeSeam({});
+    await expect(seam.probeForKeepAlive('sia_app_session=OLD')).resolves.toEqual({
+      valid: false,
+      kind: 'invalid',
+      setCookies: [],
+    });
+  });
+
+  it('is rate-limited on 429', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 429 }));
+    const { seam } = makeSeam({});
+    await expect(seam.probeForKeepAlive('sia_app_session=OLD')).resolves.toEqual({
+      valid: false,
+      kind: 'rate-limited',
+      setCookies: [],
+    });
+  });
+});

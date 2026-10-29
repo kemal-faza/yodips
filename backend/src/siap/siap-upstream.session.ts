@@ -28,6 +28,8 @@ import {
   TELEMETRY_RUNTIME,
   type TelemetryRuntime,
 } from '../observability/telemetry';
+import { classifyProbeStatus, type KeepAliveProbeResult } from '../keepalive/keepalive-probe';
+import { probeWithRedirects } from '../keepalive/probe-transport';
 
 export const SIAP_BASE_URL = 'https://siap.undip.ac.id';
 
@@ -211,6 +213,34 @@ export class SiapUpstreamSession {
       return { valid: true, reason: 'ok' };
     } catch {
       return { valid: false, reason: 'stale' };
+    }
+  }
+
+  /**
+   * Cookie-rotation probe used by session keep-alive. Unlike
+   * `checkSessionValid` it returns the raw Set-Cookie headers of every redirect
+   * hop (the caller merges rotations) and classifies 429/5xx separately so a
+   * rate-limited upstream never looks like an invalid session.
+   */
+  async probeForKeepAlive(cookie: string): Promise<KeepAliveProbeResult> {
+    if (!cookie) return { valid: false, kind: 'no-cookie', setCookies: [] };
+    try {
+      const hops = await probeWithRedirects(
+        this.runtime,
+        SIAP_SESSION_PROBE_CONTEXT,
+        `${SIAP_BASE_URL}${SIAP_PROBE_PATH}`,
+        { headers: { Cookie: cookie }, redirect: 'manual' },
+        { readBody: (hop) => hop.status >= 200 && hop.status < 300 },
+      );
+      const setCookies = hops.flatMap((hop) => hop.setCookies);
+      const final = hops[hops.length - 1];
+      if (!final) return { valid: false, kind: 'transient', setCookies };
+      const kind = classifyProbeStatus(final.status);
+      if (kind !== 'valid') return { valid: false, kind, setCookies };
+      if (final.body?.includes(SIAP_AUTH_MARKER)) return { valid: true, setCookies };
+      return { valid: false, kind: 'invalid', setCookies };
+    } catch {
+      return { valid: false, kind: 'transient', setCookies: [] };
     }
   }
 
