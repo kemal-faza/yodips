@@ -1,7 +1,11 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import { InMemorySessionStore } from '../session/in-memory-session.store';
-import { generateSessionGeneration, type CapturedSession } from '../session/session-contract';
+import {
+  generateSessionGeneration,
+  type CapturedSession,
+} from '../session/session-contract';
 import { SessionKeepAliveService } from './session-keepalive.service';
 
 const GEN = generateSessionGeneration();
@@ -35,9 +39,21 @@ describe('SessionKeepAliveService.runCycle', () => {
     await store.set('24060121130000', session());
     const service = new SessionKeepAliveService(
       store,
-      { probe: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
+      {
+        probe: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
       config(),
       { addCronJob: jest.fn(), deleteCronJob: jest.fn() } as never,
     );
@@ -54,9 +70,19 @@ describe('SessionKeepAliveService.runCycle', () => {
     const slide = jest.spyOn(store, 'getIfGeneration');
     const service = new SessionKeepAliveService(
       store,
-      { probe: jest.fn().mockResolvedValue({ valid: true, setCookies: [] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
+      {
+        probe: jest.fn().mockResolvedValue({ valid: true, setCookies: [] }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
       config(),
       { addCronJob: jest.fn(), deleteCronJob: jest.fn() } as never,
     );
@@ -71,9 +97,23 @@ describe('SessionKeepAliveService.runCycle', () => {
     await store.set('24060121130000', session());
     const service = new SessionKeepAliveService(
       store,
-      { probe: jest.fn().mockResolvedValue({ valid: true, setCookies: ['ci_session_sso=NEW; Path=/'] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: true, setCookies: ['MoodleSession=NEW; Path=/'] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
+      {
+        probe: jest.fn().mockResolvedValue({
+          valid: true,
+          setCookies: ['ci_session_sso=NEW; Path=/'],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest.fn().mockResolvedValue({
+          valid: true,
+          setCookies: ['MoodleSession=NEW; Path=/'],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
       config(),
       { addCronJob: jest.fn(), deleteCronJob: jest.fn() } as never,
     );
@@ -112,9 +152,24 @@ describe('SessionKeepAliveService.runCycle', () => {
     await store.set('24060121130000', session());
     const service = new SessionKeepAliveService(
       store,
-      { probe: jest.fn().mockResolvedValue({ valid: false, kind: 'no-cookie', setCookies: [] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: true, setCookies: ['MoodleSession=NEW; Path=/'] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
+      {
+        probe: jest.fn().mockResolvedValue({
+          valid: false,
+          kind: 'no-cookie',
+          setCookies: [],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest.fn().mockResolvedValue({
+          valid: true,
+          setCookies: ['MoodleSession=NEW; Path=/'],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
       config(),
       { addCronJob: jest.fn(), deleteCronJob: jest.fn() } as never,
     );
@@ -133,9 +188,23 @@ describe('SessionKeepAliveService.runCycle', () => {
     const slide = jest.spyOn(store, 'getIfGeneration');
     const service = new SessionKeepAliveService(
       store,
-      { probe: jest.fn().mockResolvedValue({ valid: true, setCookies: ['ci_session_sso=NEW; Path=/'] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: true, setCookies: ['MoodleSession=NEW; Path=/'] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
+      {
+        probe: jest.fn().mockResolvedValue({
+          valid: true,
+          setCookies: ['ci_session_sso=NEW; Path=/'],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest.fn().mockResolvedValue({
+          valid: true,
+          setCookies: ['MoodleSession=NEW; Path=/'],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
       config(),
       { addCronJob: jest.fn(), deleteCronJob: jest.fn() } as never,
     );
@@ -143,7 +212,9 @@ describe('SessionKeepAliveService.runCycle', () => {
     await service.runCycle();
 
     expect(slide).not.toHaveBeenCalled();
-    expect((await store.get('24060121130000'))?.kulonCookie).toBe('MoodleSession=OLD');
+    expect((await store.get('24060121130000'))?.kulonCookie).toBe(
+      'MoodleSession=OLD',
+    );
   });
 
   it('backs off one rate-limited service without skipping the others', async () => {
@@ -152,9 +223,23 @@ describe('SessionKeepAliveService.runCycle', () => {
     const slide = jest.spyOn(store, 'getIfGeneration');
     const service = new SessionKeepAliveService(
       store,
-      { probe: jest.fn().mockResolvedValue({ valid: false, kind: 'rate-limited', setCookies: [] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: true, setCookies: [] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: true, setCookies: [] }) } as never,
+      {
+        probe: jest.fn().mockResolvedValue({
+          valid: false,
+          kind: 'rate-limited',
+          setCookies: [],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: true, setCookies: [] }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: true, setCookies: [] }),
+      } as never,
       config(),
       { addCronJob: jest.fn(), deleteCronJob: jest.fn() } as never,
     );
@@ -170,9 +255,22 @@ describe('SessionKeepAliveService.runCycle', () => {
     const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
     const service = new SessionKeepAliveService(
       store,
-      { probe: jest.fn().mockResolvedValue({ valid: true, setCookies: ['ci_session_sso=SECRET; Path=/'] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
-      { probeForKeepAlive: jest.fn().mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }) } as never,
+      {
+        probe: jest.fn().mockResolvedValue({
+          valid: true,
+          setCookies: ['ci_session_sso=SECRET; Path=/'],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
+      {
+        probeForKeepAlive: jest
+          .fn()
+          .mockResolvedValue({ valid: false, kind: 'invalid', setCookies: [] }),
+      } as never,
       config(),
       { addCronJob: jest.fn(), deleteCronJob: jest.fn() } as never,
     );
@@ -187,7 +285,11 @@ describe('SessionKeepAliveService.runCycle', () => {
 });
 
 describe('SessionKeepAliveService.onApplicationBootstrap', () => {
-  const makeService = (values: Record<string, unknown>, addCronJob = jest.fn(), deleteCronJob = jest.fn()) =>
+  const makeService = (
+    values: Record<string, unknown>,
+    addCronJob = jest.fn(),
+    deleteCronJob = jest.fn(),
+  ) =>
     new SessionKeepAliveService(
       new InMemorySessionStore(60_000, 2_592_000_000),
       { probe: jest.fn() } as never,
@@ -204,17 +306,23 @@ describe('SessionKeepAliveService.onApplicationBootstrap', () => {
     expect(addCronJob).not.toHaveBeenCalled();
   });
 
-  it('registers the configured cron expression', () => {
+  it('registers the configured cron expression', async () => {
     const addCronJob = jest.fn();
     const svc = makeService(
-      { SESSION_KEEPALIVE_ENABLED: true, SESSION_KEEPALIVE_CRON: '*/7 * * * *' },
+      {
+        SESSION_KEEPALIVE_ENABLED: true,
+        SESSION_KEEPALIVE_CRON: '*/7 * * * *',
+      },
       addCronJob,
     );
     svc.onApplicationBootstrap();
-    expect(addCronJob).toHaveBeenCalledWith('session-keepalive', expect.anything());
+    expect(addCronJob).toHaveBeenCalledWith(
+      'session-keepalive',
+      expect.anything(),
+    );
     const job = addCronJob.mock.calls[0][1];
     expect(job.cronTime.source).toBe('*/7 * * * *');
-    svc.onApplicationShutdown();
+    await svc.onApplicationShutdown();
   });
 
   it('throws on an invalid cron expression', () => {

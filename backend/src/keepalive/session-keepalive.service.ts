@@ -63,9 +63,9 @@ export class SessionKeepAliveService
     this.logger.log(`Keep-alive aktif (${expression})`);
   }
 
-  onApplicationShutdown(): void {
+  async onApplicationShutdown(): Promise<void> {
     if (!this.job) return;
-    this.job.stop();
+    await this.job.stop();
     this.scheduler.deleteCronJob(JOB_NAME);
     this.job = undefined;
   }
@@ -83,7 +83,12 @@ export class SessionKeepAliveService
       );
       const concurrency = Math.min(
         10,
-        Math.max(1, Number(this.config.get('SESSION_KEEPALIVE_CONCURRENCY') ?? CHUNK_SIZE)),
+        Math.max(
+          1,
+          Number(
+            this.config.get('SESSION_KEEPALIVE_CONCURRENCY') ?? CHUNK_SIZE,
+          ),
+        ),
       );
       const budget = Number(
         this.config.get('SESSION_KEEPALIVE_CYCLE_BUDGET_MS') ?? 1_200_000,
@@ -160,7 +165,11 @@ export class SessionKeepAliveService
       matcher: RegExp,
     ): Promise<boolean> => {
       if (!result.valid || result.setCookies.length === 0) return true;
-      const merged = mergeSessionCookie(String(expected[field] ?? ''), result.setCookies, matcher);
+      const merged = mergeSessionCookie(
+        String(expected[field] ?? ''),
+        result.setCookies,
+        matcher,
+      );
       if (!merged.changed) return true;
       if (!merged.cookie.trim()) {
         this.logger.log(
@@ -181,12 +190,24 @@ export class SessionKeepAliveService
       return true;
     };
 
-    if (!(await renew('ssoCookie', probes[0].result, /^ci_session_sso$/))) return;
-    if (!(await renew('kulonCookie', probes[1].result, /^MoodleSession/))) return;
-    if (!(await renew('siapCookie', probes[2].result, /^(?:sia_|sipp|siapp|ciapp_)/i))) return;
+    if (!(await renew('ssoCookie', probes[0].result, /^ci_session_sso$/)))
+      return;
+    if (!(await renew('kulonCookie', probes[1].result, /^MoodleSession/)))
+      return;
+    if (
+      !(await renew(
+        'siapCookie',
+        probes[2].result,
+        /^(?:sia_|sipp|siapp|ciapp_)/i,
+      ))
+    )
+      return;
 
     if (!rotated) {
-      await this.store.getIfGeneration(session.identity, session.sessionGeneration);
+      await this.store.getIfGeneration(
+        session.identity,
+        session.sessionGeneration,
+      );
     }
     this.logger.log(
       `[session.keepalive] rotated=${rotated} (${Date.now() - started}ms)`,
@@ -203,7 +224,8 @@ export class SessionKeepAliveService
     }
     try {
       const result = await run();
-      if (!result.valid && result.kind === 'rate-limited') rateLimited.add(service);
+      if (!result.valid && result.kind === 'rate-limited')
+        rateLimited.add(service);
       return { result };
     } catch {
       return { result: { valid: false, kind: 'transient', setCookies: [] } };
