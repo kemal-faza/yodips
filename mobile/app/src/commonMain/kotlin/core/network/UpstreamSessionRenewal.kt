@@ -36,7 +36,7 @@ class UpstreamSessionRenewalException(
     val failure: RenewalContractFailure,
 ) : Exception()
 
-/** Narrow transport seam used by [ac.undip.sso.core.data.SessionRecoveryCoordinator]. */
+/** Narrow transport seam previously consumed by the removed session recovery coordinator. */
 fun interface UpstreamSessionRenewal {
     suspend fun renewUpstreamSession(
         service: UpstreamSessionService,
