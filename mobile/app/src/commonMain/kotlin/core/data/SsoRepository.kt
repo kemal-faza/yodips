@@ -22,7 +22,6 @@ import ac.undip.sso.core.network.SiapProfile
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.network.SsoApi
 import ac.undip.sso.core.network.UpstreamSessionService
-import ac.undip.sso.core.network.jwtSessionGeneration
 import ac.undip.sso.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -83,9 +82,7 @@ class SsoRepository(
     private val onSessionExpired: () -> Unit = SessionExpiredEvents::notifySessionExpired,
     private val tokenStore: TokenStoreLike? = null,
     refreshToken: suspend () -> String = { Backend.refresh() },
-    directTicketCapture: DirectTicketCapture? = null,
 ) {
-    private val supportsSiapRecovery = directTicketCapture != null
     // Stale-while-revalidate refreshes must not block callers nor outlive a
     // screen: a supervised IO scope owned by the repository.
     private val refreshScope = CoroutineScope(SupervisorJob() + ioDispatcher)
@@ -110,15 +107,6 @@ class SsoRepository(
         tokenStore = tokenStore,
         onSessionExpired = onSessionExpired,
     )
-
-    private val recoveryCoordinator = tokenStore?.let { store ->
-        SessionRecoveryCoordinator(
-            capture = directTicketCapture ?: DirectTicketCapture { DirectTicketCaptureResult.Unsupported },
-            renewal = api,
-            tokenStore = store,
-            readCurrentStatus = { api.me(); Unit },
-        )
-    }
 
     /**
      * Observable latest result for a fixed cache key ([CacheKeys]). Screens use
@@ -242,30 +230,10 @@ class SsoRepository(
             upstreamRead(UpstreamSessionService.SIAP) { api.absen() }
         }
 
-    suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> {
-        val generation = tokenStore?.currentToken()?.let(::jwtSessionGeneration)
-        val result = refresher.safe(retryable = false, serviceStale = true) {
+    suspend fun markKehadiran(token: String): ApiResult<KehadiranResponse> =
+        refresher.safe(retryable = false, serviceStale = true) {
             api.markKehadiran(KehadiranRequest(token))
         }
-        val stale = result as? ApiResult.Error ?: return result
-        if (stale.type != ErrorType.STALE_SESSION || !supportsSiapRecovery || generation == null ||
-            tokenStore.currentToken()?.let(::jwtSessionGeneration) != generation) return stale
-        val outcome = recoveryCoordinator?.recover(generation, UpstreamSessionService.SIAP)
-            ?: SessionRecoveryOutcome.UNSUPPORTED
-        if (outcome == SessionRecoveryOutcome.RECOVERED) {
-            // The original QR POST is never replayed: let the user decide whether
-            // to send a fresh scan after the session has been restored. The
-            // previous attempt may still have been recorded (a 200 with an
-            // unparsable body is reported as a stale 401), so the copy must not
-            // claim the submission definitely failed.
-            return ApiResult.Error(
-                stale.code,
-                "Sesi SIAP pulih. Silakan scan ulang hanya jika presensi sebelumnya belum tercatat.",
-                ErrorType.SESSION_RECOVERED,
-            )
-        }
-        return recoveryError(stale, outcome, UpstreamSessionService.SIAP)
-    }
 
     /** Registrasi token push ke backend (idempotent di server -> retryable). */
     suspend fun registerPushDevice(token: String): ApiResult<PushDeviceResponse> =
@@ -278,7 +246,6 @@ class SsoRepository(
     suspend fun clearForLogout() {
         try {
             refresher.clearForLogout()
-            recoveryCoordinator?.clear()
         } finally {
             // Cancel refreshes and wipe the cache FIRST; only then drop the
             // observable state, so an in-flight publish that already passed its
@@ -290,68 +257,11 @@ class SsoRepository(
 
     suspend fun resumeForNewSession() {
         refresher.resumeForNewSession()
-        recoveryCoordinator?.resumeForNewSession()
     }
 
-    private suspend fun <T> upstreamRead(service: UpstreamSessionService, block: suspend () -> T): ApiResult<T> {
-        val generationBeforeRequest = tokenStore?.currentToken()?.let(::jwtSessionGeneration)
-        val initial = refresher.safe(serviceStale = true, block = block)
-        val stale = initial as? ApiResult.Error ?: return initial
-        if (stale.type != ErrorType.STALE_SESSION) return initial
-        // PWA has no cookie-capture adapter; preserve its existing behavior.
-        if (service == UpstreamSessionService.SIAP && !supportsSiapRecovery) return initial
-
-        val generation = generationBeforeRequest ?: return recoveryError(stale, SessionRecoveryOutcome.UNSUPPORTED, service)
-        // A logout or a replacement login may cross the upstream response. Do
-        // not open a ticket or apply its result to a different local session.
-        if (tokenStore.currentToken()?.let(::jwtSessionGeneration) != generation) {
-            return ApiResult.Error(stale.code, "Sesi berubah. Muat ulang data ${service.name}.", stale.type)
-        }
-
-        val outcome = recoveryCoordinator?.recover(generation, service)
-            ?: SessionRecoveryOutcome.UNSUPPORTED
-        if (outcome != SessionRecoveryOutcome.RECOVERED) return recoveryError(stale, outcome, service)
-
-        // Recovery is intentionally non-recursive. The recovered cookie is
-        // persisted before this one final read; a second stale response is
-        // returned to the screen and cannot trigger another ticket flow.
-        if (tokenStore.currentToken()?.let(::jwtSessionGeneration) != generation) {
-            return ApiResult.Error(stale.code, "Sesi berubah. Muat ulang data ${service.name}.", stale.type)
-        }
-        return refresher.safe(retryable = false, serviceStale = true, block = block)
-    }
-
-    private fun recoveryError(
-        previous: ApiResult.Error,
-        outcome: SessionRecoveryOutcome,
-        service: UpstreamSessionService,
-    ): ApiResult.Error = when (outcome) {
-        SessionRecoveryOutcome.RECOVERED -> previous
-        SessionRecoveryOutcome.SESSION_DEAD -> {
-            onSessionExpired()
-            ApiResult.Error(401, "Sesi YoDips sudah berakhir. Silakan login kembali.", ErrorType.UNAUTHORIZED)
-        }
-        SessionRecoveryOutcome.AUTH_REJECTED ->
-            ApiResult.Error(previous.code, "Server menolak token YoDips. Sesi lokal tetap disimpan.", ErrorType.UNAUTHORIZED)
-        SessionRecoveryOutcome.SESSION_CHANGED ->
-            ApiResult.Error(previous.code, "Sesi berubah. Muat ulang data Kulon.", previous.type)
-        SessionRecoveryOutcome.INTERACTION_REQUIRED ->
-            ApiResult.Error(previous.code, "Login Microsoft diperlukan untuk memulihkan sesi ${service.name}.", previous.type)
-        SessionRecoveryOutcome.CONFLICT ->
-            ApiResult.Error(409, "Sesi ${service.name} berubah di perangkat lain. Muat ulang data.", previous.type)
-        SessionRecoveryOutcome.NETWORK_FAILURE ->
-            ApiResult.Error(null, "Jaringan gagal saat memulihkan sesi ${service.name}.", ErrorType.NETWORK)
-        SessionRecoveryOutcome.UPSTREAM_INVALID ->
-            ApiResult.Error(previous.code, "Ticket ${service.name} tidak menghasilkan sesi yang valid.", previous.type)
-        SessionRecoveryOutcome.UNSUPPORTED ->
-            ApiResult.Error(
-                previous.code,
-                "Pemulihan ${service.name} tidak tersedia di platform ini. Lanjutkan lewat YoDips Android.",
-                ErrorType.RECOVERY_UNSUPPORTED,
-            )
-        SessionRecoveryOutcome.PERSISTENCE_FAILURE ->
-            ApiResult.Error(null, "Cookie Kulon baru tidak dapat disimpan dengan aman.", ErrorType.SERVER)
-    }
+    @Suppress("UNUSED_PARAMETER")
+    private suspend fun <T> upstreamRead(service: UpstreamSessionService, block: suspend () -> T): ApiResult<T> =
+        refresher.safe(serviceStale = true, block = block)
 
     private suspend fun <T> cached(
         key: String,

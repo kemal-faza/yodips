@@ -415,28 +415,37 @@ class SsoRepositoryTest {
     }
 
     @Test
-    fun `stale attendance recovers SIAP without replaying the QR submission`() = runBlocking {
-        val token = jwtWithGeneration("0123456789abcdef0123456789abcdef")
-        val store = FakeTokenStore().apply { saved = Triple(token, "old-siap", "kulon-cookie") }
+    fun `stale attendance returns stale without attempting recovery`() = runBlocking {
+        val api = FakeApi()
         var submissions = 0
-        var captures = 0
-        val api = FakeApi().apply {
-            markKehadiranStub = { submissions++; throw ApiHttpException(401, "stale") }
-            renewalStub = { service, _ -> UpstreamSessionRenewalResponse(service, "renewed") }
+        api.markKehadiranStub = {
+            submissions++
+            throw ApiHttpException(401, "stale")
         }
-        val repo = SsoRepository(api = api, tokenStore = store, refreshToken = { token },
-            directTicketCapture = DirectTicketCapture { service ->
-                assertEquals(UpstreamSessionService.SIAP, service)
-                captures++
-                DirectTicketCaptureResult.Authenticated("sia_app_session=new")
-            })
+        val repo = SsoRepository(api)
+
         val result = repo.markKehadiran("qr")
-        assertTrue(result is ApiResult.Error)
+
         assertEquals(1, submissions)
-        assertEquals(1, captures)
-        val error = result as ApiResult.Error
-        assertEquals(ErrorType.SESSION_RECOVERED, error.type)
-        assertTrue(error.message.contains("belum tercatat", ignoreCase = true))
+        assertTrue(result is ApiResult.Error)
+        assertEquals(ErrorType.STALE_SESSION, (result as ApiResult.Error).type)
+    }
+
+    @Test
+    fun `stale Kulon read returns stale without a recovery retry`() = runBlocking {
+        val api = FakeApi()
+        var calls = 0
+        api.assignmentsStub = {
+            calls++
+            throw ApiHttpException(401, "stale")
+        }
+        val repo = SsoRepository(api, refreshToken = { "new-jwt" })
+
+        val result = repo.assignments()
+
+        // Initial read + the one retry after the silent JWT refresh.
+        assertEquals(2, calls)
+        assertEquals(ErrorType.STALE_SESSION, (result as ApiResult.Error).type)
     }
 
     @Test
@@ -515,127 +524,6 @@ class SsoRepositoryTest {
         } finally {
             Backend.authToken = null
         }
-    }
-
-    @Test
-    fun `stale SIAP read recovers the SIAP cookie and retries the read once`() = runBlocking {
-        val token = jwtWithGeneration("0123456789abcdef0123456789abcdef")
-        val store = FakeTokenStore().apply { saved = Triple(token, "old-siap", "kulon-cookie") }
-        var calls = 0
-        var captures = 0
-        val expected = SiapProfile(nama = "Fresh", nim = "1234")
-        val api = FakeApi().apply {
-            profileStub = {
-                calls++
-                if (calls <= 2) throw ApiHttpException(401, "stale")
-                expected
-            }
-            renewalStub = { service, cookie ->
-                assertEquals(UpstreamSessionService.SIAP, service)
-                assertEquals("sia_app_session=new", cookie)
-                UpstreamSessionRenewalResponse(service, "renewed")
-            }
-        }
-        val repo = SsoRepository(api = api, tokenStore = store, refreshToken = { token },
-            directTicketCapture = DirectTicketCapture { service ->
-                assertEquals(UpstreamSessionService.SIAP, service)
-                captures++
-                DirectTicketCaptureResult.Authenticated("sia_app_session=new")
-            })
-        assertEquals(ApiResult.Success(expected), repo.profile(force = true))
-        assertEquals(3, calls)
-        assertEquals(1, captures)
-    }
-
-    @Test
-    fun `stale Kulon read captures renews persists and performs one final read`() = runBlocking {
-        val generation = "0123456789abcdef0123456789abcdef"
-        val token = jwtWithGeneration(generation)
-        val store = FakeTokenStore().apply { saved = Triple(token, "siap-cookie", "old-kulon") }
-        var calls = 0
-        var captures = 0
-        var renewals = 0
-        val expected = listOf(KulonAssignment(id = 7, name = "final"))
-        val api = FakeApi().apply {
-            assignmentsStub = {
-                calls++
-                when (calls) {
-                    1, 2 -> throw ApiHttpException(401, "stale")
-                    else -> expected
-                }
-            }
-            renewalStub = { service, cookie ->
-                renewals++
-                assertEquals(UpstreamSessionService.KULON, service)
-                assertEquals("MoodleSession=new", cookie)
-                UpstreamSessionRenewalResponse(service = service, status = "renewed")
-            }
-        }
-        val repo = SsoRepository(
-            api = api,
-            tokenStore = store,
-            refreshToken = { token },
-            directTicketCapture = DirectTicketCapture {
-                captures++
-                DirectTicketCaptureResult.Authenticated("MoodleSession=new")
-            },
-        )
-
-        val result = repo.assignments(force = true)
-
-        assertEquals(ApiResult.Success(expected), result)
-        assertEquals(3, calls) // initial GET, JWT-refresh retry, one post-renewal GET
-        assertEquals(1, captures)
-        assertEquals(1, renewals)
-        assertEquals("MoodleSession=new", store.updatedKulonCookie)
-    }
-
-    @Test
-    fun `a stale final Kulon read does not recurse into another capture`() = runBlocking {
-        val token = jwtWithGeneration("0123456789abcdef0123456789abcdef")
-        val store = FakeTokenStore().apply { saved = Triple(token, null, "old-kulon") }
-        var calls = 0
-        var captures = 0
-        val api = FakeApi().apply {
-            assignmentsStub = { calls++; throw ApiHttpException(401, "stale") }
-            renewalStub = { service, _ -> UpstreamSessionRenewalResponse(service = service, status = "renewed") }
-        }
-        val repo = SsoRepository(
-            api = api,
-            tokenStore = store,
-            refreshToken = { token },
-            directTicketCapture = DirectTicketCapture {
-                captures++
-                DirectTicketCaptureResult.Authenticated("MoodleSession=new")
-            },
-        )
-
-        val result = repo.assignments(force = true)
-
-        assertTrue(result is ApiResult.Error && result.type == ErrorType.STALE_SESSION)
-        assertEquals(3, calls)
-        assertEquals(1, captures)
-    }
-
-    @Test
-    fun `missing generation returns platform recovery guidance without capture`() = runBlocking {
-        val store = FakeTokenStore().apply { saved = Triple("not-a-jwt", null, null) }
-        var captures = 0
-        val api = FakeApi().apply { assignmentsStub = { throw ApiHttpException(401, "stale") } }
-        val repo = SsoRepository(
-            api = api,
-            tokenStore = store,
-            refreshToken = { "not-a-jwt" },
-            directTicketCapture = DirectTicketCapture {
-                captures++
-                DirectTicketCaptureResult.Unsupported
-            },
-        )
-
-        val result = repo.assignments(force = true)
-
-        assertTrue(result is ApiResult.Error && result.message.contains("YoDips Android"))
-        assertEquals(0, captures)
     }
 
     // ────────────── Observable cached state (instant screen re-entry) ──────────────

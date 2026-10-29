@@ -102,7 +102,6 @@ fun AppRoot(
         SsoRepository(
             persistent = persistentCache,
             tokenStore = tokenStore,
-            directTicketCapture = kulonTicketCapture,
         )
     }
 
