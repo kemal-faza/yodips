@@ -306,3 +306,43 @@ describe('validateEnv - notification vars', () => {
     expect(() => validateEnv({ ...base, WEB_PUSH_CYCLE_BUDGET: '0' })).toThrow();
   });
 });
+
+describe('validateEnv - session keep-alive', () => {
+  const base = {
+    SSO_BASE_URL: 'https://sso.undip.ac.id',
+    JWT_SECRET: TEST_JWT_SECRET,
+    MS_TENANT_ID: 'tenant',
+    MS_CLIENT_ID: 'client',
+    MS_CLIENT_SECRET: 'secret',
+    MS_REDIRECT_URI: 'http://localhost:3000/callback',
+    CDP_URL: 'http://127.0.0.1:9223',
+    SSO_DASHBOARD_URL: 'https://sso.undip.ac.id/pages/dashboard',
+    SSO_LOGIN_URL: 'https://sso.undip.ac.id/auth/user/login',
+    CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
+  };
+
+  it('accepts the 30-day keep-alive cap and keep-alive settings', () => {
+    const cfg = validateEnv({
+      ...base,
+      SESSION_KEEPALIVE_ENABLED: 'true',
+      SESSION_ABSOLUTE_TTL_MS: '2592000000',
+      SESSION_KEEPALIVE_CONCURRENCY: '4',
+    });
+    expect(cfg.SESSION_KEEPALIVE_ENABLED).toBe(true);
+    expect(cfg.SESSION_ABSOLUTE_TTL_MS).toBe(2592000000);
+  });
+
+  it('rejects keep-alive concurrency outside 1..10', () => {
+    expect(() =>
+      validateEnv({
+        ...base,
+        SESSION_KEEPALIVE_CONCURRENCY: '11',
+      }),
+    ).toThrow();
+  });
+
+  it('defaults the keep-alive flag to false', () => {
+    const cfg = validateEnv(base);
+    expect(cfg.SESSION_KEEPALIVE_ENABLED).toBe(false);
+  });
+});

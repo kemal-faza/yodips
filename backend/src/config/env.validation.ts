@@ -138,6 +138,37 @@ export class EnvConfig {
    *  indefinitely). Set shorter (e.g. 86400000 = 24h) to tighten the cap. */
   SESSION_ABSOLUTE_TTL_MS: number = 604800000; // 7 days
 
+  // ---- Session keep-alive ---------------------------------------------------
+  /** Probe captured sessions periodically and persist rotated cookies.
+   *  Default OFF: canary first, then enable for all users. */
+  @IsOptional()
+  @IsBoolean()
+  SESSION_KEEPALIVE_ENABLED: boolean = false;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  SESSION_KEEPALIVE_CRON: string = '*/30 * * * *';
+
+  @IsOptional()
+  @Min(1)
+  @Max(10)
+  SESSION_KEEPALIVE_CONCURRENCY: number = 4;
+
+  @IsOptional()
+  @Min(60000)
+  SESSION_KEEPALIVE_CYCLE_BUDGET_MS: number = 1_200_000;
+
+  @IsOptional()
+  @Min(0)
+  @Max(60000)
+  SESSION_KEEPALIVE_JITTER_MS: number = 15_000;
+
+  /** Canary window: comma-separated NIMs. Empty = every session. */
+  @IsOptional()
+  @IsString()
+  SESSION_KEEPALIVE_ALLOWLIST?: string;
+
   @IsOptional()
   @Min(1000)
   CACHE_TTL_MS: number = 300000;
@@ -235,6 +266,16 @@ export function validateEnv(config: Record<string, unknown>): EnvConfig {
   if (errors.length > 0) {
     throw new Error(
       errors.map((e) => JSON.stringify(e.constraints)).join(', '),
+    );
+  }
+
+  if (
+    validated.SESSION_KEEPALIVE_ENABLED &&
+    validated.SESSION_ABSOLUTE_TTL_MS <= validated.SESSION_TTL_MS
+  ) {
+    // EnvConfig has no logger; console.warn is intentional and contains no secrets.
+    console.warn(
+      'SESSION_KEEPALIVE_ENABLED=true but SESSION_ABSOLUTE_TTL_MS <= SESSION_TTL_MS; sessions will still die at the 7-day cap',
     );
   }
 
