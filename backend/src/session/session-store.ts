@@ -106,14 +106,13 @@ export function isKulonCookieRenewal(
     replacement.emailSso === expected.emailSso;
 }
 
-/** Permit exactly one changed upstream cookie while keeping the session binding. */
-export function isUpstreamCookieRenewal(
+/** Enforce the immutable fields of an in-place SIAP-cookie renewal. */
+export function isSiapCookieRenewal(
   identity: string,
   generation: string,
   expected: CapturedSession,
   replacement: CapturedSession,
 ): boolean {
-  if (isKulonCookieRenewal(identity, generation, expected, replacement)) return true;
   return expected.identity === identity &&
     expected.sessionGeneration === generation &&
     replacement.identity === identity &&
@@ -125,4 +124,36 @@ export function isUpstreamCookieRenewal(
     replacement.ssoCookie === expected.ssoCookie &&
     replacement.microsoftCookie === expected.microsoftCookie &&
     replacement.emailSso === expected.emailSso;
+}
+
+/** Enforce the immutable fields of an in-place SSO-cookie renewal. */
+export function isSsoCookieRenewal(
+  identity: string,
+  generation: string,
+  expected: CapturedSession,
+  replacement: CapturedSession,
+): boolean {
+  return expected.identity === identity &&
+    expected.sessionGeneration === generation &&
+    replacement.identity === identity &&
+    replacement.sessionGeneration === generation &&
+    replacement.ssoCookie.trim().length > 0 &&
+    replacement.ssoCookie !== expected.ssoCookie &&
+    replacement.capturedAt === expected.capturedAt &&
+    replacement.microsoftCookie === expected.microsoftCookie &&
+    replacement.kulonCookie === expected.kulonCookie &&
+    replacement.siapCookie === expected.siapCookie &&
+    replacement.emailSso === expected.emailSso;
+}
+
+/** Permit exactly one changed upstream cookie while keeping the session binding. */
+export function isUpstreamCookieRenewal(
+  identity: string,
+  generation: string,
+  expected: CapturedSession,
+  replacement: CapturedSession,
+): boolean {
+  return isKulonCookieRenewal(identity, generation, expected, replacement) ||
+    isSiapCookieRenewal(identity, generation, expected, replacement) ||
+    isSsoCookieRenewal(identity, generation, expected, replacement);
 }

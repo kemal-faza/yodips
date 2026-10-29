@@ -220,6 +220,44 @@ describe('InMemorySessionStore (per-user, TTL)', () => {
       await expect(store.get('a')).resolves.toEqual(replacement);
     });
 
+    it('replaces only the SSO cookie while preserving every other field', async () => {
+      const expected = {
+        ...makeSession('a', 'MoodleSession=OLD'),
+        ssoCookie: 'ci_session_sso=old',
+        microsoftCookie: 'MS=keep',
+        siapCookie: 'sia_app_session=keep',
+        emailSso: 'student@example.test',
+      };
+      const replacement = { ...expected, ssoCookie: 'ci_session_sso=new' };
+      await store.set('a', expected);
+
+      await expect(store.replaceIfUnchanged('a', GEN_A, expected, replacement)).resolves.toBe('updated');
+      expect(await store.get('a')).toEqual(replacement);
+    });
+
+    it('rejects an SSO renewal that also changes another field', async () => {
+      const expected = { ...makeSession('a', 'MoodleSession=OLD'), ssoCookie: 'ci_session_sso=old' };
+      await store.set('a', expected);
+
+      await expect(
+        store.replaceIfUnchanged('a', GEN_A, expected, {
+          ...expected,
+          ssoCookie: 'ci_session_sso=new',
+          capturedAt: expected.capturedAt + 1,
+        }),
+      ).rejects.toThrow('Invalid session renewal replacement');
+      await expect(store.get('a')).resolves.toEqual(expected);
+    });
+
+    it('rejects an empty SSO renewal', async () => {
+      const expected = { ...makeSession('a', 'MoodleSession=OLD'), ssoCookie: 'ci_session_sso=old' };
+      await store.set('a', expected);
+
+      await expect(
+        store.replaceIfUnchanged('a', GEN_A, expected, { ...expected, ssoCookie: '' }),
+      ).rejects.toThrow('Invalid session renewal replacement');
+    });
+
     it('replaces only Kulon cookie and preserves identity, generation, capture time, and other session fields', async () => {
       const expected = {
         ...makeSession('a', 'MoodleSession=OLD'),
