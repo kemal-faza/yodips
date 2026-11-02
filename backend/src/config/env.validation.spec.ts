@@ -292,6 +292,11 @@ describe('validateEnv - notification vars', () => {
     expect(cfg.FIREBASE_SERVICE_ACCOUNT_JSON).toBe('e30=');
   });
 
+  it('reads the literal string "false" as disabled', () => {
+    const cfg = validateEnv({ ...base, NOTIFICATIONS_ENABLED: 'false' });
+    expect(cfg.NOTIFICATIONS_ENABLED).toBe(false);
+  });
+
   it('web-push limits default to 8 and 50 when absent', () => {
     const cfg = validateEnv(base);
     expect(cfg.WEB_PUSH_MAX_SUBSCRIPTIONS).toBe(8);
@@ -344,5 +349,16 @@ describe('validateEnv - session keep-alive', () => {
   it('defaults the keep-alive flag to false', () => {
     const cfg = validateEnv(base);
     expect(cfg.SESSION_KEEPALIVE_ENABLED).toBe(false);
+  });
+
+  it('keeps the literal string "false" disabled instead of truthy', () => {
+    const cfg = validateEnv({ ...base, SESSION_KEEPALIVE_ENABLED: 'false' });
+    expect(cfg.SESSION_KEEPALIVE_ENABLED).toBe(false);
+  });
+
+  it('still rejects a flag that is neither true/false nor 1/0', () => {
+    expect(() =>
+      validateEnv({ ...base, SESSION_KEEPALIVE_ENABLED: 'yes' }),
+    ).toThrow();
   });
 });

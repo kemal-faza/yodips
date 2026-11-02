@@ -19,6 +19,32 @@ export enum Env {
   Test = 'test',
 }
 
+/**
+ * Parse boolean env vars BEFORE `enableImplicitConversion` touches them.
+ *
+ * class-transformer converts with `Boolean(value)`, so the string `'false'`
+ * becomes `true` — a config var that looks disabled would silently enable the
+ * feature (observed in production with SESSION_KEEPALIVE_ENABLED). Normalising
+ * here (an empty value means false) keeps the validated config honest for
+ * every `ConfigService.get<boolean>()` consumer and rejects typos loudly.
+ */
+function parseBooleanEnv(key: string, value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === '') {
+    return false;
+  }
+  throw new Error(`${key} must be one of true/false/1/0`);
+}
+
+const BOOLEAN_ENV_KEYS = [
+  'CAPTURE_REUSE_ENABLED',
+  'SESSION_KEEPALIVE_ENABLED',
+  'NOTIFICATIONS_ENABLED',
+  'WEB_PUSH_ENABLED',
+] as const;
+
 export class EnvConfig {
   @IsEnum(Env)
   NODE_ENV: Env = Env.Development;
@@ -254,7 +280,11 @@ export class EnvConfig {
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvConfig {
-  const validated = plainToInstance(EnvConfig, config, {
+  const normalized = { ...config };
+  for (const key of BOOLEAN_ENV_KEYS) {
+    if (key in normalized) normalized[key] = parseBooleanEnv(key, normalized[key]);
+  }
+  const validated = plainToInstance(EnvConfig, normalized, {
     enableImplicitConversion: true,
   });
   // NOTE: NestJS passes the entire process.env to validate(), so we must NOT

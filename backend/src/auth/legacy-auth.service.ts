@@ -53,8 +53,8 @@ export class LegacyAuthService {
       );
     }
 
-    const reuseEnabled =
-      this.config.get<string>('CAPTURE_REUSE_ENABLED') === 'true';
+    const reuseFlag = this.config.get<boolean | string>('CAPTURE_REUSE_ENABLED');
+    const reuseEnabled = reuseFlag === true || reuseFlag === 'true';
     const existing = reuseEnabled
       ? await this.findReusableSession()
       : await this.preventReuse();
