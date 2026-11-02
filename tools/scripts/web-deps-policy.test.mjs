@@ -30,10 +30,11 @@ describe("web dependency hygiene policy", () => {
     assert.equal(webPkg.devDependencies?.["shadcn-vue"], "^2.8.1");
   });
 
-  it("patched overrides from 6104c42 remain in force", () => {
-    assert.equal(webPkg.overrides?.["decode-uri-component"], "^0.5.0");
+  it("security overrides remain in force", () => {
+    assert.equal(webPkg.overrides?.["decode-uri-component"], "^0.5.1");
     assert.equal(webPkg.overrides?.["fast-uri"], "^4.1.4");
     assert.equal(webPkg.overrides?.["qs"], "^6.16.0");
+    assert.deepEqual(webPkg.overrides?.stylus, { glob: "^14.0.3" });
   });
 
   it("the lockfile records shadcn-vue under a dev (root) edge", () => {
