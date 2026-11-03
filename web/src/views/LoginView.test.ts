@@ -24,6 +24,7 @@ function makeStore(overrides: Record<string, any> = {}) {
   const store = {
     login: vi.fn().mockResolvedValue(undefined),
     loginViaExtension: vi.fn().mockResolvedValue("started"),
+    loginWithPairCode: vi.fn().mockResolvedValue('ok'),
     isExtensionInstalled: vi.fn().mockResolvedValue(false),
     finishHandoff: vi.fn(),
     onExtensionResult: vi.fn().mockReturnValue(() => {}),
@@ -114,7 +115,7 @@ describe("LoginView", () => {
     const store = makeStore();
     const w = mount(LoginView);
     await flushPromises();
-    await w.find("button").trigger("click");
+    await w.find('[data-test="login-primary"]').trigger("click");
     await flushPromises();
     expect(store.login).toHaveBeenCalled();
   });
@@ -1002,13 +1003,13 @@ describe("LoginView consent gate", () => {
     expect(box.exists()).toBe(true);
     expect(w.html()).toContain("Syarat Layanan");
     expect((box.element as HTMLInputElement).checked).toBe(false);
-    expect(w.find("button").attributes("disabled")).toBeDefined();
+    expect(w.find('[data-test="login-primary"]').attributes("disabled")).toBeDefined();
 
     await box.setValue(true);
-    expect((w.find("button").element as HTMLButtonElement).disabled).toBe(false);
+    expect((w.find('[data-test="login-primary"]').element as HTMLButtonElement).disabled).toBe(false);
 
     // Once enabled, a click reaches the store.
-    await w.find("button").trigger("click");
+    await w.find('[data-test="login-primary"]').trigger("click");
     await flushPromises();
     expect(store.login).toHaveBeenCalled();
   });
@@ -1018,7 +1019,7 @@ describe("LoginView consent gate", () => {
     const w = mount(LoginView);
     await flushPromises();
 
-    await w.find("button").trigger("click");
+    await w.find('[data-test="login-primary"]').trigger("click");
     await flushPromises();
     expect(store.login).not.toHaveBeenCalled();
   });
@@ -1035,7 +1036,7 @@ describe("LoginView consent gate", () => {
     const second = mount(LoginView);
     await flushPromises();
     expect((second.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true);
-    expect((second.find("button").element as HTMLButtonElement).disabled).toBe(false);
+    expect((second.find('[data-test="login-primary"]').element as HTMLButtonElement).disabled).toBe(false);
     expect(store.login).not.toHaveBeenCalled();
   });
 
@@ -1045,6 +1046,98 @@ describe("LoginView consent gate", () => {
     const w = mount(LoginView);
     await flushPromises();
     expect((w.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false);
-    expect(w.find("button").attributes("disabled")).toBeDefined();
+    expect(w.find('[data-test="login-primary"]').attributes("disabled")).toBeDefined();
+  });
+});
+
+describe('pair code login', () => {
+  it('makes the pair form primary when no extension is installed', async () => {
+    cfg.ssoCaptureEnabled = false;
+    makeStore();
+    const w = mount(LoginView);
+    await flushPromises();
+    expect(w.find('[data-test="pair-form"]').exists()).toBe(true);
+    expect(w.find('[data-test="login-primary"]').exists()).toBe(false);
+  });
+
+  it('prefills a deep link and waits for consent before submitting', async () => {
+    localStorage.removeItem('yodips_terms_accepted');
+    const store = makeStore();
+    const w = mount(LoginView, {
+      global: { mocks: { $route: { query: { pair: 'abcd-1234' }, hash: '' } } },
+    });
+    await flushPromises();
+    const input = w.find('[data-test="pair-input"]').element as HTMLInputElement;
+    expect(input.value).toBe('ABCD1234');
+    expect(store.loginWithPairCode).not.toHaveBeenCalled();
+
+    await w.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+    expect(store.loginWithPairCode).toHaveBeenCalledWith('ABCD1234');
+  });
+
+  it('submits a deep link only once', async () => {
+    const store = makeStore();
+    mount(LoginView, {
+      global: { mocks: { $route: { query: { pair: 'ABCD1234' }, hash: '' } } },
+    });
+    await flushPromises();
+    expect(store.loginWithPairCode).toHaveBeenCalledTimes(1);
+    await flushPromises();
+    expect(store.loginWithPairCode).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a pasted claim URL', async () => {
+    cfg.ssoCaptureEnabled = false;
+    makeStore();
+    const w = mount(LoginView);
+    await flushPromises();
+    await w
+      .find('[data-test="pair-input"]')
+      .setValue('https://sso.crunchy.my.id/login?pair=abcd-2345');
+    expect((w.find('[data-test="pair-input"]').element as HTMLInputElement).value).toBe('ABCD2345');
+  });
+
+  it('does not submit a partial code', async () => {
+    cfg.ssoCaptureEnabled = false;
+    const store = makeStore();
+    const w = mount(LoginView);
+    await flushPromises();
+    await w.find('[data-test="pair-input"]').setValue('ABCD');
+    await flushPromises();
+    expect(store.loginWithPairCode).not.toHaveBeenCalled();
+    expect(w.find('[data-test="pair-submit"]').attributes('disabled')).toBeDefined();
+  });
+
+  it('does not navigate when the store reports a pair failure', async () => {
+    const store = makeStore({ loginWithPairCode: vi.fn().mockResolvedValue('error') });
+    const router = { push: vi.fn(), replace: vi.fn() };
+    mount(LoginView, {
+      global: {
+        mocks: {
+          $route: { query: { pair: 'ABCD1234' }, hash: '' },
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(store.loginWithPairCode).toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it('lets a handoff fragment win over a pair query', async () => {
+    const store = makeStore({ isHandoffMode: true });
+    const router = { replace: vi.fn(), push: vi.fn() };
+    mount(LoginView, {
+      global: {
+        mocks: {
+          $route: { hash: '#access_token=AAA.BBB.CCC', query: { pair: 'ABCD1234' } },
+          $router: router,
+        },
+      },
+    });
+    await flushPromises();
+    expect(store.finishHandoff).toHaveBeenCalledWith('AAA.BBB.CCC');
+    expect(store.loginWithPairCode).not.toHaveBeenCalled();
   });
 });

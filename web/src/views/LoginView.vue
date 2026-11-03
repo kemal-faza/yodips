@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { useExtension, type ExtOutboundStatus } from '../composables/useExtension';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import AuroraBackground from '@/components/ui/aurora-background/AuroraBackground
 import MultiStepLoader from '@/components/ui/multi-step-loader/MultiStepLoader.vue';
 import { SSO_CAPTURE_ENABLED, isMobileUserAgent } from '../config/extension';
 import { parseFragmentAccessToken } from '../lib/handoff-token';
+import { extractPairCode, normalizePairCode } from '../lib/pair-code';
 import { sessionLifetime } from '../lib/session-lifetime';
 
 const store = useAuthStore();
@@ -28,6 +29,13 @@ watch(consentAccepted, (accepted) => {
   else localStorage.removeItem(CONSENT_KEY);
 });
 
+const pairOpen = ref(false);
+const pairCode = ref('');
+const pairBusy = ref(false);
+const pairTouched = ref(false);
+const pairSuppressed = ref(false);
+let pairAttemptedFor: string | null = null;
+
 const extInstalled = ref(false);
 const extChecking = ref(true);
 const extBusy = ref(false); // initial handoff request in flight
@@ -40,6 +48,11 @@ const phaseToStep: Record<string, number> = { sso: 0, kulon: 1, siap: 2 };
 const isMobile = isMobileUserAgent();
 // Jalur interaktif Playwright di-server = single-admin/dev-only.
 const ssoCaptureEnabled = SSO_CAPTURE_ENABLED && !isMobile;
+const pairFormVisible = computed(
+  () =>
+    !pairSuppressed.value &&
+    (pairOpen.value || (!extChecking.value && !extInstalled.value && !ssoCaptureEnabled)),
+);
 let stopListening: (() => void) | null = null;
 let stopFocusListeners: (() => void) | null = null;
 // Epoch ownership + serialization (reviewers C/D): every async handoff flow
@@ -171,15 +184,58 @@ async function checkExtension() {
   }
 }
 
+function onPairInput(event: Event) {
+  const raw = (event.target as HTMLInputElement).value;
+  const next = extractPairCode(raw) ?? normalizePairCode(raw);
+  if (next === pairCode.value) return;
+  pairCode.value = next;
+  if (pairAttemptedFor !== null && pairAttemptedFor !== next) pairAttemptedFor = null;
+}
+
+async function handlePairLogin() {
+  pairTouched.value = true;
+  if (pairBusy.value || !consentAccepted.value) return;
+  if (pairCode.value.length !== 8) return;
+  pairBusy.value = true;
+  pairAttemptedFor = pairCode.value;
+  try {
+    const status = await store.loginWithPairCode(pairCode.value);
+    if (disposed) return;
+    if (status === 'ok') {
+      // Kode sudah terpakai; jangan biarkan tertinggal di riwayat.
+      window.history.replaceState(window.history.state, '', '/login');
+      await proxy().$router?.push('/');
+    }
+  } finally {
+    if (!disposed) pairBusy.value = false;
+  }
+}
+
+watch([pairCode, consentAccepted, pairFormVisible], () => {
+  if (!pairFormVisible.value || !consentAccepted.value || pairBusy.value) return;
+  if (pairCode.value.length !== 8) return;
+  if (pairAttemptedFor === pairCode.value) return;
+  void handlePairLogin();
+});
+
 onMounted(async () => {
   // YD-AUTH-002: consume a handoff #access_token fragment FIRST — synchronously
   // (no await) and before ANY extension detection/messaging, store write, or
   // navigation — so no async work can run while the secret is still in the URL.
   let fragmentConsumed = false;
+  const rawPair = proxy().$route?.query?.pair;
+  if (typeof rawPair === 'string') {
+    const parsed = extractPairCode(rawPair);
+    if (parsed) {
+      pairCode.value = parsed;
+      pairOpen.value = true;
+    }
+  }
   if (store.isHandoffMode) {
     const token = parseFragmentAccessToken(proxy().$route?.hash as string | undefined);
     if (token) {
       fragmentConsumed = true;
+      pairSuppressed.value = true;
       // History hygiene FIRST — synchronously, before any store write or await.
       // Preserve the existing history state object (never null), which keeps
       // history.back() behavior intact; a null state would corrupt it. Scrub is
@@ -201,6 +257,7 @@ onMounted(async () => {
   }
   await checkExtension();
   if (disposed) return;
+  if (!extInstalled.value && !ssoCaptureEnabled) pairOpen.value = true;
   // Listen for the extension's final result (posted to the window by the
   // content-script bridge). Handles both success (JWT) and failure/timeout.
   // Epoch ownership (reviewer C): the bridge push arrives asynchronously, so
@@ -386,6 +443,39 @@ async function handleExtensionDone() {
             Sesi loginmu belum lengkap — pastikan login SSO, Kulon, dan SIAP selesai. Tekan tombol di bawah untuk login ulang.
           </AlertDescription>
         </Alert>
+        <div
+          v-if="pairFormVisible"
+          class="mt-6 rounded-lg border border-border bg-muted/30 p-4"
+          data-test="pair-form"
+        >
+          <p class="text-sm font-semibold text-foreground">Masuk dengan kode dari perangkat lain</p>
+          <p class="mt-1 text-xs text-muted-foreground">
+            Buka YoDips di perangkat yang sudah login, lalu salin kode 8 karakternya.
+          </p>
+          <div class="mt-3 flex gap-2">
+            <input
+              :value="pairCode"
+              data-test="pair-input"
+              inputmode="text"
+              autocomplete="one-time-code"
+              autocapitalize="characters"
+              spellcheck="false"
+              placeholder="ABCD1234"
+              class="h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-3 font-mono text-lg uppercase tracking-widest"
+              @input="onPairInput"
+            />
+            <Button
+              data-test="pair-submit"
+              :disabled="pairBusy || !consentAccepted || pairCode.length !== 8"
+              @click="handlePairLogin"
+            >
+              {{ pairBusy ? 'Menghubungkan…' : 'Masuk' }}
+            </Button>
+          </div>
+          <p v-if="pairTouched && !consentAccepted" class="mt-2 text-xs text-muted-foreground">
+            Centang persetujuan dulu.
+          </p>
+        </div>
         <Button
           v-if="extChecking"
           size="lg"
@@ -396,6 +486,7 @@ async function handleExtensionDone() {
         </Button>
         <InteractiveHoverButton
           v-else-if="!extInstalled && ssoCaptureEnabled"
+          :data-test="pairOpen ? undefined : 'login-primary'"
           class="mt-6 h-11 w-full"
           :disabled="store.checking || !consentAccepted"
           :text="store.checking ? 'Memeriksa session…' : 'Login via SSO'"
@@ -404,13 +495,20 @@ async function handleExtensionDone() {
         <!-- Desktop tanpa extension & tanpa jalur capture (produksi): beri panduan. -->
         <Alert v-else-if="!extInstalled && !ssoCaptureEnabled" class="mt-6 border-warn/40 bg-warn/10 p-3">
           <AlertDescription class="text-sm text-foreground">
-            Login via web membutuhkan extension <strong>YoDips</strong>.
-            Pasang di Chrome/Edge lalu kembali ke halaman ini. (Jalur login
-            interaktif hanya aktif di lingkungan pengembangan.)
+            Butuh perangkat yang sudah login untuk membuat kode.
+            Pasang di Chrome/Edge dengan
+            <a
+              class="font-medium text-primary hover:underline"
+              href="https://chromewebstore.google.com/detail/eamfeldmafelalbkflomdjlfgfmifgic"
+              target="_blank"
+              rel="noopener"
+            >extension YoDips</a>
+            untuk login langsung.
           </AlertDescription>
         </Alert>
         <InteractiveHoverButton
           v-if="extInstalled && !extWaiting"
+          :data-test="pairOpen ? undefined : 'login-primary'"
           class="mt-6 h-11 w-full"
           :disabled="extBusy || !consentAccepted"
           :text="extBusy ? 'Menghubungkan…' : 'Login via Extension'"
