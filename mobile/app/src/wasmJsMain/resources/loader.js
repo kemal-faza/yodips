@@ -79,5 +79,16 @@
     navigator.serviceWorker.register('sw.js').catch(function () {
       /* offline is not a hard requirement */
     });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) return;
+      navigator.serviceWorker
+        .getRegistration()
+        .then(function (reg) {
+          return reg && reg.update();
+        })
+        .catch(function () {
+          /* offline / tidak didukung — bukan error fatal */
+        });
+    });
   }
 })();
