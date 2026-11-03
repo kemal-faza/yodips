@@ -628,6 +628,53 @@ describe('probeForKeepAlive', () => {
     });
   });
 
+  it('is valid on a logged-in page carrying name="sesskey"', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response('<input type="hidden" name="sesskey" value="abc">', {
+        status: 200,
+      }),
+    );
+    const svc = new KulonUpstreamSession(undefined as never);
+    await expect(svc.probeForKeepAlive('MoodleSession=OLD')).resolves.toEqual({
+      valid: true,
+      setCookies: [],
+    });
+  });
+
+  it('rejects a 200 login page whose JS config mentions sesskey', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(
+        '<body id="page-login-index"><script>M.cfg={"sesskey":"abc"};</script></body>',
+        { status: 200 },
+      ),
+    );
+    const svc = new KulonUpstreamSession(undefined as never);
+    await expect(svc.probeForKeepAlive('MoodleSession=OLD')).resolves.toEqual({
+      valid: false,
+      kind: 'invalid',
+      setCookies: [],
+    });
+  });
+
+  it('stops at a redirect into /login/ without following it', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(null, {
+        status: 303,
+        headers: {
+          location: '/login/index.php',
+          'set-cookie': 'MoodleSession=ANON; Path=/',
+        },
+      }),
+    );
+    const svc = new KulonUpstreamSession(undefined as never);
+    await expect(svc.probeForKeepAlive('MoodleSession=OLD')).resolves.toEqual({
+      valid: false,
+      kind: 'invalid',
+      setCookies: ['MoodleSession=ANON; Path=/'],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('returns rate-limited on 429', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 429 }));
     const svc = new KulonUpstreamSession(undefined as never);

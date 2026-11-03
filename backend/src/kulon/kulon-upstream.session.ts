@@ -211,14 +211,28 @@ export class KulonUpstreamSession {
         KULON_ROUTE_CONTEXTS.sessionProbe,
         `${KULON_BASE_URL}/my/`,
         { headers: { Cookie: cookie }, redirect: 'manual' },
-        { readBody: (hop) => hop.status >= 200 && hop.status < 300 },
+        {
+          // A redirect into the login flow is already stale: stop before
+          // fetching the login page (and before collecting its anonymous
+          // MoodleSession cookie as if it were a rotation).
+          stopWhen: (hop) =>
+            !!hop.location &&
+            isLoginRedirect(new URL(hop.location, hop.url).toString()),
+          readBody: (hop) => hop.status >= 200 && hop.status < 300,
+        },
       );
       const setCookies = hops.flatMap((hop) => hop.setCookies);
       const final = hops[hops.length - 1];
       if (!final) return { valid: false, kind: 'transient', setCookies };
       const kind = classifyProbeStatus(final.status);
       if (kind !== 'valid') return { valid: false, kind, setCookies };
-      if (final.body?.includes('sesskey')) return { valid: true, setCookies };
+      // Mirror `checkSessionValid`: a 200 login page is still a dead session.
+      // Moodle renders `"sesskey":"..."` in its JS config even for guests, so
+      // the substring test alone would misread the login page as authenticated.
+      if (isLoginRedirect(final.url)) {
+        return { valid: false, kind: 'invalid', setCookies };
+      }
+      if (hasSesskeyMarker(final.body ?? '')) return { valid: true, setCookies };
       return { valid: false, kind: 'invalid', setCookies };
     } catch {
       return { valid: false, kind: 'transient', setCookies: [] };

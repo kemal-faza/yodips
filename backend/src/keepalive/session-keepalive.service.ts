@@ -151,7 +151,7 @@ export class SessionKeepAliveService
     if (Date.now() >= deadline) return;
     if (!probes.some((probe) => probe.result.valid)) {
       this.logger.log(
-        `[session.keepalive] no-valid-probe (${Date.now() - started}ms)`,
+        `[session.keepalive] no-valid-probe ${this.describe(probes)} (${Date.now() - started}ms)`,
       );
       return;
     }
@@ -210,8 +210,19 @@ export class SessionKeepAliveService
       );
     }
     this.logger.log(
-      `[session.keepalive] rotated=${rotated} (${Date.now() - started}ms)`,
+      `[session.keepalive] ${this.describe(probes)} rotated=${rotated} (${Date.now() - started}ms)`,
     );
+  }
+
+  /** Per-service outcome without any cookie material. */
+  private describe(probes: Array<{ result: KeepAliveProbeResult }>): string {
+    const services = ['sso', 'kulon', 'siap'] as const;
+    return probes
+      .map(
+        (probe, index) =>
+          `${services[index]}=${probe.result.valid ? 'ok' : probe.result.kind}`,
+      )
+      .join(' ');
   }
 
   private async probe(

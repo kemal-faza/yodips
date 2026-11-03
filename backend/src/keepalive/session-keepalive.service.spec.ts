@@ -249,6 +249,40 @@ describe('SessionKeepAliveService.runCycle', () => {
     expect(slide).toHaveBeenCalledWith('24060121130000', GEN);
   });
 
+  it('logs a per-service outcome summary without cookie values', async () => {
+    const store = new InMemorySessionStore(60_000, 2_592_000_000);
+    await store.set('24060121130000', session());
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    const service = new SessionKeepAliveService(
+      store,
+      { probe: jest.fn().mockResolvedValue({ valid: true, setCookies: [] }) } as never,
+      {
+        probeForKeepAlive: jest.fn().mockResolvedValue({
+          valid: false,
+          kind: 'invalid',
+          setCookies: [],
+        }),
+      } as never,
+      {
+        probeForKeepAlive: jest.fn().mockResolvedValue({
+          valid: false,
+          kind: 'transient',
+          setCookies: [],
+        }),
+      } as never,
+      config(),
+      { addCronJob: jest.fn(), deleteCronJob: jest.fn() } as never,
+    );
+
+    await service.runCycle();
+
+    const text = log.mock.calls.flat().join(' ');
+    expect(text).toContain('sso=ok kulon=invalid siap=transient');
+    expect(text).not.toContain('ci_session_sso=');
+    expect(text).not.toContain('MoodleSession=');
+    expect(text).not.toContain('sia_app_session=');
+  });
+
   it('never logs cookie values', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
     await store.set('24060121130000', session());
