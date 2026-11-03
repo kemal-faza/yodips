@@ -6,6 +6,7 @@ import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.UserMessages
 import ac.undip.sso.core.network.createPlatformClient
+import ac.undip.sso.core.scan.CameraRegion
 import ac.undip.sso.core.scan.QrScanResult
 import ac.undip.sso.core.scan.QrScanner
 import ac.undip.sso.core.scan.extractPairCode
@@ -25,6 +26,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -32,6 +35,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,6 +49,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -60,6 +67,7 @@ import io.ktor.http.isSuccess
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.math.roundToInt
 
 @Serializable
 private data class PairConsumeResponse(
@@ -77,14 +85,14 @@ private data class PairErrorResponse(
 /** Jumlah sel OTP = panjang kode pairing Crockford. */
 private const val CODE_LEN = 8
 
-// Alfabet Crockford 32 tanpa I/L/O/U (mirror core/scan/PairCodeExtract.kt;
-// konstanta di sana private agar API-nya tetap satu fungsi extractPairCode).
+/** Harus sama dengan TERMS_VERSION di web/src/views/LoginView.vue. */
+private const val CONSENT_VERSION = "2026-09-20"
+
 private const val PAIR_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-/**
- * Sanitasi ketik bertahap: uppercase, buang spasi/dash, disambiguasi
- * O->0 / I->1 / L->1, buang non-Crockford, maksimal 8 karakter.
- */
+private enum class LoginMode { Landing, Scanning, Code }
+
+/** Sanitasi ketik: uppercase, buang spasi/dash, O→0, I/L→1, maks 8. */
 private fun sanitizeTyped(raw: String): String =
     raw.uppercase()
         .replace(" ", "")
@@ -95,67 +103,71 @@ private fun sanitizeTyped(raw: String): String =
         .filter { it in PAIR_CODE_ALPHABET }
         .take(CODE_LEN)
 
-/**
- * Login pairing utk wasmJs: tampilan kode 1 baris (2 grup x 4 karakter) +
- * satu field tersembunyi penampung ketik + scan QR kamera.
- * - SEMUA ketik masuk ke SATU field tersembunyi (multi-field terbukti race di
- *   Compose-wasm: pindah-fokus per keystroke kalah cepat dari ketik GBoard).
- * - Sel hanya me-render karakter; tap area sel mem-fokus field tersembunyi.
- * - Penuh 8 (ketik/paste/scan) -> auto-submit.
- */
 @Composable
 fun LoginScreen(
     tokenStore: TokenStoreLike,
     onLoggedIn: () -> Unit,
 ) {
+    var mode by remember { mutableStateOf(LoginMode.Landing) }
     var code by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var scanning by remember { mutableStateOf(false) }
+    var consent by remember { mutableStateOf(jsReadConsent() == CONSENT_VERSION) }
+    var region by remember { mutableStateOf<CameraRegion?>(null) }
     val scope = rememberCoroutineScope()
     val json = remember { Json { ignoreUnknownKeys = true } }
+    val density = LocalDensity.current.density
 
-    fun setCodeFrom(raw: String): Boolean {
-        val normalized = extractPairCode(raw) ?: return false
-        code = normalized
-        return true
+    fun saveConsent(value: Boolean) {
+        if (!value) {
+            jsWriteConsent(null)
+            consent = false
+            return
+        }
+        // Mode privat / storage diblokir: gate tetap tertutup (spec §6.6).
+        if (jsWriteConsent(CONSENT_VERSION)) {
+            consent = true
+        } else {
+            error = "Penyimpanan browser diblokir. Izinkan penyimpanan situs untuk melanjutkan."
+        }
     }
 
-    fun submit() {
-        if (code.length != CODE_LEN || busy) return
+    fun submit(raw: String) {
+        val normalized = sanitizeTyped(raw)
+        if (normalized.length != CODE_LEN || busy || !consent) return
         busy = true
-        scanning = false
         error = null
         scope.launch {
             try {
                 val client = createPlatformClient()
                 try {
                     val resp = client.post("${appBaseUrl}/api/auth/pair/consume") {
-                        setBody("""{"code":"$code"}""")
+                        setBody("""{"code":"$normalized"}""")
                         contentType(ContentType.Application.Json)
                     }
                     val text = resp.bodyAsText()
                     if (resp.status.isSuccess()) {
                         val result = json.decodeFromString<PairConsumeResponse>(text)
+                        jsScrubPairQuery()
                         tokenStore.save(result.accessToken, siap = null, kulon = null)
-                        // WAJIB sebelum AppShell terbentuk: tanpa ini request
-                        // terkirim tanpa Bearer -> 401 sampai hard-refresh.
                         Backend.authToken = result.accessToken
                         onLoggedIn()
                     } else {
-                        // Gagal = kode bermasalah (salah/pakai/kedaluwarsa/sesi
-                        // mati): kosongkan agar user ketik/scan ulang dan
-                        // auto-submit menyala lagi untuk kode baru.
                         code = ""
                         val err = try {
                             json.decodeFromString<PairErrorResponse>(text)
                         } catch (_: Exception) {
                             PairErrorResponse("", "NETWORK_ERROR")
                         }
-                        error = when (err.code) {
-                            BackendCodes.INVALID_CODE -> "Kode tidak valid atau sudah pernah dipakai."
-                            BackendCodes.EXPIRED_CODE -> "Kode sudah kedaluwarsa. Minta kode baru."
-                            BackendCodes.SESSION_DEAD -> "Sesi asal sudah berakhir. Login ulang di perangkat utama."
+                        error = when {
+                            resp.status.value == 429 ->
+                                "Terlalu banyak percobaan. Tunggu ±1 menit."
+                            err.code == BackendCodes.INVALID_CODE ->
+                                "Kode tidak valid atau sudah dipakai. Minta kode baru."
+                            err.code == BackendCodes.EXPIRED_CODE ->
+                                "Kode sudah kedaluwarsa. Minta kode baru."
+                            err.code == BackendCodes.SESSION_DEAD ->
+                                "Sesi di perangkat sumber sudah berakhir. Login ulang di sana lalu minta kode baru."
                             else -> UserMessages.PAIR_FAILED
                         }
                     }
@@ -171,73 +183,185 @@ fun LoginScreen(
         }
     }
 
-    fun startScan() {
-        if (busy || scanning) return
-        scanning = true
-        error = null
-        scope.launch {
-            when (val result = QrScanner.scanOnce()) {
-                is QrScanResult.Success -> {
-                    if (!setCodeFrom(result.token)) {
-                        error = "QR bukan kode pairing YoDips."
-                    }
-                }
+    // Deep link ?pair=CODE: langsung ke mode kode, tanpa kamera.
+    LaunchedEffect(Unit) {
+        val raw = jsUrlSearchParams("pair") ?: return@LaunchedEffect
+        val normalized = extractPairCode(raw) ?: return@LaunchedEffect
+        code = normalized
+        mode = LoginMode.Code
+    }
 
-                is QrScanResult.Error -> error = result.message
-                // User menutup scanner sendiri - kembali ke form tanpa pesan.
-                QrScanResult.Cancelled -> Unit
-            }
-            scanning = false
+    // Auto-open kamera hanya bila izin pernah diberikan dan tidak ada deep link.
+    LaunchedEffect(Unit) {
+        if (consent && jsCameraOk() && jsUrlSearchParams("pair") == null) {
+            mode = LoginMode.Scanning
         }
     }
 
-    // Deep-link: ?pair=CODE auto-isi lalu submit.
-    LaunchedEffect(Unit) {
-        val params = jsUrlSearchParams("pair")
-        if (params != null && setCodeFrom(params)) submit()
+    // Auto-submit: hanya saat kode lengkap DAN persetujuan tersimpan.
+    LaunchedEffect(code, consent, mode) {
+        if (mode == LoginMode.Code && consent && code.length == CODE_LEN && !busy) {
+            submit(code)
+        }
     }
 
-    // Auto-submit saat 8 karakter penuh (hasil ketik maupun scan).
-    LaunchedEffect(code) {
-        if (code.length == CODE_LEN && !busy) submit()
-    }
-
-    // Surface eksplisit: canvas Compose transparan — bg wajib dari tema agar
-    // teks selalu kontras di light & dark.
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+            verticalArrangement = if (mode == LoginMode.Scanning) Arrangement.Top else Arrangement.Center,
         ) {
             Text("YoDips", style = MaterialTheme.typography.headlineLarge)
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
 
-            OtpCodeInput(
-                code = code,
-                enabled = !busy,
-                onCodeChange = { code = it },
-                onDone = { submit() },
-            )
-            Spacer(Modifier.height(20.dp))
+            when (mode) {
+                LoginMode.Landing -> {
+                    Text(
+                        "Pindai QR dari perangkat yang sudah login",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Button(
+                        onClick = {
+                            region = null
+                            mode = LoginMode.Scanning
+                        },
+                        enabled = consent,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Pindai QR") }
+                    Spacer(Modifier.height(12.dp))
+                    TextButton(
+                        onClick = { mode = LoginMode.Code },
+                        enabled = consent,
+                    ) { Text("Masukkan kode manual") }
+                    Spacer(Modifier.height(20.dp))
+                    ConsentRow(
+                        consent = consent,
+                        onConsent = { saveConsent(it) },
+                        onOpen = { path -> jsOpenUrl(jsOrigin() + path) },
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Belum punya perangkat yang login? Login di Chrome desktop dengan extension YoDips.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
-            OutlinedButton(
-                onClick = { startScan() },
-                enabled = !busy && !scanning,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (scanning) "Memindai…" else "Pindai QR")
-            }
-            if (scanning) {
-                Spacer(Modifier.height(12.dp))
-                CircularProgressIndicator()
-            }
+                LoginMode.Scanning -> {
+                    Text(
+                        "Arahkan kamera ke QR di layar perangkat lain",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .onGloballyPositioned { coords ->
+                                val b = coords.boundsInWindow()
+                                region = CameraRegion(
+                                    left = (b.left / density).roundToInt(),
+                                    top = (b.top / density).roundToInt(),
+                                    width = (b.width / density).roundToInt(),
+                                    height = (b.height / density).roundToInt(),
+                                )
+                            },
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { mode = LoginMode.Code },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Masukkan kode manual") }
+                    TextButton(onClick = { mode = LoginMode.Landing }) { Text("Batal") }
+                }
 
-            if (error != null) {
-                Spacer(Modifier.height(16.dp))
-                Text(error!!, color = MaterialTheme.colorScheme.error)
+                LoginMode.Code -> {
+                    OtpCodeInput(
+                        code = code,
+                        enabled = !busy,
+                        onCodeChange = { code = it },
+                        onDone = { submit(code) },
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    if (!consent) {
+                        ConsentRow(
+                            consent = consent,
+                            onConsent = { saveConsent(it) },
+                            onOpen = { path -> jsOpenUrl(jsOrigin() + path) },
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
+                    TextButton(
+                        onClick = {
+                            region = null
+                            mode = LoginMode.Scanning
+                        },
+                    ) { Text("Pindai QR") }
+                    if (error != null) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(error!!, color = MaterialTheme.colorScheme.error)
+                    }
+                    if (busy) {
+                        Spacer(Modifier.height(12.dp))
+                        CircularProgressIndicator()
+                    }
+                }
             }
         }
+    }
+
+    // Pemindaian dimulai hanya setelah region terukur. Perubahan mode
+    // membatalkan LaunchedEffect → scanOnce dibatalkan → jsStopCamera di finally.
+    LaunchedEffect(mode, region) {
+        if (mode != LoginMode.Scanning) return@LaunchedEffect
+        val r = region ?: return@LaunchedEffect
+        if (r.width <= 0 || r.height <= 0) return@LaunchedEffect
+        when (val result = QrScanner.scanOnce(r)) {
+            is QrScanResult.Success -> {
+                val normalized = extractPairCode(result.token)
+                if (normalized == null) {
+                    error = "QR bukan kode pairing YoDips."
+                } else {
+                    jsSetCameraOk()
+                    code = normalized
+                }
+                mode = LoginMode.Code
+            }
+
+            is QrScanResult.Error -> {
+                jsClearCameraOk()
+                error = result.message
+                mode = LoginMode.Code
+            }
+
+            QrScanResult.Cancelled -> Unit
+        }
+    }
+}
+
+@Composable
+private fun ConsentRow(
+    consent: Boolean,
+    onConsent: (Boolean) -> Unit,
+    onOpen: (String) -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = consent, onCheckedChange = onConsent)
+        Text("Saya menyetujui ", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "Syarat",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clickable { onOpen("/terms") },
+        )
+        Text(" dan ", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "Privasi",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clickable { onOpen("/privacy") },
+        )
     }
 }
 
@@ -246,12 +370,6 @@ fun LoginScreen(
  * (tanpa sel per-huruf) + SATU [OutlinedTextField] tersembunyi (alpha ~0.001)
  * yang menampung seluruh ketik. Tidak ada pindah-fokus antar-field — sumber
  * race Compose-wasm.
- *
- * - onValueChange menyaring via [sanitizeTyped]; caret dipaksa ke akhir
- *   sehingga ketik selalu append dan backspace selalu hapus karakter akhir.
- * - Overlay transparan menangkap semua tap -> focusRequester field
- *   tersembunyi (tap tak pernah menyentuh field itu sendiri, jadi posisi
- *   caret tidak pernah pindah ke tengah teks).
  */
 @Composable
 private fun OtpCodeInput(
@@ -263,8 +381,6 @@ private fun OtpCodeInput(
     val hiddenFocus = remember { FocusRequester() }
 
     Box {
-        // Field tersembunyi: penampung ketik tunggal. Value dikontrol penuh;
-        // selection selalu di akhir agar caret tak pernah di tengah kode.
         OutlinedTextField(
             value = TextFieldValue(code, TextRange(code.length)),
             onValueChange = { raw ->
@@ -292,19 +408,15 @@ private fun OtpCodeInput(
                 disabledContainerColor = Color.Transparent,
                 focusedBorderColor = Color.Transparent,
                 unfocusedBorderColor = Color.Transparent,
-                disabledBorderColor = Color.Transparent,
                 cursorColor = Color.Transparent,
             ),
         )
 
-        // Tampilan 1 baris: 2 grup @4 karakter, posisi kosong = '_'.
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             CodeGroup(code.take(4).padEnd(4, '_'))
             CodeGroup(code.drop(4).padEnd(4, '_'))
         }
 
-        // Overlay tangkap tap: fokuskan field tersembunyi di mana pun user
-        // mengetuk area OTP.
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -313,7 +425,6 @@ private fun OtpCodeInput(
     }
 }
 
-/** Satu grup 4 karakter tampilan OTP: kotak ber-border berisi satu Text. */
 @Composable
 private fun CodeGroup(text: String) {
     Box(
@@ -331,5 +442,38 @@ private fun CodeGroup(text: String) {
     }
 }
 
+@OptIn(ExperimentalWasmJsInterop::class)
 @JsFun("(key) => { const p = new URLSearchParams(window.location.search); return p.get(key); }")
 private external fun jsUrlSearchParams(key: String): String?
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("() => { try { return localStorage.getItem('yodips_terms_accepted') } catch (e) { return null } }")
+private external fun jsReadConsent(): String?
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("(v) => { try { if (v === null) localStorage.removeItem('yodips_terms_accepted'); else localStorage.setItem('yodips_terms_accepted', v); return true } catch (e) { return false } }")
+private external fun jsWriteConsent(v: String?): Boolean
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("() => { try { return localStorage.getItem('yodips_camera_ok') === '1' } catch (e) { return false } }")
+private external fun jsCameraOk(): Boolean
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("() => { try { localStorage.setItem('yodips_camera_ok', '1') } catch (e) {} }")
+private external fun jsSetCameraOk()
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("() => { try { localStorage.removeItem('yodips_camera_ok') } catch (e) {} }")
+private external fun jsClearCameraOk()
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("() => { try { history.replaceState(history.state, '', '/app/') } catch (e) {} }")
+private external fun jsScrubPairQuery()
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("() => window.location.origin")
+private external fun jsOrigin(): String
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("(u) => { try { window.open(u, '_blank', 'noopener,noreferrer') } catch (e) {} }")
+private external fun jsOpenUrl(u: String)
