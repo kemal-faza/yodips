@@ -48,12 +48,12 @@ describe('guard UA-mobile → /app/ (pasca-F6)', () => {
     expect(replace).toHaveBeenCalledWith('/app/');
   });
 
-  it('mobile UA: /login juga diarahkan ke /app/ (branch pairing telah pensiun)', async () => {
+  it('mobile UA: query ?pair= ikut ke /app/', async () => {
     isMobileMock.mockReturnValue(true);
     const replace = stubReplace();
     const router = buildRouter(createMemoryHistory());
-    await router.push('/login');
-    expect(replace).toHaveBeenCalledWith('/app/');
+    await router.push('/login?pair=ABCD1234');
+    expect(replace).toHaveBeenCalledWith('/app/?pair=ABCD1234');
   });
 
   it('mobile UA: /privacy tetap dilayani SPA (halaman publik)', async () => {

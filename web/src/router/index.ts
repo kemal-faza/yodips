@@ -35,7 +35,8 @@ export function buildRouter(history: RouterHistory): Router {
     // Pasca-F6: satu-satunya jalur mobile adalah PWA /app/. Halaman legal tetap
     // publik (URL listing store, harus terbaca dari HP).
     if (isMobileDevice() && !PUBLIC_LEGAL_PATHS.has(to.path)) {
-      window.location.replace('/app/');
+      const search = new URL(to.fullPath, window.location.origin).search;
+      window.location.replace('/app/' + search);
       return false;
     }
     const store = useAuthStore();
