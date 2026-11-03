@@ -29,6 +29,7 @@ vi.mock('../api/client', () => ({
   getSiapProfile: vi.fn().mockResolvedValue(null),
   getAllAssignments: vi.fn(),
   logoutSession: vi.fn().mockResolvedValue(undefined),
+  pairConsume: vi.fn(),
 }));
 
 // Test env has no VITE_EXTENSION_ID; give the store a stable non-empty ID so the
@@ -1478,4 +1479,46 @@ describe('poll serialization: no overlapping reads or out-of-order application (
     expect(store.reauthPhase).toBeNull(); // settle cleared (owner), late read did not re-set to siap
     vi.useRealTimers();
   }, 10000);
+});
+
+describe('loginWithPairCode', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    vi.mocked(api.pairConsume).mockReset();
+  });
+
+  it('menyimpan token dari kode yang sudah dinormalisasi', async () => {
+    vi.mocked(api.pairConsume).mockResolvedValue({
+      accessToken: 'jwt-pair',
+      hasKulon: true,
+      hasSiap: true,
+    });
+    const store = useAuthStore();
+    await expect(store.loginWithPairCode('abcd-2345')).resolves.toBe('ok');
+    expect(api.pairConsume).toHaveBeenCalledWith('ABCD2345');
+    expect(store.token).toBe('jwt-pair');
+    expect(store.hasKulon).toBe(true);
+    expect(store.hasSiap).toBe(true);
+  });
+
+  it('tidak menulis token bila logout menyeberang saat consume', async () => {
+    vi.mocked(api.pairConsume).mockImplementation(async () => {
+      beginLogout();
+      return { accessToken: 'jwt-pair' };
+    });
+    const store = useAuthStore();
+    await expect(store.loginWithPairCode('ABCD2345')).resolves.toBe('error');
+    expect(store.token).toBeNull();
+    endLogout();
+  });
+
+  it('menulis pesan error yang bisa ditampilkan', async () => {
+    vi.mocked(api.pairConsume).mockRejectedValue({
+      response: { data: { code: 'EXPIRED_CODE' } },
+    });
+    const store = useAuthStore();
+    await expect(store.loginWithPairCode('ABCD2345')).resolves.toBe('error');
+    expect(store.error).toContain('kedaluwarsa');
+  });
 });

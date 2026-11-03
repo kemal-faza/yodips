@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
-import { capture, me, getSiapProfile, logoutSession } from '../api/client';
+import { capture, me, getSiapProfile, logoutSession, pairConsume } from '../api/client';
+import { normalizePairCode, pairErrorMessage } from '../lib/pair-code';
 import type { User } from '../types';
 import { clearCache } from '../api/cache';
 import {
@@ -262,6 +263,28 @@ export const useAuthStore = defineStore('auth', {
         return 'started';
       }
       return 'error';
+    },
+    /** Tukar kode pairing dengan JWT. Guard epoch identik dengan jalur
+     *  extension: token hanya ditulis bila logout tidak menyeberang. */
+    async loginWithPairCode(code: string): Promise<'ok' | 'error'> {
+      const epoch = sessionLifetime.epoch();
+      this.error = null;
+      try {
+        const res = await pairConsume(normalizePairCode(code));
+        if (sessionLifetime.epoch() !== epoch || sessionLifetime.isLogoutInProgress()) {
+          return 'error';
+        }
+        this.finishHandoff(res.accessToken, epoch);
+        this.hasKulon = !!res.hasKulon;
+        this.hasSiap = !!res.hasSiap;
+        return 'ok';
+      } catch (err) {
+        if (sessionLifetime.epoch() !== epoch || sessionLifetime.isLogoutInProgress()) {
+          return 'error';
+        }
+        this.error = pairErrorMessage(err);
+        return 'error';
+      }
     },
     /** Pull the current extension state / last result (self-healing poll). */
     async readExtensionResult(): Promise<ExtPollStatus | null> {
