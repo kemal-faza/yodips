@@ -136,10 +136,10 @@ export class EnvConfig {
   @IsString()
   FRONTEND_BASE_URL?: string;
 
-  /** Umur kode pairing (ms). Default 5 menit. */
+  /** Umur kode pairing (ms). Default 10 menit. */
   @IsOptional()
   @Min(30_000)
-  PAIRING_TTL_MS: number = 300_000;
+  PAIRING_TTL_MS: number = 600_000;
 
   // Session store persistence
   @IsIn(['memory', 'redis'])

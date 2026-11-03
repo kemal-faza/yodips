@@ -7,7 +7,7 @@ import { readLiveSession, sessionDead } from '../session/live-session';
 import { generatePairingCode, hashPairingCode, normalizePairingCode } from './pairing-code';
 import { PairingStore } from './pairing-store';
 
-const DEFAULT_PAIRING_TTL_MS = 300_000; // 5 menit
+const DEFAULT_PAIRING_TTL_MS = 600_000; // 10 menit
 
 /** Device-specific copy for a dead/replaced session on the pairing consume path. */
 const PAIRING_DEAD_MESSAGE =

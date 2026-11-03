@@ -38,6 +38,7 @@ describe('validateEnv', () => {
       CHROME_PROFILE_DIR: '/tmp/sso-chrome-profile',
     });
     expect(cfg.NODE_ENV).toBe('development');
+    expect(cfg.PAIRING_TTL_MS).toBe(600_000);
     expect(cfg.JWT_EXPIRES_IN).toBe('12h');
     expect(cfg.SSO_LOGIN_PATH).toBe('/sso/auth_v2');
   });
