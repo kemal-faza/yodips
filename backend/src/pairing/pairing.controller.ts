@@ -26,7 +26,7 @@ export class PairingController {
   }
 
   // Konsumsi kode ADALAH mekanisme login (menerbitkan JWT) → publik, throttle ketat.
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('pair/consume')
   consume(@Body() dto: ConsumeDto) {
     return this.pairing.consume(dto.code);

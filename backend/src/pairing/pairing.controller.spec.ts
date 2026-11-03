@@ -73,6 +73,16 @@ describe('PairingController', () => {
     expect(pairing.statusFor).toHaveBeenCalledWith('NIM1', '');
   });
 
+  it('consume dibatasi 10 percobaan per menit', () => {
+    // @nestjs/throttler v6 tidak mengekspor THROTTLER_LIMIT dari entrypoint;
+    // decorator menyimpan metadata di descriptor.value (fungsi method).
+    const limit = Reflect.getMetadata(
+      'THROTTLER:LIMITdefault',
+      PairingController.prototype.consume,
+    );
+    expect(limit).toBe(10);
+  });
+
   it('DTO tanpa code ditolak ValidationPipe (400, bukan 500)', async () => {
     const pipe = new ValidationPipe({ whitelist: true });
     await expect(
