@@ -53,8 +53,11 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,woff2}"],
         // Match the precached Vite entry exactly; '/' is not a precache key.
         navigateFallback: "index.html",
-        // Halaman navigasi /api/* tidak pernah difallback ke shell SPA.
-        navigateFallbackDenylist: [/^\/api\//],
+        // Halaman navigasi /api/* dan PWA /app/* tidak pernah difallback ke
+        // shell SPA. Tanpa /app/, service worker scope "/" menangkap navigasi
+        // /app/ lebih dulu dan menyajikan index.html SPA — PWA tidak pernah
+        // termuat (dan service worker /app/ tidak pernah terdaftar).
+        navigateFallbackDenylist: [/^\/api\//, /^\/app(\/|$)/],
       },
     }),
   ],
