@@ -81,24 +81,42 @@ describe('collectFiles', () => {
     expect(files.map((f) => f.rel).sort()).toEqual(
       ['composeApp.js', 'composeResources/font/geist.bin', 'index.html'],
     );
+    expect(files.every((f) => /^[0-9a-f]{16}$/.test(f.digest))).toBe(true);
   });
 });
 
 describe('buildSwSource', () => {
   it('memuat semua url, cache-name stabil deterministik, fallback navigasi /app/index.html', () => {
-    const src1 = buildSwSource([{ url: '/app/a.js' }, { url: '/app/b.wasm' }]);
-    const src2 = buildSwSource([{ url: '/app/b.wasm' }, { url: '/app/a.js' }]);
+    const src1 = buildSwSource([
+      { url: '/app/a.js', digest: '1111111111111111' },
+      { url: '/app/b.wasm', digest: '2222222222222222' },
+    ]);
+    const src2 = buildSwSource([
+      { url: '/app/b.wasm', digest: '2222222222222222' },
+      { url: '/app/a.js', digest: '1111111111111111' },
+    ]);
     expect(src1).toContain("'/app/a.js'");
     expect(src1).toContain("'/app/b.wasm'");
     expect(src1).toMatch(/CACHE_NAME = 'yodips-app-[0-9a-f]{16}'/);
     expect(src1).toBe(src2); // urutan input tak mengubah hasil
     expect(src1).toContain('/app/index.html');
     // cache-name berubah bila daftar aset berubah → invalidasi otomatis
-    expect(buildSwSource([{ url: '/app/c.js' }])).not.toBe(src1);
+    expect(buildSwSource([{ url: '/app/c.js', digest: '3333333333333333' }])).not.toBe(src1);
+  });
+
+  it('cache name berubah saat isi berkas berubah walau daftar URL sama', () => {
+    const a = buildSwSource([{ url: '/app/composeApp.js', digest: 'aaaaaaaaaaaaaaaa' }]);
+    const b = buildSwSource([{ url: '/app/composeApp.js', digest: 'bbbbbbbbbbbbbbbb' }]);
+    expect(a).not.toBe(b);
+  });
+
+  it('mencatat bahwa SW tidak memakai skipWaiting', () => {
+    const src = buildSwSource([{ url: '/app/index.html', digest: 'cccccccccccccccc' }]);
+    expect(src).toContain('Tanpa skipWaiting');
   });
 
   it('SW memuat handler push + notificationclick + IndexedDB (tanpa localStorage)', () => {
-    const src = buildSwSource([{ url: '/app/a.js' }]);
+    const src = buildSwSource([{ url: '/app/a.js', digest: '1111111111111111' }]);
     expect(src).toContain("self.addEventListener('push'");
     expect(src).toContain("self.addEventListener('notificationclick'");
     expect(src).toContain("indexedDB.open('sso_notif'");

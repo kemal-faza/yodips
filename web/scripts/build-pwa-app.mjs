@@ -43,7 +43,15 @@ for (const icon of ['favicon-192.png', 'yodips-logo-512.png']) {
 writeFileSync(resolve(out, 'manifest.webmanifest'), buildManifest({}));
 
 const files = await collectFiles(out);
-writeFileSync(resolve(out, 'sw.js'), buildSwSource(files.map((f) => ({ url: '/app/' + f.rel.split(sep).join('/') }))));
+writeFileSync(
+  resolve(out, 'sw.js'),
+  buildSwSource(
+    files.map((f) => ({
+      url: '/app/' + f.rel.split(sep).join('/'),
+      digest: f.digest,
+    })),
+  ),
+);
 
 const total = await gzipTotalBytes(files);
 console.log(`PWA /app/: ${files.length} file, gzip total ${(total / 1048576).toFixed(2)} MB (gate ${GZIP_GATE_BYTES})`);

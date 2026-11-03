@@ -14,25 +14,34 @@ export async function collectFiles(distDir) {
     for (const e of entries) {
       const relPath = rel ? posix.join(rel, e.name) : e.name;
       if (e.isDirectory()) await walk(relPath);
-      else if (!e.name.endsWith('.map')) out.push({ rel: relPath, abs: join(distDir, relPath) });
+      else if (!e.name.endsWith('.map')) {
+        const abs = join(distDir, relPath);
+        const digest = createHash('sha256').update(await readFile(abs)).digest('hex').slice(0, 16);
+        out.push({ rel: relPath, abs, digest });
+      }
     }
   }
   await walk('');
   return out.sort((a, b) => (a.rel < b.rel ? -1 : 1));
 }
 
-function cacheNameFor(urls) {
-  const hash = createHash('sha256').update(urls.join('\n')).digest('hex').slice(0, 16);
+function cacheNameFor(entries) {
+  const hash = createHash('sha256')
+    .update(entries.map((e) => `${e.url}:${e.digest}`).sort().join('\n'))
+    .digest('hex')
+    .slice(0, 16);
   return `yodips-app-${hash}`;
 }
 
 export function buildSwSource(entries) {
-  const urls = entries.map((e) => e.url).sort();
-  const cacheName = cacheNameFor(urls);
+  const sorted = [...entries].sort((a, b) => (a.url < b.url ? -1 : 1));
+  const urls = sorted.map((e) => e.url);
+  const cacheName = cacheNameFor(sorted);
   // Kutip tunggal eksplisit (bukan JSON.stringify) — gaya SW idiomatik.
   const precacheList = urls.map((u) => `  '${u}',`).join('\n');
   return `// Auto-generated oleh scripts/build-pwa-app.mjs — JANGAN edit manual.
 const CACHE_NAME = '${cacheName}';
+// Tanpa skipWaiting: versi baru aktif setelah SEMUA jendela /app/ ditutup.
 const PRECACHE_MANIFEST = [
 ${precacheList}
 ];
