@@ -23,8 +23,8 @@ sealed interface QrScanResult {
 /**
  * Bounding box (in CSS px) that the camera overlay should occupy — i.e. the
  * Compose content area between the top bar and the bottom nav. `null` in
- * [QrScanner.scanOnce] keeps the legacy fullscreen behavior (used by
- * LoginScreen pairing scan).
+ * [QrScanner.scanOnce] keeps the legacy fullscreen behavior; no caller uses it
+ * today — login and attendance always pass a region.
  */
 data class CameraRegion(
     val left: Int,

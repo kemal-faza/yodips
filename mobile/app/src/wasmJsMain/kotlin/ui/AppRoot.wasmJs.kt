@@ -34,6 +34,7 @@ fun AppRoot(themeController: ThemeController) {
         val t = tokenStore.currentToken()
         if (t != null) Backend.authToken = t
         hasToken = t != null
+        if (t != null) jsScrubPairQuery()
         checked = true
     }
 
@@ -220,3 +221,15 @@ private val pushToastJson = Json {
         "}",
 )
 private external fun jsListenPushMessages(cb: (JsAny?, JsAny?) -> Unit)
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun(
+    "() => { try {" +
+        "  const u = new URL(window.location.href);" +
+        "  if (u.searchParams.has('pair')) {" +
+        "    u.searchParams.delete('pair');" +
+        "    history.replaceState(history.state, '', u.pathname + (u.search || ''));" +
+        "  }" +
+        "} catch (e) {} }"
+)
+private external fun jsScrubPairQuery()
