@@ -11,6 +11,39 @@ const data = ref<PairRequestResult | null>(null);
 const remainingSec = ref(0);
 /** True sesaat setelah kode lama terdeteksi terpakai (sebelum kode baru siap). */
 const consumed = ref(false);
+const copied = ref<'code' | 'url' | null>(null);
+const actionError = ref<string | null>(null);
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyValue(value: string, kind: 'code' | 'url') {
+  actionError.value = null;
+  try {
+    await navigator.clipboard.writeText(value);
+    copied.value = kind;
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+    copyResetTimer = setTimeout(() => {
+      copied.value = null;
+    }, 2000);
+  } catch {
+    actionError.value = `Gagal menyalin. Salin manual: ${value}`;
+  }
+}
+
+async function shareLink() {
+  const url = data.value?.qrUrl;
+  if (!url) return;
+  actionError.value = null;
+  const share = (navigator as Navigator & { share?: (d: ShareData) => Promise<void> }).share;
+  if (share) {
+    try {
+      await share.call(navigator, { url });
+      return;
+    } catch {
+      // dibatalkan atau gagal — jatuh ke salin
+    }
+  }
+  await copyValue(url, 'url');
+}
 let timer: ReturnType<typeof setInterval> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -107,6 +140,7 @@ async function requestCode() {
 onBeforeUnmount(() => {
   stopTimer();
   stopPolling();
+  if (copyResetTimer) clearTimeout(copyResetTimer);
 });
 </script>
 
@@ -136,6 +170,17 @@ onBeforeUnmount(() => {
         </p>
         <p class="mt-1 text-xs text-muted-foreground" data-test="pairing-once">
           Kode berlaku sekali. Setelah dipakai, kode baru dibuat otomatis di sini.
+        </p>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" data-test="pairing-copy" @click="copyValue(data.code, 'code')">
+            {{ copied === 'code' ? 'Tersalin' : 'Salin kode' }}
+          </Button>
+          <Button size="sm" variant="outline" data-test="pairing-share" @click="shareLink">
+            {{ copied === 'url' ? 'Tautan tersalin' : 'Bagikan tautan' }}
+          </Button>
+        </div>
+        <p v-if="actionError" class="mt-2 text-sm text-danger" data-test="pairing-action-error">
+          {{ actionError }}
         </p>
       </div>
     </div>

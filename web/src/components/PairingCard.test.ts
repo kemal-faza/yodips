@@ -130,4 +130,45 @@ describe('PairingCard', () => {
     expect(pairStatus).not.toHaveBeenCalled();
     expect(pairRequest).toHaveBeenCalledTimes(1);
   });
+
+  it('menyalin kode ke clipboard', async () => {
+    pairRequest.mockResolvedValue({
+      code: 'ABCD2345',
+      qrUrl: 'https://app/login?pair=ABCD2345',
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    const w = mount(PairingCard, { attachTo: document.body });
+    await w.find('[data-test="pairing-request"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-test="pairing-copy"]').trigger('click');
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith('ABCD2345');
+    w.unmount();
+    document.body.innerHTML = '';
+  });
+
+  it('menampilkan fallback saat clipboard ditolak', async () => {
+    pairRequest.mockResolvedValue({
+      code: 'ABCD2345',
+      qrUrl: 'https://app/login?pair=ABCD2345',
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      configurable: true,
+    });
+    const w = mount(PairingCard, { attachTo: document.body });
+    await w.find('[data-test="pairing-request"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-test="pairing-copy"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-test="pairing-action-error"]').text()).toContain('Gagal menyalin');
+    w.unmount();
+    document.body.innerHTML = '';
+  });
 });
