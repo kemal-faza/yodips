@@ -22,6 +22,7 @@ export function buildRouter(history: RouterHistory): Router {
         children: [
           { path: '', name: 'dashboard', component: () => import('../views/DashboardView.vue') },
           { path: 'profile', name: 'profile', component: () => import('../views/ProfileView.vue') },
+          { path: 'perangkat', name: 'devices', component: () => import('../views/DevicesView.vue') },
           { path: 'kulon', redirect: { name: 'kulon-dashboard' } },
           { path: 'kulon/dashboard', name: 'kulon-dashboard', component: () => import('../views/KulonDashboardView.vue') },
           { path: 'kulon/matakuliah', name: 'kulon-courses', component: () => import('../views/KulonCoursesView.vue') },

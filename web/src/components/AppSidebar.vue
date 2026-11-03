@@ -7,6 +7,7 @@ import {
   BookOpen,
   ClipboardList,
   LogOut,
+  MonitorSmartphone,
   X,
 } from '@lucide/vue';
 
@@ -26,6 +27,7 @@ const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
   { label: 'Tugas', icon: ClipboardList, path: '/kulon/dashboard' },
   { label: 'Mata Kuliah', icon: BookOpen, path: '/kulon/matakuliah' },
+  { label: 'Perangkat', icon: MonitorSmartphone, path: '/perangkat' },
 ];
 
 function isActive(path: string): boolean {

@@ -8,7 +8,6 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import PairingCard from '../components/PairingCard.vue';
 
 const profile = ref<SiapProfile | null>(null);
 const loading = ref(true);
@@ -75,5 +74,4 @@ onMounted(async () => {
       </Card>
     </div>
   </div>
-  <PairingCard class="mt-6" />
 </template>
