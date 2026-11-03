@@ -1,8 +1,8 @@
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 /**
- * Normalisasi kode pairing. Identik dengan `sanitizeTyped` di
- * `LoginScreen.wasmJs.kt:88-96`; lebih ketat daripada `normalizePairingCode`
+ * Normalisasi kode pairing. Selaras dengan `sanitizeTyped` di
+ * `LoginScreen.wasmJs.kt`; lebih ketat daripada `normalizePairingCode`
  * backend (yang tidak memfilter alfabet dan tidak memotong ke 8).
  */
 export function normalizePairCode(raw: string): string {
