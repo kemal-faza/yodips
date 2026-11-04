@@ -278,6 +278,7 @@ describe('SessionKeepAliveService.runCycle', () => {
 
     const text = log.mock.calls.flat().join(' ');
     expect(text).toContain('sso=ok kulon=invalid siap=transient');
+    expect(text).toContain('ageMin=');
     expect(text).not.toContain('ci_session_sso=');
     expect(text).not.toContain('MoodleSession=');
     expect(text).not.toContain('sia_app_session=');

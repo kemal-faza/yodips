@@ -151,7 +151,7 @@ export class SessionKeepAliveService
     if (Date.now() >= deadline) return;
     if (!probes.some((probe) => probe.result.valid)) {
       this.logger.log(
-        `[session.keepalive] no-valid-probe ${this.describe(probes)} (${Date.now() - started}ms)`,
+        `[session.keepalive] no-valid-probe ${this.describe(probes)} ageMin=${this.ageMinutes(session)} (${Date.now() - started}ms)`,
       );
       return;
     }
@@ -210,8 +210,13 @@ export class SessionKeepAliveService
       );
     }
     this.logger.log(
-      `[session.keepalive] ${this.describe(probes)} rotated=${rotated} (${Date.now() - started}ms)`,
+      `[session.keepalive] ${this.describe(probes)} rotated=${rotated} ageMin=${this.ageMinutes(session)} (${Date.now() - started}ms)`,
     );
+  }
+
+  /** Whole minutes since capture; makes upstream expiry visible without identity data. */
+  private ageMinutes(session: CapturedSession): number {
+    return Math.max(0, Math.floor((Date.now() - session.capturedAt) / 60_000));
   }
 
   /** Per-service outcome without any cookie material. */
