@@ -82,9 +82,15 @@ fun <T> LoadableData(
 ) {
     var attempt by remember { mutableIntStateOf(0) }
     val fallback = remember { MutableStateFlow<ApiResult<T>?>(null) }
-    val result by (state ?: fallback).collectAsState()
+    // Direct result of this screen's load. The observable state wins once it
+    // has a value; this only prevents a skeleton from surviving a missed
+    // publish (e.g. a reload cancels the collector right after load()).
+    var direct by remember { mutableStateOf<ApiResult<T>?>(null) }
+    val observed by (state ?: fallback).collectAsState()
+    val result = observed ?: direct
     LaunchedEffect(attempt, refreshTrigger) {
         val loaded = load()
+        direct = loaded
         if (state == null) fallback.value = loaded
     }
     when (val r = result) {
@@ -161,11 +167,14 @@ fun <T> RefreshableLoadableData(
     val scope = rememberCoroutineScope()
     val lastRefreshAt = remember { arrayOf(0L) }
     val fallback = remember { MutableStateFlow<ApiResult<T>?>(null) }
-    val result by (state ?: fallback).collectAsState()
+    var direct by remember { mutableStateOf<ApiResult<T>?>(null) }
+    val observed by (state ?: fallback).collectAsState()
+    val result = observed ?: direct
 
     LaunchedEffect(attempt) {
         if (attempt > 0) isRefreshing = true
         val loaded = load()
+        direct = loaded
         if (state == null) fallback.value = loaded
         isRefreshing = false
     }

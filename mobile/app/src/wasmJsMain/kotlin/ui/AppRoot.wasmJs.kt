@@ -201,20 +201,31 @@ fun AppRoot(themeController: ThemeController) {
     }
 
     if (hasToken) {
-        AppShell(
-            repo = repo,
-            themeController = themeController,
-            onLogout = {
-                GlobalScope.launch { sessionLogout.logout() }
-            },
-            initialNavTarget = pendingNav,
-            onNavConsumed = {
+        // Stable lambda identities: AppRoot recomposes on push state, the
+        // boot gate, and visibility. Keeping these callbacks stable avoids
+        // churning AppShell/NavHost destination effects while a dashboard
+        // load is in flight.
+        val onLogout: () -> Unit = remember(sessionLogout) {
+            { GlobalScope.launch { sessionLogout.logout() } }
+        }
+        val onNavConsumed: () -> Unit = remember(history) {
+            {
                 pendingNav = null
                 // Hapus sisa record 'pendingNav' juga supaya F5 tidak double-nav.
                 GlobalScope.launch { runCatching { history.consumePendingNav() } }
-            },
+            }
+        }
+        val profileExtra: @Composable () -> Unit = remember(pushSettings) {
+            { PushSettingsCard(pushSettings) }
+        }
+        AppShell(
+            repo = repo,
+            themeController = themeController,
+            onLogout = onLogout,
+            initialNavTarget = pendingNav,
+            onNavConsumed = onNavConsumed,
             notificationHistory = history,
-            profileExtra = { PushSettingsCard(pushSettings) },
+            profileExtra = profileExtra,
         )
     } else {
         LoginScreen(
