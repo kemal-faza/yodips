@@ -93,18 +93,24 @@ internal actual fun ScanCamera(repo: SsoRepository) {
         Modifier
             .fillMaxSize()
             .onGloballyPositioned { coords ->
-                    if (region == null) {
-                        val b = coords.boundsInWindow()
-                        if (b.width > 0f && b.height > 0f) {
-                            region = CameraRegion(
-                                left = (b.left / density).roundToInt(),
-                                top = (b.top / density).roundToInt(),
-                                width = (b.width / density).roundToInt(),
-                                height = (b.height / density).roundToInt(),
-                            )
-                        }
+                if (region == null) {
+                    // Jangan pakai boundsInWindow() untuk lebar/tinggi: saat
+                    // NavHost masih menganimasikan masuk, bounds itu ter-clip
+                    // ke sliver yang terlihat (overlay kamera bisa jadi sempit
+                    // di kanan). Layout size tidak ter-clip; halaman Scan
+                    // selalu full-width, jadi left=0.
+                    val size = coords.size
+                    val b = coords.boundsInWindow()
+                    if (size.width > 0 && size.height > 0) {
+                        region = CameraRegion(
+                            left = 0,
+                            top = (b.top / density).roundToInt(),
+                            width = (size.width / density).roundToInt(),
+                            height = (size.height / density).roundToInt(),
+                        )
                     }
-                },
+                }
+            },
         ) {
             when {
                 cameraError != null -> {                    var manualToken by remember { mutableStateOf("") }
