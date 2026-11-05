@@ -9,6 +9,7 @@ import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.PushGraph
 import ac.undip.sso.core.push.normalizeNavTarget
+import ac.undip.sso.ui.common.SessionExpiredDialog
 import ac.undip.sso.ui.login.DebugKulonTicketProbe
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
@@ -17,9 +18,6 @@ import android.os.Build
 import android.webkit.CookieManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -197,18 +195,8 @@ fun AppRoot(
     // non-dismissible — the session is dead, the only way forward is re-login —
     // and its CTA reuses the normal logout path so the next login starts clean.
     val sessionExpired by SessionExpiredEvents.events.collectAsState()
-    if (hasToken && sessionExpired > 0) {
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("Sesi Berakhir") },
-            text = {
-                Text("Sesi login kamu sudah tidak valid. Klik Login Ulang untuk masuk kembali.")
-            },
-            confirmButton = {
-                TextButton(onClick = onLogout) {
-                    Text("Login Ulang")
-                }
-            },
-        )
-    }
+    SessionExpiredDialog(
+        visible = hasToken && sessionExpired > 0,
+        onRelogin = onLogout,
+    )
 }
