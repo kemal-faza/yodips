@@ -1,6 +1,6 @@
 package ac.undip.sso.ui
 
-import ac.undip.sso.core.data.NoOpPersistentCache
+import ac.undip.sso.core.data.IdbPersistentCache
 import ac.undip.sso.core.data.SessionLogout
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.data.WasmLogoutCoordinator
@@ -41,9 +41,10 @@ fun AppRoot(themeController: ThemeController) {
     // `/me` sekali saat boot setelah token dimuat. `complete=false` (cookie
     // upstream stale / probe gagal sesaat) TIDAK memaksa login ulang — sesi
     // backend + JWT masih hidup dan tetap dirotasi (lihat AppRoot android).
-    val repo = remember(tokenStore) {
+    val persistentCache = remember { IdbPersistentCache() }
+    val repo = remember(tokenStore, persistentCache) {
         SsoRepository(
-            persistent = NoOpPersistentCache,
+            persistent = persistentCache,
             tokenStore = tokenStore,
         )
     }
