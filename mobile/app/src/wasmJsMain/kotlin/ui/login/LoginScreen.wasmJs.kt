@@ -259,13 +259,21 @@ fun LoginScreen(
                             .fillMaxWidth()
                             .weight(1f)
                             .onGloballyPositioned { coords ->
-                                val b = coords.boundsInWindow()
-                                region = CameraRegion(
-                                    left = (b.left / density).roundToInt(),
-                                    top = (b.top / density).roundToInt(),
-                                    width = (b.width / density).roundToInt(),
-                                    height = (b.height / density).roundToInt(),
-                                )
+                                // Ukur sekali saja. Memperbarui region tiap
+                                // layout membuat LaunchedEffect(mode, region)
+                                // restart di tengah getUserMedia dan
+                                // meninggalkan overlay kamera yatim.
+                                if (region == null) {
+                                    val b = coords.boundsInWindow()
+                                    if (b.width > 0f && b.height > 0f) {
+                                        region = CameraRegion(
+                                            left = (b.left / density).roundToInt(),
+                                            top = (b.top / density).roundToInt(),
+                                            width = (b.width / density).roundToInt(),
+                                            height = (b.height / density).roundToInt(),
+                                        )
+                                    }
+                                }
                             },
                     )
                     Spacer(Modifier.height(12.dp))

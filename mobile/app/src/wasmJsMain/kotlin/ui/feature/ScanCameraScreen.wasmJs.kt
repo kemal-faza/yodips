@@ -95,12 +95,14 @@ internal actual fun ScanCamera(repo: SsoRepository) {
             .onGloballyPositioned { coords ->
                     if (region == null) {
                         val b = coords.boundsInWindow()
-                        region = CameraRegion(
-                            left = (b.left / density).roundToInt(),
-                            top = (b.top / density).roundToInt(),
-                            width = (b.width / density).roundToInt(),
-                            height = (b.height / density).roundToInt(),
-                        )
+                        if (b.width > 0f && b.height > 0f) {
+                            region = CameraRegion(
+                                left = (b.left / density).roundToInt(),
+                                top = (b.top / density).roundToInt(),
+                                width = (b.width / density).roundToInt(),
+                                height = (b.height / density).roundToInt(),
+                            )
+                        }
                     }
                 },
         ) {
