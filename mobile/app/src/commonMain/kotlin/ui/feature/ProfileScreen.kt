@@ -65,7 +65,6 @@ fun ProfileScreen(
     themeController: ThemeController,
     onLogout: () -> Unit,
     debugContent: (@Composable () -> Unit)? = null,
-    profileExtra: (@Composable () -> Unit)? = null,
 ) {
     val darkTheme = themeController.dark
     FeatureScreen(
@@ -93,7 +92,6 @@ fun ProfileScreen(
             ) { p ->
                 ProfileContent(p)
             }
-            profileExtra?.invoke()
             // Tombol Logout adalah komponen bawaan aplikasi, bukan data backend:
             // selalu tampil, tidak ikut skeleton/menunggu muat profil.
             Button(

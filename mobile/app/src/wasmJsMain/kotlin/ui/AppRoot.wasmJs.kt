@@ -19,7 +19,6 @@ import ac.undip.sso.jsObserveVisibility
 import ac.undip.sso.jsRemoveVisibilityObserver
 import ac.undip.sso.ui.common.SessionExpiredDialog
 import ac.undip.sso.ui.feature.PushOptInDialog
-import ac.undip.sso.ui.feature.PushSettingsCard
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
 import ac.undip.sso.ui.theme.ThemeController
@@ -215,9 +214,6 @@ fun AppRoot(themeController: ThemeController) {
                 GlobalScope.launch { runCatching { history.consumePendingNav() } }
             }
         }
-        val profileExtra: @Composable () -> Unit = remember(pushSettings) {
-            { PushSettingsCard(pushSettings) }
-        }
         AppShell(
             repo = repo,
             themeController = themeController,
@@ -225,7 +221,6 @@ fun AppRoot(themeController: ThemeController) {
             initialNavTarget = pendingNav,
             onNavConsumed = onNavConsumed,
             notificationHistory = history,
-            profileExtra = profileExtra,
         )
     } else {
         LoginScreen(
