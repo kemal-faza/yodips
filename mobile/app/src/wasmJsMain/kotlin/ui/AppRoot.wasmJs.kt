@@ -4,12 +4,18 @@ import ac.undip.sso.core.data.IdbPersistentCache
 import ac.undip.sso.core.data.SessionLogout
 import ac.undip.sso.core.data.SsoRepository
 import ac.undip.sso.core.data.WasmLogoutCoordinator
+import ac.undip.sso.core.data.runSessionRefreshLoop
 import ac.undip.sso.core.network.Backend
+import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.IdbNotificationHistoryStore
 import ac.undip.sso.core.push.PushSubscriptionManager
 import ac.undip.sso.core.push.StoredNotification
 import ac.undip.sso.core.push.normalizeNavTarget
 import ac.undip.sso.core.session.TokenStore
+import ac.undip.sso.jsDocumentVisible
+import ac.undip.sso.jsObserveVisibility
+import ac.undip.sso.jsRemoveVisibilityObserver
+import ac.undip.sso.ui.common.SessionExpiredDialog
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
 import ac.undip.sso.ui.theme.ThemeController
@@ -29,6 +35,21 @@ fun AppRoot(themeController: ThemeController) {
     var hasToken by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(false) }
     var pendingNav by remember { mutableStateOf<String?>(null) }
+    // Visibilitas tab: loop refresh JWT hanya berjalan selama tab terlihat
+    // (browser men-throttle/stop timer di tab background) dan di-restart tiap
+    // kali tab kembali tampil. Observer dilepas saat root dispose supaya
+    // dev hot-reload tidak menumpuk listener `visibilitychange`.
+    var visible by remember { mutableStateOf(jsDocumentVisible()) }
+
+    DisposableEffect(Unit) {
+        jsObserveVisibility { visible = it }
+        onDispose { jsRemoveVisibilityObserver() }
+    }
+
+    // Sesi mati (SESSION_DEAD) dipublikasikan repository sebagai counter;
+    // dikoleksi di sini (sebelum early return) agar dialog tidak bergantung
+    // pada frame setelah `checked`.
+    val sessionExpired by SessionExpiredEvents.events.collectAsState()
 
     LaunchedEffect(tokenStore) {
         val t = tokenStore.currentToken()
@@ -51,6 +72,19 @@ fun AppRoot(themeController: ThemeController) {
     LaunchedEffect(hasToken) {
         if (!hasToken) return@LaunchedEffect
         repo.sessionStatus()
+    }
+
+    // Auto-refresh JWT selama tab TERLIHAT: token yang ditinggal di tab
+    // background bisa kedaluwarsa, dan tanpa loop ini request data berikutnya
+    // yang menabrak 401 lebih dulu. Loop di-cancel saat tab hidden (effect
+    // restart karena kunci `visible`) lalu dimulai lagi saat tab kembali —
+    // rotasi terjadi sebelum 401 sempat tampil.
+    LaunchedEffect(hasToken, visible) {
+        if (!hasToken || !visible) return@LaunchedEffect
+        runSessionRefreshLoop(
+            ensureFresh = { repo.ensureFreshSession() },
+            onDeadSession = { SessionExpiredEvents.notifySessionExpired() },
+        )
     }
 
     // Live push/nav dari service worker (postMessage):
@@ -151,6 +185,9 @@ fun AppRoot(themeController: ThemeController) {
             localCleanup = {
                 repo.clearForLogout()
                 wasmLogoutGlue.localCleanup()
+                // Reset counter agar 401 in-flight pasca-logout tidak
+                // memunculkan lagi dialog di sesi berikutnya.
+                SessionExpiredEvents.consume()
             },
         )
     }
@@ -181,6 +218,14 @@ fun AppRoot(themeController: ThemeController) {
             },
         )
     }
+
+    // Dialog "Sesi Berakhir" universal: hanya untuk SESSION_DEAD eksplisit
+    // dari repository (upstream stale tetap error per-layar). Non-dismissible
+    // dan CTA-nya memakai jalur logout normal supaya login berikutnya bersih.
+    SessionExpiredDialog(
+        visible = hasToken && sessionExpired > 0,
+        onRelogin = { GlobalScope.launch { sessionLogout.logout() } },
+    )
 }
 
 /** JSON decoder untuk toast yang dibungkus SW lewat postMessage (sama dengan IDB). */
