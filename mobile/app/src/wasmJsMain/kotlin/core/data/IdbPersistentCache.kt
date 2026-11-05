@@ -153,7 +153,7 @@ class IdbPersistentCache : PersistentCache {
         "        }).catch(function(){ return del(db,'entries',key).then(function(){return null;}); }); }); }); }" +
         "  else if(mode==='save'){ p=ensureKey(db).then(function(k){" +
         "    var iv=crypto.getRandomValues(new Uint8Array(12));" +
-        "    return crypto.subtle.encrypt({name:'AES-GCM',iv:iv},k.key,new TextEncoder().encode(value)).then(function(buf){" +
+        "    return crypto.subtle.encrypt({name:'AES-GCM',iv:iv},k,new TextEncoder().encode(value)).then(function(buf){" +
         "      return put(db,'entries',{key:key,iv:b64(iv),ct:b64(new Uint8Array(buf)),fetchedAt:fetchedAt,size:size,v:1}); }); }); }" +
         "  else if(mode==='list'){ p=new Promise(function(resolve,reject){" +
         "    var tx=db.transaction('entries','readonly'); var req=tx.objectStore('entries').getAll();" +
