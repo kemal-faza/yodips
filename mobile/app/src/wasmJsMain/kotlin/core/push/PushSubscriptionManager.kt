@@ -29,6 +29,17 @@ object PushSubscriptionManager {
     /** True bila browser punya service worker CLIENTS + PushManager (secure context). */
     fun isSupported(): Boolean = jsPushSupported()
 
+    /** Current browser permission: granted | denied | default | unsupported. */
+    fun permission(): String = jsPushPermission()
+
+    /** Requests permission from a user gesture; returns the resulting permission. */
+    suspend fun requestPermission(): String =
+        suspendCancellableCoroutine { cont ->
+            jsRequestPushPermission { value ->
+                if (cont.isActive) cont.resume(value?.toString() ?: "default", onCancellation = null)
+            }
+        }
+
     /**
      * Ambil subscription yang sudah ada, atau buat baru (memicu prompt izin
      * bila belum pernah ditanya). Berhasil/null — gagal melempar RuntimeException.
@@ -79,8 +90,22 @@ object PushSubscriptionManager {
 // ---------- interop primitives (implementasi JS) ----------
 
 @OptIn(ExperimentalWasmJsInterop::class)
-@JsFun("() => (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window) ? true : false")
+@JsFun(
+    "() => (typeof window !== 'undefined' && window.isSecureContext && " +
+        "'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window)",
+)
 private external fun jsPushSupported(): Boolean
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("() => (typeof Notification !== 'undefined' ? Notification.permission : 'unsupported')")
+private external fun jsPushPermission(): String
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun(
+    "(cb) => { if (typeof Notification === 'undefined') { cb('unsupported'); return; } " +
+        "Notification.requestPermission().then(function(p){ cb(String(p)); }).catch(function(){ cb('default'); }); }",
+)
+private external fun jsRequestPushPermission(cb: (JsAny?) -> Unit)
 
 /**
  * Satu JsFun untuk dua mode:
