@@ -8,6 +8,8 @@ import ac.undip.sso.core.data.runSessionRefreshLoop
 import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.SessionExpiredEvents
 import ac.undip.sso.core.push.IdbNotificationHistoryStore
+import ac.undip.sso.core.push.PushSettingsController
+import ac.undip.sso.core.push.PushState
 import ac.undip.sso.core.push.PushSubscriptionManager
 import ac.undip.sso.core.push.StoredNotification
 import ac.undip.sso.core.push.normalizeNavTarget
@@ -16,13 +18,14 @@ import ac.undip.sso.jsDocumentVisible
 import ac.undip.sso.jsObserveVisibility
 import ac.undip.sso.jsRemoveVisibilityObserver
 import ac.undip.sso.ui.common.SessionExpiredDialog
+import ac.undip.sso.ui.feature.PushOptInDialog
+import ac.undip.sso.ui.feature.PushSettingsCard
 import ac.undip.sso.ui.login.LoginScreen
 import ac.undip.sso.ui.shell.AppShell
 import ac.undip.sso.ui.theme.ThemeController
 import androidx.compose.runtime.*
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 @Composable
@@ -32,8 +35,10 @@ fun AppRoot(themeController: ThemeController) {
     // ditulis service worker, jadi notifikasi yang diterima saat app tertutup
     // ikut terbaca. (Web Storage tidak tersedia di service worker, Task 6 fix.)
     val history = remember { IdbNotificationHistoryStore() }
+    val pushSettings = remember { PushSettingsController() }
     var hasToken by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(false) }
+    var bootChecked by remember { mutableStateOf(false) }
     var pendingNav by remember { mutableStateOf<String?>(null) }
     // Visibilitas tab: loop refresh JWT hanya berjalan selama tab terlihat
     // (browser men-throttle/stop timer di tab background) dan di-restart tiap
@@ -50,6 +55,8 @@ fun AppRoot(themeController: ThemeController) {
     // dikoleksi di sini (sebelum early return) agar dialog tidak bergantung
     // pada frame setelah `checked`.
     val sessionExpired by SessionExpiredEvents.events.collectAsState()
+    val pushState by pushSettings.state.collectAsState()
+    var pushPromptDismissed by remember { mutableStateOf(pushSettings.isPromptDismissed()) }
 
     LaunchedEffect(tokenStore) {
         val t = tokenStore.currentToken()
@@ -72,6 +79,7 @@ fun AppRoot(themeController: ThemeController) {
     LaunchedEffect(hasToken) {
         if (!hasToken) return@LaunchedEffect
         repo.sessionStatus()
+        bootChecked = true
     }
 
     // Auto-refresh JWT selama tab TERLIHAT: token yang ditinggal di tab
@@ -107,24 +115,24 @@ fun AppRoot(themeController: ThemeController) {
         }
     }
 
-    // PWA lifecycle pasca-login:
-    //  1. Konsumsi target navigasi tap-notifikasi yang ditulis SW
-    //     (notificationclick -> IndexedDB record 'pendingNav', sekali pakai).
-    //  2. Daftarkan (atau periksa ulang) subscription Web Push ke backend
-    //     — best-effort: push permission ditolak / VAPID belum dikonfigurasi /
-    //     offline → skip senyap, PWA tetap berfungsi (cuma tanpa push).
+    // PWA lifecycle pasca-login: konsumsi target navigasi tap-notifikasi yang
+    // ditulis SW (notificationclick -> IndexedDB record 'pendingNav', sekali pakai).
     LaunchedEffect(hasToken) {
         if (!hasToken) return@LaunchedEffect
         pendingNav = normalizeNavTarget(runCatching { history.consumePendingNav() }.getOrNull())
-            runCatching {
-                if (!PushSubscriptionManager.isSupported()) return@runCatching
-                val vapid = Backend.api.vapidPublicKey().publicKey
-                if (vapid.isBlank()) return@runCatching
-                // `navigator.serviceWorker.ready` never settles bila tidak ada SW
-                // terdaftar — beri timeout supaya login tidak menggantung.
-                val sub = withTimeoutOrNull(10_000) { PushSubscriptionManager.subscribe(vapid) }
-                sub?.let { Backend.api.registerWebPushDevice(it) }
-            }
+    }
+
+    // Notifikasi hanya didaftarkan dari gestur user (tombol "Aktifkan") atau
+    // rekonsiliasi saat tab terlihat — bukan otomatis saat login, supaya
+    // browser tidak dikejutkan prompt izin tanpa konteks.
+    LaunchedEffect(hasToken) {
+        if (!hasToken) return@LaunchedEffect
+        pushSettings.refresh()
+    }
+
+    LaunchedEffect(hasToken, visible) {
+        if (!hasToken || !visible) return@LaunchedEffect
+        pushSettings.reconcile()
     }
 
     if (!checked) return
@@ -206,6 +214,7 @@ fun AppRoot(themeController: ThemeController) {
                 GlobalScope.launch { runCatching { history.consumePendingNav() } }
             },
             notificationHistory = history,
+            profileExtra = { PushSettingsCard(pushSettings) },
         )
     } else {
         LoginScreen(
@@ -225,6 +234,18 @@ fun AppRoot(themeController: ThemeController) {
     SessionExpiredDialog(
         visible = hasToken && sessionExpired > 0,
         onRelogin = { GlobalScope.launch { sessionLogout.logout() } },
+    )
+
+    // Prompt opt-in sekali: hanya setelah boot gate selesai, hanya saat izin
+    // browser masih `default`, dan tidak pernah menumpuk di atas dialog sesi.
+    PushOptInDialog(
+        visible = hasToken && bootChecked && sessionExpired == 0 &&
+            pushState == PushState.PermissionDefault && !pushPromptDismissed,
+        onEnable = { GlobalScope.launch { pushSettings.enable() } },
+        onLater = {
+            pushPromptDismissed = true
+            pushSettings.dismissPrompt()
+        },
     )
 }
 
