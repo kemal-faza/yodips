@@ -134,7 +134,8 @@ object QrScanner {
             return QrScanResult.Error(UserMessages.SCANNER_SETUP)
         }
         return try {
-            val text = awaitJs(jsDecodeFile(decoder))?.toString()
+            val ladder = galleryScaleLadder(null).joinToString(",")
+            val text = awaitJs(jsDecodeFile(decoder, ladder))?.toString()
             if (text.isNullOrBlank()) {
                 QrScanResult.Error(UserMessages.QR_NOT_FOUND)
             } else {
@@ -599,41 +600,43 @@ private external fun jsStopCamera(wrap: JsAny?)
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
-    "(decodeFn) => {" +
-        "return new Promise(function(resolve, reject){" +
-        "var input = document.createElement('input');" +
-        "input.type = 'file';" +
-        "input.accept = 'image/*';" +
-        "input.style.display = 'none';" +
+    "(decodeFn, ladderCsv) => {" +
+        "return new Promise(function(resolve,reject){" +
+        "var input=document.createElement('input'); input.type='file'; input.accept='image/*'; input.style.display='none';" +
         "document.body.appendChild(input);" +
-        "input.onchange = function(){" +
-        "var file = input.files && input.files[0];" +
-        "if (!file) { input.remove(); resolve(null); return; }" +
-        "var reader = new FileReader();" +
-        "reader.onload = function(ev){" +
-        "var img = new Image();" +
-        "img.onload = function(){" +
-        "try {" +
-        "var c = document.createElement('canvas');" +
-        "var scale = Math.min(1.0, 1600 / Math.max(img.width, img.height));" +
-        "c.width = Math.round(img.width * scale);" +
-        "c.height = Math.round(img.height * scale);" +
-        "var ctx = c.getContext('2d', { willReadFrequently: true });" +
-        "ctx.drawImage(img, 0, 0, c.width, c.height);" +
-        "var d = ctx.getImageData(0, 0, c.width, c.height);" +
-        "var r = decodeFn(d.data, d.width, d.height);" +
-        "input.remove();" +
-        "resolve(r ? r.data : null);" +
-        "} catch (err) { input.remove(); reject(err); }" +
-        "};" +
-        "img.onerror = function(){ input.remove(); reject(new Error('Foto tidak dapat dibaca.')); };" +
-        "img.src = ev.target.result;" +
-        "};" +
-        "reader.onerror = function(){ input.remove(); reject(new Error('Foto tidak dapat dibaca.')); };" +
-        "reader.readAsDataURL(file);" +
+        "input.onchange=function(){" +
+        "  var file=input.files && input.files[0]; if(!file){ input.remove(); resolve(null); return; }" +
+        "  var url=null;" +
+        "  var bitmap=null;" +
+        "  var load=window.createImageBitmap ? createImageBitmap(file) : new Promise(function(res,rej){" +
+        "    url=URL.createObjectURL(file); var img=new Image(); img.onload=function(){res(img);}; img.onerror=function(){rej(new Error('Foto tidak dapat dibaca.'));}; img.src=url; });" +
+        "  load.then(function(img){" +
+        "    bitmap=img;" +
+        "    var sourceLong=Math.max(img.width,img.height);" +
+        "    var maxPixels=8000000;" +
+        "    var scale=Math.min(1,Math.sqrt(maxPixels/(img.width*img.height)));" +
+        "    var firstLong=Math.round(sourceLong*scale);" +
+        "    var ladder=String(ladderCsv||'').split(',').map(function(v){return parseInt(v,10);}).filter(function(v){return v>0 && v<firstLong;});" +
+        "    var attempts=[firstLong].concat(ladder).filter(function(v,i,a){return a.indexOf(v)===i;}).sort(function(a,b){return b-a;});" +
+        "    var canvas=document.createElement('canvas'); var ctx=canvas.getContext('2d',{willReadFrequently:true});" +
+        "    var readable=false; var lastError=null;" +
+        "    function attempt(i){" +
+        "      if(i>=attempts.length){" +
+        "        if(!readable) reject(lastError || new Error('Foto tidak dapat dibaca.')); else resolve(null); return; }" +
+        "      var long=attempts[i];" +
+        "      var s=Math.min(1,long/sourceLong);" +
+        "      var w=Math.max(1,Math.round(img.width*s)); var h=Math.max(1,Math.round(img.height*s));" +
+        "      try { canvas.width=w; canvas.height=h; ctx.drawImage(img,0,0,w,h);" +
+        "        var d=ctx.getImageData(0,0,w,h); readable=true; var r=decodeFn(d.data,d.width,d.height);" +
+        "        if(r && r.data){ resolve(r.data); return; }" +
+        "      } catch(e) { lastError=e; }" +
+        "      attempt(i+1);" +
+        "    }" +
+        "    attempt(0);" +
+        "  }).catch(function(e){ reject(e); }).finally(function(){ if(url) URL.revokeObjectURL(url); if(bitmap && bitmap.close) bitmap.close(); input.remove(); });" +
         "};" +
         "input.click();" +
         "});" +
         "}",
 )
-private external fun jsDecodeFile(decodeFn: JsAny?): JsString?
+private external fun jsDecodeFile(decodeFn: JsAny?, ladderCsv: String): JsAny?
