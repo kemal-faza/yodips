@@ -106,7 +106,7 @@ object QrScanner {
                 if (closeRequested) {
                     return QrScanResult.Cancelled
                 }
-                val text = jsDecodeFrame(decoder, camera.canvas, camera.video)?.toString()
+                val text = jsDecodeFrame(decoder, camera.canvas, camera.video, camera.wrap)?.toString()
                 if (!text.isNullOrBlank()) {
                     return QrScanResult.Success(text.trim())
                 }
@@ -321,6 +321,7 @@ private external fun jsErrText(err: JsAny?): JsString?
         "};" +
         "var applyZoom = function() {" +
         "  zoomRatio = Math.max(1, Math.min(zoomRatio, maxZoom));" +
+        "  wrap.__ydZoom = (hasHwZoom && !hwZoomFailed) ? 1 : zoomRatio;" +
         "  if (hasHwZoom && !hwZoomFailed) {" +
         "    v.dataset.hwZoom = '1';" +
         "    v.dataset.zoom = String(zoomRatio);" +
@@ -445,6 +446,8 @@ private external fun jsErrText(err: JsAny?): JsString?
         "};" +
         "var switchCamera = function() {" +
         "  if (flipBtn.disabled) return;" +
+        "  zoomRatio = 1.0;" +
+        "  applyZoom();" +
         "  var settings = {};" +
         "  try { settings = (track && track.getSettings) ? track.getSettings() : {}; } catch (e) {}" +
         "  var currentFacing = settings.facingMode === 'user' ? 'user' : 'environment';" +
@@ -468,8 +471,8 @@ private external fun jsErrText(err: JsAny?): JsString?
         "  };" +
         "  var restore = function() {" +
         "    var constraints = previousDeviceId" +
-        "      ? { video: { deviceId: { exact: previousDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: 'continuous' }] }, audio: false }" +
-        "      : { video: { facingMode: currentFacing, width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: 'continuous' }] }, audio: false };" +
+        "      ? { video: { deviceId: { exact: previousDeviceId }, width: { ideal: 1920 }, height: { ideal: 1440 }, advanced: [{ focusMode: 'continuous' }] }, audio: false }" +
+        "      : { video: { facingMode: currentFacing, width: { ideal: 1920 }, height: { ideal: 1440 }, advanced: [{ focusMode: 'continuous' }] }, audio: false };" +
         "    navigator.mediaDevices.getUserMedia(constraints).then(function(s) {" +
         "      if (wrap.__ydCancelled) { s.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); return; }" +
         "      openStream(s);" +
@@ -478,7 +481,7 @@ private external fun jsErrText(err: JsAny?): JsString?
         "  };" +
         "  var requestNext = function() {" +
         "    return navigator.mediaDevices.getUserMedia({" +
-        "      video: { facingMode: { exact: nextFacing }, width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: 'continuous' }] }," +
+        "      video: { facingMode: { exact: nextFacing }, width: { ideal: 1920 }, height: { ideal: 1440 }, advanced: [{ focusMode: 'continuous' }] }," +
         "      audio: false" +
         "    }).catch(function() {" +
         "      return navigator.mediaDevices.enumerateDevices().then(function(devs) {" +
@@ -488,7 +491,7 @@ private external fun jsErrText(err: JsAny?): JsString?
         "        var target = preferred || different || cams[0];" +
         "        if (!target) throw new Error('Kamera lain tidak ditemukan.');" +
         "        return navigator.mediaDevices.getUserMedia({" +
-        "          video: { deviceId: { exact: target.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: 'continuous' }] }," +
+        "          video: { deviceId: { exact: target.deviceId }, width: { ideal: 1920 }, height: { ideal: 1440 }, advanced: [{ focusMode: 'continuous' }] }," +
         "          audio: false" +
         "        });" +
         "      });" +
@@ -500,7 +503,7 @@ private external fun jsErrText(err: JsAny?): JsString?
         "flipBtn.onclick = switchCamera;" +
         "var startStream = function(mode) {" +
         "  return navigator.mediaDevices.getUserMedia({" +
-        "    video: { facingMode: mode, width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: 'continuous' }] }," +
+        "    video: { facingMode: mode, width: { ideal: 1920 }, height: { ideal: 1440 }, advanced: [{ focusMode: 'continuous' }] }," +
         "    audio: false" +
         "  });" +
         "};" +
@@ -541,35 +544,39 @@ private external fun jsStartCamera(
 )
 
 /**
- * Satu percobaan decode: sync ukuran canvas dengan video, draw frame, ambil
- * ImageData, jalankan jsQR. Mengembalikan teks QR atau null (belum ada QR /
- * frame belum siap). Semua di sisi JS - data piksel tidak pernah ke Kotlin.
+ * Satu percobaan decode: crop area yang benar-benar terlihat di overlay
+ * (object-fit: cover) lalu terapkan zoom digital di atasnya, draw ke canvas,
+ * ambil ImageData, jalankan jsQR. Zoom hardware sudah ada di piksel video, jadi
+ * tidak dipotong dua kali. Semua di sisi JS - piksel tidak pernah ke Kotlin.
  */
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
-    "(decodeFn, c, v) => {" +
-        "if (!v || !v.videoWidth || v.readyState < 2) return null;" +
-        "var zoom = parseFloat(v.dataset.zoom || '1');" +
-        "if (!isFinite(zoom) || zoom < 1) zoom = 1;" +
-        "var hw = v.dataset.hwZoom === '1';" +
-        "var crop = !hw && zoom > 1.0001;" +
-        "var sw = crop ? Math.max(1, Math.round(v.videoWidth / zoom)) : v.videoWidth;" +
-        "var sh = crop ? Math.max(1, Math.round(v.videoHeight / zoom)) : v.videoHeight;" +
-        "if (c.width !== sw || c.height !== sh) { c.width = sw; c.height = sh; }" +
+    "(decodeFn, c, v, wrap) => {" +
+        "if (!v || !v.videoWidth || v.readyState < 2 || !wrap) return null;" +
+        "var vw = v.videoWidth; var vh = v.videoHeight;" +
+        "var cw = wrap.clientWidth || vw; var ch = wrap.clientHeight || vh;" +
+        "var cover = Math.max(cw / vw, ch / vh);" +
+        "var visW = Math.min(vw, cw / cover); var visH = Math.min(vh, ch / cover);" +
+        "var z = Math.max(1, wrap.__ydZoom || 1);" +
+        "if (v.dataset.hwZoom === '1') z = 1;" +
+        "var sw = Math.max(1, visW / z); var sh = Math.max(1, visH / z);" +
+        "var sx = Math.max(0, (vw - sw) / 2); var sy = Math.max(0, (vh - sh) / 2);" +
+        "var scale = Math.max(1, 480 / Math.max(sw, sh));" +
+        "var tw = Math.max(1, Math.round(sw * scale)); var th = Math.max(1, Math.round(sh * scale));" +
+        "if (c.width !== tw || c.height !== th) { c.width = tw; c.height = th; }" +
         "var ctx = c.getContext('2d', { willReadFrequently: true });" +
-        "if (crop) {" +
-        "  var sx = Math.max(0, Math.round((v.videoWidth - sw) / 2));" +
-        "  var sy = Math.max(0, Math.round((v.videoHeight - sh) / 2));" +
-        "  ctx.drawImage(v, sx, sy, sw, sh, 0, 0, sw, sh);" +
-        "} else {" +
-        "  ctx.drawImage(v, 0, 0, sw, sh);" +
-        "}" +
-        "try { var d = ctx.getImageData(0, 0, c.width, c.height); } catch (e) { return null; }" +
+        "ctx.drawImage(v, sx, sy, sw, sh, 0, 0, tw, th);" +
+        "try { var d = ctx.getImageData(0, 0, tw, th); } catch (e) { return null; }" +
         "var r = decodeFn(d.data, d.width, d.height);" +
         "return r ? r.data : null;" +
         "}",
 )
-private external fun jsDecodeFrame(decodeFn: JsAny?, canvas: JsAny?, video: JsAny?): JsString?
+private external fun jsDecodeFrame(
+    decodeFn: JsAny?,
+    canvas: JsAny?,
+    video: JsAny?,
+    wrap: JsAny?,
+): JsString?
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
