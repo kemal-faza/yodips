@@ -1,5 +1,6 @@
 package ac.undip.sso.core.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -19,7 +20,14 @@ class IdbPersistentCache : PersistentCache {
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun load(key: String): PersistentCache.Entry? {
-        val raw = runCatching { op(MODE_LOAD, key = key) }.getOrNull() ?: return null
+        val raw =
+            try {
+                op(MODE_LOAD, key = key)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                return null
+            } ?: return null
         val parsed = runCatching {
             val obj = json.parseToJsonElement(raw).jsonObject
             PersistentCache.Entry(

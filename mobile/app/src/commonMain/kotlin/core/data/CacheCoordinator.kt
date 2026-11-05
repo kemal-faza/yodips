@@ -2,6 +2,7 @@ package ac.undip.sso.core.data
 
 import ac.undip.sso.core.network.ApiResult
 import ac.undip.sso.nowMs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -128,7 +129,14 @@ class CacheCoordinator(
         serializer: KSerializer<T>,
         requestGeneration: Long,
     ): ApiResult<T>? {
-        val entry = runCatching { persistent.load(key) }.getOrNull() ?: return null
+        val entry =
+            try {
+                persistent.load(key)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                return null
+            } ?: return null
         if (nowMs() - entry.fetchedAt > diskMaxAgeMs) return null
         val value = runCatching { json.decodeFromString(serializer, entry.json) }.getOrNull() ?: return null
         val result = ApiResult.Success(value)
