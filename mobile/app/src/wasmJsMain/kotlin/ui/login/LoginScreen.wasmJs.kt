@@ -6,7 +6,6 @@ import ac.undip.sso.core.network.Backend
 import ac.undip.sso.core.network.BackendCodes
 import ac.undip.sso.core.network.UserMessages
 import ac.undip.sso.core.network.createPlatformClient
-import ac.undip.sso.core.scan.CameraRegion
 import ac.undip.sso.core.scan.QrScanResult
 import ac.undip.sso.core.scan.QrScanner
 import ac.undip.sso.core.scan.extractPairCode
@@ -49,9 +48,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
+
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -67,7 +64,6 @@ import io.ktor.http.isSuccess
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlin.math.roundToInt
 
 @Serializable
 private data class PairConsumeResponse(
@@ -113,10 +109,8 @@ fun LoginScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var consent by remember { mutableStateOf(jsReadConsent() == CONSENT_VERSION) }
-    var region by remember { mutableStateOf<CameraRegion?>(null) }
     val scope = rememberCoroutineScope()
     val json = remember { Json { ignoreUnknownKeys = true } }
-    val density = LocalDensity.current.density
 
     fun saveConsent(value: Boolean) {
         if (!value) {
@@ -223,7 +217,6 @@ fun LoginScreen(
                     Spacer(Modifier.height(20.dp))
                     Button(
                         onClick = {
-                            region = null
                             mode = LoginMode.Scanning
                         },
                         enabled = consent,
@@ -254,28 +247,23 @@ fun LoginScreen(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Spacer(Modifier.height(12.dp))
+                    // Kamera login memakai overlay full-screen (seperti kamera
+                    // native) supaya preview dan area fokus cukup besar. Tombol
+                    // tutup disediakan di overlay DOM.
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .onGloballyPositioned { coords ->
-                                // Ukur sekali saja. Memperbarui region tiap
-                                // layout membuat LaunchedEffect(mode, region)
-                                // restart di tengah getUserMedia dan
-                                // meninggalkan overlay kamera yatim.
-                                if (region == null) {
-                                    val b = coords.boundsInWindow()
-                                    if (b.width > 0f && b.height > 0f) {
-                                        region = CameraRegion(
-                                            left = (b.left / density).roundToInt(),
-                                            top = (b.top / density).roundToInt(),
-                                            width = (b.width / density).roundToInt(),
-                                            height = (b.height / density).roundToInt(),
-                                        )
-                                    }
-                                }
-                            },
-                    )
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Membuka kamera…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(
                         onClick = { mode = LoginMode.Code },
@@ -302,7 +290,6 @@ fun LoginScreen(
                     }
                     TextButton(
                         onClick = {
-                            region = null
                             mode = LoginMode.Scanning
                         },
                     ) { Text("Pindai QR") }
@@ -319,13 +306,13 @@ fun LoginScreen(
         }
     }
 
-    // Pemindaian dimulai hanya setelah region terukur. Perubahan mode
-    // membatalkan LaunchedEffect → scanOnce dibatalkan → jsStopCamera di finally.
-    LaunchedEffect(mode, region) {
+    // Login memakai overlay kamera full-screen: tidak perlu menunggu region
+    // terukur, dan preview/fokus mendapat seluruh viewport seperti kamera native.
+    // Perubahan mode membatalkan LaunchedEffect → scanOnce dibatalkan →
+    // jsStopCamera di finally.
+    LaunchedEffect(mode) {
         if (mode != LoginMode.Scanning) return@LaunchedEffect
-        val r = region ?: return@LaunchedEffect
-        if (r.width <= 0 || r.height <= 0) return@LaunchedEffect
-        when (val result = QrScanner.scanOnce(r)) {
+        when (val result = QrScanner.scanOnce(null)) {
             is QrScanResult.Success -> {
                 val normalized = extractPairCode(result.token)
                 if (normalized == null) {
@@ -343,7 +330,7 @@ fun LoginScreen(
                 mode = LoginMode.Code
             }
 
-            QrScanResult.Cancelled -> Unit
+            QrScanResult.Cancelled -> mode = LoginMode.Landing
         }
     }
 }

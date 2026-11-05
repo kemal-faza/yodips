@@ -93,6 +93,8 @@ object QrScanner {
 
         val camera = try {
             startCamera(region)
+        } catch (_: CameraClosedException) {
+            return QrScanResult.Cancelled
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -120,6 +122,9 @@ object QrScanner {
     }
 
     private class CameraHandles(val video: JsAny?, val wrap: JsAny?, val canvas: JsAny?)
+
+    /** Close tapped before the camera stream finished opening. */
+    private class CameraClosedException : Exception("camera closed")
 
     /**
      * Buka file picker gambar, decode QR dari foto terpilih dengan jsQR.
@@ -200,10 +205,13 @@ object QrScanner {
                         cont.resumeWith(Result.failure(RuntimeException(message.toString())))
                     }
                 },
-                // Tombol tutup overlay TIDAK me-resume await ini (hindari
-                // resume-ganda) - cukup menandai closeRequested; loop decode
-                // yang keluar dan cleanup jalan lewat finally.
-                onCancel = { closeRequested = true },
+                // Kalau tombol tutup ditekan sebelum stream siap, resume wait
+                // dengan sinyal khusus supaya coroutine tidak menggantung.
+                // Setelah stream siap, cont sudah selesai; cukup tandai flag.
+                onCancel = {
+                    closeRequested = true
+                    if (cont.isActive) cont.resumeWith(Result.failure(CameraClosedException()))
+                },
             )
         }
 }
@@ -299,16 +307,33 @@ private external fun jsErrText(err: JsAny?): JsString?
         "  }" +
         "};" +
         "wrap.__ydStop = stopWrap;" +
+        "var closeBtn = document.createElement('button');" +
+        "closeBtn.className = 'yd-btn'; closeBtn.textContent = '×'; closeBtn.title = 'Tutup kamera'; closeBtn.setAttribute('aria-label','Tutup kamera');" +
+        "closeBtn.style.cssText = 'position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);left:calc(env(safe-area-inset-left,0px) + 12px);z-index:4;';" +
+        "closeBtn.onclick = function(){ stopWrap(); onCancel(); };" +
+        "wrap.appendChild(closeBtn);" +
         "var frameSize = Math.min(Math.min(wrap.clientWidth, wrap.clientHeight) * 0.7, 280);" +
         "if (frameSize > 0) { frame.style.width = frameSize + 'px'; frame.style.height = frameSize + 'px'; } else { frame.style.width = 'min(72vw,280px)'; frame.style.height = 'min(72vw,280px)'; }" +
         "var applyFocusMode = function(mode) {" +
         "  if (!track || !track.applyConstraints) return;" +
+        "  var attempts = [];" +
         "  try {" +
         "    var caps = track.getCapabilities ? track.getCapabilities() : {};" +
-        "    var modes = caps.focusMode || [];" +
-        "    if (modes.indexOf(mode) === -1) return;" +
-        "    track.applyConstraints({ advanced: [{ focusMode: mode }] }).catch(function(){});" +
+        "    var modes = caps.focusMode ? (Array.isArray(caps.focusMode) ? caps.focusMode : [caps.focusMode]) : [];" +
+        "    if (modes.indexOf(mode) !== -1) attempts.push({ focusMode: mode });" +
         "  } catch (e) {}" +
+        // Advanced-only constraints can be ignored silently on Android Chrome.
+        // A basic attempt is mandatory and falls through when unsupported.
+        "  attempts.push({ advanced: [{ focusMode: mode }] });" +
+        "  var next = function() {" +
+        "    if (!attempts.length) return;" +
+        "    var c = attempts.shift();" +
+        "    var p = null;" +
+        "    try { p = track.applyConstraints(c); } catch (e) { next(); return; }" +
+        "    if (!p || !p.then) return;" +
+        "    p.catch(function(){ next(); });" +
+        "  };" +
+        "  next();" +
         "};" +
         "var applyHwZoom = function(ratio) {" +
         "  if (!hasHwZoom || hwZoomFailed || !track || !track.applyConstraints) return;" +
@@ -359,7 +384,13 @@ private external fun jsErrText(err: JsAny?): JsString?
         "      }" +
         "    } catch (e) { maxZoom = 3.0; }" +
         "  }" +
+        // Autofocus needs re-arming after the track starts on several Android
+        // Chrome builds; the first applyConstraints can run before the camera
+        // has exposed its capabilities.
         "  applyFocusMode('continuous');" +
+        "  setTimeout(function(){ applyFocusMode('continuous'); }, 400);" +
+        "  setTimeout(function(){ applyFocusMode('continuous'); }, 1200);" +
+        "  setTimeout(function(){ applyFocusMode('continuous'); }, 3000);" +
         "  applyZoom();" +
         "};" +
         "var focusAt = function(clientX, clientY) {" +
