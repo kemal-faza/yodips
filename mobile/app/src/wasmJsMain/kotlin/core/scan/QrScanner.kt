@@ -381,25 +381,54 @@ private external fun jsErrText(err: JsAny?): JsString?
         "    var visibleH = videoAspect / boxAspect;" +
         "    ny = (1 - visibleH) / 2 + y * visibleH;" +
         "  }" +
-        "  var constraints = null;" +
-        "  try {" +
-        "    var caps = track.getCapabilities ? track.getCapabilities() : {};" +
-        "    var modes = caps.focusMode || [];" +
-        "    if (caps.pointsOfInterest) {" +
-        "      constraints = { advanced: [{ pointsOfInterest: [{ x: nx, y: ny }], focusMode: 'single-shot' }] };" +
-        "    } else if (modes.indexOf('single-shot') !== -1) {" +
-        "      constraints = { advanced: [{ focusMode: 'single-shot' }] };" +
-        "    } else if (modes.indexOf('continuous') !== -1) {" +
-        "      constraints = { advanced: [{ focusMode: 'continuous' }] };" +
-        "    }" +
-        "  } catch (e) {}" +
-        "  if (constraints) track.applyConstraints(constraints).catch(function(){});" +
+        "  var caps = {};" +
+        "  try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch (e) { caps = {}; }" +
+        "  var modes = [];" +
+        "  if (caps.focusMode) { modes = Array.isArray(caps.focusMode) ? caps.focusMode : [caps.focusMode]; }" +
+        "  var hasPoi = !!caps.pointsOfInterest && (!Array.isArray(caps.pointsOfInterest) || caps.pointsOfInterest.length > 0);" +
+        "  var hasSingle = modes.indexOf('single-shot') !== -1;" +
+        "  var hasContinuous = modes.indexOf('continuous') !== -1;" +
+        "  var attempts = [];" +
+        // Basic constraints are mandatory: an unsupported value rejects and
+        // falls through. Advanced-only constraints may be silently ignored by
+        // some Android builds, so try basic first.
+        "  if (hasPoi && hasSingle) attempts.push({ pointsOfInterest: [{ x: nx, y: ny }], focusMode: 'single-shot' });" +
+        "  if (hasPoi) attempts.push({ pointsOfInterest: [{ x: nx, y: ny }] });" +
+        "  if (hasSingle) attempts.push({ focusMode: 'single-shot' });" +
+        "  if (hasPoi && hasSingle) attempts.push({ advanced: [{ pointsOfInterest: [{ x: nx, y: ny }], focusMode: 'single-shot' }] });" +
+        "  if (hasPoi) attempts.push({ advanced: [{ pointsOfInterest: [{ x: nx, y: ny }] }] });" +
+        "  if (hasSingle) attempts.push({ advanced: [{ focusMode: 'single-shot' }] });" +
+        "  if (hasContinuous) attempts.push({ focusMode: 'continuous' });" +
+        // Last resort: some devices accept continuous even though getCapabilities
+        // does not advertise it. A rejected attempt is harmless.
+        "  attempts.push({ advanced: [{ focusMode: 'continuous' }] });" +
+        "  var nextAttempt = function() {" +
+        "    if (!attempts.length) return;" +
+        "    var c = attempts.shift();" +
+        "    var p = null;" +
+        "    try { p = track.applyConstraints(c); } catch (e) { nextAttempt(); return; }" +
+        "    if (!p || !p.then) return;" +
+        "    p.then(function() {" +
+        "      var mode = (c.advanced && c.advanced[0] && c.advanced[0].focusMode) || c.focusMode;" +
+        "      if (mode === 'single-shot') {" +
+        "        setTimeout(function(){" +
+        "          try { track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){}); } catch (e) {}" +
+        "        }, 1500);" +
+        "      }" +
+        "    }).catch(function(){ nextAttempt(); });" +
+        "  };" +
+        "  nextAttempt();" +
+        "  if (!hasPoi && !hasSingle) {" +
+        "    hint.textContent = 'Kamera ini hanya mendukung autofocus';" +
+        "    setTimeout(function(){ hint.textContent = 'Arahkan QR ke dalam kotak'; }, 1800);" +
+        "  }" +
         "  focusRing.style.left = (clientX - rect.left) + 'px';" +
         "  focusRing.style.top = (clientY - rect.top) + 'px';" +
         "  focusRing.classList.add('show');" +
         "  setTimeout(function(){ focusRing.classList.remove('show'); }, 650);" +
         "};" +
         "var lastPinchAt = 0;" +
+        "var lastTapAt = 0;" +
         "var pinchStartDist = 0;" +
         "var pinchStartZoom = 1;" +
         "var touchDistance = function(a, b) {" +
@@ -407,10 +436,23 @@ private external fun jsErrText(err: JsAny?): JsString?
         "  var dy = a.clientY - b.clientY;" +
         "  return Math.sqrt(dx * dx + dy * dy);" +
         "};" +
+        "var tapFocus = function(x, y) {" +
+        "  var now = Date.now();" +
+        "  if (now - lastTapAt < 400 || now - lastPinchAt < 350 || pinchStartDist > 0) return;" +
+        "  lastTapAt = now;" +
+        "  focusAt(x, y);" +
+        "};" +
         "v.addEventListener('click', function(e) {" +
-        "  if (Date.now() - lastPinchAt < 350) return;" +
-        "  focusAt(e.clientX, e.clientY);" +
+        "  tapFocus(e.clientX, e.clientY);" +
         "});" +
+        // Android/iOS sometimes deliver the media tap as touchend without a
+        // synthetic click (the video element is a media surface). Debounce
+        // against the click that may still follow.
+        "v.addEventListener('touchend', function(e) {" +
+        "  if (e.touches.length > 0 || !e.changedTouches || !e.changedTouches.length) return;" +
+        "  var t = e.changedTouches[0];" +
+        "  tapFocus(t.clientX, t.clientY);" +
+        "}, { passive: true });" +
         "wrap.addEventListener('touchstart', function(e) {" +
         "  if (e.touches.length === 2) {" +
         "    pinchStartDist = touchDistance(e.touches[0], e.touches[1]);" +
