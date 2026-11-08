@@ -63,7 +63,8 @@ android {
             buildConfigField("String", "BASE_URL", "\"http://10.0.2.2:3000\"")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -85,15 +86,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-    lint {
-        // lintVitalAnalyzeRelease refuses to read Kotlin 2.3 metadata
-        // ("Module was compiled with an incompatible version of Kotlin,
-        // binary 2.3.0, expected 2.0.0") — the lint tooling is older than the
-        // Kotlin plugin. The code is fine; only the lintVital gate trips. Keep
-        // lint on normal builds (lintDebug still runs) but don't let it
-        // block the release APK.
-        checkReleaseBuilds = false
     }
 }
 
