@@ -35,7 +35,17 @@ export function buildRouter(history: RouterHistory): Router {
   router.beforeEach(async (to) => {
     // Pasca-F6: satu-satunya jalur mobile adalah PWA /app/. Halaman legal tetap
     // publik (URL listing store, harus terbaca dari HP).
+    //
+    // Jangan redirect bila target SUDAH /app/: di dev Vite menyajikan SPA
+    // fallback untuk /app/, dan redirect ke /app/ lagi menghasilkan reload
+    // tanpa henti. Di produksi /app/ dilayani PWA, jadi guard ini tidak pernah
+    // melihat path tersebut.
+    const isPwaPath = to.path === '/app' || to.path.startsWith('/app/');
     if (isMobileDevice() && !PUBLIC_LEGAL_PATHS.has(to.path)) {
+      // Sudah di /app/: biarkan (jangan redirect ke /app/ lagi, dan jangan
+      // jatuh ke guard auth yang akan mengirim ke /login — keduanya memicu
+      // reload loop di dev server).
+      if (isPwaPath) return true;
       const search = new URL(to.fullPath, window.location.origin).search;
       window.location.replace('/app/' + search);
       return false;

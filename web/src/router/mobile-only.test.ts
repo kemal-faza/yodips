@@ -56,6 +56,16 @@ describe('guard UA-mobile → /app/ (pasca-F6)', () => {
     expect(replace).toHaveBeenCalledWith('/app/?pair=ABCD1234');
   });
 
+  it('mobile UA: /app/ tidak di-replace lagi (cegah loop reload)', async () => {
+    authState.authed = false; // guard auth tidak boleh melempar /app/ ke /login
+    isMobileMock.mockReturnValue(true);
+    const replace = stubReplace();
+    const router = buildRouter(createMemoryHistory());
+    await router.push('/app/');
+    expect(replace).not.toHaveBeenCalled();
+    expect(router.currentRoute.value.path).toBe('/app/');
+  });
+
   it('mobile UA: /privacy tetap dilayani SPA (halaman publik)', async () => {
     isMobileMock.mockReturnValue(true);
     const replace = stubReplace();
