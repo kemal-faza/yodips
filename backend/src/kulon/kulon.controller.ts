@@ -14,14 +14,18 @@ import { SessionRef, isSessionRef } from '../session/session-store';
 import { sessionDead } from '../session/live-session';
 
 interface AuthedRequest {
-  user?: { sub?: string; sessionGeneration?: unknown; [k: string]: unknown };
+  user?: { sub?: string; clientId?: string; sessionGeneration?: unknown; [k: string]: unknown };
 }
 
 function requireSessionRef(req: AuthedRequest): SessionRef {
   if (!isSessionRef(req.user)) {
     throw sessionDead();
   }
-  return { sub: req.user.sub, sessionGeneration: req.user.sessionGeneration };
+  return {
+    sub: req.user.sub,
+    clientId: req.user.clientId,
+    sessionGeneration: req.user.sessionGeneration,
+  };
 }
 
 @UseGuards(JwtAuthGuard)

@@ -8,6 +8,7 @@ import { PairingService } from './pairing.service';
 import { ConsumeDto } from './dto/pair.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
+import { LEGACY_CLIENT_ID } from '../session/session-contract';
 
 /** Mock ExecutionContext minimal utk JwtAuthGuard. */
 function ctxWith(req: any): any {
@@ -30,16 +31,33 @@ describe('PairingController', () => {
     controller = module.get(PairingController);
   });
 
-  it('pair/request meneruskan sub+generation dari JWT guard', async () => {
+  it('pair/request meneruskan sub+clientId+generation dari JWT guard', async () => {
     pairing.requestPairing.mockResolvedValue({ code: 'ABCD1234', qrUrl: 'u', expiresAt: 1 });
     const gen = 'a'.repeat(32);
-    const res = await controller.request({ user: { sub: 'NIM1', sessionGeneration: gen } } as any);
-    expect(pairing.requestPairing).toHaveBeenCalledWith({ sub: 'NIM1', sessionGeneration: gen });
+    const res = await controller.request({
+      user: { sub: 'NIM1', clientId: 'client-a', sessionGeneration: gen },
+    } as any);
+    expect(pairing.requestPairing).toHaveBeenCalledWith({
+      sub: 'NIM1',
+      clientId: 'client-a',
+      sessionGeneration: gen,
+    });
     expect(res.code).toBe('ABCD1234');
   });
 
   it('pair/request tanpa generation → 401 SESSION_DEAD (tidak diteruskan)', async () => {
     await expect(controller.request({ user: { sub: 'NIM1' } } as any)).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(pairing.requestPairing).not.toHaveBeenCalled();
+  });
+
+  it('pair/request tanpa clientId → 401 SESSION_DEAD (tidak diteruskan)', async () => {
+    const gen = 'a'.repeat(32);
+    await expect(
+      controller.request({ user: { sub: 'NIM1', sessionGeneration: gen } } as any),
+    ).rejects.toMatchObject({
       status: 401,
       response: { code: 'SESSION_DEAD' },
     });
@@ -97,13 +115,28 @@ describe('PairingController', () => {
     const SECRET = 's'.repeat(32);
     const gen = '9'.repeat(32);
     const records = new Map<string, any>([
-      ['X', { identity: 'X', ssoCookie: '', microsoftCookie: '', kulonCookie: 'K', siapCookie: '', capturedAt: Date.now(), sessionGeneration: gen }],
+      [
+        `X:${LEGACY_CLIENT_ID}`,
+        {
+          identity: 'X',
+          clientId: LEGACY_CLIENT_ID,
+          ssoCookie: '',
+          microsoftCookie: '',
+          kulonCookie: 'K',
+          siapCookie: '',
+          capturedAt: Date.now(),
+          sessionGeneration: gen,
+        },
+      ],
     ]);
     const fakeStore = {
-      get: async (sub: string) => records.get(sub) ?? null,
-      getIfGeneration: async (sub: string, generation: string) => {
-        const rec = records.get(sub) ?? null;
-        if (!rec || rec.sessionGeneration !== generation) return null;
+      getIfGeneration: async (ref: {
+        sub: string;
+        clientId: string;
+        sessionGeneration: string;
+      }) => {
+        const rec = records.get(`${ref.sub}:${ref.clientId}`) ?? null;
+        if (!rec || rec.sessionGeneration !== ref.sessionGeneration) return null;
         return rec;
       },
       clearIfGeneration: async () => true,
@@ -122,15 +155,27 @@ describe('PairingController', () => {
         JwtAuthGuard,
         { provide: PairingService, useValue: pairing },
         { provide: SessionStore, useValue: fakeStore },
-        { provide: ConfigService, useValue: { get: (k: string) => (k === 'JWT_SECRET' ? SECRET : undefined) } },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (k: string) => {
+              if (k === 'JWT_SECRET') return SECRET;
+              if (k === 'SESSION_LEGACY_CLIENT_ENABLED') return true;
+              return undefined;
+            },
+          },
+        },
       ],
     }).compile();
 
     const jwt = module.get(JwtService);
     const guard = module.get(JwtAuthGuard);
-    // The token carries the claim the fake record holds (generation gen), so the
-    // guard's shape check passes and the exact-generation compare passes.
+    // The P1 token carries no clientId: with the legacy flag on, the guard
+    // resolves the reserved `legacy` device and the record matches its exact
+    // generation.
     const token = await jwt.signAsync({ sub: 'X', via: 'pair', sessionGeneration: gen });
-    await expect(guard.canActivate(ctxWith({ headers: { authorization: `Bearer ${token}` } }))).resolves.toBe(true);
+    const req: any = { headers: { authorization: `Bearer ${token}` } };
+    await expect(guard.canActivate(ctxWith(req))).resolves.toBe(true);
+    expect(req.user.clientId).toBe(LEGACY_CLIENT_ID);
   });
 });

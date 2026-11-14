@@ -16,7 +16,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 describe('KulonController', () => {
   let controller: KulonController;
   const GEN = 'a'.repeat(32);
-  const REF = { sub: '24060121130000', sessionGeneration: GEN };
+  const REF = { sub: '24060121130000', clientId: 'client-a', sessionGeneration: GEN };
   const service = {
     getCourses: jest.fn(),
     getCourseList: jest.fn(),
@@ -27,7 +27,9 @@ describe('KulonController', () => {
     getCourseContent: jest.fn(),
     parseSesskey: jest.fn(),
   };
-  const req = () => ({ user: { sub: '24060121130000', sessionGeneration: GEN } });
+  const req = () => ({
+    user: { sub: '24060121130000', clientId: 'client-a', sessionGeneration: GEN },
+  });
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -81,6 +83,15 @@ describe('KulonController', () => {
   it('rejects 401 SESSION_DEAD without a generation (never drops to sub-only)', async () => {
     await expect(
       controller.getCourses({ user: { sub: '24060121130000' } } as any),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+    expect(service.getCourses).not.toHaveBeenCalled();
+  });
+
+  it('rejects 401 SESSION_DEAD without a clientId (never drops to sub-only)', async () => {
+    await expect(
+      controller.getCourses({
+        user: { sub: '24060121130000', sessionGeneration: GEN },
+      } as any),
     ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
     expect(service.getCourses).not.toHaveBeenCalled();
   });

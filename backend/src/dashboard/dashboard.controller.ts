@@ -24,7 +24,7 @@ import {
 } from '../observability/telemetry-contract';
 
 interface AuthedRequest {
-  user?: { sub?: string; sessionGeneration?: unknown; [k: string]: unknown };
+  user?: { sub?: string; clientId?: string; sessionGeneration?: unknown; [k: string]: unknown };
   headers?: Record<string, string | string[] | undefined>;
 }
 
@@ -80,6 +80,7 @@ export class DashboardController {
       }
       const payload = await this.dashboardService.getDashboard({
         sub: req.user.sub,
+        clientId: req.user.clientId,
         sessionGeneration: req.user.sessionGeneration,
       });
       recordTelemetry(this.runtime, {
