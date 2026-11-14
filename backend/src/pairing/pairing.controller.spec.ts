@@ -8,7 +8,6 @@ import { PairingService } from './pairing.service';
 import { ConsumeDto } from './dto/pair.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionStore } from '../session/session-store';
-import { LEGACY_CLIENT_ID } from '../session/session-contract';
 
 /** Mock ExecutionContext minimal utk JwtAuthGuard. */
 function ctxWith(req: any): any {
@@ -64,11 +63,17 @@ describe('PairingController', () => {
     expect(pairing.requestPairing).not.toHaveBeenCalled();
   });
 
-  it('pair/consume meneruskan dto.code ke service', async () => {
+  it('pair/consume meneruskan dto.code + clientId ke service', async () => {
     pairing.consume.mockResolvedValue({ accessToken: 'j', hasKulon: true, hasSiap: true });
     const res = await controller.consume({ code: 'abcd1234' } as any);
-    expect(pairing.consume).toHaveBeenCalledWith('abcd1234');
+    expect(pairing.consume).toHaveBeenCalledWith('abcd1234', undefined);
     expect(res.accessToken).toBe('j');
+  });
+
+  it('pair/consume meneruskan clientId perangkat baru bila DTO menyertakannya', async () => {
+    pairing.consume.mockResolvedValue({ accessToken: 'j', hasKulon: true, hasSiap: true });
+    await controller.consume({ code: 'abcd1234', clientId: 'pair-client' } as any);
+    expect(pairing.consume).toHaveBeenCalledWith('abcd1234', 'pair-client');
   });
 
   it('pair/status meneruskan sub + code ke service (JWT-guarded)', async () => {
@@ -111,15 +116,15 @@ describe('PairingController', () => {
     ).rejects.toThrow();
   });
 
-  it('round-trip: JWT via=pair (with sessionGeneration) dari JwtModule ter-pin LOLOS JwtAuthGuard asli — SessionStore DI resolves', async () => {
+  it('round-trip: JWT via=pair (clientId + sessionGeneration) dari JwtModule ter-pin LOLOS JwtAuthGuard asli — SessionStore DI resolves', async () => {
     const SECRET = 's'.repeat(32);
     const gen = '9'.repeat(32);
     const records = new Map<string, any>([
       [
-        `X:${LEGACY_CLIENT_ID}`,
+        'X:client-a',
         {
           identity: 'X',
-          clientId: LEGACY_CLIENT_ID,
+          clientId: 'client-a',
           ssoCookie: '',
           microsoftCookie: '',
           kulonCookie: 'K',
@@ -130,6 +135,9 @@ describe('PairingController', () => {
       ],
     ]);
     const fakeStore = {
+      set: async (session: any) => {
+        records.set(`${session.identity}:${session.clientId}`, session);
+      },
       getIfGeneration: async (ref: {
         sub: string;
         clientId: string;
@@ -139,7 +147,21 @@ describe('PairingController', () => {
         if (!rec || rec.sessionGeneration !== ref.sessionGeneration) return null;
         return rec;
       },
+      replaceIfUnchanged: async () => 'dead',
       clearIfGeneration: async () => true,
+      listBySub: async (sub: string) =>
+        [...records.values()].filter((s) => s.identity === sub),
+      clearAllForSub: async (sub: string) => {
+        let cleared = 0;
+        for (const [key, s] of records) {
+          if (s.identity !== sub) continue;
+          records.delete(key);
+          cleared += 1;
+        }
+        return cleared;
+      },
+      all: async () => [...records.values()],
+      migrateLegacyKeys: async () => ({ scanned: 0, migrated: 0 }),
     };
     const module = await Test.createTestingModule({
       controllers: [PairingController],
@@ -170,12 +192,16 @@ describe('PairingController', () => {
 
     const jwt = module.get(JwtService);
     const guard = module.get(JwtAuthGuard);
-    // The P1 token carries no clientId: with the legacy flag on, the guard
-    // resolves the reserved `legacy` device and the record matches its exact
-    // generation.
-    const token = await jwt.signAsync({ sub: 'X', via: 'pair', sessionGeneration: gen });
+    // The token carries the device's clientId; the guard resolves the exact
+    // `X:client-a` record and its generation.
+    const token = await jwt.signAsync({
+      sub: 'X',
+      clientId: 'client-a',
+      via: 'pair',
+      sessionGeneration: gen,
+    });
     const req: any = { headers: { authorization: `Bearer ${token}` } };
     await expect(guard.canActivate(ctxWith(req))).resolves.toBe(true);
-    expect(req.user.clientId).toBe(LEGACY_CLIENT_ID);
+    expect(req.user.clientId).toBe('client-a');
   });
 });

@@ -33,7 +33,7 @@ export class PairingController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('pair/consume')
   consume(@Body() dto: ConsumeDto) {
-    return this.pairing.consume(dto.code);
+    return this.pairing.consume(dto.code, dto.clientId);
   }
 
   // Status kode (polling web): read-only, tak mengonsumsi. Hanya pemilik
