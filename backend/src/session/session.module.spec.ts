@@ -14,11 +14,14 @@ const mockClient = {
   del: jest.fn(),
   scan: jest.fn(),
   mget: jest.fn(),
+  pttl: jest.fn(),
   pipeline: jest.fn(),
   quit: jest.fn(),
   ping: jest.fn(),
   connect: jest.fn().mockResolvedValue(undefined),
 };
+
+const CLIENT_A = 'client-a';
 
 function config(overrides: Record<string, string>): ConfigService {
   return {
@@ -29,7 +32,10 @@ function config(overrides: Record<string, string>): ConfigService {
 const GEN_FIX = 'c'.repeat(32);
 
 describe('createSessionStore', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockClient.scan.mockResolvedValue(['0', []]);
+  });
 
   it('returns InMemorySessionStore when SESSION_BACKEND is memory (default)', async () => {
     const store = await createSessionStore(
@@ -87,8 +93,9 @@ describe('createSessionStore', () => {
         SESSION_ABSOLUTE_TTL_MS: '200',
       }),
     )) as InMemorySessionStore;
-    await store.set('a', {
+    await store.set({
       identity: 'a',
+      clientId: CLIENT_A,
       ssoCookie: '',
       microsoftCookie: '',
       kulonCookie: 'K',
@@ -97,7 +104,13 @@ describe('createSessionStore', () => {
       sessionGeneration: GEN_FIX,
     });
     // 250ms elapsed > 200ms cap → dead even though the 7-day sliding TTL is fresh.
-    expect(await store.get('a')).toBeNull();
+    expect(
+      await store.getIfGeneration({
+        sub: 'a',
+        clientId: CLIENT_A,
+        sessionGeneration: GEN_FIX,
+      }),
+    ).toBeNull();
   });
 
   it('defaults the absolute cap to SESSION_TTL_MS when SESSION_ABSOLUTE_TTL_MS is unset', async () => {
@@ -105,8 +118,9 @@ describe('createSessionStore', () => {
     const store = (await createSessionStore(
       config({ SESSION_TTL_MS: '60000' }),
     )) as InMemorySessionStore;
-    await store.set('a', {
+    await store.set({
       identity: 'a',
+      clientId: CLIENT_A,
       ssoCookie: '',
       microsoftCookie: '',
       kulonCookie: 'K',
@@ -114,6 +128,36 @@ describe('createSessionStore', () => {
       capturedAt: now - 61_000, // older than the 60s default cap
       sessionGeneration: GEN_FIX,
     });
-    expect(await store.get('a')).toBeNull();
+    expect(
+      await store.getIfGeneration({
+        sub: 'a',
+        clientId: CLIENT_A,
+        sessionGeneration: GEN_FIX,
+      }),
+    ).toBeNull();
+  });
+
+  it('runs the legacy migration after connecting and still boots when it fails', async () => {
+    (Redis as unknown as jest.Mock).mockImplementation(() => mockClient);
+    mockClient.ping.mockResolvedValue('PONG');
+    mockClient.scan.mockRejectedValue(new Error('scan unavailable'));
+
+    const store = await createSessionStore(
+      config({
+        SESSION_BACKEND: 'redis',
+        REDIS_URL: 'redis://127.0.0.1:6379',
+        SESSION_ENC_KEY: 'some-key',
+        SESSION_TTL_MS: '604800000',
+      }),
+    );
+
+    expect(store).toBeInstanceOf(RedisSessionStore);
+    expect(mockClient.scan).toHaveBeenCalledWith(
+      '0',
+      'MATCH',
+      'sso:session:*',
+      'COUNT',
+      expect.any(Number),
+    );
   });
 });

@@ -1,14 +1,20 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SessionStore } from './session-store';
 import { InMemorySessionStore } from './in-memory-session.store';
 import { RedisSessionStore } from './redis-session.store';
 import { buildRedisClient } from '../common/build-redis-client';
 
+const logger = new Logger('SessionStore');
+
 /**
  * Build the session store from config. Fail-fast: Redis config problems and
  * connection failures throw at startup (never silently fall back to memory).
  * Redis TLS (rediss://) options are handled inside buildRedisClient.
+ *
+ * After construction, run the one-time pre-device key migration. A migration
+ * failure must never block boot: the store still serves composite keys and the
+ * next start retries. Log counts only — never IDs, cookies, or tokens.
  */
 export async function createSessionStore(
   config: ConfigService,
@@ -19,18 +25,33 @@ export async function createSessionStore(
   const absoluteMs = Number(
     config.get('SESSION_ABSOLUTE_TTL_MS') ?? config.get('SESSION_TTL_MS'),
   );
+
+  let store: SessionStore;
   if (config.get('SESSION_BACKEND') !== 'redis') {
-    return new InMemorySessionStore(ttlMs, absoluteMs);
+    store = new InMemorySessionStore(ttlMs, absoluteMs);
+  } else {
+    const url = config.get<string>('REDIS_URL');
+    const encKey = config.get<string>('SESSION_ENC_KEY');
+    if (!url) throw new Error('SESSION_BACKEND=redis but REDIS_URL is not set');
+    if (!encKey)
+      throw new Error('SESSION_BACKEND=redis but SESSION_ENC_KEY is not set');
+    const client = buildRedisClient(url);
+    await client.connect(); // resolves once the socket is ready; rejects if Redis is down
+    await client.ping(); // eager connection check — fail-fast if Redis is down
+    store = new RedisSessionStore(client, ttlMs, encKey, absoluteMs);
   }
-  const url = config.get<string>('REDIS_URL');
-  const encKey = config.get<string>('SESSION_ENC_KEY');
-  if (!url) throw new Error('SESSION_BACKEND=redis but REDIS_URL is not set');
-  if (!encKey)
-    throw new Error('SESSION_BACKEND=redis but SESSION_ENC_KEY is not set');
-  const client = buildRedisClient(url);
-  await client.connect(); // resolves once the socket is ready; rejects if Redis is down
-  await client.ping(); // eager connection check — fail-fast if Redis is down
-  return new RedisSessionStore(client, ttlMs, encKey, absoluteMs);
+
+  try {
+    const { scanned, migrated } = await store.migrateLegacyKeys();
+    logger.log(`pre-migration_records=${scanned} legacy_migrated=${migrated}`);
+  } catch (error) {
+    logger.warn(
+      `legacy session migration failed (continuing): ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    );
+  }
+  return store;
 }
 
 /**
