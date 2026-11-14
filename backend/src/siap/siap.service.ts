@@ -749,9 +749,13 @@ export class SiapService {
   }
 
   /**
-   * CURRENT-session variant for background flows (NotificationsPoller) that
-   * own no JWT: the current live record, whatever its generation. Never call
-   * from an authenticated controller/service path.
+   * CURRENT-session variant for background flows that own no JWT: the current
+   * live record, whatever its generation. Never call from an authenticated
+   * controller/service path.
+   *
+   * @deprecated Background flows now pick a per-device `SessionRef` through
+   * `withFirstLive()` and call {@link getJadwal}. Kept unchanged (behavior and
+   * `current` cache key) for compatibility; do not add callers.
    */
   async getJadwalForCurrentSession(sub: string): Promise<SiapJadwal[]> {
     return (await this.methodFlight.run(

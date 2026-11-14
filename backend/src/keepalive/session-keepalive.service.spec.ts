@@ -9,10 +9,19 @@ import {
 import { SessionKeepAliveService } from './session-keepalive.service';
 
 const GEN = generateSessionGeneration();
+const SUB = '24060121130000';
+const CLIENT = 'client-a';
+const REF = { sub: SUB, clientId: CLIENT, sessionGeneration: GEN };
+
+/** Read back the one device record this suite seeds. */
+async function read(store: InMemorySessionStore): Promise<CapturedSession | undefined> {
+  return (await store.listBySub(SUB))[0];
+}
 
 function session(overrides: Partial<CapturedSession> = {}): CapturedSession {
   return {
-    identity: '24060121130000',
+    identity: SUB,
+    clientId: CLIENT,
     ssoCookie: 'ci_session_sso=OLD',
     microsoftCookie: '',
     kulonCookie: 'MoodleSession=OLD',
@@ -36,7 +45,7 @@ function config(overrides: Record<string, unknown> = {}): ConfigService {
 describe('SessionKeepAliveService.runCycle', () => {
   it('does not slide when every probe is invalid', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set('24060121130000', session());
+    await store.set(session());
     const service = new SessionKeepAliveService(
       store,
       {
@@ -61,12 +70,12 @@ describe('SessionKeepAliveService.runCycle', () => {
     await service.runCycle();
 
     expect(slide).not.toHaveBeenCalled();
-    expect(await store.get('24060121130000')).toBeDefined();
+    expect(await read(store)).toBeDefined();
   });
 
   it('slides when at least one probe is valid and no cookie rotated', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set('24060121130000', session());
+    await store.set(session());
     const slide = jest.spyOn(store, 'getIfGeneration');
     const service = new SessionKeepAliveService(
       store,
@@ -89,12 +98,12 @@ describe('SessionKeepAliveService.runCycle', () => {
 
     await service.runCycle();
 
-    expect(slide).toHaveBeenCalledWith('24060121130000', GEN);
+    expect(slide).toHaveBeenCalledWith(REF);
   });
 
   it('applies SSO rotation before Kulon rotation', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set('24060121130000', session());
+    await store.set(session());
     const service = new SessionKeepAliveService(
       store,
       {
@@ -120,7 +129,7 @@ describe('SessionKeepAliveService.runCycle', () => {
 
     await service.runCycle();
 
-    expect(await store.get('24060121130000')).toMatchObject({
+    expect(await read(store)).toMatchObject({
       ssoCookie: 'ci_session_sso=NEW',
       kulonCookie: 'MoodleSession=NEW',
     });
@@ -128,10 +137,7 @@ describe('SessionKeepAliveService.runCycle', () => {
 
   it('skips sessions past the absolute cap', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set(
-      '24060121130000',
-      session({ capturedAt: Date.now() - 2_592_000_001 }),
-    );
+    await store.set(session({ capturedAt: Date.now() - 2_592_000_001 }));
     const sso = { probe: jest.fn() };
     const service = new SessionKeepAliveService(
       store,
@@ -149,7 +155,7 @@ describe('SessionKeepAliveService.runCycle', () => {
 
   it('does not let a no-cookie SSO probe block a valid Kulon rotation', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set('24060121130000', session());
+    await store.set(session());
     const service = new SessionKeepAliveService(
       store,
       {
@@ -176,14 +182,14 @@ describe('SessionKeepAliveService.runCycle', () => {
 
     await service.runCycle();
 
-    expect(await store.get('24060121130000')).toMatchObject({
+    expect(await read(store)).toMatchObject({
       kulonCookie: 'MoodleSession=NEW',
     });
   });
 
   it('stops the user on a CAS conflict', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set('24060121130000', session());
+    await store.set(session());
     jest.spyOn(store, 'replaceIfUnchanged').mockResolvedValueOnce('conflict');
     const slide = jest.spyOn(store, 'getIfGeneration');
     const service = new SessionKeepAliveService(
@@ -212,14 +218,14 @@ describe('SessionKeepAliveService.runCycle', () => {
     await service.runCycle();
 
     expect(slide).not.toHaveBeenCalled();
-    expect((await store.get('24060121130000'))?.kulonCookie).toBe(
+    expect((await read(store))?.kulonCookie).toBe(
       'MoodleSession=OLD',
     );
   });
 
   it('backs off one rate-limited service without skipping the others', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set('24060121130000', session());
+    await store.set(session());
     const slide = jest.spyOn(store, 'getIfGeneration');
     const service = new SessionKeepAliveService(
       store,
@@ -246,12 +252,12 @@ describe('SessionKeepAliveService.runCycle', () => {
 
     await service.runCycle();
 
-    expect(slide).toHaveBeenCalledWith('24060121130000', GEN);
+    expect(slide).toHaveBeenCalledWith(REF);
   });
 
   it('logs a per-service outcome summary without cookie values', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set('24060121130000', session());
+    await store.set(session());
     const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
     const service = new SessionKeepAliveService(
       store,
@@ -286,7 +292,7 @@ describe('SessionKeepAliveService.runCycle', () => {
 
   it('never logs cookie values', async () => {
     const store = new InMemorySessionStore(60_000, 2_592_000_000);
-    await store.set('24060121130000', session());
+    await store.set(session());
     const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
     const service = new SessionKeepAliveService(
       store,

@@ -26,10 +26,10 @@ function makeAuthedSiapSvc(cache?: any): SiapService {
   // `identity` disertakan supaya record-nya mencerminkan sesi nyata: setiap
   // sesi tersimpan selalu membawa NIM (dipakai endpoint cookie-path untuk
   // menegakkan kepemilikan, mis. getNilaiDetail).
-  const record = { siapCookie: 'sia_app_session=TEST', identity: NIM, sessionGeneration: TEST_GEN, capturedAt: Date.now() };
+  const record = { siapCookie: 'sia_app_session=TEST', identity: NIM, clientId: 'client-a', sessionGeneration: TEST_GEN, capturedAt: Date.now() };
   const store = {
-    get: async () => record,
-    getIfGeneration: async (_s: string, g: string) => (g === TEST_GEN ? record : null),
+    getIfGeneration: async (r: any) => (r.sessionGeneration === TEST_GEN ? record : null),
+    listBySub: async () => [record],
   };
   return new SiapService(
     store as any,
@@ -55,10 +55,10 @@ const NIM = '24060121130000';
 /** Session-store fake shared by every service constructor below: the seam's
  *  getContext resolves identity from it (siapCookie + identity + emailSso). */
 const STORE = {
-  get: async () => ({ siapCookie: 's', identity: NIM, emailSso: EMAIL, sessionGeneration: TEST_GEN, capturedAt: Date.now() }),
-  getIfGeneration: async (_s: string, g: string) =>
-    g === TEST_GEN
-      ? { siapCookie: 's', identity: NIM, emailSso: EMAIL, sessionGeneration: TEST_GEN, capturedAt: Date.now() }
+  listBySub: async () => [{ siapCookie: 's', identity: NIM, clientId: 'client-a', emailSso: EMAIL, sessionGeneration: TEST_GEN, capturedAt: Date.now() }],
+  getIfGeneration: async (r: any) =>
+    r.sessionGeneration === TEST_GEN
+      ? { siapCookie: 's', identity: NIM, clientId: 'client-a', emailSso: EMAIL, sessionGeneration: TEST_GEN, capturedAt: Date.now() }
       : null,
   set: jest.fn(),
 };
@@ -133,7 +133,11 @@ function mockFetchRouting(
 }
 
 const TEST_GEN = 'a'.repeat(32);
-const ref = (sub: string, sessionGeneration: string = TEST_GEN) => ({ sub, sessionGeneration });
+const ref = (sub: string, sessionGeneration: string = TEST_GEN) => ({
+  sub,
+  clientId: 'client-a',
+  sessionGeneration,
+});
 
 describe('SiapService', () => {
   let svc: SiapService;
@@ -157,16 +161,17 @@ describe('SiapService', () => {
         ? {
             siapCookie: cookie,
             identity: '24060121130000',
+            clientId: 'client-a',
             emailSso: 'x@students.undip.ac.id',
             sessionGeneration: TEST_GEN,
             capturedAt: Date.now(),
           }
         : null;
       const store = {
-        get: jest.fn().mockResolvedValue(record),
-        getIfGeneration: jest.fn(async (_s: string, g: string) =>
-          record && (record as any).sessionGeneration === g ? record : null,
+        getIfGeneration: jest.fn(async (r: any) =>
+          record && record.sessionGeneration === r.sessionGeneration ? record : null,
         ),
+        listBySub: jest.fn(async () => (record ? [record] : [])),
         set: jest.fn(),
       };
       // REAL seam: getContext reads the session store and mints through
@@ -343,7 +348,6 @@ describe('SiapService', () => {
         capturedAt: Date.now(),
       };
       const noCookieStore = {
-        get: jest.fn().mockResolvedValue(session),
         getIfGeneration: jest.fn().mockResolvedValue(session),
         set: jest.fn(),
       };
@@ -503,7 +507,6 @@ describe('SiapService', () => {
         capturedAt: Date.now(),
       };
       const noCookieStore = {
-        get: jest.fn().mockResolvedValue(session),
         getIfGeneration: jest.fn().mockResolvedValue(session),
         set: jest.fn(),
       };
@@ -1112,18 +1115,22 @@ describe('SiapService', () => {
       // fallback (yg butuh fetch dashboard) — cukup store.
       const storeWithEmail = {
         ...STORE,
-        get: async () => ({
-          siapCookie: 'sia_app_session=TEST',
-          identity: NIM,
-          emailSso: EMAIL,
-          sessionGeneration: TEST_GEN,
-          capturedAt: Date.now(),
-        }),
-        getIfGeneration: async (_s: string, g: string) =>
-          g === TEST_GEN
+        listBySub: async () => [
+          {
+            siapCookie: 'sia_app_session=TEST',
+            identity: NIM,
+            clientId: 'client-a',
+            emailSso: EMAIL,
+            sessionGeneration: TEST_GEN,
+            capturedAt: Date.now(),
+          },
+        ],
+        getIfGeneration: async (ref: any) =>
+          ref.sessionGeneration === TEST_GEN
             ? {
                 siapCookie: 'sia_app_session=TEST',
                 identity: NIM,
+                clientId: 'client-a',
                 emailSso: EMAIL,
                 sessionGeneration: TEST_GEN,
                 capturedAt: Date.now(),
@@ -1170,18 +1177,22 @@ describe('SiapService', () => {
       });
       const storeWithEmail = {
         ...STORE,
-        get: async () => ({
-          siapCookie: 'sia_app_session=TEST',
-          identity: NIM,
-          emailSso: EMAIL,
-          sessionGeneration: TEST_GEN,
-          capturedAt: Date.now(),
-        }),
-        getIfGeneration: async (_s: string, g: string) =>
-          g === TEST_GEN
+        listBySub: async () => [
+          {
+            siapCookie: 'sia_app_session=TEST',
+            identity: NIM,
+            clientId: 'client-a',
+            emailSso: EMAIL,
+            sessionGeneration: TEST_GEN,
+            capturedAt: Date.now(),
+          },
+        ],
+        getIfGeneration: async (ref: any) =>
+          ref.sessionGeneration === TEST_GEN
             ? {
                 siapCookie: 'sia_app_session=TEST',
                 identity: NIM,
+                clientId: 'client-a',
                 emailSso: EMAIL,
                 sessionGeneration: TEST_GEN,
                 capturedAt: Date.now(),
@@ -1245,18 +1256,22 @@ describe('SiapService', () => {
       });
       const storeWithEmail = {
         ...STORE,
-        get: async () => ({
-          siapCookie: 'sia_app_session=TEST',
-          identity: NIM,
-          emailSso: EMAIL,
-          sessionGeneration: TEST_GEN,
-          capturedAt: Date.now(),
-        }),
-        getIfGeneration: async (_s: string, g: string) =>
-          g === TEST_GEN
+        listBySub: async () => [
+          {
+            siapCookie: 'sia_app_session=TEST',
+            identity: NIM,
+            clientId: 'client-a',
+            emailSso: EMAIL,
+            sessionGeneration: TEST_GEN,
+            capturedAt: Date.now(),
+          },
+        ],
+        getIfGeneration: async (ref: any) =>
+          ref.sessionGeneration === TEST_GEN
             ? {
                 siapCookie: 'sia_app_session=TEST',
                 identity: NIM,
+                clientId: 'client-a',
                 emailSso: EMAIL,
                 sessionGeneration: TEST_GEN,
                 capturedAt: Date.now(),
@@ -1452,7 +1467,6 @@ describe('SiapService', () => {
         capturedAt: Date.now(),
       };
       const noCookieStore = {
-        get: jest.fn().mockResolvedValue(noCookieSession),
         getIfGeneration: jest.fn().mockResolvedValue(noCookieSession),
       };
       apiMock.fetch
@@ -1571,7 +1585,6 @@ describe('SiapService', () => {
         capturedAt: Date.now(),
       };
       const noCookieStore = {
-        get: jest.fn().mockResolvedValue(noCookieSession),
         getIfGeneration: jest.fn().mockResolvedValue(noCookieSession),
       };
       const apiFailure = new Error('KHS API unavailable');
@@ -1702,18 +1715,22 @@ function makeApiSvc(
   cache?: any,
 ): SiapService {
   const store = {
-    get: async () => ({
-      siapCookie: 'sia_app_session=TEST',
-      identity: '24060121130000',
-      emailSso: 'anonim.sso@students.undip.ac.id',
-      sessionGeneration: TEST_GEN,
-      capturedAt: Date.now(),
-    }),
-    getIfGeneration: async (_s: string, g: string) =>
-      g === TEST_GEN
+    listBySub: async () => [
+      {
+        siapCookie: 'sia_app_session=TEST',
+        identity: '24060121130000',
+        clientId: 'client-a',
+        emailSso: 'anonim.sso@students.undip.ac.id',
+        sessionGeneration: TEST_GEN,
+        capturedAt: Date.now(),
+      },
+    ],
+    getIfGeneration: async (ref: any) =>
+      ref.sessionGeneration === TEST_GEN
         ? {
             siapCookie: 'sia_app_session=TEST',
             identity: '24060121130000',
+            clientId: 'client-a',
             emailSso: 'anonim.sso@students.undip.ac.id',
             sessionGeneration: TEST_GEN,
             capturedAt: Date.now(),
@@ -1874,9 +1891,9 @@ describe('API-backed methods', () => {
           '</div></html>',
       );
     const storeStub = {
-      get: async () => ({ siapCookie: 's', identity: '24060121130000', sessionGeneration: TEST_GEN, capturedAt: Date.now() }),
-      getIfGeneration: async (_s: string, g: string) =>
-        g === TEST_GEN ? { siapCookie: 's', identity: '24060121130000', sessionGeneration: TEST_GEN, capturedAt: Date.now() } : null,
+      listBySub: async () => [{ siapCookie: 's', identity: '24060121130000', clientId: 'client-a', sessionGeneration: TEST_GEN, capturedAt: Date.now() }],
+      getIfGeneration: async (ref: any) =>
+        ref.sessionGeneration === TEST_GEN ? { siapCookie: 's', identity: '24060121130000', clientId: 'client-a', sessionGeneration: TEST_GEN, capturedAt: Date.now() } : null,
     } as any;
     const svc = new SiapService(
       storeStub,

@@ -5,10 +5,27 @@ import { InMemoryNotificationStore } from './notification-store';
 import { CycleSendBudget } from './web-push.service';
 import { KulonAssignment } from '../kulon/kulon.service';
 import { SiapJadwal } from '../siap/siap.service';
+import { StaleUpstreamError } from '../upstream/stale-classification';
+import type { CapturedSession } from '../session/session-contract';
 const NOW = 1_756_000_000_000;
 // Di luar jendela deadline 24 jam — dipakai test yang BUKAN tentang deadline
 // agar findDueSoon tidak menambah push "Deadline 24 jam" ke f.sent.
 const DUE_FAR_SEC = Math.floor(NOW / 1000) + 72 * 3600;
+const SESSION_GEN = 'a'.repeat(32);
+
+/** One live device record; the poller selects it through withFirstLive. */
+function sessionFor(clientId: string, capturedAt = NOW): CapturedSession {
+  return {
+    identity: 'u1',
+    clientId,
+    ssoCookie: 'ci_session_sso=x',
+    microsoftCookie: '',
+    kulonCookie: 'MoodleSession=x',
+    siapCookie: 'sia_app_session=x',
+    capturedAt,
+    sessionGeneration: SESSION_GEN,
+  };
+}
 
 const A = (id: number, over: Partial<KulonAssignment> = {}): KulonAssignment => ({
   id,
@@ -31,9 +48,15 @@ const J = (tanggal: string): SiapJadwal => ({
 
 function makeFakes() {
   const store = new InMemoryNotificationStore(() => NOW);
-  // Background poller owns no JWT: it calls the explicit current-session APIs.
-  const kulon = { getAllAssignmentsForCurrentSession: async (): Promise<KulonAssignment[]> => [] };
-  const siap = { getJadwalForCurrentSession: async (): Promise<SiapJadwal[]> => [] };
+  // Background poller owns no JWT: withFirstLive resolves a per-device ref from
+  // this store, then the poller calls the token-facing, ref-scoped APIs.
+  const sessionStore = {
+    sessions: [sessionFor('client-a')],
+    listBySub: async (_sub: string): Promise<CapturedSession[]> =>
+      sessionStore.sessions,
+  };
+  const kulon = { getAllAssignments: async (): Promise<KulonAssignment[]> => [] };
+  const siap = { getJadwal: async (): Promise<SiapJadwal[]> => [] };
   const sent: Array<{ tokens: string[]; title: string }> = [];
   const fcm = {
     configured: true,
@@ -52,6 +75,7 @@ function makeFakes() {
     },
   };
   const poller = new NotificationsPoller(
+    sessionStore as any,
     store,
     kulon as any,
     siap as any,
@@ -60,7 +84,7 @@ function makeFakes() {
     { get: () => undefined } as any, // ConfigService — tak dipakai runCycle
     {} as any,                       // SchedulerRegistry — tak dipakai runCycle
   );
-  return { store, kulon, siap, sent, fcm, webSent, webPush, poller };
+  return { store, sessionStore, kulon, siap, sent, fcm, webSent, webPush, poller };
 }
 
 describe('NotificationsPoller.runCycle', () => {
@@ -72,8 +96,8 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('baseline pertama: tanpa push, snapshot tersimpan', async () => {
     const f = makeFakes();
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
-    f.siap.getJadwalForCurrentSession = async () => [J('2026-08-17')];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.siap.getJadwal = async () => [J('2026-08-17')];
     await f.store.addDeviceToken('u1', 'tok');
 
     const sum = await f.poller.runCycle(NOW);
@@ -87,11 +111,11 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('tugas baru -> push new_task', async () => {
     const f = makeFakes();
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
     await f.store.addDeviceToken('u1', 'tok');
     await f.poller.runCycle(NOW);
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [
+    f.kulon.getAllAssignments = async () => [
       A(1, { duedate: DUE_FAR_SEC }),
       A(2, { duedate: DUE_FAR_SEC }),
     ];
@@ -103,7 +127,7 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('sesi stale -> push re-login SEKALI; siklus berikut tidak dobel', async () => {
     const f = makeFakes();
-    f.kulon.getAllAssignmentsForCurrentSession = async () => {
+    f.kulon.getAllAssignments = async () => {
       throw new HttpException({ message: 'expired' }, HttpStatus.UNAUTHORIZED);
     };
     await f.store.addDeviceToken('u1', 'tok');
@@ -119,13 +143,13 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('sesi pulih -> flag direset', async () => {
     const f = makeFakes();
-    f.kulon.getAllAssignmentsForCurrentSession = async () => {
+    f.kulon.getAllAssignments = async () => {
       throw new HttpException({ message: 'expired' }, HttpStatus.UNAUTHORIZED);
     };
     await f.store.addDeviceToken('u1', 'tok');
     await f.poller.runCycle(NOW);
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1)];
+    f.kulon.getAllAssignments = async () => [A(1)];
     await f.poller.runCycle(NOW);
 
     expect(await f.store.getReloginFlagged('u1')).toBe(false);
@@ -133,11 +157,11 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('upstream error non-stale -> skip diam, snapshot lama tak tersentuh', async () => {
     const f = makeFakes();
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
     await f.store.addDeviceToken('u1', 'tok');
     await f.poller.runCycle(NOW);
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => {
+    f.kulon.getAllAssignments = async () => {
       throw new HttpException({ message: 'boom' }, HttpStatus.BAD_GATEWAY);
     };
     const sum = await f.poller.runCycle(NOW);
@@ -154,7 +178,7 @@ describe('NotificationsPoller.runCycle', () => {
     const warn = jest
       .spyOn((f.poller as any).logger, 'warn')
       .mockImplementation(() => undefined);
-    f.kulon.getAllAssignmentsForCurrentSession = async () => {
+    f.kulon.getAllAssignments = async () => {
       throw secret;
     };
     await f.store.addDeviceToken(subject, 'tok');
@@ -170,11 +194,11 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('reschedule -> push sekali; diff identik tak dikirim ulang', async () => {
     const f = makeFakes();
-    f.siap.getJadwalForCurrentSession = async () => [J('2026-08-17')];
+    f.siap.getJadwal = async () => [J('2026-08-17')];
     await f.store.addDeviceToken('u1', 'tok');
     await f.poller.runCycle(NOW);
 
-    f.siap.getJadwalForCurrentSession = async () => [J('2026-08-19')];
+    f.siap.getJadwal = async () => [J('2026-08-19')];
     await f.poller.runCycle(NOW);
     expect(f.sent.filter((s) => s.title === 'Jadwal berubah')).toHaveLength(1);
 
@@ -185,7 +209,7 @@ describe('NotificationsPoller.runCycle', () => {
   it('deadline in-window dipush sekali lalu dedup', async () => {
     const f = makeFakes();
     const soon = Math.floor(NOW / 1000) + 3600;
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: soon })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: soon })];
     await f.store.addDeviceToken('u1', 'tok');
 
     await f.poller.runCycle(NOW); // baseline + deadline terdeteksi langsung
@@ -197,7 +221,7 @@ describe('NotificationsPoller.runCycle', () => {
 
   it('user tanpa token dilewati; token invalid diprune', async () => {
     const f = makeFakes();
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1)];
+    f.kulon.getAllAssignments = async () => [A(1)];
 
     const none = await f.poller.runCycle(NOW); // belum ada subs
     expect(none.usersChecked).toBe(0);
@@ -220,7 +244,7 @@ describe('NotificationsPoller.runCycle', () => {
   it('web-only user (0 FCM token, 1 web sub) TIDAK early-return -> webPush.send dipanggil', async () => {
     const f = makeFakes();
     (f as any).webPush.configured = true;
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
     await f.store.addWebSubscription('u1', {
       endpoint: 'https://pusher/abc',
       p256dh: 'pk',
@@ -228,7 +252,7 @@ describe('NotificationsPoller.runCycle', () => {
     });
     await f.poller.runCycle(NOW); // baseline
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [
+    f.kulon.getAllAssignments = async () => [
       A(1, { duedate: DUE_FAR_SEC }),
       A(2, { duedate: DUE_FAR_SEC }),
     ];
@@ -245,7 +269,7 @@ describe('NotificationsPoller.runCycle', () => {
   it('user dgn kedua token + web sub -> FCM & web sama-sama terkirim', async () => {
     const f = makeFakes();
     (f as any).webPush.configured = true;
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
     await f.store.addDeviceToken('u1', 'tok');
     await f.store.addWebSubscription('u1', {
       endpoint: 'https://pusher/abc',
@@ -254,7 +278,7 @@ describe('NotificationsPoller.runCycle', () => {
     });
     await f.poller.runCycle(NOW); // baseline
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [
+    f.kulon.getAllAssignments = async () => [
       A(1, { duedate: DUE_FAR_SEC }),
       A(2, { duedate: DUE_FAR_SEC }),
     ];
@@ -270,14 +294,14 @@ describe('NotificationsPoller.runCycle', () => {
   it('invalid web sub (statusCode 410) -> removeWebSubscription dipanggil', async () => {
     const f = makeFakes();
     (f as any).webPush.configured = true;
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
     const sub1 = { endpoint: 'https://pusher/bad', p256dh: 'pk', auth: 'auth' };
     const sub2 = { endpoint: 'https://pusher/ok', p256dh: 'pk', auth: 'auth' };
     await f.store.addWebSubscription('u1', sub1);
     await f.store.addWebSubscription('u1', sub2);
     await f.poller.runCycle(NOW); // baseline
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [
+    f.kulon.getAllAssignments = async () => [
       A(1, { duedate: DUE_FAR_SEC }),
       A(2, { duedate: DUE_FAR_SEC }),
     ];
@@ -291,7 +315,7 @@ describe('NotificationsPoller.runCycle', () => {
   it('web-only user tanpa webPush.configured -> web tidak dikirim (no-op)', async () => {
     const f = makeFakes();
     (f as any).webPush.configured = false;
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
     await f.store.addWebSubscription('u1', {
       endpoint: 'https://pusher/abc',
       p256dh: 'pk',
@@ -299,7 +323,7 @@ describe('NotificationsPoller.runCycle', () => {
     });
     await f.poller.runCycle(NOW);
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [
+    f.kulon.getAllAssignments = async () => [
       A(1, { duedate: DUE_FAR_SEC }),
       A(2, { duedate: DUE_FAR_SEC }),
     ];
@@ -312,7 +336,7 @@ describe('NotificationsPoller.runCycle', () => {
   it('runCycle owns ONE budget and passes the SAME instance to every web delivery', async () => {
     const f = makeFakes();
     (f as any).webPush.configured = true;
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
     await f.store.addWebSubscription('u1', {
       endpoint: 'https://pusher/a', p256dh: 'pk', auth: 'auth',
     });
@@ -329,7 +353,7 @@ describe('NotificationsPoller.runCycle', () => {
     const override = new CycleSendBudget(50);
     await f.poller.runCycle(NOW, undefined, override); // baseline (no events)
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [
+    f.kulon.getAllAssignments = async () => [
       A(1, { duedate: DUE_FAR_SEC }),
       A(2, { duedate: DUE_FAR_SEC }),
     ];
@@ -344,7 +368,7 @@ describe('NotificationsPoller.runCycle', () => {
   it('exhausted cycle budget gates ONLY Web Push; FCM delivery is independent and pushesSent counts event deliveries', async () => {
     const f = makeFakes();
     (f as any).webPush.configured = true;
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [A(1, { duedate: DUE_FAR_SEC })];
+    f.kulon.getAllAssignments = async () => [A(1, { duedate: DUE_FAR_SEC })];
     // u1 has BOTH an FCM token and a web subscription; u2 has only a web sub —
     // so an exhausted budget must suppress u1's AND u2's web delivery while
     // u1's FCM (independent, multicast) still goes out.
@@ -357,7 +381,7 @@ describe('NotificationsPoller.runCycle', () => {
     });
     await f.poller.runCycle(NOW); // baseline snapshots
 
-    f.kulon.getAllAssignmentsForCurrentSession = async () => [
+    f.kulon.getAllAssignments = async () => [
       A(1, { duedate: DUE_FAR_SEC }),
       A(2, { duedate: DUE_FAR_SEC }),
     ];
@@ -375,6 +399,52 @@ describe('NotificationsPoller.runCycle', () => {
     // with the web batch budget-dropped), each counting 1.
     expect(sum.pushesSent).toBe(2);
   });
+
+  it('slice Kulon stale tidak memblokir event SIAP; re-login tetap dikirim SEKALI', async () => {
+    const f = makeFakes();
+    f.siap.getJadwal = async () => [J('2026-08-17')];
+    await f.store.addDeviceToken('u1', 'tok');
+    await f.poller.runCycle(NOW); // baseline jadwal
+
+    f.kulon.getAllAssignments = async () => {
+      throw new StaleUpstreamError('Kulon', 'login-redirect');
+    };
+    f.siap.getJadwal = async () => [J('2026-08-19')];
+    await f.poller.runCycle(NOW);
+
+    // Slice SIAP tetap diproses walau Kulon stale ...
+    expect(f.sent.filter((s) => s.title === 'Jadwal berubah')).toHaveLength(1);
+    // ... dan re-login tetap dikirim untuk slice yang benar-benar mati.
+    expect(f.sent.filter((s) => s.title === 'Sesi berakhir')).toHaveLength(1);
+
+    // Episode yang sama tidak memicu push re-login kedua walau Kulon masih stale.
+    await f.poller.runCycle(NOW);
+    expect(f.sent.filter((s) => s.title === 'Sesi berakhir')).toHaveLength(1);
+  });
+
+  it('perangkat terbaru stale -> fallback ke perangkat live yang lebih lama', async () => {
+    const f = makeFakes();
+    f.sessionStore.sessions = [
+      sessionFor('client-old', NOW - 1_000),
+      sessionFor('client-new', NOW),
+    ];
+    const tried: string[] = [];
+    (f.kulon as any).getAllAssignments = async (ref: { clientId: string }) => {
+      tried.push(ref.clientId);
+      if (ref.clientId === 'client-new') {
+        throw new StaleUpstreamError('Kulon', 'login-redirect');
+      }
+      return [A(1, { duedate: DUE_FAR_SEC })];
+    };
+    await f.store.addDeviceToken('u1', 'tok');
+
+    const sum = await f.poller.runCycle(NOW);
+
+    expect(tried).toEqual(['client-new', 'client-old']);
+    expect(sum.pushesSent).toBe(0); // device lama menghasilkan baseline, bukan error
+    expect(await f.store.getSnapshot('u1', 'assignments')).toHaveLength(1);
+    expect(f.sent.filter((s) => s.title === 'Sesi berakhir')).toHaveLength(0);
+  });
 });
 
 describe('NotificationsPoller.onApplicationBootstrap', () => {
@@ -388,6 +458,7 @@ describe('NotificationsPoller.onApplicationBootstrap', () => {
     (f as any).webPush.configured = opts.webPushConfigured;
     const addCronJob = opts.sched?.addCronJob ?? jest.fn();
     const poller = new NotificationsPoller(
+      f.sessionStore as any,
       f.store,
       f.kulon as any,
       f.siap as any,
