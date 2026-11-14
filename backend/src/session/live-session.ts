@@ -45,5 +45,5 @@ export async function readLiveSession(
   ref: unknown,
 ): Promise<CapturedSession | null> {
   if (!isSessionRef(ref)) return null;
-  return store.getIfGeneration(ref.sub, ref.sessionGeneration);
+  return store.getIfGeneration(ref);
 }

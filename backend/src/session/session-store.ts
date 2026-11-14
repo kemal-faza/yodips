@@ -1,4 +1,4 @@
-import { CapturedSession } from './session-contract';
+import type { CapturedSession, SessionRef } from './session-contract';
 
 // Backward-compatible re-export: `SessionRef`/`isSessionRef` now live in the
 // dependency-neutral contract so controllers/pairing/dashboard stop importing
@@ -8,13 +8,13 @@ export { isSessionRef } from './session-contract';
 export type { SessionRef } from './session-contract';
 
 /**
- * Session store interface, keyed by user identity (NIM).
- * Implementations are async and apply a TTL (sliding on access) PLUS an
- * optional ABSOLUTE lifetime: implementations that receive `absoluteMs`
- * return null from `get()` when `now - session.capturedAt >= absoluteMs`,
- * independent of the sliding TTL (refresh can never extend a session past
- * its absolute bound — YD-AUTH-001). When `absoluteMs` is absent the store
- * behaves exactly as sliding-only.
+ * Session store interface, keyed by the composite `<sub>:<clientId>` (NIM plus
+ * device/surface ID). Implementations are async and apply a TTL (sliding on
+ * access) PLUS an optional ABSOLUTE lifetime: implementations that receive
+ * `absoluteMs` return null from `getIfGeneration()`/`all()` when
+ * `now - session.capturedAt >= absoluteMs`, independent of the sliding TTL
+ * (refresh can never extend a session past its absolute bound — YD-AUTH-001).
+ * When `absoluteMs` is absent the store behaves exactly as sliding-only.
  * `capturedAt` is lifetime only; the JWT/session binding is the
  * collision-proof `sessionGeneration` (32 lowercase hex).
  * Bound to the DI token `SessionStore`; swap via SESSION_BACKEND.
@@ -30,18 +30,16 @@ export type { SessionRef } from './session-contract';
  * data request with 401 SESSION_DEAD.
  */
 export abstract class SessionStore {
-  abstract set(identity: string, session: CapturedSession): Promise<void>;
-  abstract get(identity: string): Promise<CapturedSession | null>;
-  abstract clear(identity: string): Promise<void>;
-  abstract all(): Promise<CapturedSession[]>;
+  abstract set(session: CapturedSession): Promise<void>;
   /**
-   * Generation-qualified snapshot: return the live record for `identity`
-   * ONLY if its `sessionGeneration` exactly equals `generation`.
+   * Device- and generation-qualified snapshot: return the live record for
+   * `ref.sub` + `ref.clientId` ONLY if its `sessionGeneration` exactly equals
+   * `ref.sessionGeneration`.
    * - No record, expired/sliding-dead, absolute-dead, legacy (no generation),
    *   or generation mismatch → null (mismatch/dead must NEVER slide the TTL
    *   or destroy the live record).
-   * - Match → the live session (implementations slide the TTL exactly as
-   *   `get()` does on a live hit).
+   * - Match → the live session (implementations slide the TTL exactly as a
+   *   live read does).
    * InMemory performs check+return synchronously (no await between them, so
    * no interleaving). Redis GETs the envelope, enforces the absolute cap
    * BEFORE the generation compare (CAS-cleanup on dead, null either way),
@@ -51,19 +49,19 @@ export abstract class SessionStore {
    * generation, and a B-replacement between the two is a null (SESSION_DEAD)
    * instead of a silent use of B's cookies.
    */
-  abstract getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null>;
+  abstract getIfGeneration(ref: SessionRef): Promise<CapturedSession | null>;
   /** Atomically replace a snapshot only while it still equals the value read
-   * before upstream validation. `dead` means the requested generation has no
-   * live record; `conflict` means a newer update won and must be preserved. */
+   * before upstream validation. `dead` means the requested device/generation
+   * has no live record; `conflict` means a newer update won and must be
+   * preserved. */
   abstract replaceIfUnchanged(
-    identity: string,
-    generation: string,
+    ref: SessionRef,
     expected: CapturedSession,
     replacement: CapturedSession,
   ): Promise<'updated' | 'conflict' | 'dead'>;
   /**
-   * Atomic compare-and-clear: delete the record for `identity` ONLY if its
-   * live `sessionGeneration` exactly equals `generation`.
+   * Atomic compare-and-clear: delete the record for `ref.sub` + `ref.clientId`
+   * ONLY if its live `sessionGeneration` exactly equals `ref.sessionGeneration`.
    * - No record (or already-expired/absolute-dead record) → true (idempotent ok).
    * - Generation mismatch, or the CAS lost to a newer record → false (caller
    *   maps to SESSION_DEAD and must NEVER clear the newer session).
@@ -71,12 +69,25 @@ export abstract class SessionStore {
    * interleaving). Redis reads the envelope, checks the decrypted generation,
    * then Lua-compare-and-DELs the exact raw envelope read (false if changed).
    */
-  abstract clearIfGeneration(identity: string, generation: string): Promise<boolean>;
+  abstract clearIfGeneration(ref: SessionRef): Promise<boolean>;
+  /** Every live record owned by `sub` (one per device). */
+  abstract listBySub(sub: string): Promise<CapturedSession[]>;
+  /** Remove every record owned by `sub`; returns the number removed. */
+  abstract clearAllForSub(sub: string): Promise<number>;
+  /** Every live record across all users (background jobs only). */
+  abstract all(): Promise<CapturedSession[]>;
+  /**
+   * One-time startup migration of pre-device keys (`sso:session:<sub>`) to
+   * the composite key with `clientId: legacy`. InMemory has nothing to
+   * migrate and returns zeroes.
+   */
+  abstract migrateLegacyKeys(): Promise<{ scanned: number; migrated: number }>;
 }
 
 /** Full session snapshot comparison shared by both storage adapters. */
 export function sameCapturedSession(a: CapturedSession, b: CapturedSession): boolean {
   return a.identity === b.identity &&
+    a.clientId === b.clientId &&
     a.ssoCookie === b.ssoCookie &&
     a.microsoftCookie === b.microsoftCookie &&
     a.kulonCookie === b.kulonCookie &&
@@ -88,15 +99,16 @@ export function sameCapturedSession(a: CapturedSession, b: CapturedSession): boo
 
 /** Enforce the immutable fields of an in-place Kulon-cookie renewal. */
 export function isKulonCookieRenewal(
-  identity: string,
-  generation: string,
+  ref: SessionRef,
   expected: CapturedSession,
   replacement: CapturedSession,
 ): boolean {
-  return expected.identity === identity &&
-    expected.sessionGeneration === generation &&
-    replacement.identity === identity &&
-    replacement.sessionGeneration === generation &&
+  return expected.identity === ref.sub &&
+    expected.clientId === ref.clientId &&
+    expected.sessionGeneration === ref.sessionGeneration &&
+    replacement.identity === expected.identity &&
+    replacement.clientId === expected.clientId &&
+    replacement.sessionGeneration === expected.sessionGeneration &&
     replacement.kulonCookie.trim().length > 0 &&
     replacement.kulonCookie !== expected.kulonCookie &&
     replacement.capturedAt === expected.capturedAt &&
@@ -108,15 +120,16 @@ export function isKulonCookieRenewal(
 
 /** Enforce the immutable fields of an in-place SIAP-cookie renewal. */
 export function isSiapCookieRenewal(
-  identity: string,
-  generation: string,
+  ref: SessionRef,
   expected: CapturedSession,
   replacement: CapturedSession,
 ): boolean {
-  return expected.identity === identity &&
-    expected.sessionGeneration === generation &&
-    replacement.identity === identity &&
-    replacement.sessionGeneration === generation &&
+  return expected.identity === ref.sub &&
+    expected.clientId === ref.clientId &&
+    expected.sessionGeneration === ref.sessionGeneration &&
+    replacement.identity === expected.identity &&
+    replacement.clientId === expected.clientId &&
+    replacement.sessionGeneration === expected.sessionGeneration &&
     replacement.siapCookie.trim().length > 0 &&
     replacement.siapCookie !== expected.siapCookie &&
     replacement.kulonCookie === expected.kulonCookie &&
@@ -128,15 +141,16 @@ export function isSiapCookieRenewal(
 
 /** Enforce the immutable fields of an in-place SSO-cookie renewal. */
 export function isSsoCookieRenewal(
-  identity: string,
-  generation: string,
+  ref: SessionRef,
   expected: CapturedSession,
   replacement: CapturedSession,
 ): boolean {
-  return expected.identity === identity &&
-    expected.sessionGeneration === generation &&
-    replacement.identity === identity &&
-    replacement.sessionGeneration === generation &&
+  return expected.identity === ref.sub &&
+    expected.clientId === ref.clientId &&
+    expected.sessionGeneration === ref.sessionGeneration &&
+    replacement.identity === expected.identity &&
+    replacement.clientId === expected.clientId &&
+    replacement.sessionGeneration === expected.sessionGeneration &&
     replacement.ssoCookie.trim().length > 0 &&
     replacement.ssoCookie !== expected.ssoCookie &&
     replacement.capturedAt === expected.capturedAt &&
@@ -148,12 +162,11 @@ export function isSsoCookieRenewal(
 
 /** Permit exactly one changed upstream cookie while keeping the session binding. */
 export function isUpstreamCookieRenewal(
-  identity: string,
-  generation: string,
+  ref: SessionRef,
   expected: CapturedSession,
   replacement: CapturedSession,
 ): boolean {
-  return isKulonCookieRenewal(identity, generation, expected, replacement) ||
-    isSiapCookieRenewal(identity, generation, expected, replacement) ||
-    isSsoCookieRenewal(identity, generation, expected, replacement);
+  return isKulonCookieRenewal(ref, expected, replacement) ||
+    isSiapCookieRenewal(ref, expected, replacement) ||
+    isSsoCookieRenewal(ref, expected, replacement);
 }

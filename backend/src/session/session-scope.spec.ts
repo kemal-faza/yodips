@@ -12,8 +12,8 @@ import { classifyCacheKey } from '../cache/cache-policy';
 
 const GEN_A = 'a'.repeat(32);
 const GEN_B = 'b'.repeat(32);
-const refA = { sub: 'U1', sessionGeneration: GEN_A };
-const refB = { sub: 'U1', sessionGeneration: GEN_B };
+const refA = { sub: 'U1', clientId: 'client-a', sessionGeneration: GEN_A };
+const refB = { sub: 'U1', clientId: 'client-a', sessionGeneration: GEN_B };
 
 describe('session-scope (generation-scoped coordination keys)', () => {
   it('exposes a current-session namespace literal that can never be a generation', () => {
@@ -73,9 +73,10 @@ describe('session-scope (generation-scoped coordination keys)', () => {
 
   it('rejects a malformed SessionRef with 401 SESSION_DEAD (never builds a key)', () => {
     for (const bad of [
-      { sub: 'U1', sessionGeneration: 'not-hex' },
-      { sub: '', sessionGeneration: GEN_A },
-      { sub: 'U1' },
+      { sub: 'U1', clientId: 'client-a', sessionGeneration: 'not-hex' },
+      { sub: '', clientId: 'client-a', sessionGeneration: GEN_A },
+      { sub: 'U1', sessionGeneration: GEN_A },
+      { sub: 'U1', clientId: 'client-a' },
       null,
     ]) {
       let error: unknown;
@@ -98,22 +99,36 @@ describe('session-scope (generation-scoped coordination keys)', () => {
     expect(() => cacheKeyForCurrent('', 'siap', 'jadwal')).toThrow(TypeError);
   });
 
-  it('currentRefForSession resolves a SessionRef from the live record, null otherwise', () => {
+  it('currentRefForSession resolves a device SessionRef from the live record, null otherwise', () => {
     expect(
       currentRefForSession('U1', {
         identity: 'U1',
+        clientId: 'client-a',
         sessionGeneration: GEN_B,
       }),
-    ).toEqual({ sub: 'U1', sessionGeneration: GEN_B });
+    ).toEqual({ sub: 'U1', clientId: 'client-a', sessionGeneration: GEN_B });
     expect(currentRefForSession('U1', null)).toBeNull();
-    // Legacy record without a generation can never scope a key.
+    // Legacy record without a client ID or generation can never scope a key.
     expect(
-      currentRefForSession('U1', { identity: 'U1' }),
+      currentRefForSession('U1', { identity: 'U1', sessionGeneration: GEN_B }),
+    ).toBeNull();
+    expect(
+      currentRefForSession('U1', { identity: 'U1', clientId: 'client-a' }),
     ).toBeNull();
     // A record for another identity never scopes this sub.
     expect(
-      currentRefForSession('U1', { identity: 'U2', sessionGeneration: GEN_B }),
+      currentRefForSession('U1', {
+        identity: 'U2',
+        clientId: 'client-a',
+        sessionGeneration: GEN_B,
+      }),
     ).toBeNull();
-    expect(currentRefForSession('', { identity: 'U1', sessionGeneration: GEN_B })).toBeNull();
+    expect(
+      currentRefForSession('', {
+        identity: 'U1',
+        clientId: 'client-a',
+        sessionGeneration: GEN_B,
+      }),
+    ).toBeNull();
   });
 });
