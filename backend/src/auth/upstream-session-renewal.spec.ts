@@ -15,20 +15,34 @@ import { AuthService } from './auth.service';
 import { UpstreamSessionRenewalDto } from './dto/upstream-session-renewal.dto';
 
 const SUB = '24060121130077';
+const CLIENT_A = 'client-a';
+const CLIENT_B = 'client-b';
 const GENERATION = 'a'.repeat(32);
 const OLD_COOKIE = 'MoodleSession=old-session-value';
 const NEW_COOKIE = 'MoodleSession=new-session-value';
 
-function capturedSession(): CapturedSession {
+function capturedSession(
+  clientId = CLIENT_A,
+  sessionGeneration = GENERATION,
+): CapturedSession {
   return {
     identity: SUB,
+    clientId,
     ssoCookie: 'ci_session_sso=keep-sso',
     microsoftCookie: 'MSAL=keep-microsoft',
     kulonCookie: OLD_COOKIE,
     siapCookie: 'sia_app_session=keep-siap',
     emailSso: 'student@example.test',
     capturedAt: 1_700_000_000_000,
-    sessionGeneration: GENERATION,
+    sessionGeneration,
+  };
+}
+
+function refFor(session: CapturedSession) {
+  return {
+    sub: session.identity,
+    clientId: session.clientId,
+    sessionGeneration: session.sessionGeneration,
   };
 }
 
@@ -72,20 +86,20 @@ describe('AuthService.upstream-session renewal', () => {
   it('validates SIAP identity and replaces only the SIAP cookie for the same generation', async () => {
     const store = new InMemorySessionStore(60_000);
     const original = capturedSession();
-    await store.set(SUB, original);
+    await store.set(original);
     const validateSiap = jest.fn(async () => ({ kind: 'valid' as const, identity: SUB }));
     const service = makeAuthService(store, undefined, validateSiap);
     const cookie = 'sia_app_session=new-siap';
 
     const result = await service.renewUpstreamSession(
       { service: 'siap', cookie } as unknown as UpstreamSessionRenewalDto,
-      { sub: SUB, sessionGeneration: GENERATION },
+      { sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION },
     );
 
     expect(validateSiap).toHaveBeenCalledWith(cookie);
     expect(result).toEqual({ service: 'siap', status: 'renewed' });
     expect(JSON.stringify(result)).not.toContain(cookie);
-    expect(await store.getIfGeneration(SUB, GENERATION)).toEqual({ ...original, siapCookie: cookie });
+    expect(await store.getIfGeneration(refFor(original))).toEqual({ ...original, siapCookie: cookie });
   });
 
   it.each([
@@ -94,39 +108,39 @@ describe('AuthService.upstream-session renewal', () => {
   ] as const)('accepts a revalidated %s cookie even when its value did not rotate', async (target, cookie) => {
     const store = new InMemorySessionStore(60_000);
     const original = capturedSession();
-    await store.set(SUB, original);
+    await store.set(original);
     const service = makeAuthService(store);
     await expect(service.renewUpstreamSession(
-      { service: target, cookie }, { sub: SUB, sessionGeneration: GENERATION },
+      { service: target, cookie }, { sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION },
     )).resolves.toEqual({ service: target, status: 'renewed' });
-    expect(await store.getIfGeneration(SUB, GENERATION)).toEqual(original);
+    expect(await store.getIfGeneration(refFor(original))).toEqual(original);
   });
 
   it('preserves both services when Android and web sharing a generation renew simultaneously', async () => {
     const store = new InMemorySessionStore(60_000);
     const original = capturedSession();
-    await store.set(SUB, original);
+    await store.set(original);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const validate = jest.fn(async () => { await gate; return { kind: 'valid' as const, identity: SUB }; });
     const service = makeAuthService(store, validate, validate);
-    const user = { sub: SUB, sessionGeneration: GENERATION };
+    const user = { sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION };
     const kulon = service.renewUpstreamSession({ service: 'kulon', cookie: NEW_COOKIE }, user);
     const siap = service.renewUpstreamSession({ service: 'siap', cookie: 'sia_app_session=new' }, user);
     await Promise.resolve();
     release();
     const results = await Promise.allSettled([kulon, siap]);
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(2);
-    const first = await store.getIfGeneration(SUB, GENERATION);
+    const first = await store.getIfGeneration(refFor(original));
     expect(first?.capturedAt).toBe(original.capturedAt);
-    expect(await store.getIfGeneration(SUB, GENERATION)).toEqual({
+    expect(await store.getIfGeneration(refFor(original))).toEqual({
       ...original, kulonCookie: NEW_COOKIE, siapCookie: 'sia_app_session=new',
     });
   });
 
   it('does not let an old device overwrite a new login for the same account', async () => {
     const store = new InMemorySessionStore(60_000);
-    await store.set(SUB, capturedSession());
+    await store.set(capturedSession());
     const auth = new AuthService(
       store,
       { signAsync: jest.fn().mockResolvedValue('new-web-token') } as unknown as JwtService,
@@ -138,28 +152,65 @@ describe('AuthService.upstream-session renewal', () => {
       } as unknown as KulonService,
       {} as SiapService,
     );
-    const web = await auth.handleSessionHandoff({ kulonCookie: 'MoodleSession=web' });
+    const web = await auth.handleSessionHandoff({
+      kulonCookie: 'MoodleSession=web',
+      clientId: CLIENT_A,
+    });
     expect(web.sessionGeneration).not.toBe(GENERATION);
     await rejectedWithCode(auth.renewUpstreamSession(dto(), {
-      sub: SUB, sessionGeneration: GENERATION,
+      sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION,
     }), 401, 'SESSION_DEAD');
-    expect((await store.getIfGeneration(SUB, web.sessionGeneration))?.kulonCookie).toBe('MoodleSession=web');
+    expect((await store.getIfGeneration({ sub: SUB, clientId: CLIENT_A, sessionGeneration: web.sessionGeneration }))?.kulonCookie).toBe('MoodleSession=web');
+  });
+
+  it('renewing device A cannot touch the live session of device B', async () => {
+    const store = new InMemorySessionStore(60_000);
+    const deviceA = capturedSession(CLIENT_A, 'a'.repeat(32));
+    const deviceB = capturedSession(CLIENT_B, 'b'.repeat(32));
+    await store.set(deviceA);
+    await store.set(deviceB);
+    const service = makeAuthService(store);
+
+    // A's token presenting B's generation must not resolve B's record.
+    await rejectedWithCode(
+      service.renewUpstreamSession(dto(), {
+        sub: SUB,
+        clientId: CLIENT_A,
+        sessionGeneration: deviceB.sessionGeneration,
+      }),
+      401,
+      'SESSION_DEAD',
+    );
+
+    await expect(
+      service.renewUpstreamSession(dto(), {
+        sub: SUB,
+        clientId: CLIENT_A,
+        sessionGeneration: deviceA.sessionGeneration,
+      }),
+    ).resolves.toEqual({ service: 'kulon', status: 'renewed' });
+
+    expect(await store.getIfGeneration(refFor(deviceA))).toEqual({
+      ...deviceA,
+      kulonCookie: NEW_COOKIE,
+    });
+    expect(await store.getIfGeneration(refFor(deviceB))).toEqual(deviceB);
   });
 
   it('does not overwrite a newer cookie for the same service after a concurrent renewal', async () => {
     const store = new InMemorySessionStore(60_000);
     const original = capturedSession();
-    await store.set(SUB, original);
+    await store.set(original);
     const validate = jest.fn(async () => {
-      await store.set(SUB, { ...original, siapCookie: 'sia_app_session=newer' });
+      await store.set({ ...original, siapCookie: 'sia_app_session=newer' });
       return { kind: 'valid' as const, identity: SUB };
     });
     const service = makeAuthService(store, undefined, validate);
     await rejectedWithCode(service.renewUpstreamSession(
       { service: 'siap', cookie: 'sia_app_session=older' },
-      { sub: SUB, sessionGeneration: GENERATION },
+      { sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION },
     ), 409, 'UPSTREAM_SESSION_CONFLICT');
-    expect((await store.getIfGeneration(SUB, GENERATION))?.siapCookie).toBe('sia_app_session=newer');
+    expect((await store.getIfGeneration(refFor(original)))?.siapCookie).toBe('sia_app_session=newer');
   });
 
   it('allows renewal before seven days but never extends the absolute lifetime', async () => {
@@ -170,14 +221,14 @@ describe('AuthService.upstream-session renewal', () => {
       jest.setSystemTime(start);
       const original = { ...capturedSession(), capturedAt: start };
       const store = new InMemorySessionStore(week, week);
-      await store.set(SUB, original);
+      await store.set(original);
       const service = makeAuthService(store);
       jest.setSystemTime(start + week - 1);
-      await expect(service.renewUpstreamSession(dto(), { sub: SUB, sessionGeneration: GENERATION }))
+      await expect(service.renewUpstreamSession(dto(), { sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION }))
         .resolves.toEqual({ service: 'kulon', status: 'renewed' });
       jest.setSystemTime(start + week);
       await rejectedWithCode(service.renewUpstreamSession(
-        { service: 'siap', cookie: 'sia_app_session=new' }, { sub: SUB, sessionGeneration: GENERATION },
+        { service: 'siap', cookie: 'sia_app_session=new' }, { sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION },
       ), 401, 'SESSION_DEAD');
     } finally {
       jest.useRealTimers();
@@ -191,23 +242,23 @@ describe('AuthService.upstream-session renewal', () => {
   ])('preserves the session when SIAP validation returns %j', async (validation, status, code) => {
     const store = new InMemorySessionStore(60_000);
     const original = capturedSession();
-    await store.set(SUB, original);
+    await store.set(original);
     const service = makeAuthService(store, undefined, jest.fn(async () => validation));
     await rejectedWithCode(
       service.renewUpstreamSession(
         { service: 'siap', cookie: 'sia_app_session=new-siap' } as unknown as UpstreamSessionRenewalDto,
-        { sub: SUB, sessionGeneration: GENERATION },
+        { sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION },
       ),
       status,
       code,
     );
-    expect(await store.getIfGeneration(SUB, GENERATION)).toEqual(original);
+    expect(await store.getIfGeneration(refFor(original))).toEqual(original);
   });
 
   it('validates the JWT-bound Kulon identity and CAS-replaces only the Kulon cookie', async () => {
     const store = new InMemorySessionStore(60_000);
     const original = capturedSession();
-    await store.set(SUB, original);
+    await store.set(original);
     const validate = jest.fn(async () => ({
       kind: 'valid' as const,
       identity: SUB,
@@ -216,13 +267,14 @@ describe('AuthService.upstream-session renewal', () => {
 
     const result = await service.renewUpstreamSession(dto(), {
       sub: SUB,
+      clientId: CLIENT_A,
       sessionGeneration: GENERATION,
     });
 
     expect(validate).toHaveBeenCalledWith(NEW_COOKIE);
     expect(result).toEqual({ service: 'kulon', status: 'renewed' });
     expect(JSON.stringify(result)).not.toContain(NEW_COOKIE);
-    expect(await store.getIfGeneration(SUB, GENERATION)).toEqual({
+    expect(await store.getIfGeneration(refFor(original))).toEqual({
       ...original,
       kulonCookie: NEW_COOKIE,
     });
@@ -239,6 +291,7 @@ describe('AuthService.upstream-session renewal', () => {
     await rejectedWithCode(
       service.renewUpstreamSession(dto(), {
         sub: SUB,
+        clientId: CLIENT_A,
         sessionGeneration: GENERATION,
       }),
       401,
@@ -256,13 +309,14 @@ describe('AuthService.upstream-session renewal', () => {
     'rejects %s as UPSTREAM_SESSION_INVALID without probing',
     async (_label, cookie) => {
       const store = new InMemorySessionStore(60_000);
-      await store.set(SUB, capturedSession());
+      await store.set(capturedSession());
       const validate = jest.fn();
       const service = makeAuthService(store, validate);
 
       await rejectedWithCode(
         service.renewUpstreamSession(dto(cookie), {
           sub: SUB,
+          clientId: CLIENT_A,
           sessionGeneration: GENERATION,
         }),
         422,
@@ -279,7 +333,7 @@ describe('AuthService.upstream-session renewal', () => {
     'rejects an invalid or other-identity Kulon cookie',
     async (validation, _identity) => {
       const store = new InMemorySessionStore(60_000);
-      await store.set(SUB, capturedSession());
+      await store.set(capturedSession());
       const service = makeAuthService(
         store,
         jest.fn(async () => validation),
@@ -288,25 +342,31 @@ describe('AuthService.upstream-session renewal', () => {
       await rejectedWithCode(
         service.renewUpstreamSession(dto(), {
           sub: SUB,
+          clientId: CLIENT_A,
           sessionGeneration: GENERATION,
         }),
         422,
         'UPSTREAM_SESSION_INVALID',
       );
-      expect(await store.getIfGeneration(SUB, GENERATION)).toEqual(
-        capturedSession(),
-      );
+      expect(
+        await store.getIfGeneration({
+          sub: SUB,
+          clientId: CLIENT_A,
+          sessionGeneration: GENERATION,
+        }),
+      ).toEqual(capturedSession());
     },
   );
 
   it('maps verification failures to UPSTREAM_UNAVAILABLE and does not write', async () => {
     const store = new InMemorySessionStore(60_000);
-    await store.set(SUB, capturedSession());
+    await store.set(capturedSession());
     const validate = jest.fn(async () => ({ kind: 'unavailable' as const }));
     const service = makeAuthService(store, validate);
     const error = await rejectedWithCode(
       service.renewUpstreamSession(dto(), {
         sub: SUB,
+        clientId: CLIENT_A,
         sessionGeneration: GENERATION,
       }),
       502,
@@ -314,9 +374,13 @@ describe('AuthService.upstream-session renewal', () => {
     );
 
     expect(JSON.stringify(error.getResponse())).not.toContain(NEW_COOKIE);
-    expect(await store.getIfGeneration(SUB, GENERATION)).toEqual(
-      capturedSession(),
-    );
+    expect(
+      await store.getIfGeneration({
+        sub: SUB,
+        clientId: CLIENT_A,
+        sessionGeneration: GENERATION,
+      }),
+    ).toEqual(capturedSession());
   });
 
   it.each([
@@ -335,14 +399,14 @@ describe('AuthService.upstream-session renewal', () => {
       await rejectedWithCode(
         service.renewUpstreamSession(dto(), {
           sub: SUB,
+          clientId: CLIENT_A,
           sessionGeneration: GENERATION,
         }),
         status,
         code,
       );
       expect(store.replaceIfUnchanged).toHaveBeenCalledWith(
-        SUB,
-        GENERATION,
+        { sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION },
         expected,
         {
           ...expected,
@@ -361,7 +425,7 @@ describe('POST /api/auth/upstream-session/renew contract', () => {
 
   beforeEach(async () => {
     const store = new InMemorySessionStore(60_000);
-    await store.set(SUB, capturedSession());
+    await store.set(capturedSession());
     renew = jest
       .fn()
       .mockResolvedValue({ service: 'kulon', status: 'renewed' });
@@ -397,6 +461,7 @@ describe('POST /api/auth/upstream-session/renew contract', () => {
     await app.init();
     token = await moduleRef.get(JwtService).signAsync({
       sub: SUB,
+      clientId: CLIENT_A,
       via: 'handoff',
       sessionGeneration: GENERATION,
     });
@@ -422,7 +487,7 @@ describe('POST /api/auth/upstream-session/renew contract', () => {
     expect(JSON.stringify(response.body)).not.toContain(NEW_COOKIE);
     expect(renew).toHaveBeenCalledWith(
       expect.objectContaining({ service: 'kulon', cookie: NEW_COOKIE }),
-      expect.objectContaining({ sub: SUB, sessionGeneration: GENERATION }),
+      expect.objectContaining({ sub: SUB, clientId: CLIENT_A, sessionGeneration: GENERATION }),
     );
     expect(Object.keys(renew.mock.calls[0][0])).toEqual(['service', 'cookie']);
   });

@@ -47,6 +47,7 @@ describe('PlaywrightAuthService', () => {
     expect(session.microsoftCookie).toContain('ESTSAUTH=MS');
     expect(session.kulonCookie).toContain('MoodleSession=KULON');
     expect(session.siapCookie).toContain('cookiesession1=SIAP');
+    expect(session.clientId).toBe('legacy');
     expect(session.sessionGeneration).toMatch(/^[0-9a-f]{32}$/);
     expect(chromium.connectOverCDP).toHaveBeenCalledWith('http://127.0.0.1:9223');
   });

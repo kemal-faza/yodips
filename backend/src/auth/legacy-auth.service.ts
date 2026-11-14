@@ -14,7 +14,11 @@ import { PlaywrightAuthService } from '../playwright/playwright-auth.service';
 import { SiapService } from '../siap/siap.service';
 import { SSOTicketService } from '../sso/ticket.service';
 import { SessionStore } from '../session/session-store';
-import { generateSessionGeneration, isSessionGeneration } from '../session/session-contract';
+import {
+  generateSessionGeneration,
+  isSessionGeneration,
+  LEGACY_CLIENT_ID,
+} from '../session/session-contract';
 import type { CapturedSession } from '../session/session-contract';
 import {
   createNoopTelemetryRuntime,
@@ -62,6 +66,7 @@ export class LegacyAuthService {
       this.logger.log('Reusing stored SSO session — no browser window needed');
       const payload = {
         sub: existing.identity,
+        clientId: existing.clientId ?? LEGACY_CLIENT_ID,
         via: 'reuse',
         sessionGeneration: existing.sessionGeneration,
       };
@@ -113,10 +118,15 @@ export class LegacyAuthService {
     const identity = check.valid
       ? (await this.kulon.getSessionIdentity(session.kulonCookie)) ?? 'sso'
       : 'sso';
-    await this.sessionStore.set(identity, { ...stored, identity });
+    await this.sessionStore.set({
+      ...stored,
+      identity,
+      clientId: LEGACY_CLIENT_ID,
+    });
 
     const payload = {
       sub: identity,
+      clientId: LEGACY_CLIENT_ID,
       via: 'playwright',
       sessionGeneration: stored.sessionGeneration,
     };
@@ -177,8 +187,9 @@ export class LegacyAuthService {
     const identity = state ? `microsoft:${state}` : 'microsoft';
     const capturedAt = this.runtime.wallNowMs();
     const sessionGeneration = generateSessionGeneration();
-    await this.sessionStore.set(identity, {
+    await this.sessionStore.set({
       identity,
+      clientId: LEGACY_CLIENT_ID,
       ssoCookie: '',
       microsoftCookie: sessionCookies,
       kulonCookie: '',
@@ -186,7 +197,12 @@ export class LegacyAuthService {
       capturedAt,
       sessionGeneration,
     });
-    const payload = { sub: identity, via: 'oidc', sessionGeneration };
+    const payload = {
+      sub: identity,
+      clientId: LEGACY_CLIENT_ID,
+      via: 'oidc',
+      sessionGeneration,
+    };
     const accessToken = await this.jwt.signAsync(payload);
     return { accessToken };
   }
