@@ -1,60 +1,112 @@
 import { KulonUpstreamSession } from './kulon-upstream.session';
 import { StaleUpstreamError } from '../upstream/upstream-fetch';
 import { isKulonCookieRenewal, sameCapturedSession, SessionStore } from '../session/session-store';
-import type { CapturedSession } from '../playwright/playwright-auth.service';
+import type { CapturedSession, SessionRef } from '../session/session-contract';
 import { DataCache } from '../cache/data-cache';
 import { InMemoryDataCache } from '../cache/in-memory-data.cache';
 import type { TelemetryRuntime } from '../observability/telemetry';
 
+/** Composite key, mirroring the production stores. */
+function keyOf(record: { identity: string; clientId: string }): string {
+  return `${record.identity}:${record.clientId}`;
+}
+
+/**
+ * Production-shaped fake: one record per `<identity>:<clientId>` and every
+ * ref-based read is device-qualified. `seed()` is synchronous so fixtures read
+ * like a table of records rather than a sequence of store writes.
+ */
 class FakeStore extends SessionStore {
-  constructor(public map: Map<string, unknown>) {
+  constructor(public map = new Map<string, CapturedSession>()) {
     super();
   }
-  set(k: string, v: CapturedSession): Promise<void> {
-    this.map.set(k, v);
+
+  seed(session: CapturedSession): this {
+    this.map.set(keyOf(session), session);
+    return this;
+  }
+
+  set(session: CapturedSession): Promise<void> {
+    this.seed(session);
     return Promise.resolve();
   }
-  get(k: string): Promise<CapturedSession | null> {
-    return Promise.resolve(
-      (this.map.get(k) as CapturedSession | undefined) ?? null,
-    );
-  }
-  getIfGeneration(k: string, generation: string): Promise<CapturedSession | null> {
-    const rec = (this.map.get(k) as CapturedSession | undefined) ?? null;
-    if (!rec || rec.sessionGeneration !== generation) return Promise.resolve(null);
+
+  getIfGeneration(ref: SessionRef): Promise<CapturedSession | null> {
+    const rec = this.map.get(`${ref.sub}:${ref.clientId}`) ?? null;
+    if (!rec || rec.sessionGeneration !== ref.sessionGeneration) return Promise.resolve(null);
     return Promise.resolve(rec);
   }
+
   replaceIfUnchanged(
-    k: string,
-    generation: string,
+    ref: SessionRef,
     expected: CapturedSession,
     replacement: CapturedSession,
   ): Promise<'updated' | 'conflict' | 'dead'> {
-    const rec = (this.map.get(k) as CapturedSession | undefined) ?? null;
-    if (!rec || rec.sessionGeneration !== generation) return Promise.resolve('dead');
+    const key = `${ref.sub}:${ref.clientId}`;
+    const rec = this.map.get(key) ?? null;
+    if (!rec || rec.sessionGeneration !== ref.sessionGeneration) return Promise.resolve('dead');
     if (!sameCapturedSession(rec, expected)) return Promise.resolve('conflict');
-    if (!isKulonCookieRenewal(k, generation, expected, replacement)) {
+    if (!isKulonCookieRenewal(ref, expected, replacement)) {
       return Promise.reject(new Error('Invalid session renewal replacement'));
     }
-    this.map.set(k, replacement);
+    this.map.set(key, replacement);
     return Promise.resolve('updated');
   }
-  clear(k: string): Promise<void> {
-    this.map.delete(k);
-    return Promise.resolve();
-  }
-  clearIfGeneration(k: string, generation: string): Promise<boolean> {
-    const rec = this.map.get(k) as CapturedSession | undefined;
+
+  clearIfGeneration(ref: SessionRef): Promise<boolean> {
+    const key = `${ref.sub}:${ref.clientId}`;
+    const rec = this.map.get(key);
     if (!rec) return Promise.resolve(true);
-    if (rec.sessionGeneration !== generation) return Promise.resolve(false);
-    this.map.delete(k);
+    if (rec.sessionGeneration !== ref.sessionGeneration) return Promise.resolve(false);
+    this.map.delete(key);
     return Promise.resolve(true);
   }
-  all(): Promise<CapturedSession[]> {
-    return Promise.resolve(
-      Array.from(this.map.values()).map((value) => value as CapturedSession),
-    );
+
+  listBySub(sub: string): Promise<CapturedSession[]> {
+    return Promise.resolve([...this.map.values()].filter((s) => s.identity === sub));
   }
+
+  clearAllForSub(sub: string): Promise<number> {
+    let cleared = 0;
+    for (const [key, session] of this.map) {
+      if (session.identity !== sub) continue;
+      this.map.delete(key);
+      cleared += 1;
+    }
+    return Promise.resolve(cleared);
+  }
+
+  all(): Promise<CapturedSession[]> {
+    return Promise.resolve([...this.map.values()]);
+  }
+
+  migrateLegacyKeys(): Promise<{ scanned: number; migrated: number }> {
+    return Promise.resolve({ scanned: 0, migrated: 0 });
+  }
+}
+
+function kulonSession(
+  clientId: string,
+  generation: string,
+  overrides: Partial<CapturedSession> = {},
+): CapturedSession {
+  return {
+    identity: 'U1',
+    clientId,
+    ssoCookie: '',
+    microsoftCookie: '',
+    kulonCookie: 'MoodleSession=AAA',
+    siapCookie: '',
+    capturedAt: Date.now(),
+    sessionGeneration: generation,
+    ...overrides,
+  };
+}
+
+function storeOf(...sessions: CapturedSession[]): FakeStore {
+  const store = new FakeStore();
+  for (const session of sessions) store.seed(session);
+  return store;
 }
 
 function htmlWithSesskey(sk: string) {
@@ -223,15 +275,15 @@ describe('KulonUpstreamSession.ajax', () => {
 describe('KulonUpstreamSession.getContextForSession (B: generation-qualified TOCTOU seam)', () => {
   const GEN_A = 'a'.repeat(32);
   const GEN_B = 'b'.repeat(32);
+  const CLIENT_A = 'client-a';
+  const CLIENT_B = 'client-b';
   const COOKIE_A = 'MoodleSession=AAA';
   const COOKIE_B = 'MoodleSession=BBB';
   let store: FakeStore;
   let cache: DataCache;
 
   beforeEach(() => {
-    store = new FakeStore(
-      new Map([['U1', { identity: 'U1', kulonCookie: COOKIE_A, sessionGeneration: GEN_A, capturedAt: Date.now() }]]),
-    );
+    store = storeOf(kulonSession(CLIENT_A, GEN_A, { kulonCookie: COOKIE_A }));
     cache = new InMemoryDataCache(60_000);
     jest.restoreAllMocks();
   });
@@ -244,16 +296,37 @@ describe('KulonUpstreamSession.getContextForSession (B: generation-qualified TOC
       text: () => Promise.resolve(htmlWithSesskey('skA')),
     } as unknown as Response);
     const seam = new KulonUpstreamSession(store, cache);
-    const ctx = await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    const ctx = await (seam as any).getContextForSession({
+      sub: 'U1',
+      clientId: CLIENT_A,
+      sessionGeneration: GEN_A,
+    });
     expect(ctx.cookie).toBe(COOKIE_A);
     expect(ctx.sesskey).toBe('skA');
   });
 
-  it('reports a missing Kulon cookie as upstream stale while the backend session is live', async () => {
-    store.map.set('U1', { kulonCookie: '', sessionGeneration: GEN_A, capturedAt: Date.now() });
+  it('a record from another device cannot satisfy the ref', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch');
     const seam = new KulonUpstreamSession(store, cache);
-    await expect(seam.getContextForSession({ sub: 'U1', sessionGeneration: GEN_A }))
-      .rejects.toMatchObject({ status: 401, reason: 'no-cookie' });
+    await expect(
+      seam.getContextForSession({
+        sub: 'U1',
+        clientId: CLIENT_B,
+        sessionGeneration: GEN_A,
+      }),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+    // No upstream call with either device's cookie material.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing Kulon cookie as upstream stale while the backend session is live', async () => {
+    store.seed(kulonSession(CLIENT_A, GEN_A, { kulonCookie: '' }));
+    const seam = new KulonUpstreamSession(store, cache);
+    await expect(seam.getContextForSession({
+      sub: 'U1',
+      clientId: CLIENT_A,
+      sessionGeneration: GEN_A,
+    })).rejects.toMatchObject({ status: 401, reason: 'no-cookie' });
   });
 
   it('replacement between guard and service read rejects SESSION_DEAD and never returns B cookie to an A-token', async () => {
@@ -266,9 +339,13 @@ describe('KulonUpstreamSession.getContextForSession (B: generation-qualified TOC
     const seam = new KulonUpstreamSession(store, cache);
     // Guard validated A (live at that moment). Re-login replaces with B before
     // the service/upstream read.
-    store.map.set('U1', { kulonCookie: COOKIE_B, sessionGeneration: GEN_B, capturedAt: Date.now() });
+    store.seed(kulonSession(CLIENT_A, GEN_B, { kulonCookie: COOKIE_B }));
     await expect(
-      (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A }),
+      (seam as any).getContextForSession({
+        sub: 'U1',
+        clientId: CLIENT_A,
+        sessionGeneration: GEN_A,
+      }),
     ).rejects.toMatchObject({ status: 401 });
     // Never touched upstream with either cookie (no B leak, no A use).
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -278,12 +355,12 @@ describe('KulonUpstreamSession.getContextForSession (B: generation-qualified TOC
 describe('KulonUpstreamSession generation-scoped sesskey (findings 1+2)', () => {
   const GEN_A = 'a'.repeat(32);
   const GEN_B = 'b'.repeat(32);
+  const CLIENT_A = 'client-a';
+  const CLIENT_B = 'client-b';
   const SAME_COOKIE = 'MoodleSession=SAME';
 
   function scopedStore(cookie: string, generation: string) {
-    return new FakeStore(
-      new Map([['U1', { identity: 'U1', kulonCookie: cookie, sessionGeneration: generation, capturedAt: Date.now() }]]),
-    );
+    return storeOf(kulonSession(CLIENT_A, generation, { kulonCookie: cookie }));
   }
 
   afterEach(() => jest.restoreAllMocks());
@@ -305,11 +382,19 @@ describe('KulonUpstreamSession generation-scoped sesskey (findings 1+2)', () => 
       } as unknown as Response);
     const store = scopedStore(SAME_COOKIE, GEN_A);
     const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
-    const ctxA = await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    const ctxA = await (seam as any).getContextForSession({
+      sub: 'U1',
+      clientId: CLIENT_A,
+      sessionGeneration: GEN_A,
+    });
     expect(ctxA.sesskey).toBe('skA');
     // Same cookie, new generation: must NOT reuse A's cached sesskey entry.
-    store.map.set('U1', { identity: 'U1', kulonCookie: SAME_COOKIE, sessionGeneration: GEN_B, capturedAt: Date.now() });
-    const ctxB = await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_B });
+    store.seed(kulonSession(CLIENT_A, GEN_B, { kulonCookie: SAME_COOKIE }));
+    const ctxB = await (seam as any).getContextForSession({
+      sub: 'U1',
+      clientId: CLIENT_A,
+      sessionGeneration: GEN_B,
+    });
     expect(ctxB.sesskey).toBe('skB');
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
@@ -328,10 +413,18 @@ describe('KulonUpstreamSession generation-scoped sesskey (findings 1+2)', () => 
       } as unknown as Response);
     const store = scopedStore(SAME_COOKIE, GEN_A);
     const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
-    const pendingA = (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    const pendingA = (seam as any).getContextForSession({
+      sub: 'U1',
+      clientId: CLIENT_A,
+      sessionGeneration: GEN_A,
+    });
     // B replacement lands while A's /my/ fetch is still in flight.
-    store.map.set('U1', { identity: 'U1', kulonCookie: SAME_COOKIE, sessionGeneration: GEN_B, capturedAt: Date.now() });
-    const pendingB = (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_B });
+    store.seed(kulonSession(CLIENT_A, GEN_B, { kulonCookie: SAME_COOKIE }));
+    const pendingB = (seam as any).getContextForSession({
+      sub: 'U1',
+      clientId: CLIENT_A,
+      sessionGeneration: GEN_B,
+    });
     releaseA({
       ok: true,
       status: 200,
@@ -353,14 +446,81 @@ describe('KulonUpstreamSession generation-scoped sesskey (findings 1+2)', () => 
     } as unknown as Response);
     const store = scopedStore(SAME_COOKIE, GEN_A);
     const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
-    await (seam as any).getContextForSession({ sub: 'U1', sessionGeneration: GEN_A });
+    await (seam as any).getContextForSession({
+      sub: 'U1',
+      clientId: CLIENT_A,
+      sessionGeneration: GEN_A,
+    });
     const ctx = await seam.getContextForCurrent('U1');
     expect(ctx.sesskey).toBe('skA');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('resolves the current context from the newest live device record', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: () => Promise.resolve(htmlWithSesskey('skNew')),
+    } as unknown as Response);
+    const older = kulonSession(CLIENT_B, GEN_B, {
+      kulonCookie: 'MoodleSession=OLD',
+      capturedAt: Date.now() - 1_000,
+    });
+    const newer = kulonSession(CLIENT_A, GEN_A, {
+      kulonCookie: 'MoodleSession=NEW',
+      capturedAt: Date.now(),
+    });
+    const store = storeOf(older, newer);
+    const listSpy = jest.spyOn(store, 'listBySub');
+    const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
+
+    // Prime the newer device's generation-scoped entry, then prove the current
+    // read lands on it (same key) instead of the older device or a refetch.
+    await seam.getContextForSession({
+      sub: 'U1',
+      clientId: CLIENT_A,
+      sessionGeneration: GEN_A,
+    });
+    const ctx = await seam.getContextForCurrent('U1');
+
+    expect(ctx.cookie).toBe(newer.kulonCookie);
+    expect(ctx.sesskey).toBe('skNew');
+    expect(listSpy).toHaveBeenCalledWith('U1');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to an older device when the newest record has no Kulon cookie', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      url: 'https://kulon2.undip.ac.id/my/',
+      text: () => Promise.resolve(htmlWithSesskey('skOld')),
+    } as unknown as Response);
+    const older = kulonSession(CLIENT_B, GEN_B, {
+      kulonCookie: 'MoodleSession=OLD',
+      capturedAt: Date.now() - 1_000,
+    });
+    const newer = kulonSession(CLIENT_A, GEN_A, {
+      kulonCookie: '',
+      capturedAt: Date.now(),
+    });
+    const store = storeOf(older, newer);
+    const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
+
+    const ctx = await seam.getContextForCurrent('U1');
+
+    expect(ctx.cookie).toBe(older.kulonCookie);
+    expect(ctx.sesskey).toBe('skOld');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('a legacy record without a generation is stale on the current path (never unscoped)', async () => {
-    const store = new FakeStore(new Map([['U1', { identity: 'U1', kulonCookie: SAME_COOKIE }]]));
+    const store = storeOf({
+      identity: 'U1',
+      clientId: CLIENT_A,
+      kulonCookie: SAME_COOKIE,
+    } as CapturedSession);
     const seam = new KulonUpstreamSession(store, new InMemoryDataCache(60_000));
     await expect(seam.getContextForCurrent('U1')).rejects.toMatchObject({ reason: 'no-cookie' });
   });
@@ -373,9 +533,10 @@ describe('KulonUpstreamSession.getContext', () => {
   const cookie2 = 'MoodleSession=xyz999';
 
   beforeEach(() => {
-    store = new FakeStore(
-      new Map([['2304012012345', { identity: '2304012012345', kulonCookie: cookie, sessionGeneration: 'c'.repeat(32) }]]),
-    );
+    store = storeOf(kulonSession('client-a', 'c'.repeat(32), {
+      identity: '2304012012345',
+      kulonCookie: cookie,
+    }));
     cache = new InMemoryDataCache(60_000);
   });
 
@@ -435,14 +596,17 @@ describe('KulonUpstreamSession.getContext', () => {
     const seam = new KulonUpstreamSession(store, cache);
 
     await seam.getContext('2304012012345');
-    store.map.set('2304012012345', { identity: '2304012012345', kulonCookie: cookie2, sessionGeneration: 'd'.repeat(32) });
+    store.seed(kulonSession('client-a', 'd'.repeat(32), {
+      identity: '2304012012345',
+      kulonCookie: cookie2,
+    }));
     const ctx = await seam.getContext('2304012012345');
     expect(ctx.sesskey).toBe('sk2');
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
   it('throws stale 401 when no cookie in session store', async () => {
-    const empty = new FakeStore(new Map());
+    const empty = new FakeStore();
     const seam = new KulonUpstreamSession(empty, cache);
     await expect(seam.getContext('nobody')).rejects.toMatchObject({
       reason: 'no-cookie',

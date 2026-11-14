@@ -1,6 +1,7 @@
 // backend/src/siap/siap-upstream.session.spec.ts
 import { SiapUpstreamSession } from './siap-upstream.session';
 import { SessionStore } from '../session/session-store';
+import type { CapturedSession, SessionRef } from '../session/session-contract';
 import { DataCache } from '../cache/data-cache';
 import { InMemoryDataCache } from '../cache/in-memory-data.cache';
 import { SiapApiUpstream } from './siap-api';
@@ -10,39 +11,114 @@ import {
 } from '../upstream/upstream-fetch';
 import type { TelemetryRuntime } from '../observability/telemetry';
 
+/** Composite key, mirroring the production stores. */
+function keyOf(record: { identity: string; clientId: string }): string {
+  return `${record.identity}:${record.clientId}`;
+}
+
+/**
+ * Production-shaped fake: one record per `<identity>:<clientId>` and every
+ * ref-based read is device-qualified. `seed()` is synchronous so fixtures read
+ * like a table of records rather than a sequence of store writes.
+ */
 class FakeStore extends SessionStore {
-  constructor(private map: Map<string, any>) { super(); }
-  async set(k: string, v: any) { this.map.set(k, v); }
-  async get(k: string) { return this.map.get(k) ?? null; }
-  async getIfGeneration(k: string, generation: string) {
-    const rec = this.map.get(k) ?? null;
-    if (!rec || rec.sessionGeneration !== generation) return null;
+  constructor(public map = new Map<string, CapturedSession>()) { super(); }
+
+  seed(session: CapturedSession): this {
+    this.map.set(keyOf(session), session);
+    return this;
+  }
+
+  async set(session: CapturedSession) { this.seed(session); }
+
+  async getIfGeneration(ref: SessionRef) {
+    const rec = this.map.get(`${ref.sub}:${ref.clientId}`) ?? null;
+    if (!rec || rec.sessionGeneration !== ref.sessionGeneration) return null;
     return rec;
   }
-  async clear(k: string) { this.map.delete(k); }
-  async clearIfGeneration(k: string, generation: string) {
-    const rec = this.map.get(k);
+
+  async clearIfGeneration(ref: SessionRef) {
+    const key = `${ref.sub}:${ref.clientId}`;
+    const rec = this.map.get(key);
     if (!rec) return true;
-    if (rec.sessionGeneration !== generation) return false;
-    this.map.delete(k);
+    if (rec.sessionGeneration !== ref.sessionGeneration) return false;
+    this.map.delete(key);
     return true;
   }
-  async replaceIfUnchanged(): Promise<'dead'> {
-    return 'dead';
+
+  async replaceIfUnchanged(
+    ref: SessionRef,
+    expected: CapturedSession,
+    replacement: CapturedSession,
+  ): Promise<'updated' | 'conflict' | 'dead'> {
+    const key = `${ref.sub}:${ref.clientId}`;
+    const rec = this.map.get(key) ?? null;
+    if (!rec || rec.sessionGeneration !== ref.sessionGeneration) return 'dead';
+    if (JSON.stringify(rec) !== JSON.stringify(expected)) return 'conflict';
+    this.map.set(key, replacement);
+    return 'updated';
   }
-  async all() { return Array.from(this.map.values()); }
+
+  async listBySub(sub: string) {
+    return [...this.map.values()].filter((s) => s.identity === sub);
+  }
+
+  async clearAllForSub(sub: string) {
+    let cleared = 0;
+    for (const [key, session] of this.map) {
+      if (session.identity !== sub) continue;
+      this.map.delete(key);
+      cleared += 1;
+    }
+    return cleared;
+  }
+
+  async all() { return [...this.map.values()]; }
+
+  async migrateLegacyKeys() { return { scanned: 0, migrated: 0 }; }
 }
 
 const NIM = '2304012012345';
 const EMAIL = 'nim@students.undip.ac.id';
 const DEFAULT_GEN = 'd'.repeat(32);
+const CLIENT_A = 'client-a';
+const CLIENT_B = 'client-b';
+
+function session(
+  clientId: string,
+  overrides: Partial<CapturedSession> = {},
+): CapturedSession {
+  return {
+    identity: NIM,
+    clientId,
+    ssoCookie: '',
+    microsoftCookie: '',
+    kulonCookie: '',
+    siapCookie: 'c1',
+    capturedAt: Date.now(),
+    sessionGeneration: DEFAULT_GEN,
+    ...overrides,
+  };
+}
+
+function ref(clientId: string, sessionGeneration = DEFAULT_GEN): SessionRef {
+  return { sub: NIM, clientId, sessionGeneration };
+}
+
+function storeWith(...sessions: CapturedSession[]): FakeStore {
+  const store = new FakeStore();
+  for (const record of sessions) store.seed(record);
+  return store;
+}
 
 function makeSeam(overrides: {
   store?: SessionStore; cache?: DataCache; api?: SiapApiUpstream;
   scrape?: (c: string) => Promise<{ nim: string; emailSso: string }>;
   runtime?: TelemetryRuntime;
 }) {
-  const store = overrides.store ?? new FakeStore(new Map([[NIM, { identity: NIM, emailSso: EMAIL, siapCookie: 'c1', sessionGeneration: DEFAULT_GEN }]]));
+  const store = overrides.store ?? storeWith(
+    session(CLIENT_A, { emailSso: EMAIL, siapCookie: 'c1', sessionGeneration: DEFAULT_GEN }),
+  );
   const cache = overrides.cache ?? new InMemoryDataCache(60_000);
   const scrape = overrides.scrape ?? (async () => ({ nim: NIM, emailSso: EMAIL }));
   const api = overrides.api ?? {
@@ -72,100 +148,97 @@ describe('SiapUpstreamSession.getContextForSession (B: generation-qualified TOCT
   const GEN_A = 'a'.repeat(32);
   const GEN_B = 'b'.repeat(32);
   it('resolves identity+token for the exact live generation', async () => {
-    const store = new FakeStore(
-      new Map([[NIM, { identity: NIM, emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }]]),
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }),
     );
     const { seam, api } = makeSeam({ store });
-    const ctx = await (seam as any).getContextForSession({ sub: NIM, sessionGeneration: GEN_A });
+    const ctx = await (seam as any).getContextForSession(ref(CLIENT_A, GEN_A));
     expect(ctx).toEqual({ emailSso: EMAIL, nim: NIM, token: 'T1' });
     expect(api.mintToken).toHaveBeenCalledTimes(1);
   });
 
+  it('a record from another device cannot satisfy the ref', async () => {
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }),
+    );
+    const { seam, api } = makeSeam({ store });
+    await expect(
+      seam.getContextForSession(ref(CLIENT_B, GEN_A)),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+    expect(api.mintToken).not.toHaveBeenCalled();
+  });
+
   it('replacement between guard and service read rejects SESSION_DEAD and never mints with B', async () => {
-    const store = new FakeStore(
-      new Map([[NIM, { identity: NIM, emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }]]),
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }),
     );
     const { seam, api } = makeSeam({ store });
     // Re-login replaces with B before the qualified read.
-    await store.set(NIM, { identity: NIM, emailSso: EMAIL, siapCookie: 'cB', sessionGeneration: GEN_B });
+    store.seed(session(CLIENT_A, { emailSso: EMAIL, siapCookie: 'cB', sessionGeneration: GEN_B }));
     await expect(
-      (seam as any).getContextForSession({ sub: NIM, sessionGeneration: GEN_A }),
+      (seam as any).getContextForSession(ref(CLIENT_A, GEN_A)),
     ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
     expect(api.mintToken).not.toHaveBeenCalled();
     // B itself is hittable with its own generation.
-    const ctxB = await (seam as any).getContextForSession({ sub: NIM, sessionGeneration: GEN_B });
+    const ctxB = await (seam as any).getContextForSession(ref(CLIENT_A, GEN_B));
     expect(ctxB.token).toBe('T1');
   });
 
   it('getCookieForSession returns the exact-generation cookie and rejects a replacement with SESSION_DEAD', async () => {
-    const store = new FakeStore(
-      new Map([[NIM, { siapCookie: 'cA', sessionGeneration: GEN_A }]]),
+    const store = storeWith(
+      session(CLIENT_A, { siapCookie: 'cA', sessionGeneration: GEN_A }),
     );
     const { seam } = makeSeam({ store });
-    await expect((seam as any).getCookieForSession({ sub: NIM, sessionGeneration: GEN_A })).resolves.toBe('cA');
-    await store.set(NIM, { siapCookie: 'cB', sessionGeneration: GEN_B });
+    await expect((seam as any).getCookieForSession(ref(CLIENT_A, GEN_A))).resolves.toBe('cA');
+    store.seed(session(CLIENT_A, { siapCookie: 'cB', sessionGeneration: GEN_B }));
     await expect(
-      (seam as any).getCookieForSession({ sub: NIM, sessionGeneration: GEN_A }),
+      (seam as any).getCookieForSession(ref(CLIENT_A, GEN_A)),
     ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
   });
 });
 
 describe('SiapUpstreamSession.getKhsContextForSession', () => {
   it('resolves API identity and token for a live generation without a web cookie', async () => {
-    const store = new FakeStore(
-      new Map([
-        [NIM, { identity: NIM, emailSso: EMAIL, sessionGeneration: DEFAULT_GEN }],
-      ]),
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: EMAIL, siapCookie: '', sessionGeneration: DEFAULT_GEN }),
     );
     const { seam, api } = makeSeam({ store });
 
     await expect(
-      seam.getKhsContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+      seam.getKhsContextForSession(ref(CLIENT_A)),
     ).resolves.toEqual({ emailSso: EMAIL, nim: NIM, token: 'T1' });
     expect(api.mintToken).toHaveBeenCalledWith(EMAIL, NIM);
   });
 
   it('returns the optional web cookie from the same live-generation snapshot', async () => {
-    const store = new FakeStore(
-      new Map([
-        [
-          NIM,
-          {
-            identity: NIM,
-            emailSso: EMAIL,
-            siapCookie: 'cookie-a',
-            sessionGeneration: DEFAULT_GEN,
-          },
-        ],
-      ]),
+    const store = storeWith(
+      session(CLIENT_A, {
+        emailSso: EMAIL,
+        siapCookie: 'cookie-a',
+        sessionGeneration: DEFAULT_GEN,
+      }),
     );
     const { seam } = makeSeam({ store });
 
     await expect(
-      seam.getKhsContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+      seam.getKhsContextForSession(ref(CLIENT_A)),
     ).resolves.toMatchObject({ token: 'T1', siapCookie: 'cookie-a' });
   });
 
   it('does not resolve a KHS context from a replacement generation', async () => {
     const genA = 'a'.repeat(32);
     const genB = 'b'.repeat(32);
-    const store = new FakeStore(
-      new Map([
-        [
-          NIM,
-          {
-            identity: NIM,
-            emailSso: EMAIL,
-            siapCookie: 'cookie-b',
-            sessionGeneration: genB,
-          },
-        ],
-      ]),
+    const store = storeWith(
+      session(CLIENT_A, {
+        emailSso: EMAIL,
+        siapCookie: 'cookie-b',
+        sessionGeneration: genB,
+      }),
     );
     const { seam, api } = makeSeam({ store });
 
     await expect(
-      seam.getKhsContextForSession({ sub: NIM, sessionGeneration: genA }),
+      seam.getKhsContextForSession(ref(CLIENT_A, genA)),
     ).rejects.toMatchObject({
       status: 401,
       response: { code: 'SESSION_DEAD' },
@@ -174,19 +247,17 @@ describe('SiapUpstreamSession.getKhsContextForSession', () => {
   });
 
   it('reports missing SIAP cookie as upstream stale without killing the live backend session', async () => {
-    const store = new FakeStore(
-      new Map([
-        [NIM, { identity: NIM, emailSso: EMAIL, sessionGeneration: DEFAULT_GEN }],
-      ]),
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: EMAIL, siapCookie: '', sessionGeneration: DEFAULT_GEN }),
     );
     const { seam, api } = makeSeam({ store });
-    const ref = { sub: NIM, sessionGeneration: DEFAULT_GEN };
+    const sessionRef = ref(CLIENT_A);
 
-    await expect(seam.getContextForSession(ref)).rejects.toMatchObject({
+    await expect(seam.getContextForSession(sessionRef)).rejects.toMatchObject({
       status: 401,
       reason: 'no-cookie',
     });
-    await expect(seam.getCookieForSession(ref)).rejects.toMatchObject({
+    await expect(seam.getCookieForSession(sessionRef)).rejects.toMatchObject({
       status: 401,
       reason: 'no-cookie',
     });
@@ -196,68 +267,52 @@ describe('SiapUpstreamSession.getKhsContextForSession', () => {
 
 describe('SiapUpstreamSession.getApiContextForSession', () => {
   it('resolves API identity and token without a web cookie', async () => {
-    const store = new FakeStore(
-      new Map([
-        [NIM, { identity: NIM, emailSso: EMAIL, sessionGeneration: DEFAULT_GEN }],
-      ]),
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: EMAIL, siapCookie: '', sessionGeneration: DEFAULT_GEN }),
     );
     const { seam, api } = makeSeam({ store });
 
     await expect(
-      seam.getApiContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+      seam.getApiContextForSession(ref(CLIENT_A)),
     ).resolves.toEqual({ emailSso: EMAIL, nim: NIM, token: 'T1' });
     expect(api.mintToken).toHaveBeenCalledWith(EMAIL, NIM);
   });
 
   it('never returns the stored web cookie', async () => {
-    const store = new FakeStore(
-      new Map([
-        [
-          NIM,
-          {
-            identity: NIM,
-            emailSso: EMAIL,
-            siapCookie: 'sia_app_session=stale',
-            sessionGeneration: DEFAULT_GEN,
-          },
-        ],
-      ]),
+    const store = storeWith(
+      session(CLIENT_A, {
+        emailSso: EMAIL,
+        siapCookie: 'sia_app_session=stale',
+        sessionGeneration: DEFAULT_GEN,
+      }),
     );
     const { seam } = makeSeam({ store });
 
-    const ctx = await seam.getApiContextForSession({
-      sub: NIM,
-      sessionGeneration: DEFAULT_GEN,
-    });
+    const ctx = await seam.getApiContextForSession(ref(CLIENT_A));
     expect(ctx).toEqual({ emailSso: EMAIL, nim: NIM, token: 'T1' });
     expect('siapCookie' in ctx).toBe(false);
   });
 
   it('fails with no-emailSso when the live record has no identity source', async () => {
-    const store = new FakeStore(
-      new Map([[NIM, { identity: NIM, sessionGeneration: DEFAULT_GEN }]]),
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: undefined, siapCookie: '', sessionGeneration: DEFAULT_GEN }),
     );
     const { seam, api } = makeSeam({ store });
 
     await expect(
-      seam.getApiContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+      seam.getApiContextForSession(ref(CLIENT_A)),
     ).rejects.toMatchObject({ reason: 'no-emailSso' });
     expect(api.mintToken).not.toHaveBeenCalled();
   });
 
   it('keeps SESSION_DEAD for a dead session record', async () => {
-    const store = new FakeStore(
-      new Map([
-        [
-          NIM,
-          { identity: NIM, emailSso: EMAIL, sessionGeneration: 'e'.repeat(32) },
-        ],
-      ]),
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: EMAIL, siapCookie: '', sessionGeneration: 'e'.repeat(32) }),
     );
     const { seam, api } = makeSeam({ store });
 
     await expect(
-      seam.getApiContextForSession({ sub: NIM, sessionGeneration: DEFAULT_GEN }),
+      seam.getApiContextForSession(ref(CLIENT_A)),
     ).rejects.toMatchObject({
       status: 401,
       response: { code: 'SESSION_DEAD' },
@@ -288,7 +343,9 @@ describe('SiapUpstreamSession.getContext', () => {
   });
 
   it('scrapes identity when session store has no emailSso, then caches it', async () => {
-    const store = new FakeStore(new Map([[NIM, { identity: NIM, siapCookie: 'c1', sessionGeneration: DEFAULT_GEN }]]));
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: undefined, siapCookie: 'c1', sessionGeneration: DEFAULT_GEN }),
+    );
     const scrape = jest.fn(async () => ({ nim: NIM, emailSso: EMAIL }));
     const { seam } = makeSeam({ store, scrape });
     const ctx = await seam.getContext(NIM);
@@ -300,21 +357,25 @@ describe('SiapUpstreamSession.getContext', () => {
   });
 
   it('does NOT write scraped emailSso back to the session store', async () => {
-    const store = new FakeStore(new Map([[NIM, { identity: NIM, siapCookie: 'c1', sessionGeneration: DEFAULT_GEN }]]));
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: undefined, siapCookie: 'c1', sessionGeneration: DEFAULT_GEN }),
+    );
     const { seam } = makeSeam({ store, scrape: async () => ({ nim: NIM, emailSso: EMAIL }) });
     await seam.getContext(NIM);
-    const stored = await store.get(NIM);
-    expect(stored.emailSso).toBeUndefined();
+    const stored = await store.getIfGeneration(ref(CLIENT_A));
+    expect(stored?.emailSso).toBeUndefined();
   });
 
   it('throws stale 401 when no siapCookie', async () => {
-    const empty = new FakeStore(new Map());
+    const empty = new FakeStore();
     const { seam } = makeSeam({ store: empty });
     await expect(seam.getContext('nobody')).rejects.toMatchObject({ reason: 'no-cookie' });
   });
 
   it('throws stale 401 when emailSso cannot be resolved (no store, no cache, no scrape)', async () => {
-    const store = new FakeStore(new Map([[NIM, { identity: NIM, siapCookie: 'c1', sessionGeneration: DEFAULT_GEN }]]));
+    const store = storeWith(
+      session(CLIENT_A, { emailSso: undefined, siapCookie: 'c1', sessionGeneration: DEFAULT_GEN }),
+    );
     const { seam } = makeSeam({ store, scrape: async () => ({ nim: NIM, emailSso: '' }) });
     await expect(seam.getContext(NIM)).rejects.toMatchObject({ reason: 'no-emailSso' });
   });
@@ -326,10 +387,8 @@ describe('SiapUpstreamSession generation-scoped identity/token caches (findings 
   const EMAIL_B = 'b@students.undip.ac.id';
 
   function scopedStore() {
-    return new FakeStore(
-      new Map([
-        [NIM, { identity: NIM, emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }],
-      ]),
+    return storeWith(
+      session(CLIENT_A, { emailSso: EMAIL, siapCookie: 'cA', sessionGeneration: GEN_A }),
     );
   }
 
@@ -346,16 +405,15 @@ describe('SiapUpstreamSession generation-scoped identity/token caches (findings 
       .mockResolvedValueOnce({ token: 'T_A', data: {} })
       .mockResolvedValue({ token: 'T_B', data: {} });
     const seam = scopedSeam(store, cache, mintToken);
-    const ctxA = await seam.getContextForSession({ sub: NIM, sessionGeneration: GEN_A });
+    const ctxA = await seam.getContextForSession(ref(CLIENT_A, GEN_A));
     expect(ctxA.token).toBe('T_A');
     // Re-login replaces the live record; the primed A cache must not leak to B.
-    await store.set(NIM, {
-      identity: NIM,
+    store.seed(session(CLIENT_A, {
       emailSso: EMAIL_B,
       siapCookie: 'cB',
       sessionGeneration: GEN_B,
-    });
-    const ctxB = await seam.getContextForSession({ sub: NIM, sessionGeneration: GEN_B });
+    }));
+    const ctxB = await seam.getContextForSession(ref(CLIENT_A, GEN_B));
     expect(ctxB.token).toBe('T_B');
     expect(ctxB.emailSso).toBe(EMAIL_B);
     expect(mintToken).toHaveBeenCalledTimes(2);
@@ -374,15 +432,14 @@ describe('SiapUpstreamSession generation-scoped identity/token caches (findings 
       .mockReturnValueOnce(mintGate)
       .mockResolvedValue({ token: 'T_B', data: {} });
     const seam = scopedSeam(store, cache, mintToken);
-    const pendingA = seam.getContextForSession({ sub: NIM, sessionGeneration: GEN_A });
+    const pendingA = seam.getContextForSession(ref(CLIENT_A, GEN_A));
     // B replacement lands while A's mint is still in flight.
-    await store.set(NIM, {
-      identity: NIM,
+    store.seed(session(CLIENT_A, {
       emailSso: EMAIL_B,
       siapCookie: 'cB',
       sessionGeneration: GEN_B,
-    });
-    const ctxB = await seam.getContextForSession({ sub: NIM, sessionGeneration: GEN_B });
+    }));
+    const ctxB = await seam.getContextForSession(ref(CLIENT_A, GEN_B));
     releaseA({ token: 'T_A', data: {} });
     const ctxA = await pendingA;
     expect(ctxA.token).toBe('T_A');
@@ -396,9 +453,65 @@ describe('SiapUpstreamSession generation-scoped identity/token caches (findings 
     const cache = new InMemoryDataCache(60_000);
     const mintToken = jest.fn().mockResolvedValue({ token: 'T_A', data: {} });
     const seam = scopedSeam(store, cache, mintToken);
-    await seam.getContextForSession({ sub: NIM, sessionGeneration: GEN_A });
+    await seam.getContextForSession(ref(CLIENT_A, GEN_A));
     const ctx = await seam.getContextForCurrent(NIM);
     expect(ctx.token).toBe('T_A');
+    expect(mintToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves the current context from the newest live device record and shares its scoped token', async () => {
+    const store = storeWith(
+      session(CLIENT_B, {
+        emailSso: EMAIL,
+        siapCookie: 'cOld',
+        sessionGeneration: GEN_B,
+        capturedAt: 1_000,
+      }),
+      session(CLIENT_A, {
+        emailSso: EMAIL,
+        siapCookie: 'cNew',
+        sessionGeneration: GEN_A,
+        capturedAt: 2_000,
+      }),
+    );
+    const cache = new InMemoryDataCache(60_000);
+    const mintToken = jest.fn().mockResolvedValue({ token: 'T_A', data: {} });
+    const seam = scopedSeam(store, cache, mintToken);
+
+    // Prime the newer device's generation-scoped entry, then prove the current
+    // read lands on it (same key) instead of the older device or a refetch.
+    await seam.getContextForSession(ref(CLIENT_A, GEN_A));
+    const listSpy = jest.spyOn(store, 'listBySub');
+    const currentRef = await seam.getCurrentSessionRef(NIM);
+    const ctx = await seam.getContextForCurrent(NIM);
+
+    expect(currentRef).toEqual(ref(CLIENT_A, GEN_A));
+    expect(ctx.token).toBe('T_A');
+    expect(listSpy).toHaveBeenCalledWith(NIM);
+    expect(mintToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to an older device when the newest record has no SIAP cookie', async () => {
+    const store = storeWith(
+      session(CLIENT_B, {
+        emailSso: EMAIL,
+        siapCookie: 'cOld',
+        sessionGeneration: GEN_B,
+        capturedAt: 1_000,
+      }),
+      session(CLIENT_A, {
+        emailSso: EMAIL,
+        siapCookie: '',
+        sessionGeneration: GEN_A,
+        capturedAt: 2_000,
+      }),
+    );
+    const cache = new InMemoryDataCache(60_000);
+    const mintToken = jest.fn().mockResolvedValue({ token: 'T_B', data: {} });
+    const seam = scopedSeam(store, cache, mintToken);
+
+    await expect(seam.getCurrentSessionRef(NIM)).resolves.toEqual(ref(CLIENT_B, GEN_B));
+    await expect(seam.getContextForCurrent(NIM)).resolves.toMatchObject({ token: 'T_B' });
     expect(mintToken).toHaveBeenCalledTimes(1);
   });
 
@@ -410,13 +523,12 @@ describe('SiapUpstreamSession generation-scoped identity/token caches (findings 
       .mockResolvedValueOnce({ token: 'T_A', data: {} })
       .mockResolvedValue({ token: 'T_B', data: {} });
     const seam = scopedSeam(store, cache, mintToken);
-    await seam.getContextForSession({ sub: NIM, sessionGeneration: GEN_A });
-    await store.set(NIM, {
-      identity: NIM,
+    await seam.getContextForSession(ref(CLIENT_A, GEN_A));
+    store.seed(session(CLIENT_A, {
       emailSso: EMAIL_B,
       siapCookie: 'cB',
       sessionGeneration: GEN_B,
-    });
+    }));
     const ctx = await seam.getContextForCurrent(NIM);
     expect(ctx.token).toBe('T_B');
     expect(ctx.emailSso).toBe(EMAIL_B);

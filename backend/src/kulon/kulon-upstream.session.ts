@@ -256,8 +256,15 @@ export class KulonUpstreamSession {
    * authenticated controller/service path.
    */
   async getContextForCurrent(sub?: string): Promise<{ cookie: string; sesskey: string }> {
-    const session = sub ? await this.store.get(sub) : null;
-    if (!session?.kulonCookie) {
+    // One record per device: the CURRENT read must pick the newest device that
+    // actually carries a Kulon cookie. A `.sort()[0]` alone would let a newer
+    // record without a Kulon cookie (e.g. a partial capture) mask an older live
+    // device, so the newest-first order is filtered by cookie presence.
+    const sessions = sub ? await this.store.listBySub(sub) : [];
+    const session = [...sessions]
+      .sort((a, b) => b.capturedAt - a.capturedAt)
+      .find((s) => !!s.kulonCookie);
+    if (!session) {
       throw new StaleUpstreamError(
         'Kulon',
         'no-cookie',
