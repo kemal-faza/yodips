@@ -1,11 +1,17 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import Redis from 'ioredis';
-import { CapturedSession } from './session-contract';
+import { CapturedSession, LEGACY_CLIENT_ID, SessionRef } from './session-contract';
 import { isUpstreamCookieRenewal, sameCapturedSession, SessionStore } from './session-store';
 import { evaluateRecord } from './session-record-policy';
 
 const KEY_PREFIX = 'sso:session:';
+const SCAN_BATCH = 100;
+
+/** Composite storage key: one record per user AND device/surface. */
+function keyFor(identity: string, clientId: string): string {
+  return `${KEY_PREFIX}${identity}:${clientId}`;
+}
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12;
 /**
@@ -27,10 +33,10 @@ const CAS_REPLACE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then redis.cal
 
 /**
  * Redis-backed SessionStore for production.
- * - Key: `sso:session:{identity}`
+ * - Key: `sso:session:{identity}:{clientId}` (one record per device/surface).
  * - Value: envelope `v1:<iv>:<tag>:<ct>` (base64), AES-256-GCM encrypted.
  * - TTL: 7 days sliding — `SET ... EX ttl` on write, `EXPIRE` again on read.
- * Decrypt failure (tamper/wrong key) → get() returns null (safe default).
+ * Decrypt failure (tamper/wrong key) → reads return null (safe default).
  */
 @Injectable()
 export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
@@ -53,52 +59,27 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     this.absoluteMs = absoluteMs;
   }
 
-  async set(identity: string, session: CapturedSession): Promise<void> {
+  async set(session: CapturedSession): Promise<void> {
     const envelope = this.encrypt(JSON.stringify(session));
-    await this.client.set(`${KEY_PREFIX}${identity}`, envelope, 'EX', this.ttlSeconds());
+    await this.client.set(
+      keyFor(session.identity, session.clientId),
+      envelope,
+      'EX',
+      this.ttlSeconds(),
+    );
     this.logger.log('SSO session stored');
   }
 
-  async get(identity: string): Promise<CapturedSession | null> {
-    const key = `${KEY_PREFIX}${identity}`;
-    const envelope = await this.client.get(key);
-    if (!envelope) return null;
-    const session = this.decrypt(envelope);
-    if (!session) return null;
-    // Redis enforces the sliding TTL natively (EXPIRE), so the record we hand
-    // the policy core carries no local `expiresAt`; only the absolute cap and
-    // the generation compare can still apply.
-    const decision = evaluateRecord({ session }, Date.now(), {
-      ttlMs: this.ttlMs,
-      absoluteMs: this.absoluteMs,
-    });
-    if (decision.kind === 'absolute-dead') {
-      // Compare-and-delete the EXACT envelope read: never an unconditional DEL,
-      // so a replacement stored between GET and cleanup (newer live session)
-      // is never destroyed. A lost CAS still returns null for this stale read;
-      // the next get() observes the fresh record.
-      await this.casDeleteIfEqual(key, envelope);
-      return null;
-    }
-    // Sliding TTL: refresh on access.
-    await this.client.expire(key, this.ttlSeconds());
-    return session;
-  }
-
-  async clear(identity: string): Promise<void> {
-    await this.client.del(`${KEY_PREFIX}${identity}`);
-  }
-
   /**
-   * Atomic compare-and-clear on `sessionGeneration`. Reads the envelope,
+   * Atomic compare-and-clear on the exact device record. Reads the envelope,
    * enforces the absolute cap BEFORE the generation compare (an absolute-dead
    * record is CAS-cleaned and reports true when the cleanup wins / no live
    * record remains, false when the CAS lost to a newer replacement),
    * then Lua-CAS-DELs the exact raw envelope.
    * No record → true; generation mismatch or CAS lost → false.
    */
-  async clearIfGeneration(identity: string, generation: string): Promise<boolean> {
-    const key = `${KEY_PREFIX}${identity}`;
+  async clearIfGeneration(ref: SessionRef): Promise<boolean> {
+    const key = keyFor(ref.sub, ref.clientId);
     const envelope = await this.client.get(key);
     if (!envelope) return true;
     const session = this.decrypt(envelope);
@@ -116,7 +97,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     const decision = evaluateRecord({ session }, Date.now(), {
       ttlMs: this.ttlMs,
       absoluteMs: this.absoluteMs,
-      generation,
+      generation: ref.sessionGeneration,
     });
     switch (decision.kind) {
       case 'generation-mismatch':
@@ -134,16 +115,17 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
   }
 
   /**
-   * Generation-qualified snapshot. GETs the envelope, enforces the absolute
-   * cap BEFORE the generation compare (dead → exact-envelope CAS-cleanup,
-   * null either way, never a slide), returns null on decrypt failure
-   * (exact-envelope CAS-cleanup, null either way) or generation mismatch
-   * (no slide, no delete), and EXPIRE-slides only on an exact live match —
-   * via the Lua compare-and-expire of the exact envelope read, so a
-   * B-replacement between GET and slide loses the CAS (null, B untouched).
+   * Generation-qualified snapshot of one device record. GETs the envelope,
+   * enforces the absolute cap BEFORE the generation compare (dead →
+   * exact-envelope CAS-cleanup, null either way, never a slide), returns null
+   * on decrypt failure (exact-envelope CAS-cleanup, null either way) or
+   * generation mismatch (no slide, no delete), and EXPIRE-slides only on an
+   * exact live match — via the Lua compare-and-expire of the exact envelope
+   * read, so a B-replacement between GET and slide loses the CAS (null, B
+   * untouched).
    */
-  async getIfGeneration(identity: string, generation: string): Promise<CapturedSession | null> {
-    const key = `${KEY_PREFIX}${identity}`;
+  async getIfGeneration(ref: SessionRef): Promise<CapturedSession | null> {
+    const key = keyFor(ref.sub, ref.clientId);
     const envelope = await this.client.get(key);
     if (!envelope) return null;
     const session = this.decrypt(envelope);
@@ -154,7 +136,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     const decision = evaluateRecord({ session }, Date.now(), {
       ttlMs: this.ttlMs,
       absoluteMs: this.absoluteMs,
-      generation,
+      generation: ref.sessionGeneration,
     });
     if (decision.kind === 'absolute-dead') {
       await this.casDeleteIfEqual(key, envelope);
@@ -171,12 +153,11 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
   }
 
   async replaceIfUnchanged(
-    identity: string,
-    generation: string,
+    ref: SessionRef,
     expected: CapturedSession,
     replacement: CapturedSession,
   ): Promise<'updated' | 'conflict' | 'dead'> {
-    const key = `${KEY_PREFIX}${identity}`;
+    const key = keyFor(ref.sub, ref.clientId);
     const envelope = await this.client.get(key);
     if (!envelope) return 'dead';
     const session = this.decrypt(envelope);
@@ -187,7 +168,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     const decision = evaluateRecord({ session }, Date.now(), {
       ttlMs: this.ttlMs,
       absoluteMs: this.absoluteMs,
-      generation,
+      generation: ref.sessionGeneration,
     });
     if (decision.kind === 'generation-mismatch') return 'conflict';
     if (decision.kind === 'absolute-dead') {
@@ -196,7 +177,7 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     }
     if (decision.kind !== 'live') return 'dead';
     if (!sameCapturedSession(session, expected)) return 'conflict';
-    if (!isUpstreamCookieRenewal(identity, generation, expected, replacement)) {
+    if (!isUpstreamCookieRenewal(ref, expected, replacement)) {
       throw new Error('Invalid session renewal replacement');
     }
 
@@ -241,20 +222,150 @@ export class RedisSessionStore extends SessionStore implements OnModuleDestroy {
     return res === 1 || res === '1' ? 1 : 0;
   }
 
-  async all(): Promise<CapturedSession[]> {
+  /**
+   * Every live device record owned by `sub`. The prefix scan can over-match
+   * only on exotic glob characters in a NIM, so the decrypted `identity` is
+   * always checked before a record is returned. Absolute-dead records are
+   * CAS-cleaned exactly like the qualified reads.
+   */
+  async listBySub(sub: string): Promise<CapturedSession[]> {
     const result: CapturedSession[] = [];
+    const now = Date.now();
     let cursor = '0';
     do {
-      const [next, keys] = await this.client.scan(cursor, 'MATCH', `${KEY_PREFIX}*`, 'COUNT', 100);
+      const [next, keys] = await this.client.scan(
+        cursor,
+        'MATCH',
+        `${KEY_PREFIX}${sub}:*`,
+        'COUNT',
+        SCAN_BATCH,
+      );
       cursor = next;
       if (keys.length === 0) continue;
       const values = await this.client.mget(keys);
-      for (const value of values) {
-        const session = value ? this.decrypt(value) : null;
-        if (session) result.push(session);
+      for (let i = 0; i < keys.length; i++) {
+        const envelope = values[i];
+        if (!envelope) continue;
+        const session = this.decrypt(envelope);
+        if (!session || session.identity !== sub) continue;
+        const decision = evaluateRecord({ session }, now, {
+          ttlMs: this.ttlMs,
+          absoluteMs: this.absoluteMs,
+        });
+        if (decision.kind === 'live') {
+          result.push(decision.session);
+        } else if (decision.kind === 'absolute-dead') {
+          await this.casDeleteIfEqual(keys[i], envelope);
+        }
       }
     } while (cursor !== '0');
     return result;
+  }
+
+  /**
+   * Remove every device record for `sub`, including the pre-device unscoped
+   * key (`sso:session:<sub>`) that may still exist until migration runs.
+   */
+  async clearAllForSub(sub: string): Promise<number> {
+    let cleared = 0;
+    const legacyRemoved = await this.client.del(`${KEY_PREFIX}${sub}`);
+    cleared += Number(legacyRemoved) || 0;
+
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(
+        cursor,
+        'MATCH',
+        `${KEY_PREFIX}${sub}:*`,
+        'COUNT',
+        SCAN_BATCH,
+      );
+      cursor = next;
+      if (keys.length === 0) continue;
+      const removed = await this.client.del(...keys);
+      cleared += Number(removed) || 0;
+    } while (cursor !== '0');
+    return cleared;
+  }
+
+  /** Every live record across all users (background jobs only). */
+  async all(): Promise<CapturedSession[]> {
+    const result: CapturedSession[] = [];
+    const now = Date.now();
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(cursor, 'MATCH', `${KEY_PREFIX}*`, 'COUNT', SCAN_BATCH);
+      cursor = next;
+      if (keys.length === 0) continue;
+      const values = await this.client.mget(keys);
+      for (let i = 0; i < keys.length; i++) {
+        const envelope = values[i];
+        if (!envelope) continue;
+        const session = this.decrypt(envelope);
+        if (!session) continue;
+        const decision = evaluateRecord({ session }, now, {
+          ttlMs: this.ttlMs,
+          absoluteMs: this.absoluteMs,
+        });
+        if (decision.kind === 'live') {
+          result.push(decision.session);
+        } else if (decision.kind === 'absolute-dead') {
+          await this.casDeleteIfEqual(keys[i], envelope);
+        }
+      }
+    } while (cursor !== '0');
+    return result;
+  }
+
+  /**
+   * One-time startup migration of pre-device keys:
+   * `sso:session:<sub>` → `sso:session:<sub>:legacy`.
+   *
+   * Only single-segment suffixes are old records; already-composite keys are
+   * skipped. A newer composite record (greater `capturedAt`) wins, but the old
+   * key is removed either way. The old key's remaining PTTL is preserved with
+   * `SET ... PX`; a missing/expired PTTL falls back to the configured TTL.
+   * Returns only counts — never log IDs or cookies from here.
+   */
+  async migrateLegacyKeys(): Promise<{ scanned: number; migrated: number }> {
+    let cursor = '0';
+    let scanned = 0;
+    let migrated = 0;
+    do {
+      const [next, keys] = await this.client.scan(
+        cursor,
+        'MATCH',
+        `${KEY_PREFIX}*`,
+        'COUNT',
+        SCAN_BATCH,
+      );
+      cursor = next;
+      for (const key of keys) {
+        const suffix = key.slice(KEY_PREFIX.length);
+        if (suffix.split(':').length !== 1) continue; // already composite
+        scanned += 1;
+        const envelope = await this.client.get(key);
+        if (!envelope) continue;
+        const session = this.decrypt(envelope);
+        if (!session) continue;
+        const nextSession: CapturedSession = { ...session, clientId: LEGACY_CLIENT_ID };
+        const nextKey = keyFor(session.identity, LEGACY_CLIENT_ID);
+        const targetEnvelope = await this.client.get(nextKey);
+        const target = targetEnvelope ? this.decrypt(targetEnvelope) : null;
+        if (!target || target.capturedAt <= session.capturedAt) {
+          const pttl = await this.client.pttl(key);
+          const nextEnvelope = this.encrypt(JSON.stringify(nextSession));
+          if (pttl > 0) {
+            await this.client.set(nextKey, nextEnvelope, 'PX', pttl);
+          } else {
+            await this.client.set(nextKey, nextEnvelope, 'EX', this.ttlSeconds());
+          }
+          migrated += 1;
+        }
+        await this.client.del(key);
+      }
+    } while (cursor !== '0');
+    return { scanned, migrated };
   }
 
   async onModuleDestroy(): Promise<void> {

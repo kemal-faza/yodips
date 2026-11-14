@@ -14,8 +14,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 describe('SiapController', () => {
   let controller: SiapController;
   const GEN = 'a'.repeat(32);
-  const REF = { sub: 'u1', sessionGeneration: GEN };
-  const user = { sub: 'u1', sessionGeneration: GEN };
+  const REF = { sub: 'u1', clientId: 'client-a', sessionGeneration: GEN };
+  const user = { sub: 'u1', clientId: 'client-a', sessionGeneration: GEN };
   const mockSiap = {
     checkSessionValid: jest.fn(),
     getProfile: jest.fn(),
@@ -74,6 +74,13 @@ describe('SiapController', () => {
   it('rejects 401 SESSION_DEAD without a generation (never drops to sub-only)', async () => {
     await expect(
       controller.getProfile({ user: { sub: 'u1' } } as any),
+    ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
+    expect(mockSiap.getProfile).not.toHaveBeenCalled();
+  });
+
+  it('rejects 401 SESSION_DEAD without a clientId (never drops to sub-only)', async () => {
+    await expect(
+      controller.getProfile({ user: { sub: 'u1', sessionGeneration: GEN } } as any),
     ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
     expect(mockSiap.getProfile).not.toHaveBeenCalled();
   });

@@ -55,6 +55,9 @@ class MainActivity : ComponentActivity() {
                         // AES key (KeystoreTokenCipher) — never stored as plaintext.
                         TokenStore(applicationContext.tokenDataStore, KeystoreTokenCipher(applicationContext))
                     }
+                    // Same KMP lint false positive as AppRoot's remembers: the
+                    // constructor returns EncryptedPersistentCache, not Unit.
+                    @Suppress("RememberReturnType")
                     val persistentCache: PersistentCache = remember {
                         EncryptedPersistentCache(
                             KeystoreTokenCipher(applicationContext),

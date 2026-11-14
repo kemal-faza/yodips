@@ -14,6 +14,7 @@ import { InMemoryDataCache } from '../cache/in-memory-data.cache';
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 
 const SECRET = 's'.repeat(32);
+const CLIENT_A = 'client-a';
 const GEN_A = 'a'.repeat(32);
 const GEN_B = 'b'.repeat(32);
 const COOKIE_A = 'MoodleSession=AAA';
@@ -55,9 +56,10 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
   });
 
   beforeEach(async () => {
-    await store.clear('U1');
-    await store.set('U1', {
+    await store.clearAllForSub('U1');
+    await store.set({
       identity: 'U1',
+      clientId: CLIENT_A,
       ssoCookie: 'ci_session_sso=SSO',
       microsoftCookie: '',
       kulonCookie: COOKIE_A,
@@ -69,14 +71,15 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
   });
 
   it('Kulon: guard validates A, replacement B lands first, service read with A is SESSION_DEAD and never fetches with B', async () => {
-    const tokenA = await jwt.signAsync({ sub: 'U1', via: 'handoff', sessionGeneration: GEN_A });
+    const tokenA = await jwt.signAsync({ sub: 'U1', clientId: CLIENT_A, via: 'handoff', sessionGeneration: GEN_A });
     const req: any = { headers: { authorization: `Bearer ${tokenA}` } };
     await expect(guard.canActivate(ctxWith(req))).resolves.toBe(true);
-    expect(req.user).toMatchObject({ sub: 'U1', sessionGeneration: GEN_A });
+    expect(req.user).toMatchObject({ sub: 'U1', clientId: CLIENT_A, sessionGeneration: GEN_A });
 
     // Re-login replaces the live record BEFORE the service/upstream read.
-    await store.set('U1', {
+    await store.set({
       identity: 'U1',
+      clientId: CLIENT_A,
       ssoCookie: 'ci_session_sso=SSO',
       microsoftCookie: '',
       kulonCookie: COOKIE_B,
@@ -91,7 +94,7 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
     const svc = new KulonService(store, cache, undefined, upstream);
 
     await expect(
-      svc.getCourses({ sub: 'U1', sessionGeneration: GEN_A }),
+      svc.getCourses({ sub: 'U1', clientId: CLIENT_A, sessionGeneration: GEN_A }),
     ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
     // No upstream fetch was attempted with either cookie — B never leaks.
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -106,19 +109,20 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
     } as unknown as Response);
     // Direct adapter proof: A still dead, B resolves to B's cookie.
     await expect(
-      upstream.getContextForSession({ sub: 'U1', sessionGeneration: GEN_A }),
+      upstream.getContextForSession({ sub: 'U1', clientId: CLIENT_A, sessionGeneration: GEN_A }),
     ).rejects.toMatchObject({ status: 401 });
-    const ctxB = await upstream.getContextForSession({ sub: 'U1', sessionGeneration: GEN_B });
+    const ctxB = await upstream.getContextForSession({ sub: 'U1', clientId: CLIENT_A, sessionGeneration: GEN_B });
     expect(ctxB.cookie).toBe(COOKIE_B);
   });
 
   it('SIAP: guard validates A, replacement B lands first, service read with A is SESSION_DEAD and never mints/fetches with B', async () => {
-    const tokenA = await jwt.signAsync({ sub: 'U1', via: 'handoff', sessionGeneration: GEN_A });
+    const tokenA = await jwt.signAsync({ sub: 'U1', clientId: CLIENT_A, via: 'handoff', sessionGeneration: GEN_A });
     const req: any = { headers: { authorization: `Bearer ${tokenA}` } };
     await expect(guard.canActivate(ctxWith(req))).resolves.toBe(true);
 
-    await store.set('U1', {
+    await store.set({
       identity: 'U1',
+      clientId: CLIENT_A,
       ssoCookie: 'ci_session_sso=SSO',
       microsoftCookie: '',
       kulonCookie: COOKIE_B,
@@ -140,7 +144,7 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
     const svc = new SiapService(store, cache, upstream, { mintToken: mint, fetch: apiFetch } as any);
 
     await expect(
-      svc.getProfile({ sub: 'U1', sessionGeneration: GEN_A }),
+      svc.getProfile({ sub: 'U1', clientId: CLIENT_A, sessionGeneration: GEN_A }),
     ).rejects.toMatchObject({ status: 401, response: { code: 'SESSION_DEAD' } });
     // No mint and no API fetch with B material.
     expect(mint).not.toHaveBeenCalled();
@@ -149,9 +153,10 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
 
   it('deferred GET -> replacement -> qualified read: B survives and A stays dead (stateful InMemory interleaving)', async () => {
     // Guard snapshot was A; the service read is deferred until after B lands.
-    const staleRef = { sub: 'U1', sessionGeneration: GEN_A };
-    await store.set('U1', {
+    const staleRef = { sub: 'U1', clientId: CLIENT_A, sessionGeneration: GEN_A };
+    await store.set({
       identity: 'U1',
+      clientId: CLIENT_A,
       ssoCookie: '',
       microsoftCookie: '',
       kulonCookie: COOKIE_B,
@@ -165,7 +170,7 @@ describe('Guard-to-upstream TOCTOU (B): A-token never uses B cookies', () => {
       status: 401,
       response: { code: 'SESSION_DEAD' },
     });
-    const live = await store.getIfGeneration('U1', GEN_B);
+    const live = await store.getIfGeneration({ sub: 'U1', clientId: CLIENT_A, sessionGeneration: GEN_B });
     expect(live?.kulonCookie).toBe(COOKIE_B);
   });
 });

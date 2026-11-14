@@ -11,6 +11,7 @@ import { SiapService } from '../siap/siap.service';
 // Re-exported so existing imports keep working.
 import {
   CapturedSession,
+  LEGACY_CLIENT_ID,
   SESSION_GENERATION_RE,
   generateSessionGeneration,
   isSessionGeneration,
@@ -242,6 +243,7 @@ export class PlaywrightAuthService {
 
     return {
       identity,
+      clientId: LEGACY_CLIENT_ID,
       ssoCookie,
       microsoftCookie,
       kulonCookie,

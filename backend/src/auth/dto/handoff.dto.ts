@@ -1,4 +1,5 @@
 import { IsOptional, IsString, Matches } from 'class-validator';
+import { CLIENT_ID_RE } from '../../session/session-contract';
 
 export class HandoffDto {
   @IsString()
@@ -20,4 +21,9 @@ export class HandoffDto {
   @IsString()
   @Matches(/^[A-Za-z0-9._-]+$/)
   identity?: string;
+
+  /** Installation/surface ID. Optional during P1 (legacy fallback). */
+  @IsOptional()
+  @Matches(CLIENT_ID_RE)
+  clientId?: string;
 }

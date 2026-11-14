@@ -6,9 +6,9 @@ import androidx.compose.ui.Modifier
 /**
  * Release counterpart of the debug-only probe harness.
  *
- * The real implementation lives in `src/debug/java` so its WebView wiring and
- * diagnostic strings cannot reach a release APK: R8 is disabled, so merely
- * guarding a composable with `BuildConfig.DEBUG` would still ship the code.
+ * The real implementation lives in `src/debug/java`; keeping it out of the
+ * release source set guarantees its WebView wiring and diagnostic strings never
+ * reach a release APK, independent of R8/keep-rule changes.
  * Keeping the signature identical lets `AppRoot` (main) call it on every variant.
  */
 @Composable

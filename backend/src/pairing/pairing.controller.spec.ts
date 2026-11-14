@@ -30,11 +30,17 @@ describe('PairingController', () => {
     controller = module.get(PairingController);
   });
 
-  it('pair/request meneruskan sub+generation dari JWT guard', async () => {
+  it('pair/request meneruskan sub+clientId+generation dari JWT guard', async () => {
     pairing.requestPairing.mockResolvedValue({ code: 'ABCD1234', qrUrl: 'u', expiresAt: 1 });
     const gen = 'a'.repeat(32);
-    const res = await controller.request({ user: { sub: 'NIM1', sessionGeneration: gen } } as any);
-    expect(pairing.requestPairing).toHaveBeenCalledWith({ sub: 'NIM1', sessionGeneration: gen });
+    const res = await controller.request({
+      user: { sub: 'NIM1', clientId: 'client-a', sessionGeneration: gen },
+    } as any);
+    expect(pairing.requestPairing).toHaveBeenCalledWith({
+      sub: 'NIM1',
+      clientId: 'client-a',
+      sessionGeneration: gen,
+    });
     expect(res.code).toBe('ABCD1234');
   });
 
@@ -46,11 +52,28 @@ describe('PairingController', () => {
     expect(pairing.requestPairing).not.toHaveBeenCalled();
   });
 
-  it('pair/consume meneruskan dto.code ke service', async () => {
+  it('pair/request tanpa clientId → 401 SESSION_DEAD (tidak diteruskan)', async () => {
+    const gen = 'a'.repeat(32);
+    await expect(
+      controller.request({ user: { sub: 'NIM1', sessionGeneration: gen } } as any),
+    ).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(pairing.requestPairing).not.toHaveBeenCalled();
+  });
+
+  it('pair/consume meneruskan dto.code + clientId ke service', async () => {
     pairing.consume.mockResolvedValue({ accessToken: 'j', hasKulon: true, hasSiap: true });
     const res = await controller.consume({ code: 'abcd1234' } as any);
-    expect(pairing.consume).toHaveBeenCalledWith('abcd1234');
+    expect(pairing.consume).toHaveBeenCalledWith('abcd1234', undefined);
     expect(res.accessToken).toBe('j');
+  });
+
+  it('pair/consume meneruskan clientId perangkat baru bila DTO menyertakannya', async () => {
+    pairing.consume.mockResolvedValue({ accessToken: 'j', hasKulon: true, hasSiap: true });
+    await controller.consume({ code: 'abcd1234', clientId: 'pair-client' } as any);
+    expect(pairing.consume).toHaveBeenCalledWith('abcd1234', 'pair-client');
   });
 
   it('pair/status meneruskan sub + code ke service (JWT-guarded)', async () => {
@@ -93,20 +116,52 @@ describe('PairingController', () => {
     ).rejects.toThrow();
   });
 
-  it('round-trip: JWT via=pair (with sessionGeneration) dari JwtModule ter-pin LOLOS JwtAuthGuard asli — SessionStore DI resolves', async () => {
+  it('round-trip: JWT via=pair (clientId + sessionGeneration) dari JwtModule ter-pin LOLOS JwtAuthGuard asli — SessionStore DI resolves', async () => {
     const SECRET = 's'.repeat(32);
     const gen = '9'.repeat(32);
     const records = new Map<string, any>([
-      ['X', { identity: 'X', ssoCookie: '', microsoftCookie: '', kulonCookie: 'K', siapCookie: '', capturedAt: Date.now(), sessionGeneration: gen }],
+      [
+        'X:client-a',
+        {
+          identity: 'X',
+          clientId: 'client-a',
+          ssoCookie: '',
+          microsoftCookie: '',
+          kulonCookie: 'K',
+          siapCookie: '',
+          capturedAt: Date.now(),
+          sessionGeneration: gen,
+        },
+      ],
     ]);
     const fakeStore = {
-      get: async (sub: string) => records.get(sub) ?? null,
-      getIfGeneration: async (sub: string, generation: string) => {
-        const rec = records.get(sub) ?? null;
-        if (!rec || rec.sessionGeneration !== generation) return null;
+      set: async (session: any) => {
+        records.set(`${session.identity}:${session.clientId}`, session);
+      },
+      getIfGeneration: async (ref: {
+        sub: string;
+        clientId: string;
+        sessionGeneration: string;
+      }) => {
+        const rec = records.get(`${ref.sub}:${ref.clientId}`) ?? null;
+        if (!rec || rec.sessionGeneration !== ref.sessionGeneration) return null;
         return rec;
       },
+      replaceIfUnchanged: async () => 'dead',
       clearIfGeneration: async () => true,
+      listBySub: async (sub: string) =>
+        [...records.values()].filter((s) => s.identity === sub),
+      clearAllForSub: async (sub: string) => {
+        let cleared = 0;
+        for (const [key, s] of records) {
+          if (s.identity !== sub) continue;
+          records.delete(key);
+          cleared += 1;
+        }
+        return cleared;
+      },
+      all: async () => [...records.values()],
+      migrateLegacyKeys: async () => ({ scanned: 0, migrated: 0 }),
     };
     const module = await Test.createTestingModule({
       controllers: [PairingController],
@@ -122,15 +177,31 @@ describe('PairingController', () => {
         JwtAuthGuard,
         { provide: PairingService, useValue: pairing },
         { provide: SessionStore, useValue: fakeStore },
-        { provide: ConfigService, useValue: { get: (k: string) => (k === 'JWT_SECRET' ? SECRET : undefined) } },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (k: string) => {
+              if (k === 'JWT_SECRET') return SECRET;
+              if (k === 'SESSION_LEGACY_CLIENT_ENABLED') return true;
+              return undefined;
+            },
+          },
+        },
       ],
     }).compile();
 
     const jwt = module.get(JwtService);
     const guard = module.get(JwtAuthGuard);
-    // The token carries the claim the fake record holds (generation gen), so the
-    // guard's shape check passes and the exact-generation compare passes.
-    const token = await jwt.signAsync({ sub: 'X', via: 'pair', sessionGeneration: gen });
-    await expect(guard.canActivate(ctxWith({ headers: { authorization: `Bearer ${token}` } }))).resolves.toBe(true);
+    // The token carries the device's clientId; the guard resolves the exact
+    // `X:client-a` record and its generation.
+    const token = await jwt.signAsync({
+      sub: 'X',
+      clientId: 'client-a',
+      via: 'pair',
+      sessionGeneration: gen,
+    });
+    const req: any = { headers: { authorization: `Bearer ${token}` } };
+    await expect(guard.canActivate(ctxWith(req))).resolves.toBe(true);
+    expect(req.user.clientId).toBe('client-a');
   });
 });

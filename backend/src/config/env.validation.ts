@@ -43,6 +43,7 @@ const BOOLEAN_ENV_KEYS = [
   'SESSION_KEEPALIVE_ENABLED',
   'NOTIFICATIONS_ENABLED',
   'WEB_PUSH_ENABLED',
+  'SESSION_LEGACY_CLIENT_ENABLED',
 ] as const;
 
 export class EnvConfig {
@@ -163,6 +164,17 @@ export class EnvConfig {
    *  (previously refresh within each 7-day idle window could keep it alive
    *  indefinitely). Set shorter (e.g. 86400000 = 24h) to tighten the cap. */
   SESSION_ABSOLUTE_TTL_MS: number = 604800000; // 7 days
+
+  /** Temporary rollout fallback: missing clientId maps to the reserved `legacy` client. */
+  @IsOptional()
+  @IsBoolean()
+  SESSION_LEGACY_CLIENT_ENABLED: boolean = true;
+
+  /** Maximum live device sessions per NIM; the oldest capturedAt is evicted. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  SESSION_MAX_PER_USER: number = 10;
 
   // ---- Session keep-alive ---------------------------------------------------
   /** Probe captured sessions periodically and persist rotated cookies.

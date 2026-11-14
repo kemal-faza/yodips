@@ -131,6 +131,13 @@ export class SessionKeepAliveService
     rateLimited: Set<string>,
   ): Promise<void> {
     const started = Date.now();
+    // The device-qualified ref is fixed for the whole probe: identity/clientId
+    // and generation never change here, only the cookie material does.
+    const ref = {
+      sub: session.identity,
+      clientId: session.clientId,
+      sessionGeneration: session.sessionGeneration,
+    };
     const probes: Array<{ result: KeepAliveProbeResult }> = [];
     probes.push(
       await this.probe('sso', rateLimited, () =>
@@ -179,8 +186,7 @@ export class SessionKeepAliveService
       }
       const replacement = { ...expected, [field]: merged.cookie };
       const outcome = await this.store.replaceIfUnchanged(
-        expected.identity,
-        expected.sessionGeneration,
+        ref,
         expected,
         replacement,
       );
@@ -204,10 +210,7 @@ export class SessionKeepAliveService
       return;
 
     if (!rotated) {
-      await this.store.getIfGeneration(
-        session.identity,
-        session.sessionGeneration,
-      );
+      await this.store.getIfGeneration(ref);
     }
     this.logger.log(
       `[session.keepalive] ${this.describe(probes)} rotated=${rotated} ageMin=${this.ageMinutes(session)} (${Date.now() - started}ms)`,

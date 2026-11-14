@@ -7,7 +7,7 @@ import { ConsumeDto } from './dto/pair.dto';
 import { PairingService } from './pairing.service';
 
 interface AuthedRequest {
-  user?: { sub?: string; sessionGeneration?: unknown; [k: string]: unknown };
+  user?: { sub?: string; clientId?: string; sessionGeneration?: unknown; [k: string]: unknown };
 }
 
 @Controller('api/auth')
@@ -22,14 +22,18 @@ export class PairingController {
     if (!isSessionRef(req.user)) {
       throw sessionDead();
     }
-    return this.pairing.requestPairing({ sub: req.user.sub, sessionGeneration: req.user.sessionGeneration });
+    return this.pairing.requestPairing({
+      sub: req.user.sub,
+      clientId: req.user.clientId,
+      sessionGeneration: req.user.sessionGeneration,
+    });
   }
 
   // Konsumsi kode ADALAH mekanisme login (menerbitkan JWT) → publik, throttle ketat.
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('pair/consume')
   consume(@Body() dto: ConsumeDto) {
-    return this.pairing.consume(dto.code);
+    return this.pairing.consume(dto.code, dto.clientId);
   }
 
   // Status kode (polling web): read-only, tak mengonsumsi. Hanya pemilik

@@ -37,10 +37,13 @@ describe('DashboardController', () => {
       service as any,
       observed.telemetry,
     );
-    const req = { user: { sub: '24060121130000', sessionGeneration: GEN } };
+    const req = {
+      user: { sub: '24060121130000', clientId: 'client-a', sessionGeneration: GEN },
+    };
     await expect(controller.getDashboard(req as any)).resolves.toEqual(payload);
     expect(service.getDashboard).toHaveBeenCalledWith({
       sub: '24060121130000',
+      clientId: 'client-a',
       sessionGeneration: GEN,
     });
     expect(observed.events).toEqual([
@@ -66,7 +69,7 @@ describe('DashboardController', () => {
       observed.telemetry,
     );
     await controller.getDashboard({
-      user: { sub: 'u1', sessionGeneration: GEN },
+      user: { sub: 'u1', clientId: 'client-a', sessionGeneration: GEN },
       headers: { 'x-yodips-cache-state': 'cold' },
     } as any);
     expect(observed.events).toHaveLength(1);
@@ -88,7 +91,7 @@ describe('DashboardController', () => {
     );
     await expect(
       controller.getDashboard({
-        user: { sub: 'u1', sessionGeneration: GEN },
+        user: { sub: 'u1', clientId: 'client-a', sessionGeneration: GEN },
       } as any),
     ).rejects.toThrow();
     expect(observed.events).toEqual([
@@ -118,6 +121,20 @@ describe('DashboardController', () => {
     expect(service.getDashboard).not.toHaveBeenCalled();
   });
 
+  it('rejects 401 SESSION_DEAD without a clientId (never drops to sub-only)', async () => {
+    const service = { getDashboard: jest.fn() };
+    const controller = new DashboardController(service as any);
+    await expect(
+      controller.getDashboard({
+        user: { sub: 'u1', sessionGeneration: GEN },
+      } as any),
+    ).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'SESSION_DEAD' },
+    });
+    expect(service.getDashboard).not.toHaveBeenCalled();
+  });
+
   it('is guarded by JwtAuthGuard', async () => {
     const getDashboard = jest.fn().mockResolvedValue({ errors: {} });
     const app: INestApplication = await Test.createTestingModule({
@@ -130,6 +147,7 @@ describe('DashboardController', () => {
         canActivate: jest.fn().mockImplementation((ctx: any) => {
           ctx.switchToHttp().getRequest().user = {
             sub: 'u1',
+            clientId: 'client-a',
             sessionGeneration: GEN,
           };
           return Promise.resolve(true);
@@ -142,6 +160,7 @@ describe('DashboardController', () => {
     await app.close();
     expect(getDashboard).toHaveBeenCalledWith({
       sub: 'u1',
+      clientId: 'client-a',
       sessionGeneration: GEN,
     });
   });

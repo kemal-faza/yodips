@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   OnApplicationBootstrap,
+  Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
@@ -12,7 +13,10 @@ import {
   findDueSoon,
   NotifEvent,
 } from './detector';
-import { isStaleUpstreamError } from '../upstream/upstream-fetch';
+import {
+  isStaleUpstreamError,
+  StaleUpstreamError,
+} from '../upstream/upstream-fetch';
 import { KulonService } from '../kulon/kulon.service';
 import { eventToPush, PushCopy } from './push-copy';
 import { NotificationStore, WebSubscriptionRecord } from './notification-store';
@@ -20,6 +24,8 @@ import { SiapService } from '../siap/siap.service';
 import { FcmService } from './fcm.service';
 import { KulonAssignment } from '../kulon/kulon.service';
 import { SiapJadwal } from '../siap/siap.service';
+import { SessionStore } from '../session/session-store';
+import { withFirstLive } from '../session/with-session-selection';
 import {
   CycleSendBudget,
   DEFAULT_CYCLE_BUDGET,
@@ -35,6 +41,22 @@ const CHUNK_SIZE = 2;           // maks user paralel (spec §3.2)
 const JITTER_MAX_MS = 60_000;   // jitter antar-user
 
 /**
+ * First rejection among the settled slices, preferring a NON-stale error: a
+ * transient upstream outage must win the classification so runCycle skips the
+ * user silently instead of sending a re-login push for a session that is fine.
+ */
+function firstFailure(
+  ...results: Array<PromiseSettledResult<unknown>>
+): unknown {
+  const errors = results
+    .filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
+    .map((result) => result.reason);
+  return errors.find((error) => !isStaleUpstreamError(error)) ?? errors[0];
+}
+
+/**
  * Orkestrator polling 15-menit per spec §3.2: enumerate user ber-token ->
  * fetch upstream -> diff vs snapshot -> push FCM. Anti-overlap memakai lock
  * NotificationStore + flag in-process (deployment = satu web dyno).
@@ -45,6 +67,7 @@ export class NotificationsPoller implements OnApplicationBootstrap {
   running = false;
 
   constructor(
+    @Inject(SessionStore) private readonly sessionStore: SessionStore,
     private readonly store: NotificationStore,
     private readonly kulon: KulonService,
     private readonly siap: SiapService,
@@ -135,43 +158,111 @@ export class NotificationsPoller implements OnApplicationBootstrap {
     const webSubs = await this.store.getWebSubscriptions(sub);
     if (tokens.length === 0 && webSubs.length === 0) return;
 
-    // Background (no JWT): the CURRENT live record, whatever its generation.
-    // Explicit current-session APIs — never the token-facing SessionRef paths.
-    const assignments: KulonAssignment[] = await this.kulon.getAllAssignmentsForCurrentSession(sub);
-    const jadwal: SiapJadwal[] = await this.siap.getJadwalForCurrentSession(sub);
+    // Background (no JWT): each slice INDEPENDENTLY picks the newest live
+    // device able to serve it (withFirstLive). Running both concurrently and
+    // settling separately means a stale Kulon session no longer suppresses the
+    // SIAP slice, and vice versa. No empty data is synthesized for a failed
+    // slice: its snapshot/sent-keys stay untouched below.
+    const [assignmentsResult, jadwalResult] = await Promise.allSettled([
+      withFirstLive(
+        this.sessionStore,
+        sub,
+        (ref) => this.kulon.getAllAssignments(ref),
+        () =>
+          new StaleUpstreamError(
+            'Kulon',
+            'no-cookie',
+            'Kulon session belum ada. Silakan login ulang via SSO',
+          ),
+      ),
+      withFirstLive(
+        this.sessionStore,
+        sub,
+        (ref) => this.siap.getJadwal(ref),
+        () =>
+          new StaleUpstreamError(
+            'Siap',
+            'no-cookie',
+            'SIAP session belum ada. Silakan login ulang via SSO',
+          ),
+      ),
+    ]);
+    const assignments =
+      assignmentsResult.status === 'fulfilled' ? assignmentsResult.value : null;
+    const jadwal =
+      jadwalResult.status === 'fulfilled' ? jadwalResult.value : null;
+    const failure = firstFailure(assignmentsResult, jadwalResult);
 
-    // Sesi valid -> episode expired usai; reset agar episode BERIKUTNYA boleh push lagi.
-    if (await this.store.getReloginFlagged(sub)) {
-      await this.store.setReloginFlagged(sub, false);
+    // No slice produced data: keep the all-or-nothing contract (stale ->
+    // re-login push, other -> silent skip) and leave the episode flag as-is.
+    if (assignments === null && jadwal === null) {
+      throw failure ?? new Error('notification slice failed');
     }
 
-    const prevAssignments = await this.store.getSnapshot<KulonAssignment[]>(
-      sub,
-      'assignments',
-    );
-    const newRes = detectNewAssignments(prevAssignments, assignments);
+    // Sesi valid -> episode expired usai; reset agar episode BERIKUTNYA boleh
+    // push lagi. A still-stale slice keeps the flag set — it is what dedupes
+    // the re-login push to once per episode.
+    if (!failure || !isStaleUpstreamError(failure)) {
+      if (await this.store.getReloginFlagged(sub)) {
+        await this.store.setReloginFlagged(sub, false);
+      }
+    }
 
-    const sentDeadline = await this.store.getSentKeys(sub, 'deadline');
-    const due = findDueSoon(assignments, nowMs, sentDeadline, deadlineWindowMs);
+    const newEvents: NotifEvent[] = [];
+    const dueEvents: NotifEvent[] = [];
+    const reschedEvents: NotifEvent[] = [];
+    let assignmentSnapshotValid = false;
+    let deadlineKeys: string[] = [];
+    if (assignments !== null) {
+      const prevAssignments = await this.store.getSnapshot<KulonAssignment[]>(
+        sub,
+        'assignments',
+      );
+      const newRes = detectNewAssignments(prevAssignments, assignments);
+      const sentDeadline = await this.store.getSentKeys(sub, 'deadline');
+      const due = findDueSoon(assignments, nowMs, sentDeadline, deadlineWindowMs);
+      newEvents.push(...newRes.events);
+      dueEvents.push(...due.events);
+      assignmentSnapshotValid = newRes.snapshotValid;
+      deadlineKeys = due.newKeys;
+    }
 
-    const prevJadwal = await this.store.getSnapshot<SiapJadwal[]>(sub, 'jadwal');
-    const seenPrints = await this.store.getSentKeys(sub, 'reschedule');
-    const resched = detectReschedules(prevJadwal, jadwal, seenPrints);
+    let jadwalSnapshotValid = false;
+    let reschedFingerprints: string[] = [];
+    if (jadwal !== null) {
+      const prevJadwal = await this.store.getSnapshot<SiapJadwal[]>(
+        sub,
+        'jadwal',
+      );
+      const seenPrints = await this.store.getSentKeys(sub, 'reschedule');
+      const resched = detectReschedules(prevJadwal, jadwal, seenPrints);
+      reschedEvents.push(...resched.events);
+      jadwalSnapshotValid = resched.snapshotValid;
+      reschedFingerprints = resched.fingerprints;
+    }
 
-    const events: NotifEvent[] = [...newRes.events, ...resched.events, ...due.events];
+    const events: NotifEvent[] = [...newEvents, ...reschedEvents, ...dueEvents];
     for (const ev of events) {
       await this.deliver(sub, tokens, webSubs, eventToPush(ev), summary, budget);
     }
 
-    // Persist state — snapshot hanya saat fetch tampak sehat (guard detector).
-    if (newRes.snapshotValid) {
-      await this.store.setSnapshot(sub, 'assignments', assignments);
+    // Persist state — snapshot hanya saat fetch tampak sehat (guard detector),
+    // dan hanya untuk slice yang benar-benar berhasil this cycle.
+    if (assignments !== null) {
+      if (assignmentSnapshotValid) {
+        await this.store.setSnapshot(sub, 'assignments', assignments);
+      }
+      await this.store.setSentKeys(sub, 'deadline', deadlineKeys);
     }
-    if (resched.snapshotValid) {
-      await this.store.setSnapshot(sub, 'jadwal', jadwal);
+    if (jadwal !== null) {
+      if (jadwalSnapshotValid) {
+        await this.store.setSnapshot(sub, 'jadwal', jadwal);
+      }
+      await this.store.setSentKeys(sub, 'reschedule', reschedFingerprints);
     }
-    await this.store.setSentKeys(sub, 'deadline', due.newKeys);
-    await this.store.setSentKeys(sub, 'reschedule', resched.fingerprints);
+
+    // Surface the failure AFTER the working slice's events were delivered.
+    if (failure) throw failure;
   }
 
   /**

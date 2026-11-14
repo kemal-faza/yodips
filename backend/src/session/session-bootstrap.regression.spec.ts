@@ -53,8 +53,11 @@ jest.mock('ioredis', () => {
       get: jest.fn(async () => null),
       del: jest.fn(async () => 1),
       expire: jest.fn(async () => 1),
-      scan: jest.fn(async () => ({ cursor: '0', keys: [] })),
+      // ioredis scan resolves [cursor, keys] — the legacy migration consumes
+      // this shape during the store factory.
+      scan: jest.fn(async () => ['0', []] as [string, string[]]),
       mget: jest.fn(async () => []),
+      pttl: jest.fn(async () => -2),
       pipeline: jest.fn(() => ({
         set: jest.fn(),
         get: jest.fn(),

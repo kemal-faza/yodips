@@ -12,7 +12,9 @@
     "INVALID_CODE",
     "EXPIRED_CODE",
     "IDENTITY_UNRESOLVED",
-    "WEB_PUSH_CAP_REACHED"
+    "WEB_PUSH_CAP_REACHED",
+    "INVALID_CLIENT_ID",
+    "CLIENT_ID_REQUIRED"
   ],
   "apiPaths": {
     "auth.me": "/api/auth/me",

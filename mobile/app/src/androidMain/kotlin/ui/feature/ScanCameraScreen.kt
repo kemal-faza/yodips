@@ -11,6 +11,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -515,6 +516,7 @@ private fun PermissionPrompt(
  * [onToken]. The atomic [processing] gate is claimed by the first accepted
  * decode across camera and gallery, preventing duplicate attendance requests.
  */
+@androidx.annotation.OptIn(markerClass = [ExperimentalGetImage::class])
 private fun decodeQr(
     imageProxy: ImageProxy,
     scanner: BarcodeScanner,

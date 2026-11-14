@@ -2,6 +2,12 @@ export interface PairingRecord {
   /** Identitas pemilik sesi sumber (NIM, dari JWT guard — bukan dari client). */
   sub: string;
   /**
+   * Device/surface that requested the code. `consume` reads the source
+   * session with this exact client ID; an OLD record without it maps to the
+   * reserved `legacy` device while the rollout flag is on (dead otherwise).
+   */
+  clientId: string;
+  /**
    * Issuing `sessionGeneration`: the exact generation the requesting JWT was
    * minted against. `consume` requires the LIVE store record to still carry
    * this same generation — a replacement (re-login) between request and

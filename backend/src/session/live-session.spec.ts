@@ -11,6 +11,7 @@ const GEN_B = 'b'.repeat(32);
 function session(overrides: Partial<CapturedSession> = {}): CapturedSession {
   return {
     identity: 'U1',
+    clientId: 'client-a',
     ssoCookie: 'ci_session_sso=SSO',
     microsoftCookie: '',
     kulonCookie: 'MoodleSession=A',
@@ -33,28 +34,38 @@ describe('readLiveSession (one guarded read seam)', () => {
       null,
       undefined,
       { sub: 'U1', sessionGeneration: 'not-hex' },
-      { sub: '', sessionGeneration: GEN_A },
-      { sub: 'U1' },
+      { sub: '', clientId: 'client-a', sessionGeneration: GEN_A },
+      { sub: 'U1', sessionGeneration: GEN_A }, // missing clientId
+      { sub: 'U1', clientId: 'bad id', sessionGeneration: GEN_A },
+      { sub: 'U1', clientId: 'client-a' },
     ]) {
       await expect(readLiveSession(store, bad)).resolves.toBeNull();
     }
     expect(getIfGeneration).not.toHaveBeenCalled();
   });
 
-  it('reads the exact-generation record and returns the live session', async () => {
+  it('reads the exact device+generation record and returns the live session', async () => {
     const live = session();
     const getIfGeneration = jest.fn().mockResolvedValue(live);
     const store = fakeStore(getIfGeneration);
     await expect(
-      readLiveSession(store, { sub: 'U1', sessionGeneration: GEN_A }),
+      readLiveSession(store, { sub: 'U1', clientId: 'client-a', sessionGeneration: GEN_A }),
     ).resolves.toBe(live);
-    expect(getIfGeneration).toHaveBeenCalledWith('U1', GEN_A);
+    expect(getIfGeneration).toHaveBeenCalledWith({
+      sub: 'U1',
+      clientId: 'client-a',
+      sessionGeneration: GEN_A,
+    });
   });
 
-  it('returns null when the store has no live record for that generation', async () => {
+  it('returns null when the store has no live record for that device/generation', async () => {
     const getIfGeneration = jest.fn().mockResolvedValue(null);
     await expect(
-      readLiveSession(fakeStore(getIfGeneration), { sub: 'U1', sessionGeneration: GEN_A }),
+      readLiveSession(fakeStore(getIfGeneration), {
+        sub: 'U1',
+        clientId: 'client-a',
+        sessionGeneration: GEN_A,
+      }),
     ).resolves.toBeNull();
   });
 
@@ -64,7 +75,11 @@ describe('readLiveSession (one guarded read seam)', () => {
     const record = session({ sessionGeneration: GEN_B });
     const getIfGeneration = jest.fn().mockResolvedValue(record);
     await expect(
-      readLiveSession(fakeStore(getIfGeneration), { sub: 'U1', sessionGeneration: GEN_A }),
+      readLiveSession(fakeStore(getIfGeneration), {
+        sub: 'U1',
+        clientId: 'client-a',
+        sessionGeneration: GEN_A,
+      }),
     ).resolves.toBe(record);
   });
 });

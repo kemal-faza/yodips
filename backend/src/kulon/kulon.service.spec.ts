@@ -23,13 +23,14 @@ import { SessionStore } from '../session/session-store';
 /** Minimal store stub for tests that never resolve the store (parseMoodleDate,
  *  course-content, page-transport specs). */
 const NO_STORE: SessionStore = {
-  get: async () => null,
   getIfGeneration: async () => null,
   replaceIfUnchanged: async () => 'dead',
-  clear: async () => undefined,
   clearIfGeneration: async () => true,
+  listBySub: async () => [],
+  clearAllForSub: async () => 0,
   set: async () => undefined,
   all: async () => [],
+  migrateLegacyKeys: async () => ({ scanned: 0, migrated: 0 }),
 };
 import type {
   KulonAssignment,
@@ -39,7 +40,11 @@ import type {
 } from './kulon-parse';
 
 const TEST_GEN = 'a'.repeat(32);
-const ref = (sub: string, sessionGeneration: string = TEST_GEN) => ({ sub, sessionGeneration });
+const ref = (sub: string, sessionGeneration: string = TEST_GEN) => ({
+  sub,
+  clientId: 'client-a',
+  sessionGeneration,
+});
 
 function recordingRuntime(): { runtime: TelemetryRuntime; events: unknown[] } {
   const events: unknown[] = [];
@@ -68,13 +73,19 @@ describe('sub-based session resolution (endpoint API)', () => {
     sessionGeneration?: string;
   }): KulonService {
     const full = session
-      ? { sessionGeneration: TEST_GEN, capturedAt: Date.now(), ...session }
+      ? {
+          identity: 'u1',
+          clientId: 'client-a',
+          sessionGeneration: TEST_GEN,
+          capturedAt: Date.now(),
+          ...session,
+        }
       : null;
     const store = {
-      get: jest.fn().mockResolvedValue(full),
-      getIfGeneration: jest.fn(async (_sub: string, gen: string) =>
-        full && (full as any).sessionGeneration === gen ? full : null,
+      getIfGeneration: jest.fn(async (ref: any) =>
+        full && full.sessionGeneration === ref.sessionGeneration ? full : null,
       ),
+      listBySub: jest.fn(async () => (full ? [full] : [])),
     } as any;
     // Real seam wired with the same session-store fake: getContext resolves
     // the cookie from the store, fetchSesskeyOrThrow probes via global.fetch.
@@ -178,12 +189,18 @@ describe('Kulon timed owner compatibility', () => {
 
   it('propagates a recording runtime to the fallback upstream session', async () => {
     const { runtime, events } = recordingRuntime();
-    const record = { kulonCookie: 'cookie', sessionGeneration: TEST_GEN, capturedAt: Date.now() };
+    const record = {
+      identity: 'u1',
+      clientId: 'client-a',
+      kulonCookie: 'cookie',
+      sessionGeneration: TEST_GEN,
+      capturedAt: Date.now(),
+    };
     const store = {
-      get: jest.fn().mockResolvedValue(record),
-      getIfGeneration: jest.fn(async (_sub: string, gen: string) =>
-        gen === TEST_GEN ? record : null,
+      getIfGeneration: jest.fn(async (ref: any) =>
+        ref.sessionGeneration === TEST_GEN ? record : null,
       ),
+      listBySub: jest.fn(async () => [record]),
     } as any;
     global.fetch = jest.fn(async (input: string) => {
       if (input.includes('/my/')) {
@@ -267,22 +284,18 @@ describe('Kulon timed owner compatibility', () => {
  * the instance level so no /my/ probe hits global.fetch (sesskey is canned).
  */
 function makeAuthedKulonSvc(opts: { cache?: any; siap?: any } = {}): KulonService {
+  const record = {
+    identity: 'u1',
+    clientId: 'client-a',
+    kulonCookie: 'session-cookie',
+    siapCookie: 'siap-cookie',
+    sessionGeneration: TEST_GEN,
+    capturedAt: Date.now(),
+  };
   const store = {
-    get: async () => ({
-      kulonCookie: 'session-cookie',
-      siapCookie: 'siap-cookie',
-      sessionGeneration: TEST_GEN,
-      capturedAt: Date.now(),
-    }),
-    getIfGeneration: async (_sub: string, gen: string) =>
-      gen === TEST_GEN
-        ? {
-            kulonCookie: 'session-cookie',
-            siapCookie: 'siap-cookie',
-            sessionGeneration: TEST_GEN,
-            capturedAt: Date.now(),
-          }
-        : null,
+    getIfGeneration: async (ref: any) =>
+      ref.sessionGeneration === TEST_GEN ? record : null,
+    listBySub: async () => [record],
   } as any;
   const real = new KulonUpstreamSession(store);
   (real as any).fetchSesskeyOrThrow = async () => 'sesskey123';
@@ -495,6 +508,8 @@ describe('KulonService', () => {
 
   afterEach(() => {
     (global.fetch as jest.Mock).mockReset();
+    // The calendar-sensitive progress test freezes time; never leak it.
+    jest.useRealTimers();
   });
 
   it('gets courses from timeline endpoint (all + inprogress + hidden), strips [SIAP] prefix, tags timelineStatus', async () => {
@@ -903,6 +918,9 @@ describe('KulonService', () => {
   });
 
   it('gets courses with a future-month progress of 0', async () => {
+    // Freeze the clock: the fixtures use fixed November section dates and the
+    // assertion "both sections are still ahead" only holds before November.
+    jest.useFakeTimers({ now: new Date('2026-08-15T10:00:00Z') });
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce({
         ok: true,

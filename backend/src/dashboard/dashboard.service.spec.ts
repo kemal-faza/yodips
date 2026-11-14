@@ -37,7 +37,7 @@ const ASSIGN: KulonAssignment = {
 } as KulonAssignment;
 
 const GEN = 'a'.repeat(32);
-const ref = (sub: string) => ({ sub, sessionGeneration: GEN });
+const ref = (sub: string) => ({ sub, clientId: 'client-a', sessionGeneration: GEN });
 
 function makeService(overrides: Record<string, jest.Mock>): DashboardService {
   const deps = {

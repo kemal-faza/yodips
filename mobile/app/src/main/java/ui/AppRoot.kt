@@ -93,6 +93,9 @@ fun AppRoot(
     // `SessionRefresher.safe`). Meng-escalate-nya memaksa login ulang untuk
     // sesi yang sebenarnya sehat — inilah "harus login ulang padahal token
     // masih hidup".
+    // Lint cannot resolve the commonMain SsoRepository constructor through the
+    // KMP release model and misreports this remember as returning Unit.
+    @Suppress("RememberReturnType")
     val repo = remember(tokenStore, persistentCache) {
         SsoRepository(
             persistent = persistentCache,
@@ -140,6 +143,7 @@ fun AppRoot(
     // only spans invocations that share ONE SessionLogout instance — building
     // a fresh one per tap would create new single-flight state each time and
     // defeat it.
+    @Suppress("RememberReturnType") // Same KMP false positive as `repo` above.
     val sessionLogout = remember {
         SessionLogout(
             pushUnregister = { PushGraph.onLogout() },

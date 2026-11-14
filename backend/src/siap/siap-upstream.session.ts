@@ -298,8 +298,14 @@ export class SiapUpstreamSession {
 
   /** Resolve the live generation for a background caller before token work. */
   async getCurrentSessionRef(sub?: string): Promise<SessionRef> {
-    const session = sub ? await this.store.get(sub) : null;
-    const ref = sub && session?.siapCookie ? currentRefForSession(sub, session) : null;
+    // One record per device: choose the newest device that actually carries a
+    // SIAP cookie. A newer partial record without one must not hide an older
+    // live device (the token path is still exact-generation via its ref).
+    const sessions = sub ? await this.store.listBySub(sub) : [];
+    const session = [...sessions]
+      .sort((a, b) => b.capturedAt - a.capturedAt)
+      .find((s) => !!s.siapCookie);
+    const ref = sub && session ? currentRefForSession(sub, session) : null;
     if (!ref) {
       throw new StaleUpstreamError(
         'Siap',

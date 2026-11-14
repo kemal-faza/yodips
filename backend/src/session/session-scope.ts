@@ -80,11 +80,19 @@ export function cacheKeyForCurrent(sub: string, ...parts: string[]): string {
  */
 export function currentRefForSession(
   sub: string,
-  session: { identity?: unknown; sessionGeneration?: unknown } | null | undefined,
+  session: {
+    identity?: unknown;
+    clientId?: unknown;
+    sessionGeneration?: unknown;
+  } | null | undefined,
 ): SessionRef | null {
   if (typeof sub !== 'string' || !SEGMENT.test(sub)) return null;
   if (typeof session !== 'object' || session === null) return null;
   if (session.identity !== sub) return null;
-  const candidate = { sub, sessionGeneration: session.sessionGeneration };
+  const candidate = {
+    sub,
+    clientId: session.clientId,
+    sessionGeneration: session.sessionGeneration,
+  };
   return isSessionRef(candidate) ? candidate : null;
 }

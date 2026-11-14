@@ -3,6 +3,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Kamera dipakai untuk scan QR, tetapi bukan syarat: absen juga bisa
+         lewat galeri dan web build tidak memakai kamera. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!-- Push notification (Android 13+): diminta runtime setelah login. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

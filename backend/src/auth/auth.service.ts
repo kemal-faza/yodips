@@ -5,8 +5,12 @@ import { ConfigService } from '@nestjs/config';
 import { ERROR_CODES } from '../common/error-codes';
 import {
   generateSessionGeneration,
+  isClientId,
   isSessionGeneration,
+  isStoredClientId,
+  LEGACY_CLIENT_ID,
 } from '../session/session-contract';
+import type { SessionRef } from '../session/session-contract';
 import { sameCapturedSession, SessionStore } from '../session/session-store';
 import { readLiveSession, sessionDead } from '../session/live-session';
 import { KulonService } from '../kulon/kulon.service';
@@ -52,6 +56,7 @@ export class AuthService {
    * waiting cannot conjure a cookie that was never sent.
    */
   async handleSessionHandoff(dto: HandoffDto) {
+    const clientId = this.resolveHandoffClientId(dto.clientId);
     const retryMs = Number(this.config.get('HANDOFF_KULON_RETRY_DELAY_MS') ?? 2000);
     let check = await this.kulon.checkSessionValid(dto.kulonCookie);
     for (let attempt = 1; !check.valid && check.reason === 'stale' && attempt < 3; attempt++) {
@@ -122,8 +127,27 @@ export class AuthService {
     }
     const capturedAt = this.runtime.wallNowMs();
     const sessionGeneration = generateSessionGeneration();
-    await this.sessionStore.set(identity, {
+    // Cap live devices per NIM: a NEW device evicts the oldest capturedAt
+    // record; a re-login of an existing device replaces its own record and
+    // never counts against the cap. Never evict a different user's record.
+    const existing = await this.sessionStore.listBySub(identity);
+    const configuredMax = Number(this.config.get('SESSION_MAX_PER_USER') ?? 10);
+    const max =
+      Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 10;
+    const hasCurrent = existing.some((s) => s.clientId === clientId);
+    if (!hasCurrent && existing.length >= max) {
+      const oldest = [...existing].sort((a, b) => a.capturedAt - b.capturedAt)[0];
+      if (oldest) {
+        await this.sessionStore.clearIfGeneration({
+          sub: oldest.identity,
+          clientId: oldest.clientId,
+          sessionGeneration: oldest.sessionGeneration,
+        });
+      }
+    }
+    await this.sessionStore.set({
       identity,
+      clientId,
       ssoCookie: dto.ssoCookie ?? '',
       microsoftCookie: dto.microsoftCookie ?? '',
       kulonCookie: dto.kulonCookie,
@@ -132,7 +156,7 @@ export class AuthService {
       capturedAt,
       sessionGeneration,
     });
-    const payload = { sub: identity, via: 'handoff', sessionGeneration };
+    const payload = { sub: identity, clientId, via: 'handoff', sessionGeneration };
     const accessToken = await this.jwt.signAsync(payload);
     return {
       accessToken,
@@ -159,7 +183,12 @@ export class AuthService {
    * `capturedAt` is lifetime only and never binds a JWT.
    */
   async refresh(token: string) {
-    let payload: { sub?: unknown; sessionGeneration?: unknown; via?: unknown };
+    let payload: {
+      sub?: unknown;
+      clientId?: unknown;
+      sessionGeneration?: unknown;
+      via?: unknown;
+    };
     try {
       payload = await this.jwt.verifyAsync(token, {
         secret: this.config.get<string>('JWT_SECRET'),
@@ -176,21 +205,21 @@ export class AuthService {
     }
     const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
     const generation = payload?.sessionGeneration;
-    if (!sub || !isSessionGeneration(generation)) {
+    const clientId = this.resolveTokenClientId(payload?.clientId);
+    if (!sub || !isSessionGeneration(generation) || !clientId) {
       throw new HttpException(
         { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const session = await readLiveSession(this.sessionStore, {
-      sub,
-      sessionGeneration: generation,
-    });
+    const ref: SessionRef = { sub, clientId, sessionGeneration: generation };
+    const session = await readLiveSession(this.sessionStore, ref);
     if (!session) {
       throw sessionDead();
     }
     const accessToken = await this.jwt.signAsync({
       sub,
+      clientId,
       via: typeof payload.via === 'string' ? payload.via : 'handoff',
       sessionGeneration: session.sessionGeneration,
     });
@@ -204,18 +233,26 @@ export class AuthService {
    */
   async renewUpstreamSession(
     dto: UpstreamSessionRenewalDto,
-    user: { sub?: unknown; sessionGeneration?: unknown },
+    user: { sub?: unknown; clientId?: unknown; sessionGeneration?: unknown },
   ): Promise<{ service: 'kulon' | 'siap'; status: 'renewed' }> {
     const sub =
       typeof user?.sub === 'string' && user.sub.length > 0 ? user.sub : null;
     const generation = user?.sessionGeneration;
-    if (!sub || !isSessionGeneration(generation)) throw sessionDead();
+    const clientId =
+      typeof user?.clientId === 'string' && isStoredClientId(user.clientId)
+        ? user.clientId
+        : null;
+    if (!sub || !clientId || !isSessionGeneration(generation)) throw sessionDead();
+    const ref: SessionRef = { sub, clientId, sessionGeneration: generation };
 
-    const expected = await readLiveSession(this.sessionStore, {
-      sub,
-      sessionGeneration: generation,
-    });
-    if (!expected || expected.identity !== sub) throw sessionDead();
+    const expected = await readLiveSession(this.sessionStore, ref);
+    if (
+      !expected ||
+      expected.identity !== sub ||
+      expected.clientId !== clientId
+    ) {
+      throw sessionDead();
+    }
 
     const service = dto?.service;
     if (
@@ -243,7 +280,7 @@ export class AuthService {
     // Some upstreams re-authenticate without rotating the cookie value. A
     // validated no-op is safe only while the complete snapshot is still live.
     if (dto.cookie === (service === 'kulon' ? expected.kulonCookie : expected.siapCookie)) {
-      const current = await readLiveSession(this.sessionStore, { sub, sessionGeneration: generation });
+      const current = await readLiveSession(this.sessionStore, ref);
       if (!current) throw sessionDead();
       if (!sameSessionExceptOtherCookie(current, expected, service)) throw upstreamSessionConflict(service);
       this.probeCache.delete(`${sub}:${service}:${dto.cookie}`);
@@ -254,13 +291,12 @@ export class AuthService {
       ? { ...expected, kulonCookie: dto.cookie }
       : { ...expected, siapCookie: dto.cookie };
     let outcome = await this.sessionStore.replaceIfUnchanged(
-      sub,
-      generation,
+      ref,
       expected,
       replacement,
     );
     if (outcome === 'conflict') {
-      const current = await readLiveSession(this.sessionStore, { sub, sessionGeneration: generation });
+      const current = await readLiveSession(this.sessionStore, ref);
       if (!current) throw sessionDead();
       // A simultaneous renewal of the OTHER service can be merged once.
       // Never overwrite a newer cookie for this service or a new session.
@@ -268,7 +304,7 @@ export class AuthService {
         const merged = service === 'kulon'
           ? { ...current, kulonCookie: dto.cookie }
           : { ...current, siapCookie: dto.cookie };
-        outcome = await this.sessionStore.replaceIfUnchanged(sub, generation, current, merged);
+        outcome = await this.sessionStore.replaceIfUnchanged(ref, current, merged);
       }
     }
     if (outcome === 'dead') throw sessionDead();
@@ -292,7 +328,11 @@ export class AuthService {
    * never trusted.
    */
   async logout(bearerToken: string): Promise<{ ok: true }> {
-    let payload: { sub?: unknown; sessionGeneration?: unknown };
+    let payload: {
+      sub?: unknown;
+      clientId?: unknown;
+      sessionGeneration?: unknown;
+    };
     try {
       payload = await this.jwt.verifyAsync(bearerToken, {
         secret: this.config.get<string>('JWT_SECRET'),
@@ -309,28 +349,43 @@ export class AuthService {
     }
     const sub = typeof payload?.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
     const generation = payload?.sessionGeneration;
-    if (!sub || !isSessionGeneration(generation)) {
+    const clientId = this.resolveTokenClientId(payload?.clientId);
+    if (!sub || !isSessionGeneration(generation) || !clientId) {
       throw new HttpException(
         { message: 'Token tidak valid', code: 'INVALID_TOKEN' },
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const cleared = await this.sessionStore.clearIfGeneration(sub, generation);
+    const cleared = await this.sessionStore.clearIfGeneration({
+      sub,
+      clientId,
+      sessionGeneration: generation,
+    });
     if (!cleared) {
       // Mismatch or CAS lost to a newer live session — never cleared.
       throw sessionDead();
     }
-    this.logger.log(`SSO session cleared for ${sub}`);
+    this.logger.log('SSO session cleared');
     return { ok: true };
   }
 
-  async me(user: { sub?: unknown; sessionGeneration?: unknown; via?: unknown }) {
+  async me(user: {
+    sub?: unknown;
+    clientId?: unknown;
+    sessionGeneration?: unknown;
+    via?: unknown;
+  }) {
     const sub = typeof user?.sub === 'string' && user.sub.length > 0 ? user.sub : null;
     // The one guarded read: guard validated A, but a B-replacement before this
     // read must NOT surface B's cookies/validity to an A-token. A miss (no
     // record, dead, legacy, mismatch) is unauthenticated — never a silent
-    // switch to the replacement.
-    const session = await readLiveSession(this.sessionStore, user);
+    // switch to the replacement. The ref carries the device ID too, so another
+    // device's live record can never answer this token.
+    const session = await readLiveSession(this.sessionStore, {
+      sub,
+      clientId: typeof user?.clientId === 'string' ? user.clientId : null,
+      sessionGeneration: user?.sessionGeneration,
+    });
     const present = !!session;
     // B1: live-probe validity (Kulon/SIAP) instead of only checking cookie
     // presence. Results are cached ~60s so the boot gate & polls get accurate
@@ -354,6 +409,9 @@ export class AuthService {
     const requireSsoCookie = user?.via !== 'pair';
     return {
       sub,
+      clientId:
+        session?.clientId ??
+        (typeof user.clientId === 'string' ? user.clientId : null),
       authenticated: present,
       hasSso: present ? !!session?.ssoCookie : false,
       hasMicrosoft: present ? !!session?.microsoftCookie : false,
@@ -365,6 +423,57 @@ export class AuthService {
         kulonValid &&
         siapValid,
     };
+  }
+
+  /** P1 rollout flag; both a validated boolean and a raw `'true'` enable it. */
+  private legacyClientEnabled(): boolean {
+    const raw = this.config.get<boolean | string>(
+      'SESSION_LEGACY_CLIENT_ENABLED',
+    );
+    return raw === true || raw === 'true';
+  }
+
+  /**
+   * Handoff input is client-controlled, so an EXPLICIT malformed value (a bad
+   * shape OR the reserved `legacy` sentinel) is rejected loudly — never
+   * silently remapped to the legacy client. Only a missing/empty value falls
+   * back to `legacy` while the rollout flag is on.
+   */
+  private resolveHandoffClientId(supplied: unknown): string {
+    if (supplied !== undefined && supplied !== null && supplied !== '') {
+      if (!isClientId(supplied)) {
+        throw new HttpException(
+          {
+            message: 'clientId tidak valid',
+            code: ERROR_CODES.INVALID_CLIENT_ID,
+          },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      return supplied;
+    }
+    if (this.legacyClientEnabled()) return LEGACY_CLIENT_ID;
+    throw new HttpException(
+      { message: 'clientId wajib diisi', code: ERROR_CODES.CLIENT_ID_REQUIRED },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  /**
+   * Token claim resolution. An absent claim maps to `legacy` while the rollout
+   * flag is on (P1 tokens are minted by clients that do not send an ID yet);
+   * a malformed supplied claim is INVALID_TOKEN. `legacy` is a stored-only ID,
+   * accepted from a signed token only while the flag is on.
+   */
+  private resolveTokenClientId(raw: unknown): string | null {
+    if (isClientId(raw)) return raw;
+    if (raw === undefined || raw === null || raw === '') {
+      return this.legacyClientEnabled() ? LEGACY_CLIENT_ID : null;
+    }
+    if (raw === LEGACY_CLIENT_ID && this.legacyClientEnabled()) {
+      return LEGACY_CLIENT_ID;
+    }
+    return null;
   }
 
   /**

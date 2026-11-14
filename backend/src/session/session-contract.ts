@@ -22,6 +22,20 @@ import { randomBytes } from 'crypto';
 /** 128-bit collision-proof session generation: 32 lowercase hex chars. */
 export const SESSION_GENERATION_RE = /^[0-9a-f]{32}$/;
 
+/** Client installation/surface ID. UUID v4 is recommended. */
+export const CLIENT_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+export const LEGACY_CLIENT_ID = 'legacy';
+
+/** Client-supplied ID: never the reserved legacy value. */
+export function isClientId(v: unknown): v is string {
+  return typeof v === 'string' && v !== LEGACY_CLIENT_ID && CLIENT_ID_RE.test(v);
+}
+
+/** Stored/ref ID: a client ID or the internal legacy sentinel. */
+export function isStoredClientId(v: unknown): v is string {
+  return v === LEGACY_CLIENT_ID || isClientId(v);
+}
+
 /** Generate a fresh session generation with Node stdlib crypto (128-bit). */
 export function generateSessionGeneration(): string {
   return randomBytes(16).toString('hex');
@@ -33,15 +47,14 @@ export function isSessionGeneration(v: unknown): v is string {
 }
 
 /**
- * Generation-qualified reference to one login session: the JWT `sub` plus the
- * exact `sessionGeneration` the token was minted against. Every
- * token-facing (JwtAuthGuard-authenticated) read of the session store MUST
- * carry BOTH halves — a `sub`-only read is a TOCTOU: the guard validates
- * generation A, the store is replaced with generation B, and the service
- * then uses B's cookies for A's request. Threading the exact generation
- * through to the adapter that retrieves cookies (via `getIfGeneration`)
- * closes that window: a replaced record is a miss (SESSION_DEAD), never a
- * silent switch to the replacement's cookies.
+ * Device-qualified reference to one login session: the JWT `sub`, the
+ * installation/surface `clientId`, and the exact `sessionGeneration` the token
+ * was minted against. Every token-facing (JwtAuthGuard-authenticated) read of
+ * the session store MUST carry ALL THREE — a `sub`-only read is a TOCTOU
+ * between devices too. Threading the exact generation through to the adapter
+ * that retrieves cookies (via `getIfGeneration`) closes that window: a
+ * replaced record is a miss (SESSION_DEAD), never a silent switch to the
+ * replacement's cookies.
  *
  * Lives in the dependency-neutral contract (NOT the store port) so
  * controllers, dashboard and pairing can validate a ref without importing the
@@ -49,23 +62,27 @@ export function isSessionGeneration(v: unknown): v is string {
  */
 export interface SessionRef {
   sub: string;
+  clientId: string;
   sessionGeneration: string;
 }
 
-/** True iff `v` is a well-formed SessionRef (non-empty sub + 32-hex generation). */
+/** True iff `v` is a well-formed SessionRef (non-empty sub + stored client ID + 32-hex generation). */
 export function isSessionRef(v: unknown): v is SessionRef {
   if (typeof v !== 'object' || v === null) return false;
-  const r = v as { sub?: unknown; sessionGeneration?: unknown };
+  const r = v as { sub?: unknown; clientId?: unknown; sessionGeneration?: unknown };
   return (
     typeof r.sub === 'string' &&
     r.sub.length > 0 &&
+    isStoredClientId(r.clientId) &&
     isSessionGeneration(r.sessionGeneration)
   );
 }
 
-/** One captured login session, keyed by identity in the SessionStore. */
+/** One captured login session, keyed by `<identity>:<clientId>` in the SessionStore. */
 export interface CapturedSession {
   identity: string;
+  /** Device/surface that owns this record. `legacy` during the P1 rollout. */
+  clientId: string;
   ssoCookie: string;
   microsoftCookie: string;
   kulonCookie: string;
