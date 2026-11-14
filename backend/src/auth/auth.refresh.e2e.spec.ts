@@ -9,6 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { AppModule } from '../app.module';
 import { KulonService } from '../kulon/kulon.service';
 import { SiapService } from '../siap/siap.service';
+import { SessionStore } from '../session/session-store';
 
 /**
  * TEMPORARY live E2E for the auto-rotate JWT feature (deleted after run).
@@ -63,6 +64,20 @@ describe('AuthModule refresh E2E (temporary)', () => {
       .set('Authorization', `Bearer ${res.body.accessToken}`)
       .expect(200);
     expect(me.body.sub ?? me.body.nim ?? me.body.identity).toBeTruthy();
+    // P1 behavior-neutral rollout: a handoff without clientId is the reserved
+    // `legacy` device, and /me reports that effective ID.
+    expect(me.body.clientId).toBe('legacy');
+    // The record really lives under the composite key for that device. Assert
+    // on identity/clientId only — never print cookie material.
+    const sessions = await app.get(SessionStore).listBySub(NIM);
+    expect(sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          clientId: 'legacy',
+          sessionGeneration: res.body.sessionGeneration,
+        }),
+      ]),
+    );
   });
 
   it('an EXPIRED but validly-signed JWT is rejected by the guard, then silently rotated by /refresh; the new token passes the guard', async () => {

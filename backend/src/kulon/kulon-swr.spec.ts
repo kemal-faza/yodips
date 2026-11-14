@@ -64,7 +64,7 @@ function makeCache(): CacheMock {
 }
 
 const TEST_GEN = 'a'.repeat(32);
-const ref = (sub: string) => ({ sub, sessionGeneration: TEST_GEN });
+const ref = (sub: string) => ({ sub, clientId: 'client-a', sessionGeneration: TEST_GEN });
 
 function makeUpstream(): UpstreamMock {
   const canned = { cookie: 'cookie', sesskey: 'sesskey' };

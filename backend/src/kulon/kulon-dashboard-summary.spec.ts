@@ -9,6 +9,7 @@ import { swrWindow } from '../cache/cache-policy';
 const GENERATION = 'a'.repeat(32);
 const ref = (sub = 'u1', sessionGeneration = GENERATION) => ({
   sub,
+  clientId: 'client-a',
   sessionGeneration,
 });
 

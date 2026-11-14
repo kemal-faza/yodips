@@ -44,12 +44,10 @@ export async function createSessionStore(
   try {
     const { scanned, migrated } = await store.migrateLegacyKeys();
     logger.log(`pre-migration_records=${scanned} legacy_migrated=${migrated}`);
-  } catch (error) {
-    logger.warn(
-      `legacy session migration failed (continuing): ${
-        error instanceof Error ? error.message : 'unknown error'
-      }`,
-    );
+  } catch {
+    // Fixed copy: an adapter error message can embed a Redis key (which
+    // carries the sub), so never interpolate it into the log.
+    logger.warn('legacy session migration failed (continuing)');
   }
   return store;
 }
